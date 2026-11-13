@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
@@ -230,94 +229,5 @@ struct ClipboardPasteboardPublisherTests {
             ], source: servingOffer)
         #expect(publisher.retractWrite(servingOffer: offer, withdrawing: withdrawal) == .keptPart)
         #expect(pasteboard.dataByItem == [[NSPasteboard.PasteboardType(textUTI): Data("plain".utf8)]])
-    }
-
-    // MARK: - Planning
-
-    @Test("a plan's file URL and inline types reach their own serving calls")
-    func planRoutesEachTypeToItsServingCall() {
-        let serving = RecordingPromiseServing(
-            url: URL(fileURLWithPath: "/tmp/kernova-test/a.bin"), data: Data("inline".utf8))
-
-        let plan = ClipboardPasteboardItemPlan.plan(
-            for: [
-                ClipboardRepresentationDescriptor(
-                    uti: textUTI, filename: "", isInline: true, isPromisable: true),
-                ClipboardRepresentationDescriptor(
-                    uti: "public.data", filename: "a.bin", isInline: false, isPromisable: true),
-            ])
-        let specs = ClipboardPasteboardPublisher.specs(for: plan, generation: 6, serve: serving)
-
-        #expect(specs.count == 2)
-        #expect(specs[0].provide(textUTI) == Data("inline".utf8))
-        #expect(serving.dataCalls == [Call(generation: 6, repIndex: 0, uti: textUTI)])
-
-        // The `.fileURL` flavor promises the URL's own string bytes.
-        #expect(
-            specs[1].provide(ClipboardPasteboardPublisher.ItemSpec.fileURLType)
-                == Data(serving.url!.absoluteString.utf8))
-        #expect(serving.fileURLCalls == [Call(generation: 6, repIndex: 1, uti: nil)])
-    }
-
-    @Test("a type no coordinate resolves is left off, and an item left empty is dropped")
-    func unresolvedTypesAreLeftOff() {
-        let serving = RecordingPromiseServing(data: Data("inline".utf8))
-
-        let plan = ClipboardPasteboardItemPlan.plan(
-            for: [
-                ClipboardRepresentationDescriptor(
-                    uti: textUTI, filename: "", isInline: true, isPromisable: true),
-                ClipboardRepresentationDescriptor(
-                    uti: "public.data", filename: "a.bin", isInline: false, isPromisable: true),
-            ])
-        let specs = ClipboardPasteboardPublisher.specs(for: plan, serve: serving) { promised in
-            promised.isFileURL ? nil : (generation: 3, repIndex: promised.representationIndex)
-        }
-
-        // The file item promised nothing but its URL, so nothing is left of it —
-        // a paste finds no flavor to fire rather than one that serves nothing.
-        #expect(specs.count == 1)
-        #expect(specs[0].types == [textUTI])
-        #expect(specs[0].provide(textUTI) == Data("inline".utf8))
-        #expect(serving.fileURLCalls.isEmpty)
-    }
-}
-
-/// One call a promise made on its serving side.
-private struct Call: Equatable, Sendable {
-    let generation: UInt64
-    let repIndex: Int
-    let uti: String?
-}
-
-/// Records what a promised type asked for instead of pulling anything.
-private final class RecordingPromiseServing: ClipboardPromiseServing, Sendable {
-    private struct Calls: Sendable {
-        var fileURL: [Call] = []
-        var data: [Call] = []
-    }
-
-    let url: URL?
-    let data: Data?
-    private let calls = Locked(Calls())
-
-    /// Answers every file-URL request with `url` and every data request with
-    /// `data`.
-    init(url: URL? = nil, data: Data? = nil) {
-        self.url = url
-        self.data = data
-    }
-
-    var fileURLCalls: [Call] { calls.withLock { $0.fileURL } }
-    var dataCalls: [Call] { calls.withLock { $0.data } }
-
-    func serveFileURL(generation: UInt64, repIndex: Int) -> URL? {
-        calls.withLock { $0.fileURL.append(Call(generation: generation, repIndex: repIndex, uti: nil)) }
-        return url
-    }
-
-    func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data? {
-        calls.withLock { $0.data.append(Call(generation: generation, repIndex: repIndex, uti: uti)) }
-        return data
     }
 }

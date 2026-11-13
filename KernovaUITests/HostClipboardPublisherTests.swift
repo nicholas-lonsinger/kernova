@@ -19,9 +19,9 @@ struct HostClipboardPublisherOutcomeTests {
         var isConnected = true
         let inboundOfferSeq: UInt64 = 0
         let connectionEpoch: UInt64 = 0
-        let connectionStartChangeCount: Int? = nil
-        let snapshotStaging: ClipboardFileStaging? = nil
-        let clipboardConnection: ClipboardConnectionID? = nil
+        let connectionStartChangeCount = 0
+        let snapshotStaging = ClipboardFileStaging.leased(label: "copies", root: TestStagingRoot().root)
+        let clipboardConnection = ClipboardConnectionID()
         let copyItems: [CopyToMacItem]
 
         init(copyItems: [CopyToMacItem]) { self.copyItems = copyItems }

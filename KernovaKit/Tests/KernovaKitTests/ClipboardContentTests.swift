@@ -259,23 +259,6 @@ struct ClipboardContentTests {
 
     // MARK: - Text
 
-    @Test("empty string normalizes to .empty")
-    func emptyStringNormalizes() {
-        let content = ClipboardContent(text: "")
-        #expect(content.isEmpty)
-        #expect(content == .empty)
-        #expect(content.representations.isEmpty)
-    }
-
-    @Test("text init produces a single UTF-8 representation")
-    func textInit() {
-        let content = ClipboardContent(text: "héllo")
-        #expect(content.representations.count == 1)
-        #expect(content.representations.first?.uti == ClipboardContent.utf8TextUTI)
-        #expect(content.text == "héllo")
-        #expect(!content.isEmpty)
-    }
-
     @Test("text reads the first UTF-8 plain-text representation only")
     func textPicksUTF8Rep() {
         let content = ClipboardContent(representations: [
@@ -326,19 +309,18 @@ struct ClipboardContentTests {
         #expect(offMain.representations.map(\.filename) == sync.representations.map(\.filename))
     }
 
-    @Test("makeOffActor(text:) matches init(text:) for empty, small, and large text")
-    func makeOffActorTextMatchesSyncInit() async {
-        // The editor commit path relies on these being identical so the off-actor
-        // commit and the synchronous flush produce the same content/digest.
+    @Test("makeOffActor(text:) holds one UTF-8 representation of the text, the empty string none")
+    func makeOffActorText() async {
         let large = String(repeating: "swift clipboard ", count: 4096)  // ~64 KiB
-        for text in ["", "hello", large] {
-            let sync = ClipboardContent(text: text)
+        for text in ["hello", large] {
+            let sync = ClipboardContent(representations: [
+                .init(uti: ClipboardContent.utf8TextUTI, data: Data(text.utf8))
+            ])
             let offMain = await ClipboardContent.makeOffActor(text: text)
             #expect(offMain == sync)  // digest-based equality
             #expect(offMain.digest == sync.digest)
             #expect(offMain.representations.map(\.inMemoryData) == sync.representations.map(\.inMemoryData))
         }
-        // The empty string normalizes to `.empty`, identically to init(text:).
         #expect(await ClipboardContent.makeOffActor(text: "") == .empty)
     }
 }
@@ -468,7 +450,9 @@ struct ClipboardSnapshotPolicyTests {
 struct ClipboardContentConcealedTests {
     @Test("defaults to false")
     func defaultsFalse() {
-        #expect(!ClipboardContent(text: "hi").isConcealed)
+        #expect(
+            !ClipboardContent(representations: [.init(uti: ClipboardContent.utf8TextUTI, data: Data("hi".utf8))])
+                .isConcealed)
         #expect(!ClipboardContent(representations: []).isConcealed)
     }
 

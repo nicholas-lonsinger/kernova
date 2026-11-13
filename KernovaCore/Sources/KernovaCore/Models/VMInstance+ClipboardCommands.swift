@@ -16,10 +16,11 @@ extension VMInstance {
         clipboardTransfers.gestureBegan()
         Task { @MainActor [weak self, weak service] in
             defer { self?.runningClipboardCommands.remove(.copyMacClipboardToGuest) }
+            guard let staging = service?.snapshotStaging, let connection = service?.clipboardConnection else { return }
             let outcome = await ClipboardPasteboardReader.readSnapshot(
                 from: pasteboard,
                 ceiling: self?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes,
-                staging: service?.snapshotStaging, copyingTo: service?.clipboardConnection)
+                staging: staging, copyingTo: connection)
             guard let self, let service else { return }
             switch outcome {
             case .nothing:

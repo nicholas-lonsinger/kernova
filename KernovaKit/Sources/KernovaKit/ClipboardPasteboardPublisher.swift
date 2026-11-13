@@ -84,22 +84,6 @@ extension NSPasteboard: ClipboardWritePasteboard {
     }
 }
 
-/// Serves a promised representation's bytes when a paste asks for it.
-///
-/// Both calls run inside the pasteboard server's `provideData` callback, on
-/// whichever thread it fires on.
-public protocol ClipboardPromiseServing: AnyObject, Sendable {
-    /// Resolves the pasteboard `.fileURL` for a promised rep, or `nil` when
-    /// nothing can be served. Safe to call on the main thread even though it
-    /// blocks.
-    func serveFileURL(generation: UInt64, repIndex: Int) -> URL?
-
-    /// Resolves an inline pasteboard flavor's bytes for a promised rep, or `nil`
-    /// when nothing can be served. Safe to call on the main thread even though
-    /// it blocks.
-    func serveData(generation: UInt64, repIndex: Int, uti: String) -> Data?
-}
-
 /// Which promises of a write a retraction withdraws. Two rules hold for either, item by item:
 ///
 /// - An item marked concealed goes whole, read or not, what it holds as data with it: it lives only while its
@@ -387,66 +371,5 @@ public final class ClipboardPasteboardPublisher {
         lastWriteChangeCount = pasteboard.changeCount
         heldChangeCount = nil
         ledger.record(nil, by: self, on: pasteboard)
-    }
-
-    // MARK: - Planning
-
-    /// The item specs promising `plan`'s types, every one of them backed by
-    /// `generation`'s representations.
-    nonisolated public static func specs(
-        for plan: ClipboardPasteboardItemPlan, generation: UInt64,
-        serve: any ClipboardPromiseServing
-    ) -> [ItemSpec] {
-        specs(for: plan, serve: serve) { promised in
-            (generation: generation, repIndex: promised.representationIndex)
-        }
-    }
-
-    /// The item specs promising `plan`'s types, each addressed to the offer
-    /// coordinates `source` resolves it to and served by `serve` at paste time.
-    ///
-    /// A type `source` maps to `nil` is left off its item, and an item left with
-    /// no type at all is dropped — a paste then finds no flavor to fire rather
-    /// than firing one that serves nothing. Each closure holds `serve` strongly:
-    /// the pasteboard can ask for a promised flavor long after the connection
-    /// that offered it is gone, and a representation already pulled is still
-    /// pastable then.
-    nonisolated public static func specs(
-        for plan: ClipboardPasteboardItemPlan, serve: any ClipboardPromiseServing,
-        source: (ClipboardPasteboardItemPlan.PromisedType) -> (generation: UInt64, repIndex: Int)?
-    ) -> [ItemSpec] {
-        plan.items.compactMap { item -> ItemSpec? in
-            var types: [String] = []
-            var routes: [String: Route] = [:]
-            for promised in item.types {
-                guard let coordinate = source(promised) else { continue }
-                let type = promised.isFileURL ? ItemSpec.fileURLType : promised.uti
-                types.append(type)
-                routes[type] = Route(
-                    generation: coordinate.generation, repIndex: coordinate.repIndex,
-                    uti: promised.uti, isFileURL: promised.isFileURL)
-            }
-            guard !types.isEmpty else { return nil }
-            // Snapshot to a `let` so the @Sendable closure captures an immutable
-            // map.
-            let itemRoutes = routes
-            return ItemSpec(types: types) { type in
-                guard let route = itemRoutes[type] else { return nil }
-                guard route.isFileURL else {
-                    return serve.serveData(
-                        generation: route.generation, repIndex: route.repIndex, uti: route.uti)
-                }
-                return serve.serveFileURL(generation: route.generation, repIndex: route.repIndex)
-                    .map { Data($0.absoluteString.utf8) }
-            }
-        }
-    }
-
-    /// Where one promised type's bytes come from.
-    private struct Route: Sendable {
-        let generation: UInt64
-        let repIndex: Int
-        let uti: String
-        let isFileURL: Bool
     }
 }

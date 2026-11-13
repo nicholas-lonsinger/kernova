@@ -92,9 +92,9 @@ struct ClipboardPassthroughCoordinatorTests {
         func passthroughStopped() {}
         func hostCopyOffersNothing() {}
         let connectionEpoch: UInt64 = 0
-        let connectionStartChangeCount: Int? = nil
-        let snapshotStaging: ClipboardFileStaging? = nil
-        let clipboardConnection: ClipboardConnectionID? = nil
+        var connectionStartChangeCount = 0
+        let snapshotStaging = ClipboardFileStaging.leased(label: "copies", root: TestStagingRoot().root)
+        let clipboardConnection = ClipboardConnectionID()
         func reservePromiseDestination() -> URL? { nil }
         func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? { nil }
         func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy {
@@ -183,6 +183,7 @@ struct ClipboardPassthroughCoordinatorTests {
             name: "Passthrough VM", guestOS: .macOS,
             preferences: preferences ?? makeTestPreferences())
         let service = FakePassthroughService()
+        service.connectionStartChangeCount = pasteboard.changeCount
         let reports = ClipboardTransferReports()
         service.reporter = reports.reporter
         instance.beginSessionContextForTesting()
@@ -450,9 +451,9 @@ struct ClipboardPassthroughCoordinatorTests {
         func passthroughStopped() {}
         func hostCopyOffersNothing() {}
         let connectionEpoch: UInt64 = 0
-        let connectionStartChangeCount: Int? = nil
-        let snapshotStaging: ClipboardFileStaging? = nil
-        let clipboardConnection: ClipboardConnectionID? = nil
+        let connectionStartChangeCount = 0
+        let snapshotStaging = ClipboardFileStaging.leased(label: "copies", root: TestStagingRoot().root)
+        let clipboardConnection = ClipboardConnectionID()
         func reservePromiseDestination() -> URL? { nil }
         func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? { nil }
         func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy {

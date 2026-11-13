@@ -193,7 +193,7 @@ final class ClipboardPassthroughCoordinator {
     private func connection(to service: any ClipboardServicing) -> OutboundConnection {
         if let outbound, outbound.serves(service) { return outbound }
         let connection = OutboundConnection(
-            service: service, settledChangeCount: service.connectionStartChangeCount ?? pasteboard.changeCount)
+            service: service, settledChangeCount: service.connectionStartChangeCount)
         outbound = connection
         return connection
     }
