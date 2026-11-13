@@ -308,7 +308,7 @@ struct ClipboardTransferOperationTests {
 
         let unit1 = operation.unit(expectedBytes: 1_000)
         unit1?.advanced(landed: 300, declared: 0)
-        operation.finishCancelled()
+        operation.finishCancelled(itemsOwed: .unknown)
         await settle()
         let settled = recorder.reports.count
 
@@ -490,79 +490,60 @@ struct ClipboardTransferOperationTests {
         unit?.ended(succeeded: false)
     }
 
-    @Test("Cancel is offered for the readout's whole life, and its outcome says whether it stopped a transfer")
-    func cancelOnlyWhileATransferIsInFlight() async throws {
-        // A paste's owner: its Cancel ends the operation with nothing owed but what is in flight.
-        func makePaste(_ recorder: Recorder, _ clock: GatedEngineClock, stops: Locked<Int>)
-            -> ClipboardTransferOperation
-        {
-            let operation = Locked<ClipboardTransferOperation?>(nil)
-            let made = makeOperation(
-                recorder: recorder, clock: clock, gesture: .paste,
-                onCancelRequested: {
-                    stops.withLock { $0 += 1 }
-                    operation.withLock { $0 }?.finishCancelled()
-                })
-            operation.withLock { $0 = made }
-            return made
-        }
-
-        // Cancelled in the gap between two files: nothing was in flight, so the paste completes.
+    @Test("Cancel is offered for the readout's whole life, idle gaps included, and always reaches its owner")
+    func cancelOfferedForTheReadoutsLife() async throws {
         let recorder = Recorder()
         let clock = GatedEngineClock()
         let stops = Locked(0)
-        let operation = makePaste(recorder, clock, stops: stops)
-        #expect(operation.isCancellable)
+        let operation = Locked<ClipboardTransferOperation?>(nil)
+        let made = makeOperation(
+            recorder: recorder, clock: clock, gesture: .paste,
+            onCancelRequested: {
+                stops.withLock { $0 += 1 }
+                operation.withLock { $0 }?.finishCancelled(itemsOwed: .unknown)
+            })
+        operation.withLock { $0 = made }
+        #expect(made.isCancellable)
         clock.advance(seconds: Self.revealDelay)
-        let unit = try #require(operation.unit(expectedBytes: 100))
+        let unit = try #require(made.unit(expectedBytes: 100))
         unit.advanced(landed: 100, declared: 100)
         await settle()
         #expect(try #require(recorder.runningSnapshot).isCancellable)
         unit.ended(succeeded: true)
         await settle()
-        let idle = try #require(recorder.runningSnapshot)
-        #expect(idle.bytesTransferred == 100)
-        #expect(idle.isCancellable)
-        #expect(recorder.reporter.cancel(operation.id))
+        // Between two transfers: nothing in flight, and Cancel still up.
+        #expect(try #require(recorder.runningSnapshot).isCancellable)
+        #expect(recorder.reporter.cancel(made.id))
         #expect(stops.withLock { $0 } == 1)
         await settle()
-        if case .completed = try #require(recorder.finish).outcome {
-        } else {
-            Issue.record("a Cancel with nothing in flight should complete")
-        }
-        #expect(!operation.isCancellable)
-        #expect(!operation.requestCancel())
-
-        // Cancelled during a file: the paste is cancelled.
-        let busyRecorder = Recorder()
-        let busyClock = GatedEngineClock()
-        let busy = makePaste(busyRecorder, busyClock, stops: stops)
-        busyClock.advance(seconds: Self.revealDelay)
-        let inFlight = try #require(busy.unit(expectedBytes: 100))
-        inFlight.advanced(landed: 40, declared: 100)
-        await settle()
-        #expect(busyRecorder.reporter.cancel(busy.id))
-        await settle()
-        let finish = try #require(busyRecorder.finish)
-        if case .cancelled = finish.outcome {} else { Issue.record("a Cancel during a transfer should cancel") }
-        #expect(finish.finalSnapshot?.bytesTransferred == 40)
-        inFlight.ended(succeeded: false)
+        #expect(recorder.finish != nil)
+        #expect(!made.isCancellable)
+        #expect(!made.requestCancel())
     }
 
-    @Test("a Cancel with items still owed is cancelled though nothing is in flight")
-    func cancelWithItemsOwedIsCancelled() async throws {
+    @Test(
+        "a Cancel between transfers completes only when its owner knows nothing more was owed",
+        arguments: [
+            (ClipboardTransferOperation.ItemsOwed.known(false), true),
+            (.known(true), false),
+            (.unknown, false),
+        ])
+    func cancelOutcomeFollowsWhatIsOwed(owed: ClipboardTransferOperation.ItemsOwed, completes: Bool) async throws {
         let recorder = Recorder()
         let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock, gesture: .drop, expectedItems: 2)
         clock.advance(seconds: Self.revealDelay)
         let first = try #require(operation.unit(expectedBytes: 100))
         first.ended(succeeded: true)
-        operation.finishCancelled(itemsOwed: true)
+        operation.finishCancelled(itemsOwed: owed)
         await settle()
-        if case .cancelled = try #require(recorder.finish).outcome {
-        } else {
-            Issue.record("a Cancel with an item owed should cancel")
+        let finish = try #require(recorder.finish)
+        switch finish.outcome {
+        case .completed: #expect(completes)
+        case .cancelled: #expect(!completes)
+        default: Issue.record("a Cancel ended \(finish.outcome)")
         }
+        #expect(finish.finalSnapshot?.bytesTransferred == 100)
     }
 
     @Test("an operation with nothing to stop offers no cancel")

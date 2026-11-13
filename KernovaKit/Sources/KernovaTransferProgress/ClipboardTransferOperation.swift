@@ -567,16 +567,24 @@ public final class ClipboardTransferOperation: Sendable {
         }
     }
 
-    /// Ends the operation for a Cancel its owner acted on: `.cancelled` when the
-    /// Cancel stopped something — a transfer in flight, or `itemsOwed`, items the
-    /// gesture asked for that had not arrived — and `.completed` when everything
-    /// asked for had already arrived.
-    public func finishCancelled(itemsOwed: Bool = false) {
-        deliver(
-            state.withLock { state in
-                let ending: Ending = itemsOwed || !state.isIdle ? .cancelled : .completed
-                return state.finish(ending, at: clock.now, header: header)
-            })
+    /// What an owner knows, at a Cancel it acted on, of the items its gesture asked for.
+    public enum ItemsOwed: Sendable {
+        /// The owner counts what the gesture asked for — a drop, a drag out — and the value is whether some had
+        /// not arrived.
+        case known(Bool)
+        /// The owner can't count it: a paste, whose app asks for one item at a time and may have asked again.
+        case unknown
+    }
+
+    /// Ends the operation for a Cancel its owner acted on: `.completed` only when its owner knows everything
+    /// asked for had arrived, `.cancelled` otherwise, at what had arrived.
+    public func finishCancelled(itemsOwed: ItemsOwed) {
+        let ending: Ending
+        switch itemsOwed {
+        case .known(false): ending = .completed
+        case .known(true), .unknown: ending = .cancelled
+        }
+        deliver(state.withLock { $0.finish(ending, at: clock.now, header: header) })
     }
 
     /// Retires the operation without a finished report — a teardown, where what

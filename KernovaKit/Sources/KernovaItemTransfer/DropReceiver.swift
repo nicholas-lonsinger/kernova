@@ -137,7 +137,7 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
     private func cancel(_ token: Data) {
         guard let job = jobs.withLock({ $0[token] }) else { return }
         logger.log(.notice, "The user cancelled a drop")
-        job.readout?.finishCancelled(itemsOwed: job.next < job.count)
+        job.readout?.finishCancelled(itemsOwed: .known(job.next < job.count))
         finish(token, refusing: WireError(.cancelled, debugDetail: "the user cancelled the drop"))
     }
 

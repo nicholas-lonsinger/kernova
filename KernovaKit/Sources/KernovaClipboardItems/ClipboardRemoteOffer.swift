@@ -331,7 +331,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
 
     /// The readout's Cancel: the offer ends as ``close()`` ends it, except that its pulls in flight end as
     /// cancelled rather than failed, everyone waiting on one hears it cancelled — a paste hears nil — and the
-    /// readout finishes cancelled if a pull was in flight, completed if not.
+    /// readout finishes cancelled at what had landed.
     private func spend() {
         end(.cancelled)
     }
@@ -357,7 +357,7 @@ public final class ClipboardRemoteOffer: ClipboardItemPulling, Sendable {
         }
         switch ending {
         case .closed: readout?.abandon()
-        case .cancelled: readout?.finishCancelled()
+        case .cancelled: readout?.finishCancelled(itemsOwed: .unknown)
         }
         for id in ids { link.cancelPull(id) }
         for ask in asks { ask.completion(ending == .cancelled ? .cancelled : .missing(nil)) }

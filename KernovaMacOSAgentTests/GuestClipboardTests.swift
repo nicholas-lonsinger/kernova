@@ -362,6 +362,59 @@ struct GuestClipboardTests {
         #expect(link.pulls.count == 2)
     }
 
+    @Test("A paste's Cancel between two files ends its readout cancelled, at what had landed")
+    func pasteCancelledBetweenFilesIsCancelled() async throws {
+        let pasteboard = FakePasteboard()
+        let (transfers, reports, reported) = recordingTransfers()
+        // Gated, so the readout's idle gap never passes: only the Cancel ends it.
+        let clock = GatedEngineClock()
+        let clipboard = GuestClipboard(
+            pasteboard: pasteboard, stagingRoot: staging.root, transfers: transfers, transferClock: clock)
+        let items = ["a.bin", "b.bin"].map { name -> OfferedItem in
+            var item = OfferedItem()
+            var representation = Representation()
+            representation.type = TypeDescriptor(appleUTI: "public.data")
+            representation.storage = .file
+            representation.name = Data(name.utf8)
+            representation.sizeEstimate = 4
+            item.representations = [representation]
+            return item
+        }
+        let link = RecordingLink(items: items, sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
+        clipboard.setLink(link)
+        clipboard.exchange.handle(
+            .offerReceived(
+                ItemSetHeaderValue(
+                    feature: .clipboard, token: Data(repeating: 9, count: 16), concealed: false, count: 2)),
+            on: link)
+        try await pasteboard.changed.wait { !pasteboard.promisedTypes.isEmpty }
+        func running() -> ClipboardProgressSnapshot? {
+            guard case .running(let snapshot, _)? = reports.withLock({ $0.last }) else { return nil }
+            return snapshot
+        }
+
+        // The pasting app takes the first file and has not yet asked for the second.
+        let first = Task.detached { pasteboard.invokeProvider(forType: .fileURL, itemIndex: 0) }
+        try await link.changed.wait { link.opened.count == 1 }
+        clock.advance(seconds: 1)
+        link.pulls[0].order.progress?.advanced(landed: 4, declared: 4)
+        try await reported.wait { running() != nil }
+        try await landPull(Data("abcd".utf8), clipboard, link)
+        #expect(await first.value != nil)
+        let readout = try #require(running())
+
+        #expect(transfers.cancel(readout.operationID))
+        try await reported.wait {
+            if case .finished? = reports.withLock({ $0.last }) { true } else { false }
+        }
+        guard case .finished(let finish)? = reports.withLock({ $0.last }), case .cancelled(let final) = finish.outcome
+        else {
+            Issue.record("the readout ended \(reports.withLock { $0 })")
+            return
+        }
+        #expect(final.bytesTransferred == 4)
+    }
+
     @Test("A fresh copy on the host after a paste's Cancel pastes normally, on a readout of its own")
     func freshOfferAfterACancelPulls() async throws {
         let pasteboard = FakePasteboard()
