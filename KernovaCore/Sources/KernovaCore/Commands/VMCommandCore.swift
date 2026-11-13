@@ -179,9 +179,8 @@ package final class VMCommandCore {
         let status: VMStatus?
         /// `nil` for an arrival and for a VM with no session.
         let agentStatus: AgentStatus?
-        let errorMessage: String?
-        /// `nil` for an arrival, and for a VM no Start or Resume has failed on.
-        let startFailure: VMStartFailure?
+        /// `nil` for an arrival, and for a VM that has recorded no failure.
+        let failure: VMFailure?
 
         /// The status as it crosses the wire.
         var wireStatus: String { status?.rawValue ?? VMStatus.preparingWireName }
@@ -787,9 +786,8 @@ package final class VMCommandCore {
             guard case .vm(let instance) = entry else { continue }
             _ = instance.configuration.name
             _ = instance.status
-            _ = instance.errorMessage
             _ = instance.agentPresentation
-            _ = instance.activity.lastStartFailure
+            _ = instance.activity.lastFailure
         }
     }
 
@@ -802,12 +800,10 @@ package final class VMCommandCore {
                     name: instance.name,
                     status: instance.status,
                     agentStatus: instance.agentPresentation?.status,
-                    errorMessage: instance.errorMessage,
-                    startFailure: instance.activity.lastStartFailure)
+                    failure: instance.activity.lastFailure)
             case .arriving(let arrival):
                 states[arrival.id] = ObservedState(
-                    name: arrival.name, status: nil, agentStatus: nil, errorMessage: nil,
-                    startFailure: nil)
+                    name: arrival.name, status: nil, agentStatus: nil, failure: nil)
             }
         }
         return states
@@ -822,9 +818,9 @@ package final class VMCommandCore {
     /// two passes reports only where it ended up. An arrival's adoption reads
     /// as a status change from ``VMStatus/preparingWireName``.
     ///
-    /// A VM fails at most once per pass: by a Start or Resume that failed
-    /// (``VMActivity/lastStartFailure``), wherever it rested the VM, or else by
-    /// entering the error status.
+    /// A VM fails at most once per pass, with the latest failure it recorded
+    /// (``VMActivity/lastFailure``) — which, unlike the status, outlasts
+    /// whatever phase the VM rests in next.
     private func emitLibraryChanges() {
         let current = currentObservedStates()
         var batch: [VMLibraryEvent] = []
@@ -840,21 +836,10 @@ package final class VMCommandCore {
                     .statusChanged(
                         id: id, name: now.name, from: before.wireStatus, to: now.wireStatus))
             }
-            let startFailure =
-                if case .vm(let instance) = entry, let failure = now.startFailure,
-                    failure != before.startFailure
-                {
-                    reportedFailure(of: failure, on: instance)
-                } else {
-                    CommandError?.none
-                }
-            if let startFailure {
-                batch.append(.failure(id: id, name: now.name, message: startFailure.message))
-            } else if before.status != now.status, now.status == .error {
-                batch.append(
-                    .failure(
-                        id: id, name: now.name,
-                        message: now.errorMessage ?? "The virtual machine stopped with an error."))
+            if case .vm(let instance) = entry, let failure = now.failure, failure != before.failure,
+                let message = reportedMessage(of: failure, on: instance)
+            {
+                batch.append(.failure(id: id, name: now.name, message: message))
             }
             if before.agentStatus != now.agentStatus {
                 batch.append(
@@ -888,21 +873,29 @@ package final class VMCommandCore {
         onFailure?(failure, instance)
     }
 
-    /// What the event stream reports for `failure`, a Start or Resume that ran
-    /// on `instance` and failed — in the words its verb's own refusal uses
-    /// (``bringUpFailure(_:verb:on:)``), unrecorded — or `nil` for a refusal,
-    /// after which nothing about the VM moved.
-    private func reportedFailure(of failure: VMStartFailure, on instance: VMInstance) -> CommandError? {
-        let reported: CommandError
-        switch failure.error {
-        case is VMAdmissionRefusal:
-            return nil
-        case let command as CommandError:
-            reported = command
-        default:
-            reported = ranAndFailed(failure.error, verb: failure.verb, on: instance)
+    /// What the event stream reports for `recorded`, a failure of `instance`: a
+    /// session's end in Virtualization's own words, and an operation's in the
+    /// words its verb gives its caller — ``bringUpFailure(_:verb:on:)`` for a
+    /// Start or Resume, ``failure(_:verb:on:)`` for a Suspend — unrecorded;
+    /// `nil` for a refusal, after which nothing about the VM moved.
+    private func reportedMessage(of recorded: VMFailure, on instance: VMInstance) -> String? {
+        switch recorded.cause {
+        case .sessionStoppedWithError(let message):
+            return message
+        case .operation(let verb, let error):
+            let reported: CommandError
+            switch error {
+            case is VMAdmissionRefusal:
+                return nil
+            case let command as CommandError:
+                reported = command
+            default:
+                reported =
+                    verb == .suspend
+                    ? failure(error, verb: verb, on: instance) : ranAndFailed(error, verb: verb, on: instance)
+            }
+            return reported.isOperationFailure ? reported.message : nil
         }
-        return reported.isOperationFailure ? reported : nil
     }
 
     /// Puts an arrival's failure on the event stream, waited or not, while its

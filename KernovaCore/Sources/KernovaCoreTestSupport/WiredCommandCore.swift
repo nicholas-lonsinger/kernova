@@ -190,3 +190,50 @@ extension WiredCommandCore {
         }
     }
 }
+
+extension WiredCommandCore {
+    /// Every event `stream` carried about `instance`, read up to a rename of it
+    /// made now — so the read is bounded by a change the test made rather than
+    /// by a deadline, and an event emitted after the one expected is still
+    /// seen.
+    ///
+    /// Takes the stream rather than an iterator: its buffer is unbounded, so
+    /// everything emitted before the read starts is still there.
+    func eventsReadPastRename(
+        of instance: VMInstance, on stream: AsyncStream<[VMLibraryEvent]>
+    ) async throws -> [VMLibraryEvent] {
+        let sentinel = "Read past the events"
+        try core.rename(.id(instance.id), to: sentinel)
+        var events: [VMLibraryEvent] = []
+        for await batch in stream {
+            for event in batch where event.vmID == instance.id {
+                if case .renamed(_, _, let to) = event, to == sentinel { return events }
+                events.append(event)
+            }
+        }
+        return events
+    }
+
+    /// The message of each failure `stream` carried about `instance`, read as
+    /// ``eventsReadPastRename(of:on:)`` reads.
+    func failureMessages(
+        of instance: VMInstance, on stream: AsyncStream<[VMLibraryEvent]>
+    ) async throws -> [String] {
+        try await eventsReadPastRename(of: instance, on: stream).compactMap {
+            guard case .failure(_, _, let message) = $0 else { return nil }
+            return message
+        }
+    }
+}
+
+extension VMLibraryEvent {
+    /// The VM the event is about.
+    fileprivate var vmID: UUID {
+        switch self {
+        case .added(let summary): summary.id
+        case .removed(let id, _), .statusChanged(let id, _, _, _), .agentStatusChanged(let id, _, _),
+            .failure(let id, _, _), .renamed(let id, _, _):
+            id
+        }
+    }
+}

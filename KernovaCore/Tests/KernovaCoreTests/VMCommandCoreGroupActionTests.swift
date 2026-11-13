@@ -291,21 +291,7 @@ struct VMCommandCoreGroupActionTests {
             return
         }
         #expect(suspended.status == .suspended)
-        // Read up to a rename made after the action, so a second failure would
-        // still be seen.
-        let sentinel = "Read past the action"
-        try harness.core.rename(.id(suspended.id), to: sentinel)
-        var failures: [UUID] = []
-        reading: for await batch in events {
-            for event in batch {
-                switch event {
-                case .renamed(_, _, let to) where to == sentinel: break reading
-                case .failure(let id, _, _): failures.append(id)
-                default: continue
-                }
-            }
-        }
-        #expect(failures == [suspended.instanceID])
+        #expect(try await harness.wired.failureMessages(of: suspended, on: events).count == 1)
     }
 
     // MARK: - Launch pass

@@ -12,7 +12,8 @@ import Testing
 /// The unsettled-session marker (``VMHostState/hasUnsettledSession``): what
 /// sets it, what settles it, and the one rule a session found ended unsettled
 /// answers to — an Ephemeral VM's baseline revert, which every request
-/// carrying the guest's files forward waits out.
+/// carrying the guest's files forward waits out — and how a session
+/// Virtualization stopped with an error is told, however it settles.
 @Suite("Ephemeral Session Settlement Tests", .serialized, .caseScoped)
 @MainActor
 struct EphemeralSessionSettlementTests {
@@ -96,6 +97,113 @@ struct EphemeralSessionSettlementTests {
         #expect(virtualization.revertedSnapshots.map(\.id) == [other.id])
         #expect(virtualization.lastStartRoute == .restoredSavedState)
         #expect(instance.snapshotManifest.currentID == other.id)
+    }
+
+    // MARK: - A session stopped with an error
+
+    /// An error as Virtualization stops a session with one.
+    private static let stopError = NSError(
+        domain: "VZErrorDomain", code: 1,
+        userInfo: [
+            NSLocalizedDescriptionKey:
+                "Internal Virtualization error. The virtual machine stopped unexpectedly."
+        ])
+
+    /// What records each failure alert `harness`'s library raises.
+    private func recordingAlerts(of harness: WiredCommandCore) -> MockLibraryFailureSink {
+        let alerts = MockLibraryFailureSink()
+        harness.library.onFailure = { [alerts] title, message, subject in
+            alerts.record(title: title, message: message, subject: subject)
+        }
+        return alerts
+    }
+
+    /// Where a VM's session ending with an error leaves it.
+    enum CrashedVM: CaseIterable, Sendable {
+        /// Not in Ephemeral Mode: failed, with the error's message.
+        case notEphemeral
+        /// Back at a cold baseline: stopped.
+        case coldBaseline
+        /// Back at a warm baseline: suspended.
+        case warmBaseline
+    }
+
+    @Test(
+        "A session Virtualization stops with an error raises one alert and one stream failure, wherever the VM rests",
+        arguments: CrashedVM.allCases)
+    func sessionStoppedWithErrorIsToldOnce(vm: CrashedVM) async throws {
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let alerts = recordingAlerts(of: harness)
+        let session = UUID()
+        let (instance, baseline, _) = try makeVM(
+            in: harness, baseline: vm == .warmBaseline ? .warm : .cold, ephemeral: vm != .notEphemeral,
+            phase: .running(sessionID: session))
+        let events = harness.core.events()
+
+        instance.activity.deliverSessionEvent(.didStopWithError(Self.stopError), from: session)
+        await harness.library.waitForRevertsToSettle()
+
+        let message = "Internal Virtualization error. The virtual machine stopped unexpectedly."
+        switch vm {
+        case .notEphemeral:
+            #expect(instance.phase == .failed(message: message))
+            #expect(virtualization.revertedSnapshots.isEmpty)
+        case .coldBaseline:
+            #expect(instance.phase == .stopped)
+            #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
+        case .warmBaseline:
+            #expect(instance.phase == .suspended)
+            #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
+        }
+        #expect(alerts.errors == [message])
+        #expect(alerts.errorTitles == ["\u{201C}Throwaway\u{201D} Stopped Because of an Error"])
+        if case .vm(let subject)? = alerts.errorSubject {
+            #expect(subject === instance)
+        } else {
+            Issue.record("The alert was about \(String(describing: alerts.errorSubject))")
+        }
+
+        let reported = try await harness.eventsReadPastRename(of: instance, on: events)
+        let failures = reported.compactMap { event -> String? in
+            guard case .failure(_, _, let message) = event else { return nil }
+            return message
+        }
+        #expect(failures == [message])
+        // An Ephemeral VM is told its failure without ever reading Error.
+        let statuses = reported.compactMap { event -> String? in
+            guard case .statusChanged(_, _, _, let to) = event else { return nil }
+            return to
+        }
+        #expect(statuses.contains(VMStatus.error.rawValue) == (vm == .notEphemeral))
+    }
+
+    @Test("A session stopped with an error while a start holds the VM is told as it ends, once")
+    func sessionStoppedWithErrorUnderAnOperationIsToldOnce() async throws {
+        let virtualization = MockVirtualizationService()
+        let gate = GatedStep()
+        virtualization.startGate = gate
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let alerts = recordingAlerts(of: harness)
+        let (instance, _, _) = try makeVM(in: harness, ephemeral: false)
+        let events = harness.core.events()
+
+        let start = Task { @MainActor in
+            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        }
+        try await gate.waitUntilEntered()
+        let session = try #require(instance.liveSessionID)
+        instance.activity.deliverSessionEvent(.didStopWithError(Self.stopError), from: session)
+
+        let message = "Internal Virtualization error. The virtual machine stopped unexpectedly."
+        #expect(!instance.phase.isSettled)
+        #expect(alerts.errors == [message])
+        gate.release()
+        _ = try? await start.value
+
+        #expect(instance.phase == .failed(message: message))
+        #expect(alerts.errors == [message])
+        #expect(try await harness.failureMessages(of: instance, on: events) == [message])
     }
 
     // MARK: - Restart

@@ -1544,28 +1544,6 @@ struct VMCommandCoreTests {
         Issue.record("the stream ended without an agent status change")
     }
 
-    @Test("A VM landing in its error state reports the message it carries")
-    func eventsReportFailures() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Broken", phase: .running(sessionID: UUID()))
-        var events = VMLibraryEventReader(harness.core.events())
-
-        instance.activity.placeForTesting(.failed(message: "The disk went away"))
-
-        var failure: VMLibraryEvent?
-        while let event = await events.next() {
-            if case .failure = event {
-                failure = event
-                break
-            }
-        }
-        guard case .failure(_, _, let message)? = failure else {
-            Issue.record("expected a failure event")
-            return
-        }
-        #expect(message == "The disk went away")
-    }
-
     @Test("A Start failing into the error status, from rest or from the error status, reports one failure")
     func startFailingIntoErrorIsReportedOnce() async throws {
         for phase: VMLifecyclePhase in [.stopped, .failed(message: "An earlier failure")] {
@@ -1577,30 +1555,26 @@ struct VMCommandCoreTests {
             _ = try? await harness.core.start(.id(instance.id), recovery: false, consent: .none)
 
             #expect(instance.status == .error)
-            let failures = try await failuresReported(on: events, renaming: instance, in: harness.core)
-            #expect(failures.map(\.id) == [instance.id], "from \(phase)")
+            let failures = try await harness.wired.failureMessages(of: instance, on: events)
+            #expect(failures.count == 1, "from \(phase)")
         }
     }
 
-    /// The failures `events` carried, read up to a rename of `instance` made
-    /// now — so a failure reported after the one expected would still be
-    /// counted.
-    private func failuresReported(
-        on events: AsyncStream<[VMLibraryEvent]>, renaming instance: VMInstance, in core: VMCommandCore
-    ) async throws -> [(id: UUID, message: String)] {
-        let sentinel = "Read past the failure"
-        try core.rename(.id(instance.id), to: sentinel)
-        var failures: [(id: UUID, message: String)] = []
-        reading: for await batch in events {
-            for event in batch {
-                switch event {
-                case .renamed(_, _, let to) where to == sentinel: break reading
-                case .failure(let id, _, let message): failures.append((id, message))
-                default: continue
-                }
-            }
+    @Test("A Suspend whose save fails reports one failure, worded as its caller was told")
+    func suspendFailureIsReportedOnce() async throws {
+        let harness = makeHarness()
+        harness.virtualization.saveError = NSError(
+            domain: "VZErrorDomain", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "The virtual machine's state could not be saved."])
+        let instance = makeInstance(in: harness, name: "Broken", phase: .running(sessionID: UUID()))
+        let events = harness.core.events()
+
+        let thrown = try await #require(throws: CommandError.self) {
+            try await harness.core.suspend(.id(instance.id))
         }
-        return failures
+
+        let failures = try await harness.wired.failureMessages(of: instance, on: events)
+        #expect(failures == [thrown.message])
     }
 
     @Test("A clone whose copy fails reports the failure directly, then the arrival's removal")
@@ -1665,35 +1639,6 @@ struct VMCommandCoreTests {
         }
     }
 
-    /// The name a rename gives a VM to mark how far a test reads the stream.
-    private static let readSentinel = "Renamed past the failure"
-
-    /// Every failure `stream` carries for `id`, read up to the rename
-    /// ``readSentinel`` names — so the read is bounded by a change the test
-    /// made rather than by a deadline, and a second failure would still be
-    /// seen.
-    ///
-    /// Takes the stream rather than an iterator: the buffer is unbounded, so
-    /// everything emitted before this starts reading is still there.
-    private func failureMessages(
-        in stream: AsyncStream<[VMLibraryEvent]>, for id: UUID
-    ) async -> [String] {
-        var messages: [String] = []
-        for await batch in stream {
-            for event in batch {
-                switch event {
-                case .renamed(_, _, let to) where to == Self.readSentinel:
-                    return messages
-                case .failure(let failed, _, let message) where failed == id:
-                    messages.append(message)
-                default:
-                    continue
-                }
-            }
-        }
-        return messages
-    }
-
     @Test("A transient setup failure nobody awaited reaches the stream, carrying its message")
     func transientSetupFailureReachesTheEventStream() async throws {
         let install = MockMacOSInstallService()
@@ -1705,11 +1650,10 @@ struct VMCommandCoreTests {
         try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
         await instance.setupOperationTask?.value
 
-        // Transient: the VM is back where a retry starts, so its phase holds no
-        // message and the diff has nothing to report.
+        // Transient: the VM is back where a retry starts, its phase holding no
+        // message.
         #expect(instance.status == .initialBoot)
-        try harness.core.rename(.id(instance.id), to: Self.readSentinel)
-        let messages = await failureMessages(in: events, for: instance.id)
+        let messages = try await harness.wired.failureMessages(of: instance, on: events)
         #expect(messages.count == 1)
         // The sentence the alert gets, not the raw error — one failure, worded
         // once.
@@ -1730,8 +1674,7 @@ struct VMCommandCoreTests {
 
         #expect(instance.status == .initialBoot)
         #expect(harness.failures.isEmpty)
-        try harness.core.rename(.id(instance.id), to: Self.readSentinel)
-        let messages = await failureMessages(in: events, for: instance.id)
+        let messages = try await harness.wired.failureMessages(of: instance, on: events)
         #expect(messages.isEmpty)
     }
 
@@ -1752,8 +1695,7 @@ struct VMCommandCoreTests {
         #expect(instance.status == .stopped)
         let reportedMessage = try #require(harness.failures.first?.message)
         #expect(reportedMessage.contains("at most two"))
-        try harness.core.rename(.id(instance.id), to: Self.readSentinel)
-        let messages = await failureMessages(in: events, for: instance.id)
+        let messages = try await harness.wired.failureMessages(of: instance, on: events)
         #expect(messages == [reportedMessage])
     }
 

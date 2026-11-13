@@ -919,6 +919,14 @@ package final class VMLibrary: VMAdmissionPeers {
             self.recordUnreadableFiles(of: instance)
             self.reportNewlyUnreadable()
         }
+        // The title is Apple's account of `virtualMachine(_:didStopWithError:)`:
+        // "Tells the delegate that the VM stopped because of an error."
+        instance.activity.onSessionStoppedWithError = { [weak self, weak instance] message in
+            guard let self, let instance else { return }
+            self.surfaceError(
+                message, title: "\u{201C}\(instance.name)\u{201D} Stopped Because of an Error",
+                about: .vm(instance))
+        }
         // A guest that has just become attachable takes back the accessories
         // paired with it, and is a running guest whose address can be watched.
         instance.activity.onSessionBecameAttachable = { [weak self, weak instance] in
