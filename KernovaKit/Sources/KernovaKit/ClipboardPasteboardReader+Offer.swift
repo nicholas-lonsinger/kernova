@@ -109,15 +109,15 @@ extension ClipboardPasteboardReader {
     /// goes over; otherwise it is the write's own source's, what is not a file pulled through it now and each file
     /// pulled through it when pulled, while that offer lasts. Any other pasteboard is read as
     /// ``readOffer(from:promises:promiseDestination:sizeOf:)`` reads it, its file promises called in now into a
-    /// ``ClipboardFileStaging/lease()`` of `staging` the snapshot holds, so they live as long as it does; with no
-    /// `staging`, a promise lands nothing. No more than `ceiling` bytes of what is not a file are read; an image
-    /// file's bytes are read through `contentsOf`, and count only when it reads them.
+    /// ``ClipboardFileStaging/lease()`` of `staging` the snapshot holds, so they live as long as it does. No more
+    /// than `ceiling` bytes of what is not a file are read; an image file's bytes are read through `contentsOf`,
+    /// and count only when it reads them.
     public static func readSnapshot(
         from pasteboard: any ClipboardReadPasteboard,
         ceiling: Int = ClipboardPasteLimit.defaultBytes,
         ledger: ClipboardWriteLedger = .shared,
-        staging: ClipboardFileStaging? = nil,
-        copyingTo destination: ClipboardConnectionID?,
+        staging: ClipboardFileStaging,
+        copyingTo destination: ClipboardConnectionID,
         sizeOf: (@Sendable (URL) -> Int)? = { ClipboardDirectory.estimatedByteCount(at: $0) },
         contentsOf: @escaping @Sendable (URL) -> Data? = ClipboardOfferSource.contentsDownloadingNothing
     ) async -> SnapshotOutcome {
@@ -130,13 +130,10 @@ extension ClipboardPasteboardReader {
                     else { return .nothing }
                     return .snapshot(snapshot, lost: lost)
                 }
-                let lease = staging?.lease()
+                let lease = staging.lease()
                 let read = await readOffer(
                     from: pasteboard, promises: pasteboard.filePromiseReceivers,
-                    promiseDestination: {
-                        guard let lease else { throw ClipboardServeError.unavailable }
-                        return try lease.reserveScratchDirectory()
-                    }, sizeOf: sizeOf)
+                    promiseDestination: { try lease.reserveScratchDirectory() }, sizeOf: sizeOf)
                 if case .nothingOfferable(let lost) = read, lost > 0 { return .unreadable }
                 guard case .offer(let source, let lost) = read else { return .nothing }
                 if let (snapshot, leftOut) = try await source.snapshot(
