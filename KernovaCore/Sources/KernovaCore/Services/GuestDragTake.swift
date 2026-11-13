@@ -1061,7 +1061,7 @@ package final class GuestDragTake: GuestDragTaking {
     private func cancelWrites() {
         guard terminal == nil else { return }
         terminal = .cancelled
-        readout?.finish(.cancelled)
+        readout?.finishCancelled(itemsOwed: written.count < items.count)
         for cancel in inFlight.values { cancel() }
         failOwed()
         retireIfDone()

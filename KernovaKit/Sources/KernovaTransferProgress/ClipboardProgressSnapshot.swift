@@ -49,10 +49,8 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
     public let gesture: ClipboardTransferGesture
     /// How long this operation has been running.
     public let elapsedSeconds: TimeInterval
-    /// Whether a Cancel would stop something now — one of the operation's
-    /// transfers is in flight and its owner can stop it — which is what puts a
-    /// Cancel affordance on the readout. A surface must not offer one otherwise:
-    /// it would stop nothing.
+    /// Whether the operation's owner can stop it, which puts a Cancel affordance
+    /// on the readout for as long as the operation is live.
     public let isCancellable: Bool
     /// Which operation this readout measures, so a Cancel on it stops that one
     /// and not whichever transfer happens to be newest when the click lands.

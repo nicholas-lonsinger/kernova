@@ -223,8 +223,8 @@ public final class ClipboardTransferReporter {
         recompute()
     }
 
-    /// Stops the operation `id` names, reporting whether one was reached: one
-    /// with nothing in flight is not.
+    /// Stops the operation `id` names, reporting whether a live one its owner
+    /// can stop was reached.
     ///
     /// The readout is the only handle the user has on a transfer, so a Cancel on
     /// it must reach *that* operation and no other. The identity comes off the

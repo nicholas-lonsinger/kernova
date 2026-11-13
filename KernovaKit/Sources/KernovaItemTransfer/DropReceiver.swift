@@ -135,8 +135,9 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
     /// The readout's Cancel: the offer of `token` is refused `CANCELLED`, which ends its pull in flight
     /// `ITEM_OFFER_STALE`, unless it already committed.
     private func cancel(_ token: Data) {
+        guard let job = jobs.withLock({ $0[token] }) else { return }
         logger.log(.notice, "The user cancelled a drop")
-        jobs.withLock { $0[token]?.readout }?.finish(.cancelled)
+        job.readout.finishCancelled(itemsOwed: job.next < job.count)
         finish(token, refusing: WireError(.cancelled, debugDetail: "the user cancelled the drop"))
     }
 

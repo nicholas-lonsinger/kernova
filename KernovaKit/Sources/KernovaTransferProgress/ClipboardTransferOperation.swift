@@ -67,11 +67,24 @@ public final class ClipboardTransferOperation: Sendable {
     /// ``finishWhenIdle()`` calls it over.
     public static let defaultIdleGap: TimeInterval = 2.0
 
-    /// How an operation ended.
+    /// How an owner ends an operation; a Cancel ends it through ``finishCancelled(itemsOwed:)``.
     public enum Terminal: Sendable {
+        case completed
+        case failed(ClipboardTransferFailure)
+    }
+
+    /// How an operation ended.
+    private enum Ending: Sendable {
         case completed
         case cancelled
         case failed(ClipboardTransferFailure)
+
+        init(_ terminal: Terminal) {
+            switch terminal {
+            case .completed: self = .completed
+            case .failed(let failure): self = .failed(failure)
+            }
+        }
     }
 
     private struct UnitState {
@@ -185,8 +198,6 @@ public final class ClipboardTransferOperation: Sendable {
         /// Whether anything has been published, so a terminal inside the reveal
         /// gate knows it has nothing to retire.
         var published = false
-        /// The cancellability the last published readout carried.
-        var publishedCancellable = false
         var isFinished = false
         /// The armed idle terminal, `nil` while none is.
         ///
@@ -227,8 +238,8 @@ public final class ClipboardTransferOperation: Sendable {
         /// Whether nothing is in flight.
         var isIdle: Bool { activeUnits.isEmpty }
 
-        /// Whether a Cancel would stop something now: a transfer is in flight and the owner can stop it.
-        func isCancellable(_ header: Header) -> Bool { header.isStoppable && !isFinished && !isIdle }
+        /// Whether the readout offers a Cancel: for as long as it is live, when its owner can stop it.
+        func isCancellable(_ header: Header) -> Bool { header.isStoppable && !isFinished }
 
         /// The files the operation expects to transfer.
         var fileCount: Int { max(units.count, expectedItems) }
@@ -268,11 +279,6 @@ public final class ClipboardTransferOperation: Sendable {
                 coalescer.markForwarded(bytesTransferred: progress.done, at: now)
                 logs.append(.revealed(elapsed: elapsed, bytes: loggedBytes))
                 admits = true
-            } else if isCancellable(header) != publishedCancellable {
-                // A Cancel appearing or going is never held back: one left showing
-                // with nothing in flight would stop nothing.
-                coalescer.markForwarded(bytesTransferred: progress.done, at: now)
-                admits = true
             } else {
                 admits = coalescer.shouldForward(
                     bytesTransferred: progress.done, totalBytes: progress.total, at: now)
@@ -283,13 +289,12 @@ public final class ClipboardTransferOperation: Sendable {
             guard admits else { return Outcome(logs: logs) }
             published = true
             let snapshot = snapshot(at: now, header: header)
-            publishedCancellable = snapshot.isCancellable
             logs.append(.emission(snapshot))
             return Outcome(call: .running(snapshot, since: header.startedDate), logs: logs)
         }
 
         /// Resolves a terminal reached at `now`.
-        mutating func finish(_ terminal: Terminal, at now: EngineInstant, header: Header) -> Outcome {
+        mutating func finish(_ terminal: Ending, at now: EngineInstant, header: Header) -> Outcome {
             guard !isFinished else { return Outcome() }
             isFinished = true
             cancelIdleTerminal()
@@ -374,10 +379,10 @@ public final class ClipboardTransferOperation: Sendable {
     /// cannot know its bytes: its readout counts files alone.
     ///
     /// `onCancelRequested` stops what this operation measures, and is what puts a
-    /// Cancel affordance on the readout while one of its transfers is in flight.
-    /// It is invoked outside the lock, only for a Cancel that reached the
-    /// operation with a transfer in flight, but that transfer can end before it
-    /// runs, so it must be idempotent.
+    /// Cancel affordance on the readout for as long as the operation is live. It
+    /// is invoked outside the lock for a Cancel that reached the live operation,
+    /// which can end before it runs, so it must be idempotent; it ends the
+    /// operation through ``finishCancelled(itemsOwed:)``.
     public init(
         gesture: ClipboardTransferGesture,
         direction: ClipboardProgressSnapshot.Direction,
@@ -537,12 +542,12 @@ public final class ClipboardTransferOperation: Sendable {
     ///
     /// For a caller that owns the loop — a preview fetch, a paste fire, a drop.
     /// Idempotent; later events are dropped. `.completed` reports a failure
-    /// ``Unit/failed(_:)`` recorded instead. A `.completed`/`.cancelled` terminal
-    /// inside the reveal gate publishes nothing, so an operation nobody saw never
-    /// flashes UI; a `.failed` one always reports, since a refusal is owed an
-    /// answer whether or not a bar was on screen.
+    /// ``Unit/failed(_:)`` recorded instead. A completed or cancelled operation
+    /// ending inside the reveal gate publishes nothing, so an operation nobody saw
+    /// never flashes UI; a `.failed` one always reports, since a refusal is owed
+    /// an answer whether or not a bar was on screen.
     public func finish(_ terminal: Terminal) {
-        deliver(state.withLock { $0.finish(terminal, at: clock.now, header: header) })
+        deliver(state.withLock { $0.finish(Ending(terminal), at: clock.now, header: header) })
     }
 
     /// Arms the idle terminal: the operation completes `idleGap` after its last
@@ -562,6 +567,18 @@ public final class ClipboardTransferOperation: Sendable {
         }
     }
 
+    /// Ends the operation for a Cancel its owner acted on: `.cancelled` when the
+    /// Cancel stopped something — a transfer in flight, or `itemsOwed`, items the
+    /// gesture asked for that had not arrived — and `.completed` when everything
+    /// asked for had already arrived.
+    public func finishCancelled(itemsOwed: Bool = false) {
+        deliver(
+            state.withLock { state in
+                let ending: Ending = itemsOwed || !state.isIdle ? .cancelled : .completed
+                return state.finish(ending, at: clock.now, header: header)
+            })
+    }
+
     /// Retires the operation without a finished report — a teardown, where what
     /// the readout was measuring no longer exists.
     public func abandon() {
@@ -575,14 +592,12 @@ public final class ClipboardTransferOperation: Sendable {
     /// silently measures nothing at all.
     public var isLive: Bool { state.withLock { !$0.isFinished } }
 
-    /// Whether a Cancel would stop something now — one of its transfers is in
-    /// flight and its owner can stop it — which is what puts a Cancel affordance
-    /// on its readout.
+    /// Whether its readout offers a Cancel: the operation is live and its owner
+    /// can stop it.
     public var isCancellable: Bool { state.withLock { $0.isCancellable(header) } }
 
-    /// Stops what this operation measures, if a transfer of it is in flight and
-    /// its owner can stop it; with nothing in flight it changes nothing. Returns
-    /// whether it reached the owner.
+    /// Stops what this operation measures, if it is live and its owner can stop
+    /// it. Returns whether it reached the owner.
     @discardableResult
     public func requestCancel() -> Bool {
         guard let onCancelRequested, isCancellable else { return false }
