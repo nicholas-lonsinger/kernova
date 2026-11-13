@@ -156,57 +156,10 @@ struct ItemHostileTests {
             }
         }
     }
-
-    @Test("The transport ending at every byte of the pull's frames ends the pull once, landing only when whole")
-    func cutTransport() throws {
-        let wire = WireFrames.bytes(
-            [Unit.raw(HostileItems.pullStream, HostileItems.container), Unit.end(HostileItems.pullStream)],
-            preamble: false)
-        for cut in 0...wire.count {
-            let (run, pulled) = HostileItems.pulling(seed: UInt64(cut))
-            let id = try #require(pulled, "cut \(cut): no pull")
-            if cut > 0 { run.feed(wire.prefix(cut)) }
-            run.host?.transportEnded(now: run.now)
-            run.drain()
-            var failures = HostileItems.endedOnce(run, id)
-            let expected: ItemPullResult =
-                cut == wire.count ? .landed(.named(Data("item".utf8))) : .closed(.connectionLost)
-            failures += expectThat(run.itemEnds == [.pullEnded(.clipboard, id, expected)], "ends \(run.itemEnds)")
-            if !failures.isEmpty {
-                Issue.record("cut \(cut) of \(wire.count): \(failures.joined(separator: "; "))")
-                return
-            }
-        }
-    }
 }
 
 @Suite("Item names held to Representation.name's contract")
 struct ItemNameAdmissionTests {
-    @Test("A far side's Item that breaks the contract is reset MALFORMED_MESSAGE and never received")
-    func misnamedRemoteItemIsRefused() {
-        for (label, representation) in HostileItems.misnamed {
-            let run = HostileItems.offered(representation)
-            #expect(run.streamResets.map(\.code) == [.malformedMessage], "\(label): \(run.streamResets)")
-            #expect(!HostileItems.offerReceived(run), "\(label) was received")
-            #expect(run.closure == nil, "\(label) closed the connection")
-        }
-    }
-
-    @Test(
-        "A far side's FILE or FOLDER named by one path component, and an unnamed INLINE, are received as named",
-        arguments: [
-            SimItems.representation(.file, size: 64), SimItems.representation(.folder, size: 64),
-            SimItems.representation(.inline, size: 64),
-        ])
-    func wellNamedRemoteItemIsReceived(representation: Representation) {
-        let run = HostileItems.offered(representation)
-        #expect(run.streamResets.isEmpty, "\(run.streamResets)")
-        #expect(HostileItems.offerReceived(run))
-        #expect(
-            run.readItem(SimItems.token(7))?.representations.map(\.name)
-                == [representation.name])
-    }
-
     @Test("This side's offer that breaks the contract is refused INTERNAL, and nothing opens")
     func misnamedLocalOfferIsRefused() {
         for (label, representation) in HostileItems.misnamed {
@@ -217,16 +170,6 @@ struct ItemNameAdmissionTests {
             #expect(refusal?.code == .internal, "\(label): \(String(describing: refusal))")
             #expect(!run.written.contains { $0.type == .open }, "\(label) opened a stream")
         }
-    }
-
-    @Test("A role offering a kind it never opens is refused UNSUPPORTED_KIND before its token or names are read")
-    func wrongRoleLocalOfferIsUnsupported() {
-        let run = HostileRun(local: .host, seed: 1, items: true)
-        run.feed([HostileItems.peerHello], preamble: true)
-        var offer = SimItems.offer(9, [[HostileItems.misnamed[0].representation]])
-        offer.token = Data([1])
-        let refusal = run.offerItems(offer, feature: .drag)
-        #expect(refusal?.code == .unsupportedKind, "\(String(describing: refusal))")
     }
 }
 

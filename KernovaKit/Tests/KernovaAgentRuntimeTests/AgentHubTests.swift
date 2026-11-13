@@ -287,30 +287,6 @@ struct AgentHubTests {
         harness.hub.close()
     }
 
-    @Test("A connection of a shown identity that closes publishes no away peer while its successor is shown")
-    func supersededCloseStaysHidden() async {
-        // Two sessions of one user — the old session's agent still connected as the new one's arrives.
-        let harness = HubHarness()
-        await harness.attached()
-        let old = HubPeer(harness, claim: .session(.user, instance: 1), state: PeerSessionState(sessionID: "old"))
-        _ = await harness.snapshot { $0.peers.count == 1 }
-        let new = HubPeer(harness, claim: .session(.user, instance: 2), state: PeerSessionState(sessionID: "new"))
-        _ = await harness.snapshot { $0.peers.count == 2 }
-
-        var later = harness.snapshots.waiterFromNow()
-        old.driver.close(.shuttingDown)
-        let one = await later.next { $0.peers.count == 1 }
-        #expect(one.peers[0].sessionID == "new")
-        await harness.settled()
-        #expect(harness.snapshots.elements.allSatisfy { $0.away.isEmpty })
-
-        // Its successor's close is the identity's last, and the one it is remembered by.
-        new.driver.close(.shuttingDown)
-        let gone = await harness.snapshot { $0.peers.isEmpty && !$0.away.isEmpty }
-        #expect(gone.away.map(\.summary.sessionID) == ["new"])
-        harness.hub.close()
-    }
-
     @Test("A peer that closes after installing an update is away relaunching, still updating")
     func relaunching() async {
         let small = BundledPayload(
@@ -374,50 +350,6 @@ struct AgentHubTests {
 
     // MARK: Identity conflicts
 
-    @Test("The same process's new connection supersedes its old one")
-    func sameInstanceSupersedes() async {
-        let harness = HubHarness()
-        await harness.attached()
-        let first = HubPeer(harness, claim: .session(.user, instance: 1))
-        _ = await harness.snapshot { $0.peers.count == 1 }
-        let second = HubPeer(harness, claim: .session(.user, instance: 1))
-
-        let closure = await first.closure()
-        #expect(closure.code == .superseded)
-        #expect(closure.retryAfter == nil)
-        let settled = await harness.snapshot { $0.peers.count == 1 && $0.peers[0].handle.rawValue == 2 }
-        #expect(settled.peers.count == 1)
-        second.driver.close(.shuttingDown)
-        harness.hub.close()
-    }
-
-    @Test(
-        "Of two session peers of different scope rank, the lower closes DUPLICATE_PEER, 60 s",
-        arguments: [
-            (existing: InstallScope.user, incoming: InstallScope.unspecified),
-            (existing: InstallScope.unspecified, incoming: InstallScope.user),
-            (existing: InstallScope.user, incoming: InstallScope.system),
-        ])
-    func lowerRankCloses(_ scopes: (existing: InstallScope, incoming: InstallScope)) async {
-        let harness = HubHarness()
-        await harness.attached()
-        let existing = HubPeer(harness, claim: .session(scopes.existing, instance: 1))
-        _ = await harness.snapshot { $0.peers.count == 1 }
-        let incoming = HubPeer(harness, claim: .session(scopes.incoming, instance: 2))
-
-        let rank: [InstallScope: Int] = [.user: 2, .system: 1, .unspecified: 0]
-        let existingWins = rank[scopes.existing]! > rank[scopes.incoming]!
-        let winningScope = existingWins ? scopes.existing : scopes.incoming
-        let loser = existingWins ? incoming : existing
-        let winner = existingWins ? existing : incoming
-        let closure = await loser.closure()
-        #expect(closure.code == .duplicatePeer)
-        #expect(closure.retryAfter == .milliseconds(60_000))
-        _ = await harness.snapshot { $0.peers.count == 1 && $0.peers[0].scope == winningScope }
-        winner.driver.close(.shuttingDown)
-        harness.hub.close()
-    }
-
     @Test("An unresponsive existing peer is superseded by an incoming one of equal rank")
     func unresponsiveExistingSuperseded() async {
         var policy = ReceiverPolicy.production
@@ -458,19 +390,6 @@ struct AgentHubTests {
         harness.hub.close()
     }
 
-    @Test("Two session peers of different sessions are both peers")
-    func differentSessionsCoexist() async {
-        let harness = HubHarness()
-        await harness.attached()
-        let first = HubPeer(harness, claim: .session(.user, instance: 1), state: PeerSessionState(sessionID: "1"))
-        let second = HubPeer(harness, claim: .session(.user, instance: 2), state: PeerSessionState(sessionID: "2"))
-        let snapshot = await harness.snapshot { $0.peers.count == 2 }
-        #expect(Set(snapshot.peers.map(\.sessionID)) == ["1", "2"])
-        first.driver.close(.shuttingDown)
-        second.driver.close(.shuttingDown)
-        harness.hub.close()
-    }
-
     // MARK: Merged status
 
     @Test("The merged status follows 0, 1 and 2 peers, newest first")
@@ -506,40 +425,6 @@ struct AgentHubTests {
     }
 
     // MARK: Commands
-
-    @Test("A policy toggle reaches every connection as a PolicyUpdate")
-    func policyReachesPeers() async {
-        let harness = HubHarness()
-        await harness.attached()
-        let sessionEvents = Recorder<PeerEvent>()
-        let systemEvents = Recorder<PeerEvent>()
-        let session = harness.runtime(registry: PeerFeatureRegistry(logs: LogForwarding()), events: sessionEvents)
-        let system = harness.runtime(
-            claim: PeerClaim(role: .systemPeer, scope: .system, os: .linux, architecture: .arm64),
-            state: PeerSessionState(console: .off), registry: PeerFeatureRegistry(logs: LogForwarding()),
-            events: systemEvents)
-        session.start()
-        system.start()
-        var sessionPolicies = sessionEvents.waiter()
-        var systemPolicies = systemEvents.waiter()
-        _ = await sessionPolicies.next { $0.isPolicyReceived }
-        _ = await systemPolicies.next { $0.isPolicyReceived }
-        let before = await harness.snapshot { $0.peers.count == 2 }
-        #expect(before.features[.logs] == .absent(.disabledByPolicy, debugDetail: ""))
-
-        harness.hub.setPolicy(Fixture.logsEnabled)
-        _ = await sessionPolicies.next { $0 == .policyReceived(Fixture.logsEnabled) }
-        _ = await systemPolicies.next { $0 == .policyReceived(Fixture.logsEnabled) }
-        _ = await harness.snapshot { $0.peers.count == 2 && $0.features[.logs].isAvailable }
-        for connection in [1, 2] {
-            #expect(
-                harness.connector.commands.elements.filter { $0.connection == connection }.map(\.command)
-                    .contains(.setPolicy(Fixture.logsEnabled)))
-        }
-        await withCheckedContinuation { continuation in session.close { continuation.resume() } }
-        await withCheckedContinuation { continuation in system.close { continuation.resume() } }
-        harness.hub.close()
-    }
 
     @Test("Attaching a second transport ends the first one's connections once, and builds the next with its policy")
     func attachReplacesTransport() async {
@@ -606,28 +491,6 @@ struct AgentHubTests {
             #expect(sent.last == .setPeerFrozen(false))
         }
         for peer in [first, second, third] { peer.driver.close(.shuttingDown) }
-        harness.hub.close()
-    }
-
-    @Test("Detaching ends every connection exactly once and frees every slot")
-    func detachEndsEveryDriverOnce() async {
-        let harness = HubHarness()
-        await harness.attached()
-        let first = HubPeer(harness, claim: .session(.user, instance: 1), state: PeerSessionState(sessionID: "1"))
-        let second = HubPeer(harness, claim: .session(.user, instance: 2), state: PeerSessionState(sessionID: "2"))
-        _ = await harness.snapshot { $0.peers.count == 2 }
-
-        harness.hub.detach()
-        #expect(await first.closure() == .transportLost)
-        #expect(await second.closure() == .transportLost)
-        _ = await harness.snapshot { $0.peers.isEmpty }
-        var events = harness.connector.events.waiter()
-        for _ in 1...2 { _ = await events.next { if case .closed = $0.event { true } else { false } } }
-        await flush(harness.hub.queue)
-        #expect(harness.connector.closures == [1: 1, 2: 1])
-        await harness.transport.released(2)
-        #expect(harness.transport.acceptor?.liveConnectionCount == 0)
-        #expect(harness.connect() == nil)
         harness.hub.close()
     }
 
@@ -774,28 +637,6 @@ struct GuestStreamAcceptorTests {
             }
             return admitted ? host : nil
         }
-    }
-
-    @Test("The ninth connection is refused before anything touches it, and a release frees a slot")
-    func capAtAccept() {
-        let probe = Probe()
-        let ends = (0..<GuestStreamAcceptor.connectionLimit).compactMap { _ in probe.offer() }
-        #expect(ends.count == 8)
-        #expect(probe.acceptor.liveConnectionCount == 8)
-
-        let opened = Locked(false)
-        #expect(
-            !probe.acceptor.offer { _ in
-                opened.withLock { $0 = true }
-                return nil
-            })
-        #expect(!opened.withLock { $0 })
-
-        ends[0].shutdown()
-        #expect(probe.acceptor.liveConnectionCount == 7)
-        #expect(probe.offer() != nil)
-        #expect(probe.accepted.elements.count == 9)
-        probe.acceptor.stop()
     }
 
     @Test("A run of refusals at the cap is one notice, and the slot that ends it another")

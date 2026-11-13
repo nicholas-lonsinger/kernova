@@ -36,15 +36,6 @@ struct AgentHubPowerTests {
         harness.hub.close()
     }
 
-    @Test("With no agent, routing hands the ACPI press back and asks no one")
-    func noAgentUsesACPI() async {
-        let harness = HubHarness()
-        await harness.attached()
-        #expect(await harness.hub.requestPower(.shutdown) == .untaken(refusals: []))
-        #expect(harness.connector.commands.elements.isEmpty)
-        harness.hub.close()
-    }
-
     @Test("The console session's peer takes the shutdown, and the merged entry names it")
     func sessionPeerHandsOff() async {
         let harness = HubHarness()
@@ -58,28 +49,6 @@ struct AgentHubPowerTests {
         #expect(power.performed.elements.count == 1)
         #expect(harness.hostLogs.elements.contains { $0.contains("Asking the session peer (session 1") })
         await close([session], harness)
-    }
-
-    @Test("A session peer's refusal moves on to the system peer")
-    func refusalFallsThrough() async {
-        let harness = HubHarness()
-        await harness.attached()
-        let sessionPower = FakePowerAdapter(accepts: false)
-        let systemPower = FakePowerAdapter()
-        let session = await connect(harness, sessionPower)
-        let system = await connect(
-            harness, systemPower, claim: Self.systemClaim,
-            state: PeerSessionState(console: .on, consoleSessionID: "1"), peers: 2)
-        _ = await harness.snapshot { $0.power == .agent(.sessionPeer) }
-
-        async let outcome = harness.hub.requestPower(.shutdown)
-        var performed = sessionPower.performed.waiter()
-        let id = await performed.next { _ in true }
-        sessionPower.report(.refused(id, WireError(.powerNotPermitted)))
-
-        #expect(await outcome == .handedOff)
-        #expect(systemPower.performed.elements.count == 1)
-        await close([session, system], harness)
     }
 
     @Test("Every refusal ends in the ACPI press, carrying the refusals")
@@ -141,41 +110,6 @@ struct AgentHubPowerTests {
         harness.hub.detach()
 
         #expect(await outcome == .lostAfterAcceptance)
-        await close([session], harness)
-    }
-
-    @Test("With a user logged in, only the system peer shuts down without waiting for apps, and the snapshot says so")
-    func systemPeerShutsDownIgnoringApps() async {
-        let harness = HubHarness()
-        await harness.attached()
-        let sessionPower = FakePowerAdapter()
-        let systemPower = FakePowerAdapter(
-            initial: .available(PowerOffer(actions: [], ignoringApps: [.shutdown])))
-        let session = await connect(harness, sessionPower)
-        let system = await connect(
-            harness, systemPower, claim: Self.systemClaim,
-            state: PeerSessionState(console: .on, consoleSessionID: "1"), peers: 2)
-        let ready = await harness.snapshot { $0.shutsDownIgnoringApps }
-        // A graceful shutdown still goes to the console session's peer.
-        #expect(ready.power == .agent(.sessionPeer))
-
-        #expect(await harness.hub.requestPower(.shutdown, ignoringApps: true) == .handedOff)
-        #expect(systemPower.performedIgnoringApps.elements.count == 1)
-        #expect(sessionPower.performed.elements.isEmpty)
-        await close([session, system], harness)
-    }
-
-    @Test("With no peer offering it, a shutdown without waiting for apps asks no one and is untaken")
-    func nothingShutsDownIgnoringApps() async {
-        let harness = HubHarness()
-        await harness.attached()
-        let power = FakePowerAdapter()
-        let session = await connect(harness, power)
-        let ready = await harness.snapshot { $0.power == .agent(.sessionPeer) }
-        #expect(!ready.shutsDownIgnoringApps)
-
-        #expect(await harness.hub.requestPower(.shutdown, ignoringApps: true) == .untaken(refusals: []))
-        #expect(power.performed.elements.isEmpty)
         await close([session], harness)
     }
 

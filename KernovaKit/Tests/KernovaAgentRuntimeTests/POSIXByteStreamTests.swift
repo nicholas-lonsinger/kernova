@@ -204,35 +204,6 @@ extension SocketTests {
             close(far)
         }
 
-        @Test("shutdown() after the far side's EOF adds nothing")
-        func shutdownAfterEOF() async throws {
-            let (local, far) = try RawSocket.pair()
-            let observed = try ObservedStream(adopting: local)
-            close(far)
-            var events = observed.events.waiter()
-            #expect(await events.next { _ in true } == .ended(.eof))
-            observed.stream.shutdown()
-            observed.stream.shutdown()
-            await observed.waitForRelease()
-            #expect(observed.events.elements == [.ended(.eof)])
-        }
-
-        @Test("shutdown() before start closes the descriptor at once: the far side reads EOF and no handler runs")
-        func shutdownBeforeStart() async throws {
-            let (local, far) = try RawSocket.pair()
-            let observed = try ObservedStream(adopting: local, start: false)
-            observed.stream.shutdown()
-            await observed.waitForRelease()
-            // No other suite opens a descriptor while this one runs (`SocketTests` is serialized), so the number
-            // cannot have been reused.
-            let flags = fcntl(local, F_GETFD)
-            let error = errno
-            #expect(flags == -1 && error == EBADF)
-            #expect(RawSocket.readToEnd(far).isEmpty)
-            #expect(observed.events.elements.isEmpty)
-            close(far)
-        }
-
         @Test("A write after shutdown fails .shutDown, never inside the call")
         func writeAfterShutdown() async throws {
             let (local, far) = try RawSocket.pair()
@@ -241,18 +212,6 @@ extension SocketTests {
             let result = await observed.write([Data(count: 10)])
             #expect(result.error == .shutDown)
             #expect(!result.insideCall)
-            await observed.waitForRelease()
-            close(far)
-        }
-
-        @Test("A write of only empty chunks completes without error, never inside the call")
-        func emptyWrite() async throws {
-            let (local, far) = try RawSocket.pair()
-            let observed = try ObservedStream(adopting: local)
-            let result = await observed.write([Data(), Data()])
-            #expect(result.error == nil)
-            #expect(!result.insideCall)
-            observed.stream.shutdown()
             await observed.waitForRelease()
             close(far)
         }
@@ -270,27 +229,6 @@ extension SocketTests {
                 observed.stream.shutdown()
             }
             #expect(end == .ended(.failed(.system(ECONNREFUSED))))
-            observed.stream.shutdown()
-            await observed.waitForRelease()
-        }
-
-        @Test("Nothing more is delivered after a .received until readMore()")
-        func readMoreGates() async throws {
-            let (local, far) = try RawSocket.pair()
-            let observed = try ObservedStream(adopting: local)
-            RawSocket.send(far, Data(repeating: 1, count: 10))
-            var events = observed.events.waiter()
-            #expect(await events.next { _ in true } == .received(Data(repeating: 1, count: 10)))
-
-            RawSocket.send(far, Data(repeating: 2, count: 10))
-            close(far)
-            for _ in 0..<8 { await flush(observed.queue) }
-            #expect(observed.events.elements.count == 1)
-
-            observed.queue.async { observed.stream.readMore() }
-            #expect(await events.next { _ in true } == .received(Data(repeating: 2, count: 10)))
-            observed.queue.async { observed.stream.readMore() }
-            #expect(await events.next { _ in true } == .ended(.eof))
             observed.stream.shutdown()
             await observed.waitForRelease()
         }

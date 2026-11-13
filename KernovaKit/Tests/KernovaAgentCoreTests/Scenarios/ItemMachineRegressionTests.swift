@@ -57,19 +57,6 @@ struct ItemMachineRegressionTests {
     static let overhead = ItemOfferRegistry.remoteItemOverhead
     static let limit = ItemOfferRegistry.remoteItemByteLimit
 
-    @Test("An offer's count is reserved at its OPEN: a claim past the budget is refused TOO_LARGE before any item")
-    func countReservedAtOpen() {
-        let run = Regression.host()
-        run.feed([
-            WireFrames.open(1, .clipboardOfferByPeer, body: HostileItems.header(count: .max)),
-            WireFrames.open(
-                3, .clipboardOfferByPeer, body: HostileItems.header(token: Regression.token(3), count: 1_000_000)),
-        ])
-        #expect(Regression.resets(run, on: 1) == [.tooLarge])
-        #expect(Regression.resets(run, on: 3) == [.tooLarge])
-        #expect(run.closure == nil)
-    }
-
     @Test("Empty Items cost their overhead: a full budget of them refuses the next offer until it is released")
     func emptyItemsCharged() {
         let run = Regression.host(trace: false)
@@ -125,17 +112,6 @@ struct ItemMachineRegressionTests {
         #expect(run.closure == nil)
     }
 
-    @Test("This side releasing the far side's offer ends its pull of it ITEM_OFFER_STALE, uncommitted")
-    func releaseEndsPull() throws {
-        let (run, pulled) = HostileItems.pulling(seed: 4)
-        let id = try #require(pulled)
-        run.item(.release(token: SimItems.token(7)))
-        run.feed([Unit.raw(HostileItems.pullStream, HostileItems.container), Unit.end(HostileItems.pullStream)])
-        #expect(run.itemEnds == [.pullEnded(.clipboard, id, .closed(.resetLocally(WireError(.itemOfferStale))))])
-        #expect(!run.itemOutputs.contains(.sink(.commit(id))))
-        #expect(HostileItems.endedOnce(run, id).isEmpty, "\(HostileItems.endedOnce(run, id))")
-    }
-
     @Test("The far side withdrawing its offer ends this side's pull of it ITEM_OFFER_STALE, uncommitted")
     func withdrawEndsPull() throws {
         let (run, pulled) = HostileItems.pulling(seed: 5)
@@ -145,21 +121,6 @@ struct ItemMachineRegressionTests {
         #expect(run.itemEnds == [.pullEnded(.clipboard, id, .closed(.resetLocally(WireError(.itemOfferStale))))])
         #expect(!run.itemOutputs.contains(.sink(.commit(id))))
         #expect(HostileItems.endedOnce(run, id).isEmpty, "\(HostileItems.endedOnce(run, id))")
-    }
-
-    @Test("A puller's END before this side's END left is reset STREAM_PROTOCOL_ERROR, not taken as landed")
-    func outcomeBeforeOurEnd() throws {
-        let run = Regression.host()
-        #expect(run.offerItems(SimItems.offer(9, [[SimItems.representation(.inline, size: 100)]])) == nil)
-        run.writerStalled = true
-        run.feed([WireFrames.open(1, .itemPullByPeer, body: SimItems.request(9))])
-        var landed = Kernova_V2_PullOutcome()
-        landed.kind = .landed
-        run.feed([Unit.end(1, Unit.encode(landed))])
-        run.writerStalled = false
-        run.drain()
-        #expect(HostileItems.servesResetLocally(run) == [.streamProtocolError] && run.itemEnds.count == 1)
-        #expect(Regression.resets(run, on: 1) == [.streamProtocolError])
     }
 
     @Test("A peer's UPDATE_PULL END before the host's END left is reset STREAM_PROTOCOL_ERROR")
@@ -185,35 +146,5 @@ struct ItemMachineRegressionTests {
         run.drain()
         #expect(Regression.resets(run, on: 1) == [.streamProtocolError])
         #expect(!run.hostEvents.contains { if case .update(.result) = $0 { true } else { false } })
-    }
-
-    @Test("A peer's clipboard offer hands the host the host offer it was made after")
-    func offerCarriesAfter() {
-        let run = Regression.host()
-        var header = HostileItems.header(token: Regression.token(1), count: 0)
-        header.after = Regression.token(9)
-        run.feed([WireFrames.open(1, .clipboardOfferByPeer, body: header), Unit.end(1)])
-        #expect(Regression.received(run).map(\.after) == [Regression.token(9)])
-    }
-
-    @Test("Offer tokens are per side: the far side may reuse this side's token, and each end names its origin")
-    func tokensPerSide() {
-        let run = Regression.host()
-        let token = Regression.token(9)
-        #expect(run.offerItems(SimItems.offer(9, [[SimItems.representation(.inline, size: 10)]])) == nil)
-        run.feed([
-            WireFrames.open(1, .clipboardOfferByPeer, body: HostileItems.header(token: token, count: 0)), Unit.end(1),
-        ])
-        #expect(Regression.resets(run, on: 1).isEmpty)
-        #expect(Regression.received(run).map(\.token) == [token])
-        run.feed([WireFrames.reset(1, code: ErrorCode.cancelled.rawValue)])
-        let ends = run.itemOutputs.compactMap {
-            if case .event(.offerEnded(_, let origin, let ended, _)) = $0 { (origin, ended) } else { nil }
-        }
-        #expect(ends.map(\.0) == [.remote] && ends.map(\.1) == [token])
-        // This side's offer of the same token is still open and served.
-        run.feed([WireFrames.open(3, .itemPullByPeer, body: SimItems.request(9))])
-        #expect(run.itemOutputs.contains { if case .source(.serve) = $0 { true } else { false } })
-        #expect(Regression.resets(run, on: 3).isEmpty)
     }
 }

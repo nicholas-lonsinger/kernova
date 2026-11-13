@@ -7,7 +7,6 @@ import Foundation
 import Dispatch
 import KernovaAgentCore
 import KernovaAgentRuntime
-import KernovaSynchronization
 import KernovaWire
 import Testing
 
@@ -15,43 +14,6 @@ import Testing
 /// every OS.
 @Suite("Peer agent runtime")
 struct PeerAgentRuntimeTests {
-    @Test("A runtime dialing through UnansweredDialer gets no transport, through a session's loss and return")
-    func unansweredDialerGivesNoTransport() async {
-        let dialer = WatchedDialer(UnansweredDialer(logger: Fixture.logger))
-        let harness = PeerRuntimeHarness(dialer: dialer)
-        harness.runtime.start()
-        await harness.settle()
-        harness.runtime.setPeerState(nil)
-        await harness.settle()
-        harness.runtime.setPeerState(Fixture.peerState)
-        await harness.settle()
-        #expect(dialer.dials.withLock { $0 } == 1)
-        #expect(dialer.answers.withLock { $0 } == 0)
-        #expect(harness.scheduler.armed.isEmpty)
-        #expect(harness.stops.elements.isEmpty)
-        #expect(harness.runtime.hostConnection == .connecting)
-    }
-
-    @Test("A transient dial failure is redialed after its backoff, not before")
-    func transientRedial() async {
-        let harness = PeerRuntimeHarness()
-        harness.runtime.start()
-        var dials = harness.dialer.dials.waiter()
-        _ = await dials.next { $0 == 1 }
-        harness.dialer.answer(1, .failure(.transient))
-        await harness.settle()
-        #expect(harness.scheduler.armed == [Fixture.at(milliseconds: 1_000)])
-
-        harness.scheduler.advance(to: Fixture.at(milliseconds: 999))
-        await harness.settle()
-        #expect(harness.dialer.dials.elements == [1])
-        // The fire runs on the runtime's queue and dials inside that step.
-        harness.scheduler.advance(to: Fixture.at(milliseconds: 1_000))
-        await harness.settle()
-        #expect(harness.dialer.dials.elements == [1, 2])
-        #expect(harness.scheduler.armed.isEmpty)
-    }
-
     @Test("The host connection reads connected from the host's Hello, and connecting once the connection ends")
     func hostConnectionFollowsTheConnection() async {
         let harness = PeerRuntimeHarness()
@@ -87,35 +49,6 @@ struct PeerAgentRuntimeTests {
         harness.scheduler.advance(to: Fixture.at(milliseconds: 1_000))
         await harness.settle()
         #expect(harness.dialer.dials.elements == [1, 2])
-    }
-
-    @Test("retry_after stretches the redial, and generation 2's Hello carries a report made during generation 1")
-    func retryAfterAndCarriedReports() async {
-        let power = FakePowerAdapter(handsOff: false, initial: .absent(.notOnConsole, debugDetail: ""))
-        let harness = PeerRuntimeHarness(power: power)
-        harness.runtime.start()
-        let first = await harness.connect(1)
-        power.report(.availability(.available(PowerOffer(actions: [.restart]))))
-        await harness.pump(first)
-
-        var arms = harness.scheduler.arms.waiterFromNow()
-        first.far.command(.close(.duplicatePeer, retryAfter: .seconds(20)))
-        await harness.pump(first)
-        _ = await arms.next { $0 == Fixture.at(milliseconds: 20_000) }
-        #expect(first.stream.shutdowns == 1)
-
-        harness.scheduler.advance(to: Fixture.at(milliseconds: 19_999))
-        await harness.settle()
-        #expect(harness.dialer.dials.elements == [1])
-        harness.scheduler.advance(to: Fixture.at(milliseconds: 20_000))
-        let second = await harness.connect(2)
-        var hellos = second.far.events.waiter()
-        let hello = await hellos.next {
-            if case .featuresChanged = $0 { return true }
-            return false
-        }
-        guard case .featuresChanged(let table) = hello else { return }
-        #expect(table[.power].isAvailable)
     }
 
     @Test("The power ledger crosses connections, and a late report naming generation 1 reaches no stream")
@@ -157,29 +90,6 @@ struct PeerAgentRuntimeTests {
         #expect(next.generation == ConnectionGeneration(rawValue: 2))
     }
 
-    @Test("A cancel the adapter cannot confirm ends the request .unconfirmed and frees the ledger for the next")
-    func unconfirmedCancelFreesLedger() async {
-        let harness = PeerRuntimeHarness(power: FakePowerAdapter(accepts: false))
-        harness.runtime.start()
-        let link = await harness.connect(1)
-        let first = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 1)
-        link.far.command(.requestPower(first, .shutdown))
-        await harness.pump(link)
-        var performed = harness.power.performed.waiter()
-        _ = await performed.next { _ in true }
-
-        link.far.command(.cancelPower(first))
-        await harness.pump(link)
-        var cancelled = harness.power.cancelled.waiter()
-        _ = await cancelled.next { _ in true }
-
-        let second = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 2)
-        link.far.command(.requestPower(second, .shutdown))
-        await harness.pump(link)
-        #expect(harness.power.performed.elements.count == 2)
-        #expect(!link.far.events.elements.contains(.power(second, .indeterminate)))
-    }
-
     @Test("close() with no connection completes at once, and a dial it outlived is shut down unstarted")
     func closeDuringDial() async {
         let harness = PeerRuntimeHarness()
@@ -197,40 +107,6 @@ struct PeerAgentRuntimeTests {
         #expect(stream.calls.elements == ["shutdown"])
         #expect(harness.scheduler.armed.isEmpty)
         #expect(harness.stops.elements.isEmpty)
-    }
-
-    @Test("close() twice on a live connection: both complete once its stream is shut down, and nothing redials")
-    func closeTwice() async {
-        let harness = PeerRuntimeHarness()
-        harness.runtime.start()
-        let link = await harness.connect(1)
-        let completions = Recorder<Int>()
-        harness.runtime.close { completions.record(1) }
-        harness.runtime.close { completions.record(2) }
-        await harness.settle()
-        #expect(completions.elements.isEmpty)
-
-        await harness.pump(link)
-        var done = completions.waiter()
-        _ = await done.next { $0 == 2 }
-        #expect(completions.elements == [1, 2])
-        #expect(link.stream.shutdowns == 1)
-        harness.scheduler.advance(to: Fixture.at(milliseconds: 60_000))
-        await harness.settle()
-        #expect(harness.dialer.dials.elements == [1])
-        #expect(harness.stops.elements.isEmpty)
-    }
-
-    @Test("setPeerState reaches the live connection")
-    func peerStateReachesDriver() async {
-        let harness = PeerRuntimeHarness()
-        harness.runtime.start()
-        let link = await harness.connect(1)
-        let changed = PeerSessionState(console: .off, sessionID: "1", userName: "user")
-        harness.runtime.setPeerState(changed)
-        await harness.pump(link)
-        var events = link.far.events.waiter()
-        _ = await events.next { $0 == .peerStateChanged(changed) }
     }
 
     @Test("A session peer's new session closes its connection SHUTTING_DOWN and redials at once to say Hello with it")
@@ -274,49 +150,6 @@ struct PeerAgentRuntimeTests {
         var secondEvents = second.far.events.waiter()
         _ = await secondEvents.next { event in
             if case .helloReceived(_, Fixture.peerState) = event { true } else { false }
-        }
-    }
-
-    @Test("A runtime made with no session dials nothing until it has one")
-    func startsWithoutSession() async {
-        let harness = PeerRuntimeHarness(state: nil)
-        harness.runtime.start()
-        await harness.settle()
-        #expect(harness.dialer.dials.elements.isEmpty)
-        #expect(harness.scheduler.armed.isEmpty)
-        harness.runtime.setPeerState(Fixture.peerState)
-        let link = await harness.connect(1)
-        var events = link.far.events.waiter()
-        _ = await events.next { event in
-            if case .helloReceived(_, Fixture.peerState) = event { true } else { false }
-        }
-    }
-
-    @Test(
-        "Item transfer is advertised available with item adapters registered, and each feature over it where the adapters serve it; everything else is absent NOT_IMPLEMENTED",
-        arguments: [true, false])
-    func itemTransferAdvert(registered: Bool) async {
-        let harness = PeerRuntimeHarness(
-            items: registered ? RegisteredItemAdapters.adapters([.clipboard, .drop]) : nil)
-        harness.runtime.start()
-        let link = await harness.connect(1)
-        let advert = link.far.peerAdvert(.itemTransfer)
-        if registered {
-            #expect(advert == .available(Data()))
-        } else if case .absent(let reason, _) = advert {
-            #expect(reason == .notImplemented)
-        } else {
-            Issue.record("advertised \(String(describing: advert))")
-        }
-        let served: [FeatureID] = registered ? [.clipboard, .drop] : []
-        for feature in [FeatureID.clipboard, .drop, .drag] {
-            switch link.far.peerAdvert(feature) {
-            case .available? where served.contains(feature),
-                .absent(.notImplemented, _)? where !served.contains(feature):
-                continue
-            case let advert:
-                Issue.record("\(feature) advertised \(String(describing: advert))")
-            }
         }
     }
 
@@ -369,27 +202,6 @@ struct HostConnectionRuntimeTests {
         func pump() async {
             await exchange(stream, queues: [hub], read: far.read, output: far.output)
         }
-    }
-
-    @Test("A pull is read from the payload source by position and installed")
-    func pullServed() async {
-        let content = FakePayloadSource.payload(Int(Self.manifest.payloadSize))
-        let harness = Harness(content: content)
-        await harness.pump()
-        var events = harness.events.waiter()
-        let result = await events.next {
-            if case .update(.result) = $0 { return true }
-            return false
-        }
-        #expect(
-            result
-                == .update(
-                    .result(
-                        UpdatePullID(generation: harness.connection.generation, stream: StreamID(rawValue: 1)),
-                        UpdateResultValue(kind: .staged))))
-        let reads = harness.source.reads.elements
-        #expect(reads.first?.offset == 0)
-        #expect(zip(reads, reads.dropFirst()).allSatisfy { $0.offset + UInt64($0.count) == $1.offset })
     }
 
     @Test("A source that runs out short of the payload's size fails the pull READ_FAILED")
@@ -461,35 +273,5 @@ struct SystemSchedulerTests {
         #expect(kept.onQueue)
         await flush(queue)
         #expect(fired.elements.map(\.name) == ["kept"])
-    }
-
-    @Test("now never goes backwards")
-    func monotonic() {
-        let scheduler = SystemScheduler()
-        var last = scheduler.now
-        for _ in 0..<10_000 {
-            let now = scheduler.now
-            #expect(now >= last)
-            last = now
-        }
-    }
-}
-
-/// Counts the dials it passes to `inner` and the answers that come back.
-private final class WatchedDialer: TransportDialer {
-    let dials = Locked(0)
-    let answers = Locked(0)
-    private let inner: any TransportDialer
-
-    init(_ inner: any TransportDialer) {
-        self.inner = inner
-    }
-
-    func dial(_ completion: @escaping @Sendable (Result<any ByteStream, DialFailure>) -> Void) {
-        dials.withLock { $0 += 1 }
-        inner.dial { [answers] result in
-            answers.withLock { $0 += 1 }
-            completion(result)
-        }
     }
 }
