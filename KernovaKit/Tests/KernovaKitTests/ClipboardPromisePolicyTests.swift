@@ -37,6 +37,11 @@ struct ClipboardPromisePolicyTests {
         #expect(ClipboardPromisePolicy.keeps(.make(mimeOnly, .inline, size: 8)))
     }
 
+    @Test("an unrecognized storage is not kept")
+    func dropsUnspecifiedStorage() {
+        #expect(!ClipboardPromisePolicy.keeps(.make(TypeDescriptor(appleUTI: "public.data"), .unspecified, size: 8)))
+    }
+
     // MARK: - servesFileURL
 
     @Test("only a kept FILE or FOLDER serves .fileURL")
