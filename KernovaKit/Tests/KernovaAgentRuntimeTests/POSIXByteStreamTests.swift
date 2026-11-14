@@ -204,6 +204,22 @@ extension SocketTests {
             close(far)
         }
 
+        @Test("shutdown() before start closes the descriptor at once: the far side reads EOF and no handler runs")
+        func shutdownBeforeStart() async throws {
+            let (local, far) = try RawSocket.pair()
+            let observed = try ObservedStream(adopting: local, start: false)
+            observed.stream.shutdown()
+            await observed.waitForRelease()
+            // No other suite opens a descriptor while this one runs (`SocketTests` is serialized), so the number
+            // cannot have been reused.
+            let flags = fcntl(local, F_GETFD)
+            let error = errno
+            #expect(flags == -1 && error == EBADF)
+            #expect(RawSocket.readToEnd(far).isEmpty)
+            #expect(observed.events.elements.isEmpty)
+            close(far)
+        }
+
         @Test("A write after shutdown fails .shutDown, never inside the call")
         func writeAfterShutdown() async throws {
             let (local, far) = try RawSocket.pair()
