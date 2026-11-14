@@ -88,6 +88,26 @@ struct AppClipboardReadoutTests {
 
     // MARK: - Readout ranking
 
+    @Test("A peer's paste outranks a drop, and a drop outranks the rest")
+    func readoutRanksAwaitedGesturesFirst() throws {
+        let pasting = makeInstance(name: "Paste VM")
+        let dropping = makeInstance(name: "Drop VM")
+        let fetching = makeInstance(name: "Preview VM")
+        // Reverse rank order in time, so recency alone would pick the loser at
+        // each step.
+        let paste = runTransfer(
+            on: pasting, gesture: .peerPaste, since: Date(timeIntervalSince1970: 100))
+        let drop = runTransfer(
+            on: dropping, gesture: .drop, since: Date(timeIntervalSince1970: 200))
+        let preview = runTransfer(
+            on: fetching, gesture: .preview, since: Date(timeIntervalSince1970: 300))
+
+        #expect(try shownID(in: [pasting, dropping, fetching]) == paste.operation.id)
+        #expect(try shownID(in: [dropping, fetching]) == drop.operation.id)
+        #expect(try shownID(in: [fetching]) == preview.operation.id)
+        withExtendedLifetime((paste.operation, drop.operation, preview.operation)) {}
+    }
+
     @Test("Two VMs at the same rank are settled by which opened its bar last")
     func readoutSettlesEqualRanksByRecency() throws {
         let earlier = makeInstance(name: "Build VM")
