@@ -49,7 +49,30 @@ struct GuestClipboardTests {
         rig.clipboard.checkPasteboard()
     }
 
+    /// The types each of `link`'s offers carries, in order.
+    private func offeredUTIs(_ link: RecordingLink) -> [[String?]] {
+        link.offers.map { $0.items.flatMap { $0.representations.map(\.type.appleUTI) } }
+    }
+
     // MARK: - Gating
+
+    @Test("A copy is offered only while passthrough runs, on the console, over a connection that can use CLIPBOARD")
+    func offeredOnlyWhilePassthroughRuns() async throws {
+        let rig = rig()
+        let link = RecordingLink()
+        rig.clipboard.setOnConsole(true)
+        rig.clipboard.setLink(link)
+        copy("passthrough off", rig)
+        await drainMainQueue()
+        #expect(!rig.clipboard.isOffering)
+        #expect(link.offers.isEmpty)
+
+        rig.clipboard.apply(Self.policy(passthrough: true))
+        #expect(rig.clipboard.isOffering)
+        copy("passthrough on", rig)
+        try await link.changed.wait { link.offers.count == 1 }
+        #expect(offeredUTIs(link) == [[ClipboardContent.utf8TextUTI]])
+    }
 
     @Test("Turning passthrough off withdraws the guest's offer, and later copies are not offered")
     func passthroughOffWithdraws() async throws {
@@ -103,6 +126,33 @@ struct GuestClipboardTests {
     }
 
     // MARK: - The host's offers
+
+    @Test("The host's offer is published promised, and released once a copy in the guest replaces it")
+    func hostOfferPublishedThenReleased() async throws {
+        let rig = rig()
+        var text = OfferedItem()
+        var representation = Representation()
+        representation.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
+        representation.storage = .inline
+        text.representations = [representation]
+        let link = RecordingLink(items: [text])
+        rig.clipboard.setLink(link)
+        let token = Data(repeating: 9, count: 16)
+
+        rig.clipboard.exchange.handle(
+            .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: token, concealed: false, count: 1)),
+            on: link)
+        try await rig.pasteboard.changed.wait { !rig.pasteboard.promisedTypes.isEmpty }
+        #expect(rig.pasteboard.promisedTypes == [NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)])
+        // The poll does not read the agent's own promise as a copy.
+        rig.clipboard.checkPasteboard()
+        #expect(link.releases.isEmpty)
+
+        #expect(rig.pasteboard.setString("copied in the guest", forType: .string))
+        rig.clipboard.checkPasteboard()
+        try await link.changed.wait { link.releases == [token] }
+        #expect(link.offers.isEmpty)
+    }
 
     @Test("The host's policy sets each pull's byte ceiling, and a policy arriving later changes it for later offers")
     func policySetsThePullCeiling() async throws {
