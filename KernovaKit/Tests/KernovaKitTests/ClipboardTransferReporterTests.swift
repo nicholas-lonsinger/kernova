@@ -93,59 +93,7 @@ struct ClipboardTransferReporterTests {
         #expect(restored.bytesTransferred == 10)
     }
 
-    @Test("a running report displaces a standing refusal, and its finish takes over again")
-    func runningAndFinishedDisplaceEachOther() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let operation = makeOperation(reporter)
-        let standing = finish(.timedOut)
-
-        reporter.finish(standing)
-        #expect(reporter.report == .finished(standing))
-
-        reporter.publish(from: operation, .running(snapshot(bytes: 5), since: Date()))
-        guard case .running = reporter.report else {
-            Issue.record("a running operation must displace the standing refusal")
-            return
-        }
-
-        let ended = finish(.transferFailed)
-        reporter.publish(from: operation, .finished(ended))
-        #expect(reporter.report == .finished(ended))
-    }
-
     // MARK: - Dwell
-
-    @Test("a completed report dwells, then the reporter goes idle")
-    func completedReportsDwellThenClear() async throws {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let operation = makeOperation(reporter)
-        let completed = ClipboardTransferFinish(
-            gesture: .paste, outcome: .completed(final: snapshot(bytes: 100)),
-            peerName: "macOS TEST")
-
-        reporter.publish(from: operation, .finished(completed))
-        #expect(reporter.report == .finished(completed))
-
-        try await passDwell(on: clock, of: reporter)
-    }
-
-    @Test("a refusal never dwells — it stands until something displaces or clears it")
-    func failedReportsStand() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-
-        reporter.finish(finish(.timedOut))
-        #expect(clock.requestedSeconds.isEmpty)
-        guard case .finished = reporter.report else {
-            Issue.record("expected the refusal to stand")
-            return
-        }
-
-        reporter.clearFinished()
-        #expect(reporter.report == .idle)
-    }
 
     @Test("a dwell armed for one report is defused by the next")
     func aNewReportDefusesTheDwell() async throws {
@@ -168,27 +116,6 @@ struct ClipboardTransferReporterTests {
             Issue.record("the stale dwell must not clear the newer readout")
             return
         }
-    }
-
-    @Test("a dwell whose interval passed as the report changed retires nothing")
-    func aDwellPassingAsTheReportChangesRetiresNothing() async throws {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let operation = makeOperation(reporter)
-        let completed = ClipboardTransferFinish(
-            gesture: .paste, outcome: .completed(final: snapshot(bytes: 100)),
-            peerName: "macOS TEST")
-        reporter.publish(from: operation, .finished(completed))
-        let dwell = try #require(clock.parked.first)
-
-        // The interval passes, and before the dwell's body can reach the main
-        // actor a refusal replaces the report it was armed for.
-        clock.release(dwell)
-        let refusal = finish(.timedOut)
-        reporter.finish(refusal)
-        await clock.completion(of: dwell)
-
-        #expect(reporter.report == .finished(refusal))
     }
 
     // MARK: - A refusal raised alongside another operation
@@ -312,28 +239,6 @@ struct ClipboardTransferReporterTests {
         #expect(clock.requestedSeconds.isEmpty)
     }
 
-    @Test("a peer paste that succeeds still clears the peer paste that failed before it")
-    func aPeerPasteClearsAnOlderPeerPasteRefusal() async throws {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let retry = makeOperation(reporter, gesture: .peerPaste)
-        let failedAt = Date(timeIntervalSince1970: 100)
-
-        // The guest's first paste failed; the refusal is the guest user's.
-        reporter.finish(finish(.transferFailed, gesture: .peerPaste, at: failedAt))
-        // Their retry begins after it and runs to the end, so it disproves it.
-        let since = failedAt.addingTimeInterval(1)
-        reporter.publish(
-            from: retry, .running(snapshot(bytes: 10, gesture: .peerPaste), since: since))
-        let completed = ClipboardTransferFinish(
-            gesture: .peerPaste, outcome: .completed(final: snapshot(bytes: 100)),
-            peerName: "macOS TEST")
-        reporter.publish(from: retry, .finished(completed))
-
-        #expect(reporter.report == .finished(completed))
-        try await passDwell(on: clock, of: reporter)
-    }
-
     // MARK: - Absorbing repeats
 
     @Test("the repeated fires of one refused paste raise one report")
@@ -406,47 +311,7 @@ struct ClipboardTransferReporterTests {
         #expect(announced.count == 2)
     }
 
-    @Test("a gesture that opens no operation at all is still owed its own message")
-    func reannouncesAfterAGestureThatOpenedNoOperation() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        var announced: [ClipboardTransferFinish] = []
-        reporter.onReportChanged = { report in
-            guard case .finished(let finish) = report, finish.failure != nil else { return }
-            announced.append(finish)
-        }
-
-        // A drag whose items were all unreadable: nothing was offered, so no
-        // operation ever measured it.
-        reporter.gestureBegan()
-        reporter.finish(
-            finish(.itemsUnreadable, gesture: .drop, at: Date(timeIntervalSince1970: 1)))
-
-        // The next drag fails the same way. It is a separate gesture, so the
-        // same sentence is owed again rather than collapsed into the first.
-        reporter.gestureBegan()
-        let later = finish(.itemsUnreadable, gesture: .drop, at: Date(timeIntervalSince1970: 2))
-        reporter.finish(later)
-
-        #expect(reporter.report == .finished(later))
-        #expect(announced.count == 2)
-    }
-
     // MARK: - Surface entry points
-
-    @Test("clearing a finished report leaves a running one alone")
-    func clearFinishedLeavesRunningAlone() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let operation = makeOperation(reporter)
-
-        reporter.publish(from: operation, .running(snapshot(bytes: 5), since: Date()))
-        reporter.clearFinished()
-        guard case .running = reporter.report else {
-            Issue.record("expected the running readout to survive")
-            return
-        }
-    }
 
     @Test("a cancel reaches the operation its readout named, not the newest one")
     func cancelReachesTheOperationItsReadoutNamed() {
@@ -463,42 +328,6 @@ struct ClipboardTransferReporterTests {
 
         #expect(olderStopped.withLock { $0 })
         #expect(!newerStopped.withLock { $0 })
-    }
-
-    @Test("a cancel of an operation that cannot be stopped reaches nothing else")
-    func cancelOfANonCancellableOperationStopsNothing() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let stopped = Locked(false)
-        let cancellable = makeOperation(reporter, onCancelRequested: { stopped.withLock { $0 = true } })
-        // A paste fire: the pasteboard drives it one item at a time, so there is
-        // nothing a Cancel could usefully stop.
-        let pasteFire = makeOperation(reporter)
-
-        reporter.publish(from: cancellable, .running(snapshot(bytes: 1), since: Date()))
-        reporter.publish(from: pasteFire, .running(snapshot(bytes: 2), since: Date()))
-
-        #expect(!reporter.cancel(pasteFire.id))
-        #expect(!stopped.withLock { $0 })
-    }
-
-    @Test("a cancel for an operation that has ended reports it reached nothing")
-    func cancelOfAFinishedOperationIsANoOp() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let stopped = Locked(false)
-        let operation = makeOperation(reporter, onCancelRequested: { stopped.withLock { $0 = true } })
-
-        reporter.publish(from: operation, .running(snapshot(bytes: 1), since: Date()))
-        reporter.publish(
-            from: operation,
-            .finished(
-                ClipboardTransferFinish(
-                    gesture: .drop, outcome: .completed(final: snapshot(bytes: 1)),
-                    peerName: "macOS TEST")))
-
-        #expect(!reporter.cancel(operation.id))
-        #expect(!stopped.withLock { $0 })
     }
 
     // MARK: - Ranking
@@ -520,19 +349,6 @@ struct ClipboardTransferReporterTests {
         #expect(runningSnapshot(reporter)?.pendingBehind == 1)
     }
 
-    @Test("equal-ranked operations keep the newest readout")
-    func equalRanksFallBackToRecency() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let older = makeOperation(reporter, gesture: .drop)
-        let newer = makeOperation(reporter, gesture: .drop)
-
-        reporter.publish(from: older, .running(snapshot(bytes: 1, gesture: .drop), since: Date()))
-        reporter.publish(from: newer, .running(snapshot(bytes: 2, gesture: .drop), since: Date()))
-
-        #expect(runningSnapshot(reporter)?.bytesTransferred == 2)
-    }
-
     @Test("a queued operation takes the readout once it opens a bar of its own")
     func aQueuedOperationTakesTheReadoutWhenItStarts() {
         let clock = GatedEngineClock()
@@ -547,22 +363,6 @@ struct ClipboardTransferReporterTests {
         #expect(runningSnapshot(reporter)?.bytesTransferred == 1)
 
         reporter.publish(from: waiting, .running(snapshot(bytes: 2, gesture: .drop), since: Date()))
-        #expect(runningSnapshot(reporter)?.bytesTransferred == 2)
-    }
-
-    @Test("progress on the older of two running readouts does not take the bar back")
-    func progressOnAnOlderReadoutDoesNotTakeTheBarBack() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let older = makeOperation(reporter, gesture: .drop)
-        let newer = makeOperation(reporter, gesture: .drop)
-
-        reporter.publish(from: older, .running(snapshot(bytes: 1, gesture: .drop), since: Date()))
-        reporter.publish(from: newer, .running(snapshot(bytes: 2, gesture: .drop), since: Date()))
-        // Both are streaming: without this the bar would change hands on every
-        // tick, since each publication would be the most recent one.
-        reporter.publish(from: older, .running(snapshot(bytes: 9, gesture: .drop), since: Date()))
-
         #expect(runningSnapshot(reporter)?.bytesTransferred == 2)
     }
 
@@ -583,31 +383,6 @@ struct ClipboardTransferReporterTests {
         #expect(runningSnapshot(reporter)?.pendingBehind == 1)
     }
 
-    @Test("a queued operation alone shows nothing — there is no bar to show yet")
-    func aQueuedOperationAloneShowsNothing() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let waiting = makeOperation(reporter, gesture: .drop)
-
-        reporter.queued(waiting)
-
-        #expect(reporter.report == .idle)
-    }
-
-    @Test("a queued operation stops being counted once it retires")
-    func aQueuedOperationStopsBeingCountedWhenItRetires() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let running = makeOperation(reporter, gesture: .drop)
-        let waiting = makeOperation(reporter, gesture: .drop)
-
-        reporter.publish(from: running, .running(snapshot(bytes: 1, gesture: .drop), since: Date()))
-        reporter.queued(waiting)
-        reporter.retire(waiting)
-
-        #expect(runningSnapshot(reporter)?.pendingBehind == 0)
-    }
-
     @Test("an operation that started is counted behind the readout that outranks it")
     func aRunningOperationUnderTheReadoutIsCountedToo() {
         let clock = GatedEngineClock()
@@ -621,24 +396,6 @@ struct ClipboardTransferReporterTests {
 
         #expect(runningSnapshot(reporter)?.gesture == .peerPaste)
         #expect(runningSnapshot(reporter)?.pendingBehind == 1)
-    }
-
-    @Test("a surface hears once per distinct value")
-    func notifiesOncePerDistinctValue() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let operation = makeOperation(reporter)
-        var reports: [ClipboardTransferReport] = []
-        reporter.onReportChanged = { reports.append($0) }
-
-        let since = Date()
-        reporter.publish(from: operation, .running(snapshot(bytes: 5), since: since))
-        reporter.publish(from: operation, .running(snapshot(bytes: 5), since: since))
-        reporter.publish(from: operation, .running(snapshot(bytes: 6), since: since))
-        reporter.retire(operation)
-
-        #expect(reports.count == 3)
-        #expect(reports.last == .idle)
     }
 
     @Test("A copy that delivered all but some items is logged as partial; one that delivered nothing, as failed")

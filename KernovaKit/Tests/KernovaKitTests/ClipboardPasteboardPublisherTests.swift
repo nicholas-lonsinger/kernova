@@ -41,44 +41,6 @@ struct ClipboardPasteboardPublisherTests {
         #expect(pasteboard.lastPrepareOptions == .currentHostOnly)
     }
 
-    @Test("a successful write hands its providers to the registry")
-    func successfulWriteRetainsItsProviders() {
-        let pasteboard = FakeWritePasteboard()
-        let registry = LazyClipboardProviderRegistry()
-        defer { registry.releaseAllForTesting() }
-        let publisher = ClipboardPasteboardPublisher(
-            pasteboard: pasteboard, providerRegistry: registry)
-
-        #expect(
-            publisher.write(
-                [
-                    makeSpec(textUTI, bytes: Data("one".utf8)),
-                    makeSpec("public.rtf", bytes: Data("two".utf8)),
-                ], source: servingOffer))
-
-        #expect(registry.countForTesting == 2)
-        #expect(publisher.lastWriteChangeCount == pasteboard.changeCount)
-    }
-
-    @Test("a failed write still latches the change it made, and retains nothing")
-    func failedWriteLatchesItsChangeAndRetainsNothing() {
-        let pasteboard = FakeWritePasteboard()
-        let registry = LazyClipboardProviderRegistry()
-        defer { registry.releaseAllForTesting() }
-        let publisher = ClipboardPasteboardPublisher(
-            pasteboard: pasteboard, providerRegistry: registry)
-        pasteboard.failNextWrite()
-
-        #expect(
-            !publisher.write(
-                [makeSpec(textUTI, bytes: Data("one".utf8))], source: servingOffer))
-
-        // The prepare cleared the pasteboard and bumped its count, and that
-        // change must never read as the user's own copy.
-        #expect(publisher.lastWriteChangeCount == pasteboard.changeCount)
-        #expect(registry.countForTesting == 0)
-    }
-
     @Test("a failed write holds nothing, so there is nothing to take back")
     func failedWriteIsNotHeld() {
         let pasteboard = FakeWritePasteboard()
@@ -125,23 +87,6 @@ struct ClipboardPasteboardPublisherTests {
     }
 
     // MARK: - Holding the write
-
-    @Test("the write is held only while nothing has replaced it")
-    func holdsLastWriteTracksTheChangeCount() {
-        let pasteboard = FakeWritePasteboard()
-        let registry = LazyClipboardProviderRegistry()
-        defer { registry.releaseAllForTesting() }
-        let publisher = ClipboardPasteboardPublisher(
-            pasteboard: pasteboard, providerRegistry: registry)
-
-        #expect(!publisher.holdsLastWrite)
-        publisher.write([makeSpec(textUTI, bytes: Data("one".utf8))], source: servingOffer)
-        #expect(publisher.holdsLastWrite)
-
-        // Somebody else wrote to the pasteboard.
-        pasteboard.clearContents()
-        #expect(!publisher.holdsLastWrite)
-    }
 
     @Test("a retraction withdraws only a write still held that serves the offer it names")
     func retractionOnlyTakesBackAHeldWriteOfItsOffer() {

@@ -191,14 +191,6 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         return true
     }
 
-    /// Places one item carrying `file`'s URL beside `receiver`'s file promise — a Photos copy's shape, its URL
-    /// naming the library's derivative.
-    @MainActor
-    @discardableResult
-    public func setFile(_ file: URL, promising receiver: any FilePromiseReceiving) -> Bool {
-        setItem([(type: .fileURL, data: Data(file.absoluteString.utf8))], promising: receiver)
-    }
-
     /// Places one item of `representations` beside `receiver`'s file promise, `receiver` the receiver every
     /// later read of the pasteboard's promises yields.
     @MainActor

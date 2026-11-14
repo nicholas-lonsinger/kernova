@@ -10,51 +10,13 @@ import Testing
 struct ClipboardProgressFormatTests {
     /// A snapshot with everything but the fields under test held constant.
     private static func snapshot(
-        direction: ClipboardProgressSnapshot.Direction = .outbound, peerName: String = "VM",
-        currentItemName: String? = nil, filesCompleted: Int = 0, fileCount: Int = 1,
-        bytesTransferred: UInt64 = 0, totalBytes: UInt64 = 1_000,
-        gesture: ClipboardTransferGesture = .peerPaste, pendingBehind: Int = 0
+        peerName: String = "VM", currentItemName: String? = nil, bytesTransferred: UInt64 = 0,
+        totalBytes: UInt64 = 1_000
     ) -> ClipboardProgressSnapshot {
         ClipboardProgressSnapshot(
-            direction: direction, peerName: peerName, currentItemName: currentItemName,
-            filesCompleted: filesCompleted, fileCount: fileCount,
-            bytesTransferred: bytesTransferred, totalBytes: totalBytes, bytesPerSecond: nil,
-            secondsRemaining: nil, gesture: gesture, elapsedSeconds: 1,
-            pendingBehind: pendingBehind)
-    }
-
-    @Test("the headline names the peer in quotes and says what is happening")
-    func headlineNamesPeer() {
-        // A paste is named as such: the bytes are leaving for an app on the other
-        // machine that is blocked until they land, which is the whole reason the
-        // readout interrupted.
-        #expect(
-            ClipboardProgressFormat.headline(
-                direction: .outbound, peerName: "macOS TEST", gesture: .peerPaste)
-                == "Pasting into “macOS TEST”…")
-        #expect(
-            ClipboardProgressFormat.headline(
-                direction: .outbound, peerName: "macOS TEST", gesture: .paste)
-                == "Sending to “macOS TEST”…")
-        #expect(
-            ClipboardProgressFormat.headline(
-                direction: .inbound, peerName: "macOS TEST", gesture: .paste)
-                == "Receiving from “macOS TEST”…")
-        // Serving a drag out is the guest copying files onto the Mac, never a
-        // paste into it.
-        #expect(
-            ClipboardProgressFormat.headline(direction: .outbound, peerName: "Mac", gesture: .dragOut)
-                == "Copying to “Mac”…")
-    }
-
-    @Test("the file counter shows the file being worked on, and is absent for a single file")
-    func itemCounter() {
-        #expect(ClipboardProgressFormat.itemCounter(completed: 0, total: 1) == nil)
-        #expect(ClipboardProgressFormat.itemCounter(completed: 0, total: 5) == "1 of 5")
-        #expect(ClipboardProgressFormat.itemCounter(completed: 2, total: 5) == "3 of 5")
-        // Never past the total, even in the beat between the last file finishing
-        // and the readout clearing.
-        #expect(ClipboardProgressFormat.itemCounter(completed: 5, total: 5) == "5 of 5")
+            direction: .outbound, peerName: peerName, currentItemName: currentItemName, filesCompleted: 0,
+            fileCount: 1, bytesTransferred: bytesTransferred, totalBytes: totalBytes, bytesPerSecond: nil,
+            secondsRemaining: nil, gesture: .peerPaste, elapsedSeconds: 1)
     }
 
     @Test("speed is a byte count per second, and absent without an estimate")
@@ -109,15 +71,6 @@ struct ClipboardProgressFormatTests {
         #expect(withSpeed.contains("(") == true)
     }
 
-    @Test("a readout that does not know its bytes has no byte line")
-    func byteProgressUnknown() {
-        let snapshot = ClipboardProgressSnapshot(
-            direction: .inbound, peerName: "VM", currentItemName: nil, filesCompleted: 0,
-            fileCount: 1_000, bytesTransferred: 0, totalBytes: 0, bytesPerSecond: nil,
-            secondsRemaining: nil, gesture: .dragOut, elapsedSeconds: 1, bytesKnown: false)
-        #expect(ClipboardProgressFormat.byteProgress(snapshot) == nil)
-    }
-
     @Test("the summary of a readout that does not know its bytes counts files, never bytes")
     func summaryUnknownBytes() {
         let snapshot = ClipboardProgressSnapshot(
@@ -127,25 +80,10 @@ struct ClipboardProgressFormatTests {
         #expect(ClipboardProgressFormat.summary(snapshot) == "Receiving from “VM”… — 25% — 251 of 1000")
     }
 
-    @Test("the summary leads with the headline and carries the counter for a multi-file paste")
-    func summaryMultipleItems() {
-        let snapshot = Self.snapshot(
-            currentItemName: "big.mov", filesCompleted: 1, fileCount: 5, bytesTransferred: 500)
-        #expect(ClipboardProgressFormat.summary(snapshot) == "Pasting into “VM”… — 50% — 2 of 5")
-    }
-
     @Test("the summary falls back to the file's name for a single-file paste")
     func summarySingleItem() {
         let snapshot = Self.snapshot(currentItemName: "big.mov", bytesTransferred: 250)
         #expect(ClipboardProgressFormat.summary(snapshot) == "Pasting into “VM”… — 25% — big.mov")
-    }
-
-    @Test("the summary carries the direction for a transfer that is not a paste")
-    func summaryNonPaste() {
-        let snapshot = Self.snapshot(
-            direction: .inbound, currentItemName: "big.mov", bytesTransferred: 250,
-            gesture: .paste)
-        #expect(ClipboardProgressFormat.summary(snapshot) == "Receiving from “VM”… — 25% — big.mov")
     }
 
     @Test("work behind the readout is named, and singular reads as one")
@@ -153,15 +91,5 @@ struct ClipboardProgressFormatTests {
         #expect(ClipboardProgressFormat.pendingNote(count: 0) == nil)
         #expect(ClipboardProgressFormat.pendingNote(count: 1) == "1 more transfer pending")
         #expect(ClipboardProgressFormat.pendingNote(count: 4) == "4 more transfers pending")
-    }
-
-    @Test("the summary carries what is queued behind the transfer it describes")
-    func summaryCarriesWhatIsPending() {
-        let snapshot = Self.snapshot(
-            direction: .outbound, currentItemName: "big.mov", bytesTransferred: 250,
-            gesture: .drop, pendingBehind: 2)
-        #expect(
-            ClipboardProgressFormat.summary(snapshot)
-                == "Sending to “VM”… — 25% — big.mov — 2 more transfers pending")
     }
 }

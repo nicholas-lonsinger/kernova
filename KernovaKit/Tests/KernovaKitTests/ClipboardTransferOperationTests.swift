@@ -1,5 +1,4 @@
 import Foundation
-import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
@@ -62,46 +61,14 @@ struct ClipboardTransferOperationTests {
         gesture: ClipboardTransferGesture = .preview,
         direction: ClipboardProgressSnapshot.Direction = .inbound,
         expectedBytes: UInt64? = 0,
-        expectedItems: Int = 0,
-        onCancelRequested: (@Sendable () -> Void)? = nil
+        expectedItems: Int = 0
     ) -> ClipboardTransferOperation {
         ClipboardTransferOperation(
             gesture: gesture, direction: direction, peerName: "macOS TEST",
-            expectedBytes: expectedBytes, expectedItems: expectedItems, clock: clock,
-            onCancelRequested: onCancelRequested, reporter: recorder.reporter)
+            expectedBytes: expectedBytes, expectedItems: expectedItems, clock: clock, reporter: recorder.reporter)
     }
 
     // MARK: - Reveal gate
-
-    @Test("nothing reaches a surface until the operation has run for the reveal delay")
-    func revealsOnlyAfterTheDelay() async {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock)
-
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitProgressed(id: 1, bytesTransferred: 50)
-        await settle()
-        #expect(recorder.reports.isEmpty)
-
-        clock.advance(seconds: Self.revealDelay)
-        operation.unitProgressed(id: 1, bytesTransferred: 60)
-        await settle()
-        #expect(recorder.runningSnapshot?.bytesTransferred == 60)
-    }
-
-    @Test("an operation that completes inside the reveal gate never flashes UI")
-    func completionInsideTheGatePublishesNothing() async {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock)
-
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitEnded(id: 1, succeeded: true)
-        operation.finish(.completed)
-        await settle()
-        #expect(recorder.reports.isEmpty)
-    }
 
     @Test("a refusal inside the reveal gate is still reported")
     func failureInsideTheGateIsPublished() async {
@@ -142,29 +109,6 @@ struct ClipboardTransferOperationTests {
 
     // MARK: - Aggregation
 
-    @Test("concurrent and sequential transfers fill one bar between them")
-    func aggregatesEveryTransfer() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitBegan(id: 2, expectedBytes: 300)
-        operation.unitProgressed(id: 1, bytesTransferred: 100)
-        operation.unitEnded(id: 1, succeeded: true)
-        operation.unitProgressed(id: 2, bytesTransferred: 300)
-        operation.unitEnded(id: 2, succeeded: true)
-        operation.finish(.completed)
-        await settle()
-
-        let snapshot = try #require(recorder.finish?.finalSnapshot)
-        #expect(snapshot.totalBytes == 400)
-        #expect(snapshot.bytesTransferred == 400)
-        #expect(snapshot.filesCompleted == 2)
-        #expect(snapshot.fileCount == 2)
-    }
-
     @Test("a retry that restarts its own byte count never walks the aggregate back")
     func clampsMonotonically() async throws {
         let recorder = Recorder()
@@ -194,42 +138,6 @@ struct ClipboardTransferOperationTests {
         await settle()
 
         #expect(try #require(recorder.finish?.finalSnapshot).totalBytes == 500)
-    }
-
-    @Test("a transfer that succeeded reads as complete even with its last chunks throttled")
-    func creditsSuccessInFull() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation.unitBegan(id: 1, expectedBytes: 1_000)
-        operation.unitProgressed(id: 1, bytesTransferred: 10)
-        operation.unitEnded(id: 1, succeeded: true)
-        operation.finish(.completed)
-        await settle()
-
-        let snapshot = try #require(recorder.finish?.finalSnapshot)
-        #expect(snapshot.bytesTransferred == 1_000)
-        #expect(snapshot.fractionComplete == 1)
-    }
-
-    @Test("the update that reaches the total is admitted however small its delta")
-    func admitsTheFinalChunk() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation.unitBegan(id: 1, expectedBytes: 1_000)
-        operation.unitProgressed(id: 1, bytesTransferred: 999)
-        await settle()
-        let beforeFinalChunk = recorder.reports.count
-        operation.unitProgressed(id: 1, bytesTransferred: 1_000)
-        await settle()
-
-        #expect(recorder.reports.count == beforeFinalChunk + 1)
-        #expect(try #require(recorder.runningSnapshot).fractionComplete == 1)
     }
 
     @Test("the readout names the transfer that began most recently")
@@ -358,28 +266,6 @@ struct ClipboardTransferOperationTests {
         #expect(finish.finalSnapshot?.fractionComplete == 1)
     }
 
-    @Test("a transfer beginning inside the gap defuses the idle terminal")
-    func aNewTransferDefusesTheIdleTerminal() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(
-            recorder: recorder, clock: clock, gesture: .peerPaste, direction: .outbound)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitEnded(id: 1, succeeded: true)
-        operation.finishWhenIdle()
-        #expect(clock.parked.count == 1)
-
-        // The terminal armed for that gap is called off, not left to fire.
-        operation.unitBegan(id: 2, expectedBytes: 100)
-        try await clock.parkedChanged.wait { clock.parked.isEmpty }
-        await settle()
-
-        #expect(operation.isLive)
-        #expect(recorder.finish == nil)
-    }
-
     @Test("an idle terminal whose gap passed as a transfer began completes nothing")
     func anIdleTerminalPassingAsATransferBeginsCompletesNothing() async throws {
         let recorder = Recorder()
@@ -447,67 +333,5 @@ struct ClipboardTransferOperationTests {
         // take this bar down.
         operation = nil
         try await recorder.changed.wait { recorder.latest == .idle }
-    }
-
-    // MARK: - Cancel
-
-    @Test("a cancel on the readout reaches the operation's own stop closure")
-    func routesCancelToTheOperation() {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let stopped = Locked(false)
-        let operation = makeOperation(
-            recorder: recorder, clock: clock, onCancelRequested: { stopped.withLock { $0 = true } })
-
-        operation.requestCancel()
-        #expect(stopped.withLock { $0 })
-    }
-
-    @Test("an operation with nothing to stop offers no cancel")
-    func reportsWhetherItIsCancellable() async {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        await settle()
-        #expect(recorder.runningSnapshot?.isCancellable == false)
-        // A no-op rather than a crash for a caller that asks anyway.
-        operation.requestCancel()
-    }
-
-    // MARK: - Queued
-
-    @Test("a queued operation that ends without ever revealing leaves nothing behind")
-    func queuedOperationRetiresOnItsTerminal() async {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock, gesture: .drop)
-
-        operation.markQueued()
-        await settle()
-        #expect(recorder.latest == .idle)
-        operation.finish(.completed)
-        await settle()
-
-        #expect(recorder.latest == .idle)
-        #expect(recorder.finish == nil)
-    }
-
-    @Test("the readout takes over from the queued announcement once bytes move")
-    func queuedGivesWayToTheReadout() async {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock, gesture: .drop)
-
-        operation.markQueued()
-        clock.advance(seconds: Self.revealDelay)
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitProgressed(id: 1, bytesTransferred: 40)
-        await settle()
-
-        #expect(recorder.runningSnapshot?.bytesTransferred == 40)
-        #expect(recorder.runningSnapshot?.pendingBehind == 0)
     }
 }

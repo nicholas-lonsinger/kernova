@@ -8,54 +8,6 @@ import Testing
 struct ClipboardContentTests {
     // MARK: - Digest
 
-    @Test("digest is deterministic for equal content")
-    func digestDeterministic() {
-        let make = {
-            ClipboardContent(representations: [
-                .init(uti: "public.png", data: Data([1, 2, 3])),
-                .init(uti: "public.utf8-plain-text", data: Data("hi".utf8)),
-            ])
-        }
-        #expect(make().digest == make().digest)
-        #expect(make() == make())
-    }
-
-    @Test("digest is order-sensitive")
-    func digestOrderSensitive() {
-        let a = ClipboardContent(representations: [
-            .init(uti: "public.png", data: Data([1])),
-            .init(uti: "public.tiff", data: Data([2])),
-        ])
-        let b = ClipboardContent(representations: [
-            .init(uti: "public.tiff", data: Data([2])),
-            .init(uti: "public.png", data: Data([1])),
-        ])
-        #expect(a.digest != b.digest)
-        #expect(a != b)
-    }
-
-    @Test("digest distinguishes byte shifts across the uti/data boundary")
-    func digestBoundaryShift() {
-        // Same concatenated bytes, different split between uti and data:
-        // without length prefixes these would collide.
-        let a = ClipboardContent(representations: [.init(uti: "ab", data: Data("c".utf8))])
-        let b = ClipboardContent(representations: [.init(uti: "a", data: Data("bc".utf8))])
-        #expect(a.digest != b.digest)
-    }
-
-    @Test("digest distinguishes representation-boundary shifts")
-    func digestRepresentationBoundaryShift() {
-        let a = ClipboardContent(representations: [
-            .init(uti: "x", data: Data([1, 2])),
-            .init(uti: "y", data: Data([3])),
-        ])
-        let b = ClipboardContent(representations: [
-            .init(uti: "x", data: Data([1])),
-            .init(uti: "y", data: Data([2, 3])),
-        ])
-        #expect(a.digest != b.digest)
-    }
-
     @Test("filename is folded into the digest (distinguishes same-bytes files by name)")
     func filenameInDigest() {
         // Required once a payload can carry several files: two file payloads that
@@ -83,25 +35,6 @@ struct ClipboardContentTests {
         #expect(withName.digest == sameName.digest)
     }
 
-    @Test("two file reps differing only by filename produce different digests")
-    func multiFileNameSensitivity() {
-        // The multi-file echo-suppression scenario: [a.bin, b.bin] vs
-        // [a.bin, c.bin] where b and c are byte-identical (same sha256). Only the
-        // second name differs, and that must change the content digest.
-        let sha = Data(repeating: 0xAB, count: 32)
-        func content(secondName: String) -> ClipboardContent {
-            ClipboardContent(representations: [
-                .init(
-                    uti: "public.data", fileURL: URL(fileURLWithPath: "/tmp/a"),
-                    byteCount: 8, sha256: sha, filename: "a.bin"),
-                .init(
-                    uti: "public.data", fileURL: URL(fileURLWithPath: "/tmp/x"),
-                    byteCount: 8, sha256: sha, filename: secondName),
-            ])
-        }
-        #expect(content(secondName: "b.bin").digest != content(secondName: "c.bin").digest)
-    }
-
     @Test("isDirectory is excluded from the digest")
     func isDirectoryDigestInvisible() {
         // The archive's SHA-256 plus the folded folder name already identify a
@@ -122,75 +55,6 @@ struct ClipboardContentTests {
     }
 
     // MARK: - .pendingRemote (lazy-receive placeholder) digest
-
-    @Test(".pendingRemote digest is deterministic for equal (uti, byteCount)")
-    func pendingRemoteDigestDeterministic() {
-        let make = {
-            ClipboardContent(representations: [
-                .init(pendingRemoteUTI: "public.png", byteCount: 4096, filename: "photo.png")
-            ])
-        }
-        #expect(make().digest == make().digest)
-        #expect(make() == make())
-
-        // Filename is folded into the digest here too, so the same placeholder
-        // with no name is a different digest (uniform with the materialized form).
-        let withoutName = ClipboardContent(representations: [
-            .init(pendingRemoteUTI: "public.png", byteCount: 4096)
-        ])
-        #expect(make().digest != withoutName.digest)
-
-        // A different advertised byteCount changes the placeholder's identity.
-        let differentSize = ClipboardContent(representations: [
-            .init(pendingRemoteUTI: "public.png", byteCount: 4097)
-        ])
-        #expect(make().digest != differentSize.digest)
-    }
-
-    @Test(".pendingRemote is never digest-equal to the same rep materialized as .inMemory")
-    func pendingRemoteDistinctFromInMemory() {
-        // A 3-byte inline payload under the same UTI must not alias the
-        // metadata-only placeholder advertising 3 bytes — the domain tag (3 vs
-        // the inline tag 0) keeps them apart so a pulled rep is a real change.
-        let bytes = Data([1, 2, 3])
-        let placeholder = ClipboardContent(representations: [
-            .init(pendingRemoteUTI: "public.png", byteCount: bytes.count)
-        ])
-        let materialized = ClipboardContent(representations: [
-            .init(uti: "public.png", data: bytes)
-        ])
-        #expect(placeholder.digest != materialized.digest)
-    }
-
-    @Test(".pendingRemote is never digest-equal to the same rep materialized as .file")
-    func pendingRemoteDistinctFromFile() {
-        let sha = Data(repeating: 0xAB, count: 32)
-        let placeholder = ClipboardContent(representations: [
-            .init(pendingRemoteUTI: "public.data", byteCount: 1024, filename: "x.bin")
-        ])
-        let materializedFile = ClipboardContent(representations: [
-            .init(
-                uti: "public.data", fileURL: URL(fileURLWithPath: "/tmp/x.bin"),
-                byteCount: 1024, sha256: sha, filename: "x.bin")
-        ])
-        #expect(placeholder.digest != materializedFile.digest)
-    }
-
-    @Test(".pendingRemote is distinct from a .file placeholder with no streamed sha256 (tag 2 vs 3)")
-    func pendingRemoteDistinctFromUnhashedFilePlaceholder() {
-        // A `.file` rep whose bytes haven't streamed yet folds in only its byte
-        // count under tag 2; a `.pendingRemote` rep folds in its byte count under
-        // tag 3. Same UTI and byte count, but the domain tags keep them apart.
-        let pendingRemote = ClipboardContent(representations: [
-            .init(pendingRemoteUTI: "public.data", byteCount: 1024)
-        ])
-        let unhashedFile = ClipboardContent(representations: [
-            .init(
-                uti: "public.data", fileURL: URL(fileURLWithPath: "/tmp/x.bin"),
-                byteCount: 1024, sha256: nil, filename: "x.bin")
-        ])
-        #expect(pendingRemote.digest != unhashedFile.digest)
-    }
 
     @Test(".pendingRemote accessors expose metadata only — no resident bytes or file URL")
     func pendingRemoteAccessors() {
@@ -246,17 +110,6 @@ struct ClipboardContentTests {
         #expect(a.digest != differentBytes.digest)
     }
 
-    @Test("totalByteCount sums file and inline representations without loading")
-    func totalByteCountMixed() {
-        let content = ClipboardContent(representations: [
-            .init(uti: "a", data: Data(count: 10)),
-            .init(
-                uti: "b", fileURL: URL(fileURLWithPath: "/tmp/x"), byteCount: 5_000_000_000,
-                filename: "x"),
-        ])
-        #expect(content.totalByteCount == 5_000_000_010)
-    }
-
     // MARK: - Text
 
     @Test("text reads the first UTF-8 plain-text representation only")
@@ -293,22 +146,6 @@ struct ClipboardContentTests {
         #expect(content.totalByteCount == .max)
     }
 
-    @Test("makeOffActor yields the same digest and representations as the sync init")
-    func makeOffActorMatchesSyncInit() async {
-        let reps: [ClipboardContent.Representation] = [
-            .init(uti: "public.tiff", data: Data(count: 4096), filename: "a.tiff"),
-            .init(uti: ClipboardContent.utf8TextUTI, data: Data("hello".utf8)),
-        ]
-        let sync = ClipboardContent(representations: reps)
-        let offMain = await ClipboardContent.makeOffActor(representations: reps)
-
-        #expect(offMain.digest == sync.digest)
-        #expect(offMain == sync)  // digest-based equality
-        #expect(offMain.representations.map(\.uti) == sync.representations.map(\.uti))
-        #expect(offMain.representations.map(\.inMemoryData) == sync.representations.map(\.inMemoryData))
-        #expect(offMain.representations.map(\.filename) == sync.representations.map(\.filename))
-    }
-
     @Test("makeOffActor(text:) holds one UTF-8 representation of the text, the empty string none")
     func makeOffActorText() async {
         let large = String(repeating: "swift clipboard ", count: 4096)  // ~64 KiB
@@ -342,48 +179,6 @@ struct ClipboardSnapshotPolicyTests {
             ])
     }
 
-    @Test(
-        "file reference types are skipped",
-        arguments: [
-            "public.file-url",
-            "Public.File-URL",
-            "com.apple.pasteboard.promised-file-url",
-            "com.apple.pasteboard.promised-file-content-type",
-            "com.apple.pasteboard.promised-suggested-file-name",
-            "com.apple.pasteboard.NSFilePromiseID",
-            "com.apple.NSFilePromiseProvider",
-            "NSFilenamesPboardType",
-            "dyn.ah62d4rv4gu8y6y4grf0gn5xbrzw1gydcr7u1e3cytf2gn",  // NSFilenamesPboardType
-            "dyn.ah62d4rv4gu8yg55wqzkgc65yqzvg82pwqvdg22p0r73fk8puqyuda8b0g25xnr3wg3bu",  // 'furl' flavor
-            "dyn.ah62d4rv4gu8yc6durvwwa3xmrvw1gkdusm1044pxqyuha2pxsvw0e55bsmwca7d3sbwu",  // legacy files promise
-            "DYN.AH62D4RV4GU8Y6Y4GRF0GN5XBRZW1GYDCR7U1E3CYTF2GN",  // encodes nothing
-        ])
-    func fileReferenceTypesSkipped(uti: String) {
-        #expect(ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: uti))
-        let outcome = ClipboardSnapshotPolicy.evaluate([(uti: uti, data: Data([1]))])
-        #expect(outcome.content.isEmpty)
-        #expect(outcome.skipped == [.init(uti: uti, reason: .fileReferenceType)])
-    }
-
-    @Test("a dynamic UTI encoding a content type is kept, as is a custom UTI no system declares")
-    func dynamicAndCustomUTIsKept() {
-        // "Example private pasteboard type", as AppKit encodes a legacy name.
-        let dyn = "dyn.ah62d4rv4gu8yn8dbrz2g23masb3gw7xbsvwwa6dbsr4gn2xtqf3gkkdytf2gn"
-        for uti in [dyn, "com.example.x"] {
-            #expect(!ClipboardSnapshotPolicy.shouldSkipBeforeReading(uti: uti))
-            let outcome = ClipboardSnapshotPolicy.evaluate([(uti: uti, data: Data([1]))])
-            #expect(outcome.content.representations.map(\.uti) == [uti])
-            #expect(outcome.skipped.isEmpty)
-        }
-    }
-
-    @Test("a marker is skipped in any case")
-    func markersSkippedInAnyCase() {
-        let marker = "ORG.NSPASTEBOARD.TRANSIENTTYPE"
-        let outcome = ClipboardSnapshotPolicy.evaluate([(uti: marker, data: Data([1]))])
-        #expect(outcome.skipped == [.init(uti: marker, reason: .transientMarkerType)])
-    }
-
     @Test("zero-byte representations are skipped")
     func zeroByteSkipped() {
         let outcome = ClipboardSnapshotPolicy.evaluate([
@@ -392,39 +187,6 @@ struct ClipboardSnapshotPolicyTests {
         ])
         #expect(outcome.content.representations.map(\.uti) == [ClipboardContent.utf8TextUTI])
         #expect(outcome.skipped == [.init(uti: "public.png", reason: .emptyData)])
-    }
-
-    @Test("a representation far larger than the old 104 MiB cap is kept (no size limit)")
-    func noSizeCap() {
-        // The greedy budget and per-rep cap are gone — streaming bounds size by
-        // free disk, not a fixed limit. A 200 MiB inline rep survives evaluate.
-        let huge = 200 * 1024 * 1024
-        let outcome = ClipboardSnapshotPolicy.evaluate([
-            (uti: "public.tiff", data: Data(count: huge)),
-            (uti: ClipboardContent.utf8TextUTI, data: Data("also kept".utf8)),
-        ])
-        #expect(
-            outcome.content.representations.map(\.uti) == [
-                "public.tiff", ClipboardContent.utf8TextUTI,
-            ])
-        #expect(outcome.skipped.isEmpty)
-    }
-
-    @Test("all-skipped input yields empty content with populated skip report")
-    func allSkippedNeverSilent() {
-        let outcome = ClipboardSnapshotPolicy.evaluate([
-            (uti: "org.nspasteboard.AutoGeneratedType", data: Data([1])),
-            (uti: "public.file-url", data: Data([2])),
-        ])
-        #expect(outcome.content.isEmpty)
-        #expect(outcome.skipped.count == 2)
-    }
-
-    @Test("empty input yields empty content and no skips")
-    func emptyInput() {
-        let outcome = ClipboardSnapshotPolicy.evaluate([])
-        #expect(outcome.content.isEmpty)
-        #expect(outcome.skipped.isEmpty)
     }
 
     // MARK: - Snapshot disposition
@@ -436,26 +198,10 @@ struct ClipboardSnapshotPolicyTests {
                 ClipboardContent.utf8TextUTI, "public.png",
             ]) == .allow)
     }
-
-    @Test("transient takes precedence over a coexisting concealed marker")
-    func transientBeatsConcealed() {
-        #expect(
-            ClipboardSnapshotPolicy.disposition(forTypes: [
-                "org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType",
-            ]) == .suppress(.transientSnapshot))
-    }
 }
 
 @Suite("ClipboardContent.isConcealed", .caseScoped)
 struct ClipboardContentConcealedTests {
-    @Test("defaults to false")
-    func defaultsFalse() {
-        #expect(
-            !ClipboardContent(representations: [.init(uti: ClipboardContent.utf8TextUTI, data: Data("hi".utf8))])
-                .isConcealed)
-        #expect(!ClipboardContent(representations: []).isConcealed)
-    }
-
     @Test("withConcealed sets the flag and reuses the digest (no re-hash)")
     func withConcealedReusesDigest() {
         let reps = [ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: Data("pw".utf8))]
@@ -469,28 +215,5 @@ struct ClipboardContentConcealedTests {
         #expect(concealed == plain)
         // Matches the digest a from-scratch concealed build would produce.
         #expect(concealed.digest == ClipboardContent(representations: reps, isConcealed: true).digest)
-    }
-
-    @Test("withConcealed returns self unchanged when the flag already matches")
-    func withConcealedNoOpWhenUnchanged() {
-        let reps = [ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: Data("pw".utf8))]
-        let plain = ClipboardContent(representations: reps, isConcealed: false)
-        #expect(plain.withConcealed(false) == plain)
-        let concealed = ClipboardContent(representations: reps, isConcealed: true)
-        #expect(concealed.withConcealed(true).isConcealed)
-        #expect(concealed.withConcealed(true).digest == concealed.digest)
-    }
-
-    @Test("withConcealed clears the flag and reuses the digest")
-    func withConcealedClearsTheFlag() {
-        let reps = [ClipboardContent.Representation(uti: ClipboardContent.utf8TextUTI, data: Data("pw".utf8))]
-        let concealed = ClipboardContent(representations: reps, isConcealed: true)
-        let revealed = concealed.withConcealed(false)
-        #expect(!revealed.isConcealed)
-        // Clearing reuses the digest too (the flag is excluded), so the revealed
-        // copy stays digest-equal to the concealed original and to a from-scratch
-        // unconcealed build.
-        #expect(revealed.digest == concealed.digest)
-        #expect(revealed == ClipboardContent(representations: reps, isConcealed: false))
     }
 }

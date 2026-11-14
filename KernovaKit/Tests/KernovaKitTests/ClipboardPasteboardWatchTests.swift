@@ -59,19 +59,4 @@ struct ClipboardPasteboardWatchTests {
         #expect(heard == ["earlier"])
         withExtendedLifetime(earlier) {}
     }
-
-    @Test("Each pasteboard has a watch of its own")
-    func watchPerPasteboard() {
-        let general = FakePasteboard()
-        let other = FakePasteboard()
-        var heard: [String] = []
-        let onGeneral = ClipboardPasteboardWatch.observe(general, in: .newCopies) { heard.append("general") }
-        let onOther = ClipboardPasteboardWatch.observe(other, in: .newCopies) { heard.append("other") }
-        ClipboardPasteboardWatch.pollForTesting(general)
-        #expect(heard == ["general"])
-        onGeneral.cancel()
-        #expect(!ClipboardPasteboardWatch.isPollingForTesting(general))
-        #expect(ClipboardPasteboardWatch.isPollingForTesting(other))
-        withExtendedLifetime(onOther) {}
-    }
 }

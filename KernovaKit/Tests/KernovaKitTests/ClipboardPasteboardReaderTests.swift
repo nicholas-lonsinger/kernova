@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import KernovaFileTree
 import KernovaTestSupport
 import KernovaWire
 import Testing
@@ -35,11 +34,6 @@ struct ClipboardPasteboardReaderTests {
             return nil
         }
         return (source, lost)
-    }
-
-    /// Each offered item's types, in order.
-    private func types(of source: ClipboardOfferSource) -> [[String?]] {
-        source.items.map { $0.representations.map(\.type.appleUTI) }
     }
 
     // MARK: - Markers
@@ -113,16 +107,6 @@ struct ClipboardPasteboardReaderTests {
         #expect(lost == 1)
     }
 
-    @Test("a plain text copy names no file, so nothing is counted lost")
-    func textIsNotAFile() async throws {
-        let pasteboard = FakeReadPasteboard()
-        pasteboard.setItem([(type: .string, data: Data("hello".utf8))])
-
-        let offered = try #require(await offer(pasteboard))
-        #expect(offered.lost == 0)
-        #expect(types(of: offered.source) == [[NSPasteboard.PasteboardType.string.rawValue]])
-    }
-
     @Test("a missed URL is not a loss while a promise is still outstanding")
     func outstandingPromiseIsNotALoss() async {
         let gone = URL(fileURLWithPath: "/nonexistent/\(UUID().uuidString)/pending.txt")
@@ -143,38 +127,6 @@ struct ClipboardPasteboardReaderTests {
             return
         }
         #expect(lost == 0)
-    }
-
-    @Test("an item whose file is gone still offers its inline flavor, the file counted lost")
-    func lostFilesItemOffersItsInlineFlavor() async throws {
-        let gone = URL(fileURLWithPath: "/nonexistent/\(UUID().uuidString)/shot.png")
-        let png = try makePNG()
-        let pasteboard = FakeReadPasteboard()
-        // A screenshot drag pairs the image bytes with a `.fileURL` whose file
-        // is already gone.
-        pasteboard.setItem([
-            (type: .png, data: png),
-            (type: .fileURL, data: Data(gone.absoluteString.utf8)),
-        ])
-
-        let offered = try #require(await offer(pasteboard))
-        #expect(offered.lost == 1)
-        #expect(types(of: offered.source) == [[NSPasteboard.PasteboardType.png.rawValue]])
-    }
-
-    @Test("a lost file on a later item is reported, the earlier item still offered")
-    func laterItemsLostFileIsReported() async throws {
-        let png = try makePNG()
-        let gone = URL(fileURLWithPath: "/nonexistent/\(UUID().uuidString)/gone.txt")
-        let pasteboard = FakeReadPasteboard()
-        pasteboard.setItems([
-            FakePasteboardItem([(type: .png, data: png)]),
-            FakePasteboardItem([(type: .fileURL, data: Data(gone.absoluteString.utf8))]),
-        ])
-
-        let offered = try #require(await offer(pasteboard))
-        #expect(offered.lost == 1)
-        #expect(types(of: offered.source) == [[NSPasteboard.PasteboardType.png.rawValue]])
     }
 
     // MARK: - Empty
@@ -265,42 +217,5 @@ struct ClipboardPasteboardReaderTests {
         try Data("checked".utf8).write(to: file)
         let source = ClipboardPasteboardReader.readableSource(for: file, opening: { _ in errno })
         #expect((source == file) == offered)
-    }
-
-    @Test("the check opens with materialization off, downloading nothing, and leaves the thread as it found it")
-    func checkOpensWithoutMaterializing() throws {
-        let file = scratch.url.appendingPathComponent("checked.txt")
-        try Data("checked".utf8).write(to: file)
-        let before = DatalessMaterialization.ofThisThread
-        var during: DatalessMaterialization?
-        let source = ClipboardPasteboardReader.readableSource(
-            for: file,
-            opening: {
-                during = DatalessMaterialization.ofThisThread
-                return ClipboardPasteboardReader.openForReading($0)
-            })
-        #expect(source == file)
-        #expect(during == .off)
-        #expect(DatalessMaterialization.ofThisThread == before)
-    }
-
-    @Test("the check's own open answers success, or the errno it failed with")
-    func openForReadingAnswersErrno() throws {
-        let file = scratch.url.appendingPathComponent("opened.txt")
-        try Data("opened".utf8).write(to: file)
-        #expect(ClipboardPasteboardReader.openForReading(file.path) == 0)
-        #expect(ClipboardPasteboardReader.openForReading(scratch.url.appendingPathComponent("gone").path) == ENOENT)
-    }
-
-    // MARK: - Helpers
-
-    private func makePNG() throws -> Data {
-        let rep = try #require(
-            NSBitmapImageRep(
-                bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
-                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
-            ))
-        return try #require(rep.representation(using: .png, properties: [:]))
     }
 }

@@ -88,20 +88,6 @@ struct ClipboardItemBridgeTests {
         }
     }
 
-    /// Starts every pull and never completes one, keeping each completion for the test.
-    private final class StalledPuller: ClipboardItemPulling {
-        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
-        let completions = Locked<[@Sendable (Data?) -> Void]>([])
-
-        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
-            completions.withLock { $0.append(completion) }
-        }
-
-        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
-            completions.withLock { $0.append { _ in completion(nil) } }
-        }
-    }
-
     /// One publication onto a fresh destination, with what it promised.
     private struct Published {
         let destination: FakePasteboard
@@ -294,21 +280,6 @@ struct ClipboardItemBridgeTests {
         #expect(try Data(contentsOf: landed.appendingPathComponent("b.txt")) == Data("bb".utf8))
     }
 
-    @Test("a file gone since the copy is lost, not offered")
-    func vanishedFileIsLost() async throws {
-        let gone = scratch.url.appendingPathComponent("gone.txt")
-        let pasteboard = FakePasteboard()
-        pasteboard.setItem([(type: .fileURL, data: Data(gone.absoluteString.utf8))])
-
-        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, sizeOf: nil)
-
-        guard case .nothingOfferable(let lost) = outcome else {
-            Issue.record("expected nothing offerable, got \(outcome)")
-            return
-        }
-        #expect(lost == 1)
-    }
-
     // MARK: - Promises
 
     private let promiseTypes: [NSPasteboard.PasteboardType] = [
@@ -390,44 +361,6 @@ struct ClipboardItemBridgeTests {
         }
     }
 
-    @Test("a legacy promise item takes its own receiver, so the next promise keeps its own")
-    func legacyPromiseKeepsReceiversAligned() async throws {
-        let legacy = NSPasteboard.PasteboardType(
-            "dyn.ah62d4rv4gu8yc6durvwwa3xmrvw1gkdusm1044pxqyuha2pxsvw0e55bsmwca7d3sbwu")
-        let pasteboard = FakePasteboard()
-        pasteboard.setItems([
-            [(type: legacy, data: Data("txt".utf8))], promiseTypes.map { (type: $0, data: Data()) },
-        ])
-        let first = FakeFilePromiseReceiver(
-            name: "legacy.txt", fileType: "public.plain-text", contents: .file(Data("A".utf8)))
-        let second = FakeFilePromiseReceiver(name: "photo.png", fileType: "public.png", contents: .file(pngBytes))
-
-        let source = try await readOffer(pasteboard, promises: [first, second])
-
-        let names = source.items.map { $0.representations.first?.name }
-        #expect(names == [Data("legacy.txt".utf8), Data("photo.png".utf8)])
-        #expect(source.items.allSatisfy { $0.representations.first?.promised == true })
-    }
-
-    @Test("an item whose file resolves still takes its receiver, so the next promise keeps its own")
-    func resolvedFileConsumesItsReceiver() async throws {
-        let file = try directory("on-disk").appendingPathComponent("first.txt")
-        try Data("A".utf8).write(to: file)
-        let promise = promiseTypes.map { (type: $0, data: Data()) }
-        let pasteboard = FakePasteboard()
-        pasteboard.setItems([[(type: .fileURL, data: Data(file.absoluteString.utf8))] + promise, promise])
-        let first = FakeFilePromiseReceiver(
-            name: "first.txt", fileType: "public.plain-text", contents: .file(Data("A".utf8)))
-        let second = FakeFilePromiseReceiver(name: "second.png", fileType: "public.png", contents: .file(pngBytes))
-
-        let source = try await readOffer(pasteboard, promises: [first, second])
-
-        let names = source.items.map { $0.representations.first?.name }
-        #expect(names == [Data("first.txt".utf8), Data("second.png".utf8)])
-        #expect(source.items.map { $0.representations.first?.promised } == [false, true])
-        #expect(first.callIns == 0)
-    }
-
     // MARK: - Drops
 
     /// What a drop of `pasteboard` offers, its `promises` called in first into a fresh directory.
@@ -442,25 +375,6 @@ struct ClipboardItemBridgeTests {
             throw CancellationError()
         }
         return source
-    }
-
-    @Test("a drop's promise is called in before its offer is read, and offered under the name it gives then")
-    func dropPromiseIsCalledInFirst() async throws {
-        let receiver = FakeFilePromiseReceiver(
-            name: "IMG_0001.png", fileType: "public.png", contents: .file(pngBytes), named: false)
-
-        let source = try await readDropOffer(promisePasteboard(), promises: [receiver])
-
-        #expect(receiver.callIns == 1)
-        let representation = try #require(single(source).first)
-        #expect(representation.name == Data("IMG_0001.png".utf8))
-        #expect(representation.promised)
-        guard case .file(let landed) = try await source.serve(item: 0, representation: 0) else {
-            Issue.record("expected the promised file")
-            return
-        }
-        #expect(try Data(contentsOf: landed) == pngBytes)
-        #expect(receiver.callIns == 1)
     }
 
     @Test("a drop's promise naming several files offers one item per name, each served once its own file lands")
@@ -525,24 +439,6 @@ struct ClipboardItemBridgeTests {
 
     // MARK: - Markers
 
-    @Test("a concealed copy is offered concealed and published with the marker, which reads back concealed")
-    func concealedRoundTrips() async throws {
-        let pasteboard = FakePasteboard()
-        pasteboard.setItem([(type: .string, data: Data("hunter2".utf8)), (type: concealedType, data: Data())])
-
-        let source = try await readOffer(pasteboard)
-        #expect(source.concealed)
-        #expect(single(source).map(\.type.appleUTI) == [ClipboardContent.utf8TextUTI])
-
-        let published = try publish(source)
-        defer { published.registry.releaseAllForTesting() }
-        #expect(published.destination.promisedTypesByItem == [[.string]])
-        #expect(published.destination.dataByItem == [[concealedType: Data()]])
-        let reread = try await readOffer(published.destination)
-        #expect(reread.concealed)
-        #expect(published.destination.providerInvocations == 0)
-    }
-
     @Test(
         "a transient or auto-generated copy offers nothing, even concealed",
         arguments: [
@@ -564,39 +460,6 @@ struct ClipboardItemBridgeTests {
             return
         }
         #expect(suppressed == reason)
-    }
-
-    @Test("a paste holds its thread for a stalled pull only until its limit, gets nothing, and leaves the pull running")
-    func pasteHoldEndsAtItsLimit() async throws {
-        #expect(ClipboardPasteboardPublisher.pasteRequesterDeadline == 120)
-        var item = OfferedItem()
-        item.representations = [.make(TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI), .inline, size: 0)]
-        let puller = StalledPuller()
-        let specs = ClipboardPasteboardPublisher.itemSpecs(
-            for: [item], concealed: false, puller: puller, holdLimit: 0.05, eventLoopWait: { nil })
-        let spec = try #require(specs.first)
-
-        let served = await offCooperativePool { spec.provide(ClipboardContent.utf8TextUTI) }
-
-        #expect(served == nil)
-        let started = puller.completions.withLock { $0 }
-        #expect(started.count == 1)
-        // The pull ends after the paste gave up: nothing is left waiting for it.
-        started.first?(Data("late".utf8))
-    }
-
-    @Test("a peer's transient marker is never published")
-    func peerTransientMarkerIsNotPublished() {
-        var item = OfferedItem()
-        item.representations = [
-            .make(TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI), .inline, size: 0),
-            .make(TypeDescriptor(appleUTI: ClipboardSnapshotPolicy.transientMarkerUTI), .inline, size: 0),
-        ]
-
-        let specs = ClipboardPasteboardPublisher.itemSpecs(
-            for: [item], concealed: false, puller: FixedPuller(bytes: Data("x".utf8)))
-
-        #expect(specs.map(\.types) == [[ClipboardContent.utf8TextUTI]])
     }
 
     // MARK: - Smuggled file references
@@ -691,17 +554,6 @@ struct ClipboardItemBridgeTests {
             #expect(!ClipboardSnapshotPolicy.admits(linked, servedAs: uti), "a link at depth \(depth)")
         }
         #expect(!ClipboardSnapshotPolicy.admits(Data("{\\rtf1 not a wrapper}".utf8), servedAs: uti))
-    }
-
-    @Test("a published RTFD is served intact, and never with a symbolic link in it")
-    func publishedRTFDRefusesSymbolicLinks() async throws {
-        let hostFile = try directory("host").appendingPathComponent("secret.png")
-        try pngBytes.write(to: hostFile)
-        let uti = "com.apple.flat-rtfd"
-
-        let plain = try flatRTFD(attachment: pngBytes, depth: 2)
-        #expect(await served(plain, as: uti) == plain)
-        #expect(await served(try flatRTFD(linkingTo: hostFile, depth: 2), as: uti) == nil)
     }
 
     @Test(

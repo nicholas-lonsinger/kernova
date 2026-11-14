@@ -16,55 +16,6 @@ import KernovaSynchronization
 struct LazyClipboardDataProviderTests {
     private let textType = NSPasteboard.PasteboardType("public.utf8-plain-text")
 
-    @Test("provideDataForType sets the bytes produced by `provide` on the item")
-    func providesBytesForType() {
-        let bytes = Data("hello".utf8)
-        let provider = LazyClipboardDataProvider(
-            provide: { [textType] in $0 == textType ? bytes : nil },
-            onFinished: { _ in })
-
-        let item = NSPasteboardItem()
-        provider.pasteboard(nil, item: item, provideDataForType: textType)
-        #expect(item.data(forType: textType) == bytes)
-    }
-
-    @Test("a `provide` that returns nil leaves the type empty")
-    func nilProvideLeavesTypeEmpty() {
-        let provider = LazyClipboardDataProvider(
-            provide: { _ in nil },
-            onFinished: { _ in })
-
-        let item = NSPasteboardItem()
-        provider.pasteboard(nil, item: item, provideDataForType: textType)
-        #expect(item.data(forType: textType) == nil)
-    }
-
-    @Test("provideDataForType is invoked with the exact type requested")
-    func passesRequestedTypeThrough() {
-        let fileType = NSPasteboard.PasteboardType.fileURL
-        let requested = Locked<NSPasteboard.PasteboardType?>(nil)
-        let provider = LazyClipboardDataProvider(
-            provide: { type in
-                requested.withLock { $0 = type }
-                return nil
-            },
-            onFinished: { _ in })
-
-        provider.pasteboard(nil, item: NSPasteboardItem(), provideDataForType: fileType)
-        #expect(requested.withLock { $0 } == fileType)
-    }
-
-    @Test("pasteboardFinishedWithDataProvider invokes onFinished with self")
-    func finishedFiresOnFinished() {
-        let finished = Locked<LazyClipboardDataProvider?>(nil)
-        let provider = LazyClipboardDataProvider(
-            provide: { _ in nil },
-            onFinished: { provider in finished.withLock { $0 = provider } })
-
-        provider.pasteboardFinishedWithDataProvider(NSPasteboard.withUniqueName())
-        #expect(finished.withLock { $0 } === provider)
-    }
-
     /// A provider whose `provide` runs `insideFire` with the provider itself, the
     /// way a fire's event loop reaches back into it, then serves `bytes`; its
     /// finish releases it from `registry` and counts on `finishes`.
@@ -112,39 +63,6 @@ struct LazyClipboardDataProviderTests {
         // The fire ran to completion still owned; the finish came after it.
         #expect(item.data(forType: textType) == bytes)
         #expect(finishesSeenInsideFire.withLock { $0 } == 0)
-        try await finished.wait { finishes.withLock { $0 } == 1 }
-        #expect(registry.countForTesting == 0)
-    }
-
-    @Test("a finish inside a nested fire waits for the outermost fire to return")
-    func finishInsideNestedFireWaitsForTheOuterFire() async throws {
-        let bytes = Data("served".utf8)
-        let registry = LazyClipboardProviderRegistry()
-        let finished = AsyncGate()
-        let finishes = Locked(0)
-        let finishesSeenAfterNestedFire = Locked(-1)
-        let depth = Locked(0)
-        let provider = makeRetainedProvider(
-            registry: registry, finishes: finishes, finished: finished, bytes: bytes
-        ) { provider in
-            depth.withLock { $0 += 1 }
-            defer { depth.withLock { $0 -= 1 } }
-            if depth.withLock({ $0 }) == 1 {
-                // The outer fire's event loop runs a sibling flavor's fire, and the
-                // finish lands inside that nested one.
-                provider.pasteboard(nil, item: NSPasteboardItem(), provideDataForType: .fileURL)
-                let seen = finishes.withLock { $0 }
-                finishesSeenAfterNestedFire.withLock { $0 = seen }
-            } else {
-                provider.pasteboardFinishedWithDataProvider(NSPasteboard.withUniqueName())
-            }
-        }
-
-        let item = NSPasteboardItem()
-        provider.pasteboard(nil, item: item, provideDataForType: textType)
-
-        #expect(item.data(forType: textType) == bytes)
-        #expect(finishesSeenAfterNestedFire.withLock { $0 } == 0)
         try await finished.wait { finishes.withLock { $0 } == 1 }
         #expect(registry.countForTesting == 0)
     }

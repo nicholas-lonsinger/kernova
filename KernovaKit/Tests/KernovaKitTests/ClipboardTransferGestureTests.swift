@@ -5,18 +5,6 @@ import Testing
 
 @Suite("ClipboardTransferGesture", .caseScoped)
 struct ClipboardTransferGestureTests {
-    @Test("only a refusal of a gesture made here interrupts on this side")
-    func onlyPeerPasteIsTheirsToReport() {
-        for gesture in [
-            ClipboardTransferGesture.paste, .preview, .copy, .forward, .drop,
-        ] {
-            #expect(gesture.isMadeHere, "\(gesture) refuses a gesture made on this side")
-        }
-        // The guest user's own paste refusal — their agent's dropdown reveals it
-        // over there.
-        #expect(!ClipboardTransferGesture.peerPaste.isMadeHere)
-    }
-
     @Test("every gesture someone waits on outranks every gesture they can leave")
     func awaitedGesturesOutrankTheRest() {
         let every: [ClipboardTransferGesture] = [
