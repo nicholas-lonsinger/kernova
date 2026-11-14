@@ -688,6 +688,15 @@ struct CLIRenderingTests {
 
     // MARK: - JSON
 
+    @Test("JSON keys are sorted, so two runs diff by content")
+    func jsonKeysAreStable() throws {
+        let rendered = try JSONRenderer.render([alpha])
+        let keys = ["\"id\"", "\"name\"", "\"status\""]
+        let positions = keys.compactMap { rendered.range(of: $0)?.lowerBound }
+        #expect(positions.count == keys.count)
+        #expect(positions == positions.sorted())
+    }
+
     @Test("A guest address's JSON names its state, and only an observed one carries an address")
     func addressJSONNamesItsState() throws {
         let expected: [(GuestIPAddress, [String: String])] = [
