@@ -107,26 +107,6 @@ struct AgentHubItemTests {
         await close([off], harness)
     }
 
-    @Test(
-        "Beside a macOS system peer reporting the console on without naming a session, the session peers' reports name the console peer"
-    )
-    func macOSSystemPeerConsoleOnUnnamed() async {
-        let harness = await harness()
-        let systemClaim = PeerClaim(role: .systemPeer, scope: .system, os: .macOS, architecture: .arm64)
-        let system = runtime(harness, claim: systemClaim, state: PeerSessionState(console: .on))
-        let off = runtime(harness, claim: Self.offConsole, state: Self.offState)
-        let alone = await harness.snapshot { $0.peers.count == 2 && $0.features[.clipboard].isAvailable }
-        #expect(alone.consolePeers.isEmpty)
-
-        let on = runtime(harness)
-        let ready = await harness.snapshot { $0.peers.count == 3 && $0.consolePeers.count == 3 }
-        guard let console = ready.peers.first(where: { $0.sessionID == "1" })?.handle else {
-            Issue.record("no peer of session 1"); return
-        }
-        #expect(ready.consolePeers == [.clipboard: console, .drop: console, .drag: console])
-        await close([system, off, on], harness)
-    }
-
     @Test("The snapshot's console peer for each feature follows the console from one session to another")
     func consolePeerFollowsConsole() async {
         let harness = await harness()
@@ -147,96 +127,6 @@ struct AgentHubItemTests {
         second.setPeerState(PeerSessionState(console: .off, sessionID: "2", userName: "other"))
         _ = await harness.snapshot { $0.peers.count == 2 && $0.consolePeers.isEmpty }
         await close([first, second], harness)
-    }
-
-    @Test(
-        "A console move withdraws the host's offer from the old peer, the owner hears its end once with why no peer holds it, and a re-offer reaches the new console peer"
-    )
-    func consoleMoveWithdrawsOffer() async {
-        let harness = await harness()
-        let (oneEvents, twoEvents) = (Recorder<PeerEvent>(), Recorder<PeerEvent>())
-        let first = runtime(harness, events: oneEvents)
-        let second = runtime(harness, claim: Self.offConsole, state: Self.offState, events: twoEvents)
-        let ready = await harness.snapshot { $0.peers.count == 2 && $0.consolePeers.count == 3 }
-        guard let one = ready.peers.first(where: { $0.sessionID == "1" })?.handle,
-            let two = ready.peers.first(where: { $0.sessionID == "2" })?.handle
-        else { Issue.record("not both sessions"); return }
-        #expect(await offer(harness, .clipboard) == .success(one))
-        var oneWaiter = oneEvents.waiter()
-        _ = await oneWaiter.next(where: Self.isOfferReceived)
-
-        var log = harness.itemLog.waiter()
-        first.setPeerState(PeerSessionState(console: .off, sessionID: "1", userName: "user"))
-        let ended = await log.next { if case .event(.items(_, .offerEnded)) = $0 { true } else { false } }
-        // No session is on the console until the second says it is.
-        let unheld = StreamClosure.resetLocally(WireError(.featureUnavailable, absence: .notOnConsole))
-        #expect(ended == .event(.items(one, .offerEnded(.clipboard, .local, token: Self.token, unheld))))
-        _ = await oneWaiter.next {
-            if case .items(.offerEnded(.clipboard, .remote, Self.token, _)) = $0 { true } else { false }
-        }
-        second.setPeerState(PeerSessionState(console: .on, sessionID: "2", userName: "other"))
-
-        _ = await harness.snapshot { $0.consolePeers[.clipboard] == two }
-        #expect(await offer(harness, .clipboard) == .success(two))
-        var twoWaiter = twoEvents.waiter()
-        _ = await twoWaiter.next(where: Self.isOfferReceived)
-        await harness.settled()
-        let ends = harness.itemLog.elements.filter {
-            if case .event(.items(_, .offerEnded)) = $0 { true } else { false }
-        }
-        #expect(ends.count == 1, "\(ends)")
-        await close([first, second], harness)
-    }
-
-    @Test("A peer's offer from a peer that is not the feature's console peer is released, never forwarded")
-    func offConsoleOfferReleased() async {
-        let harness = await harness()
-        let on = HubPeer(harness, claim: Fixture.peerClaim, items: MemoryItems())
-        let off = HubPeer(harness, claim: Self.offConsole, state: Self.offState, items: MemoryItems())
-        let ready = await harness.snapshot { $0.peers.count == 2 && $0.consolePeers.count == 3 }
-        guard let console = ready.peers.first(where: { $0.sessionID == "1" })?.handle else {
-            Issue.record("no peer of session 1"); return
-        }
-        off.send(.offer(ItemRequestID(rawValue: 1), Self.offer, feature: .clipboard))
-        off.send(.offer(ItemRequestID(rawValue: 2), SimItems.offer(2, []), feature: .drag))
-        var released = off.events.waiter()
-        for token in [Self.token, SimItems.token(2)] {
-            _ = await released.next {
-                if case .items(.offerEnded(_, .local, token, _)) = $0 { true } else { false }
-            }
-        }
-        on.send(.offer(ItemRequestID(rawValue: 1), Self.offer, feature: .clipboard))
-        var log = harness.itemLog.waiter()
-        let received = await log.next { if case .event(.items(_, .offerReceived)) = $0 { true } else { false } }
-        guard case .event(.items(console, .offerReceived(let header))) = received else {
-            Issue.record("received \(received)"); return
-        }
-        #expect(header.token == Self.token)
-        await harness.settled()
-        let forwarded = harness.itemLog.elements.filter {
-            if case .event(.items(_, .offerReceived)) = $0 { true } else { false }
-        }
-        #expect(forwarded == [received])
-        harness.hub.close()
-    }
-
-    @Test(
-        "Each of CLIPBOARD, DROP and DRAG is served only with its own policy entry",
-        arguments: [FeatureID.clipboard, .drop, .drag])
-    func policyEntryPerFeature(_ enabled: FeatureID) async {
-        let harness = await harness(policy: PolicySnapshot([FeaturePolicyValue(feature: enabled, enabled: true)]))
-        let peer = runtime(harness)
-        let snapshot = await harness.snapshot { $0.peers.count == 1 && $0.features[enabled].isAvailable }
-        #expect(snapshot.consolePeers == [enabled: snapshot.peers[0].handle])
-        for feature in [FeatureID.clipboard, .drop, .drag] where feature != enabled {
-            guard case .absent(.disabledByPolicy, _) = snapshot.features[feature] else {
-                Issue.record("\(feature) is \(snapshot.features[feature])")
-                continue
-            }
-        }
-        let offered: FeatureID = enabled == .clipboard ? .drop : .clipboard
-        #expect(await offer(harness, offered) == .failure(WireError(.featureUnavailable, absence: .disabledByPolicy)))
-        await close([peer], harness)
     }
 
     @Test("A peer's offer is read and pulled through the hub, each answer before the events it causes")

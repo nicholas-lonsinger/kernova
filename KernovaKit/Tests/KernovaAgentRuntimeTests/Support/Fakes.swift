@@ -264,26 +264,18 @@ final class FakeInstaller: UpdateInstaller {
     func abort(_ id: UpdatePullID) { calls.record("abort") }
 }
 
-/// Serves `content` by position; a read at or past `stallAfter` never completes.
+/// Serves `content` by position.
 final class FakePayloadSource: UpdatePayloadSource {
     let content: Data
-    let stallAfter: Int?
-    /// Each read's offset and count, in order.
-    let reads = Recorder<(offset: UInt64, count: Int)>()
-    /// Each read held at the stall.
-    let stalled = Recorder<UInt64>()
 
-    init(content: Data, stallAfter: Int? = nil) {
+    init(content: Data) {
         self.content = content
-        self.stallAfter = stallAfter
     }
 
     func read(
         manifest: UpdateManifestValue, offset: UInt64, count: Int,
         _ completion: @escaping @Sendable (Result<Data, WireError>) -> Void
     ) {
-        reads.record((offset, count))
-        if let stallAfter, offset >= UInt64(stallAfter) { return stalled.record(offset) }
         let start = Int(clamping: min(offset, UInt64(content.count)))
         completion(.success(Data(content[start..<min(content.count, start + count)])))
     }

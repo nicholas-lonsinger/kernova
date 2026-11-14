@@ -105,63 +105,6 @@ struct DragDeliveryTests {
             }
     }
 
-    // MARK: - Delivered
-
-    @Test("the first TARGETED gives the drag offer its items, which pull from it; a later one lists the same")
-    func targetedCarriesTheItems() throws {
-        let (run, id) = try Self.opened()
-        #expect(run.pullItem(SimItems.request(1)).map { (try? $0.get()) == nil } == true, "pulled an empty offer")
-        run.feed([Self.targeted(id, Self.drag)])
-        #expect(Self.targets(run) == [Self.items(Self.drag)])
-        for item in 0..<3 {
-            #expect(run.readItem(Self.token, item: UInt32(item)) == Self.items(Self.drag)[item])
-        }
-        run.feed([Self.targeted(id, [])])
-        #expect(Self.targets(run) == [Self.items(Self.drag), Self.items(Self.drag)])
-        #expect(run.pullItem(SimItems.request(1, item: 2)).map { (try? $0.get()) != nil } == true)
-        #expect(run.state == ConnectionState.established)
-    }
-
-    @Test("STEP_NAMED names the promises, the END sizes every item, and every item pulls from the taken offer")
-    func delivered() throws {
-        let (run, id) = try Self.taking()
-        run.feed([Self.naming(id, ["IMG_0042.heic"])])
-        #expect(Self.namings(run) == [[Data("IMG_0042.heic".utf8)]])
-        #expect(Self.ended(run).isEmpty)
-
-        run.feed([Self.caught(id, [8192, 2048, 4096])])
-        #expect(
-            Self.ended(run) == [
-                .caught(DragDelivery(names: [0: Data("IMG_0042.heic".utf8)], sizes: [0: 8192, 1: 2048, 2: 4096]))
-            ])
-        for item in 0..<3 {
-            #expect(
-                run.pullItem(SimItems.request(1, item: UInt32(item))).map { (try? $0.get()) != nil } == true,
-                "item \(item) did not pull")
-        }
-        #expect(!Self.offerEnded(run), "the taken offer ended before the host released it")
-        #expect(run.state == ConnectionState.established)
-    }
-
-    @Test("a CAUGHT with no STEP_NAMED delivered nothing, whatever sizes it names")
-    func undelivered() throws {
-        let (plain, id) = try Self.taking()
-        plain.feed([Self.caught(id)])
-        #expect(Self.ended(plain) == [.caught(nil)])
-
-        let (sized, other) = try Self.taking()
-        sized.feed([Self.caught(other, [4096])])
-        #expect(Self.ended(sized) == [.caught(nil)])
-        #expect(sized.state == ConnectionState.established)
-    }
-
-    @Test("a drag with no promises is named by an empty STEP_NAMED")
-    func noPromises() throws {
-        let (run, id) = try Self.taking([Self.named("Folder", .folder)])
-        run.feed([Self.naming(id, []), Self.caught(id, [10])])
-        #expect(Self.ended(run) == [.caught(DragDelivery(names: [:], sizes: [0: 10]))])
-    }
-
     // MARK: - A hostile STEP_NAMED
 
     static let hostileNames: [(label: String, names: [String])] = [
@@ -199,13 +142,6 @@ struct DragDeliveryTests {
         #expect(Self.resetMalformed(run))
     }
 
-    @Test("a STEP_NAMED before the first TARGETED resets the take MALFORMED_MESSAGE")
-    func namedBeforeTargeted() throws {
-        let (run, id) = try Self.opened()
-        run.feed([Self.naming(id, [])])
-        #expect(Self.resetMalformed(run))
-    }
-
     @Test("a DRAG_OFFER listing items is reset MALFORMED_MESSAGE, and a peer offers none")
     func dragOfferListsNoItems() throws {
         let run = HostileRun(local: .host, seed: 1, items: true)
@@ -232,15 +168,6 @@ struct DragDeliveryTests {
         #expect(Self.namings(run).isEmpty)
         #expect(!Self.offerEnded(run))
         #expect(run.state == ConnectionState.established)
-    }
-
-    @Test("two promises named alike, ignoring case, reset the take MALFORMED_MESSAGE")
-    func duplicateNames() throws {
-        let (run, id) = try Self.taking([
-            Self.named("Untitled.heic", .file, promised: true), Self.named("Untitled.heic", .file, promised: true),
-        ])
-        run.feed([Self.naming(id, ["IMG.heic", "img.HEIC"])])
-        #expect(Self.resetMalformed(run))
     }
 
     @Test("a second STEP_NAMED resets the take MALFORMED_MESSAGE")

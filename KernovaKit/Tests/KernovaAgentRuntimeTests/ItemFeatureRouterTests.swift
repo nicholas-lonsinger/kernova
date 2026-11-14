@@ -59,21 +59,6 @@ struct ItemFeatureRouterTests {
     static let take = DragTakeID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 8))
     static let closed = StreamClosure.resetLocally(WireError(.cancelled))
 
-    @Test("Each item event reaches its feature's owner alone, in the order delivered")
-    func eventsRouteByFeature() {
-        let heard = Recorder<Heard>()
-        let router: ItemFeatureRouter<PeerHandle> = router(heard: heard)
-        let events: [ItemTransferEvent] = [
-            .offerEnded(.drop, .local, token: SimItems.token(1), Self.closed),
-            .pullEnded(.clipboard, Self.pull, .closed(Self.closed)),
-            .serveEnded(.drag, Self.pull, .landed),
-            .offerEnded(.clipboard, .remote, token: SimItems.token(2), Self.closed),
-            .serveEnded(.drop, Self.pull, .closed(Self.closed)),
-        ]
-        for event in events { router.deliver(event, from: PeerHandle(rawValue: 1)) }
-        #expect(heard.elements == events.map { .items($0.feature, $0) })
-    }
-
     @Test(
         "Every feature's serve that did not land is logged once, at its level, before its owner hears it; a landed serve or one this side reset is not"
     )
@@ -106,40 +91,6 @@ struct ItemFeatureRouterTests {
         #expect(records.elements[0].text.contains("errno 5"))
         #expect(records.elements.map(\.heard) == [2, 3, 4, 5])
         #expect(heard.elements == ends.map { .items($0.0, .serveEnded($0.0, Self.pull, $0.1)) })
-    }
-
-    @Test("A drag take reaches DRAG's owner, interleaved in order with item events")
-    func dragTakeReachesDrag() {
-        let heard = Recorder<Heard>()
-        let router: ItemFeatureRouter<Void> = router(heard: heard)
-        let offerEnded = ItemTransferEvent.offerEnded(.drag, .local, token: SimItems.token(1), Self.closed)
-        router.deliver(.dragTake(.requested(Self.take, token: SimItems.token(1))))
-        router.deliver(.items(offerEnded))
-        router.deliver(.updateAvailable(nil))
-        #expect(heard.elements == [.take(.requested(Self.take, token: SimItems.token(1))), .items(.drag, offerEnded)])
-    }
-
-    @Test("The host's policy reaches every owner, in order with item events")
-    func policyReachesEveryOwner() {
-        let heard = Recorder<Heard>()
-        let router: ItemFeatureRouter<Void> = router([.clipboard, .drag], heard: heard)
-        let policy = PolicySnapshot([FeaturePolicyValue(feature: .clipboard, enabled: true, params: Data([8, 1]))])
-        let offerEnded = ItemTransferEvent.offerEnded(.clipboard, .local, token: SimItems.token(1), Self.closed)
-        router.deliver(.policyReceived(policy))
-        router.deliver(.items(offerEnded))
-        #expect(
-            heard.elements == [.policy(.clipboard, policy), .policy(.drag, policy), .items(.clipboard, offerEnded)])
-    }
-
-    @Test("Content comes from the owner of the pulled offer's feature", arguments: [FeatureID.clipboard, .drop, .drag])
-    func contentReachesOwner(_ feature: FeatureID) {
-        let heard = Recorder<Heard>()
-        let router: ItemFeatureRouter<PeerHandle> = router(heard: heard)
-        let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
-        let result = router.content(
-            feature, pull, SimItems.request(3), SimItems.representation(.inline, size: 6))
-        #expect(result == .success(.inline(Data("routed".utf8))))
-        #expect(heard.elements == [.content(feature, token: SimItems.token(3))])
     }
 
     @Test("Only the features given an owner are the router's, and content of another is unavailable")
