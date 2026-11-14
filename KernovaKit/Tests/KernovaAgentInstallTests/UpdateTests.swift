@@ -316,6 +316,26 @@ struct SlotUpdateInstallerTests {
         #expect(state.active == "b")
     }
 
+    @Test("A version the switch did not make current drops the switch as it starts, and confirms nothing")
+    func confirmsOnlyItsOwnSwitch() throws {
+        let fixture = try SlotFixture()
+        try Self.switchToB(fixture)
+        // Slot a running again with the switch still pending can only be a crash before current moved: the
+        // switch never took effect, and starting drops it.
+        try FileManager.default.removeItem(atPath: fixture.root + "/current")
+        try FileManager.default.createSymbolicLink(atPath: fixture.root + "/current", withDestinationPath: "slots/a")
+        let old = try InstallerRun(fixture, running: "a")
+        #expect(try old.reports.next() == Payloads.available())
+        old.installer.confirm()
+        old.installer.recordRejected(Data(repeating: 1, count: 32))
+        _ = try old.reports.next()
+        #expect(!fixture.exists("switch-pending"))
+        let state = try fixture.state()
+        #expect(state.pendingSwitch == nil)
+        #expect(state.active == "a")
+        #expect(state.rejected?.payloadSHA256 == lowercaseHex(Data(repeating: 1, count: 32)))
+    }
+
     /// Switches the fixture to slot b through the installer, as the running version a does.
     static func switchToB(_ fixture: SlotFixture) throws {
         let run = try InstallerRun(fixture)

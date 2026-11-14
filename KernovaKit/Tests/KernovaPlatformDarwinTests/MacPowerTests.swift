@@ -215,6 +215,34 @@ struct MacPowerTests {
         #expect(calls.withLock { $0 } == 0)
     }
 
+    @Test(
+        "A request the peer does not offer — a restart either way, or the session peer's shutdown without waiting for apps — is refused POWER_ACTION_UNSUPPORTED without a call",
+        arguments: [
+            (PowerAction.shutdown, true, true), (.restart, true, true), (.restart, true, false),
+            (.restart, false, true), (.restart, false, false),
+        ])
+    func unofferedRefused(action: PowerAction, sessionPeer: Bool, ignoringApps: Bool) {
+        let sent = Locked(0)
+        let ran = Locked(0)
+        let mechanism: MacPowerMechanism =
+            sessionPeer
+            ? .loginWindow(send: { _ in
+                sent.withLock { $0 += 1 }
+                return noErr
+            })
+            : .shutdownCommand(run: { _ in
+                ran.withLock { $0 += 1 }
+                return 0
+            })
+        let harness = Harness(mechanism, console: .on)
+        _ = harness.take()
+
+        harness.adapter.perform(Self.id, action, ignoringApps: ignoringApps)
+        #expect(harness.take() == [.refused(Self.id, WireError(.powerActionUnsupported))])
+        #expect(sent.withLock { $0 } == 0)
+        #expect(ran.withLock { $0 } == 0)
+    }
+
     @Test("A cancel while the call is blocked lets the request go unconfirmed, and its late answer reports nothing")
     func cancelWhileCalling() {
         let calling = DispatchSemaphore(value: 0)

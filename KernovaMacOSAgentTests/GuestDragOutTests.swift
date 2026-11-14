@@ -182,6 +182,19 @@ struct GuestDragOutTests {
         #expect(rig.peer.events == [.offered(token: first), .withdrew(token: first), .offered(token: second)])
     }
 
+    @Test("a drag whose items change keeps its one offer, whether or not the change count moves")
+    func aChangingDragKeepsItsOffer() throws {
+        let rig = Rig()
+        rig.pressAndDrag([fileItem(try file("first.txt"))])
+
+        rig.input.drag([fileItem(try file("second.txt"))])
+        rig.input.fireTick()
+        rig.input.fill([fileItem(try file("second.txt")), fileItem(try file("third.txt"))])
+        rig.input.fireTick()
+
+        #expect(rig.peer.events == [.offered(token: try rig.token())])
+    }
+
     // MARK: - The baseline
 
     @Test("what was already on the drag pasteboard when watching started is not a drag")
@@ -297,6 +310,18 @@ struct GuestDragOutTests {
         #expect(rig.surface.showCount == 0)
     }
 
+    @Test("no screen to cover refuses the take")
+    func noScreenRefusesTheTake() throws {
+        let rig = Rig()
+        rig.surface.hasScreen = false
+        rig.pressAndDrag([fileItem(try file("dragged.txt"))])
+
+        let id = try rig.take(1)
+
+        #expect(rig.peer.answers(to: id) == [.refused(.dragNotCurrent)])
+        #expect(!rig.surface.isShown)
+    }
+
     // MARK: - What a take carries
 
     @Test(
@@ -331,6 +356,23 @@ struct GuestDragOutTests {
         #expect(rig.catcher.draggingUpdated(GuestDragCatcher.Drag(sourceMask: .copy, items: entered)) == .copy)
         #expect(rig.peer.offers.count == 1)
         #expect(!rig.peer.events.contains(.withdrew(token: try rig.token())))
+    }
+
+    @Test("items that cannot go out are answered no operation, refusing the take DRAG_NOT_CURRENT")
+    func itemsThatCannotGoOutAreRefused() throws {
+        // The root's URL names no file a drop could land under.
+        let urls = [try file("plain.txt"), URL(fileURLWithPath: "/")]
+        let rig = Rig()
+        rig.pressAndDrag(urls.map(fileItem))
+        let id = try rig.take(1)
+
+        #expect(rig.enter(items(urls)) == [])
+
+        #expect(rig.peer.answers(to: id) == [.armed, .refused(.dragNotCurrent)])
+        #expect(!rig.surface.isShown)
+        #expect(
+            failureCode(rig.dragOut.served.content(request(try rig.token(), item: 0))) == .itemRepresentationUnavailable
+        )
     }
 
     // MARK: - The catcher's steps
@@ -824,6 +866,32 @@ struct GuestDragOutTests {
             failureCode(rig.dragOut.served.content(request(token, item: 1))) == .itemRepresentationUnavailable)
         await rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
         #expect(!exists(folder))
+    }
+
+    @Test(
+        "a drop calls each promise in when its first promise offers no promised file URL or its paste location is refused",
+        arguments: [false, true])
+    func aDropWithoutTheWholeDropCallsEachPromiseIn(offersWholeDrop: Bool) throws {
+        let photo = FakePromiseReceiver(names: ["IMG_0001.HEIC"])
+        let (rig, items) = try promiseRig(["public.heic"], receivers: [photo])
+        try rig.take(1)
+        let fallback = FakeGuestDragDrop(
+            items, offering: offersWholeDrop ? [1] : [], takesLocation: false, receivers: [photo])
+
+        drop(rig, items, drop: fallback)
+
+        let folder = try #require(photo.destination)
+        #expect(folder.deletingLastPathComponent().path == rig.promiseFolders.path)
+        #expect(
+            fallback.calls
+                == (offersWholeDrop
+                    ? [.items, .offers(item: 1), .setPasteLocation(folder), .receivers]
+                    : [.items, .offers(item: 1), .receivers]))
+        #expect(rig.input.watchedFolder == nil)
+        #expect(
+            Array(rig.peer.answers(to: takeID(1)).suffix(2)) == [
+                .named(["IMG_0001.HEIC"]), .caught(sizes: [5, 0]),
+            ])
     }
 
     // MARK: - What the host's pulls are served from

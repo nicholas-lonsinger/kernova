@@ -412,6 +412,22 @@ struct GuestClipboardTests {
         #expect(rig.clipboard.exchange.localSource == nil)
     }
 
+    @Test("A host clipboard offer of no items is refused: released, and the guest's clipboard left as it is")
+    func hostOfferOfNoItemsIsRefused() async throws {
+        let rig = rig()
+        let link = RecordingLink()
+        openGate(rig, link)
+        copy("copied in the guest", rig)
+        try await link.changed.wait { link.offers.count == 1 }
+
+        rig.clipboard.exchange.handle(
+            .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: false, count: 0)),
+            on: link)
+        try await link.changed.wait { link.releases == [Self.hostToken] }
+        #expect(link.withdrawals.isEmpty)
+        #expect(rig.pasteboard.items.first?.data(forType: .string) == Data("copied in the guest".utf8))
+    }
+
     @Test("A copy that offers nothing withdraws the guest's offer")
     func emptyCopyWithdraws() async throws {
         let rig = rig()
@@ -612,6 +628,22 @@ struct GuestClipboardTests {
         await drainMainQueue()
         #expect(FileManager.default.fileExists(atPath: url.path))
         #expect(try Data(contentsOf: url) == Data("png".utf8))
+    }
+
+    @Test("A host copy of only references to what the guest's clipboard still holds changes nothing, said held already")
+    func hostCopyOfStandingReferencesIsHeld() async throws {
+        let rig = rig()
+        let file = try guestFile()
+        rig.clipboard.setOnConsole(true)
+        let first = RecordingLink()
+        rig.clipboard.setLink(first)
+        let guestCopy = try await sendFileCopy(file, rig, first)
+        let before = rig.pasteboard.changeCount
+        let link = RecordingLink(items: [Self.referenceItem(to: guestCopy.token)])
+        rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.copyToken, count: 1)), on: link)
+        try await link.changed.wait { !link.refusals.isEmpty }
+        #expect(link.refusals.map(\.code) == [.clipboardAlreadyHeld])
+        #expect(rig.pasteboard.changeCount == before)
     }
 
     @Test("A host copy's reference the guest can no longer fill is left out, and the host told so")
@@ -857,6 +889,22 @@ struct GuestClipboardTests {
             rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
                 == Data("from the host".utf8))
         #expect(rig.pasteboard.promisedTypes.isEmpty)
+    }
+
+    @Test("A host copy of only files over the paste ceiling is not written: refused too large")
+    func hostCopyOfOversizeFilesAlone() async throws {
+        let rig = rig()
+        var file = Self.textAndFileItem(fileSize: 3 << 30)
+        file.representations.removeFirst()
+        let link = RecordingLink(items: [file])
+        rig.clipboard.setLink(link)
+        #expect(rig.pasteboard.setString("the guest's", forType: .string))
+        let before = rig.pasteboard.changeCount
+
+        rig.clipboard.exchange.handle(.offerReceived(Self.copyHeader(token: Self.copyToken, count: 1)), on: link)
+        try await link.changed.wait { !link.refusals.isEmpty }
+        #expect(link.refusals.map(\.code) == [.tooLarge])
+        #expect(rig.pasteboard.changeCount == before)
     }
 
     /// Lands `text` as the INLINE pull `index` of `link` opened.

@@ -161,7 +161,8 @@ final class FakeGuestDragInput: GuestDragInput {
 }
 
 /// A delivering drop's promises: whether its first promised item offers the
-/// whole-drop exchange, recording every call.
+/// whole-drop exchange and whether its paste location is taken, recording
+/// every call.
 @MainActor
 final class FakeGuestDragDrop: GuestDragDrop {
     enum Call: Equatable {
@@ -174,6 +175,8 @@ final class FakeGuestDragDrop: GuestDragDrop {
 
     /// The items that offer their promised file URL, by index in drag order.
     var offering: Set<Int>
+    /// Whether the paste location is taken.
+    var takesLocation: Bool
     /// The source writing the whole drop at the paste location, once asked.
     var onRequest: ((URL) -> Void)?
     private let promises: [FakePromiseReceiver]
@@ -183,10 +186,12 @@ final class FakeGuestDragDrop: GuestDragDrop {
     private var location: URL?
 
     init(
-        _ dropped: [GuestDragItem]?, offering: Set<Int> = [], receivers: [FakePromiseReceiver] = []
+        _ dropped: [GuestDragItem]?, offering: Set<Int> = [], takesLocation: Bool = true,
+        receivers: [FakePromiseReceiver] = []
     ) {
         self.dropped = dropped
         self.offering = offering
+        self.takesLocation = takesLocation
         promises = receivers
     }
 
@@ -202,8 +207,8 @@ final class FakeGuestDragDrop: GuestDragDrop {
 
     func setPasteLocation(_ folder: URL) -> Bool {
         calls.append(.setPasteLocation(folder))
-        location = folder
-        return true
+        if takesLocation { location = folder }
+        return takesLocation
     }
 
     func requestPromisedFileURL(item index: Int) -> Bool {
@@ -226,12 +231,14 @@ final class FakeCatcherSurface: GuestDragCatcherSurface {
     private(set) var showCount = 0
     /// The items the latest showing presented.
     private(set) var shownItems: [GuestDragItem]?
+    /// Whether a screen is there to cover.
+    var hasScreen = true
 
     func show(items: [GuestDragItem]) -> Bool {
         showCount += 1
         shownItems = items
-        isShown = true
-        return true
+        isShown = hasScreen
+        return hasScreen
     }
 
     func hide() {
