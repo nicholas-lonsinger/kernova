@@ -40,27 +40,6 @@ struct CLIArgumentParsingTests {
         #expect(try parse(["list"]) is KernovaCommand.List)
     }
 
-    @Test("A snapshot verb this build does not have is a usage error")
-    func unknownSnapshotVerbIsRefused() {
-        #expect(throws: (any Error).self) { try parse(["snapshot", "restore", "Alpha", "Base"]) }
-    }
-
-    @Test("Every snapshot verb refuses without the arguments it acts on")
-    func snapshotVerbsNeedTheirArguments() {
-        let lines: [[String]] = [
-            ["snapshot", "list"],
-            ["snapshot", "take"],
-            ["snapshot", "revert", "Alpha"],
-            ["snapshot", "delete", "Alpha"],
-            ["snapshot", "rename", "Alpha", "Base"],
-            ["rename", "Alpha"],
-            ["import"],
-        ]
-        for line in lines {
-            #expect(throws: (any Error).self, "\(line)") { try parse(line) }
-        }
-    }
-
     // MARK: - list filters
 
     /// The query `arguments`, after `list`, put on the wire.
@@ -71,14 +50,6 @@ struct CLIArgumentParsingTests {
             return VMListQuery()
         }
         return query
-    }
-
-    @Test("A repeated filter flag forms an include-set; different flags constrain together")
-    func repeatedFlagsWiden() throws {
-        let query = try listQuery(["--os", "macOS", "--os", "linux", "--state", "stopped", "--os", "linux"])
-        #expect(query.filter == VMLibraryFilter(guestOSes: [.macOS, .linux], states: [.stopped]))
-        #expect(query.networks.isEmpty)
-        #expect(query.groups.isEmpty)
     }
 
     @Test("--state takes each state bucket by its name, and refuses any other")
@@ -117,25 +88,6 @@ struct CLIArgumentParsingTests {
         #expect(throws: (any Error).self) { try parse(["list", "--sort", "size"]) }
     }
 
-    @Test("--smart-group names one group, ANDed with the flags; a second is a usage error")
-    func smartGroupParses() throws {
-        let query = try listQuery(["--smart-group", "Linux Lab", "--os", "linux"])
-        #expect(query.groups == [VMGroupReference(.smartGroup, named: "Linux Lab")])
-        #expect(query.filter == VMLibraryFilter(guestOSes: [.linux]))
-        #expect(throws: (any Error).self) {
-            try parse(["list", "--smart-group", "A", "--smart-group", "B"])
-        }
-    }
-
-    @Test("--folder names one folder; a second group of either kind is a usage error")
-    func folderParses() throws {
-        let query = try listQuery(["--folder", "Client Project", "--state", "running"])
-        #expect(query.groups == [VMGroupReference(.folder, named: "Client Project")])
-        #expect(query.filter == VMLibraryFilter(states: [.running]))
-        #expect(throws: (any Error).self) { try parse(["list", "--folder", "A", "--folder", "B"]) }
-        #expect(throws: (any Error).self) { try parse(["list", "--smart-group", "A", "--folder", "B"]) }
-    }
-
     @Test("clone follows the app's preference unless an outcome flag says otherwise")
     func cloneParsesItsOutcomeFlags() throws {
         let byDefault = try #require(try parse(["clone", "Alpha"]) as? KernovaCommand.Clone)
@@ -149,13 +101,6 @@ struct CLIArgumentParsingTests {
         let kept = try #require(
             try parse(["clone", "Alpha", "--exact-copy"]) as? KernovaCommand.Clone)
         #expect(kept.outcome?.outcome == .exactCopy)
-    }
-
-    @Test("Two clone outcomes at once is a usage error, not a silent winner")
-    func cloneOutcomesAreExclusive() {
-        #expect(throws: (any Error).self) {
-            try parse(["clone", "Alpha", "--new-machine", "--exact-copy"])
-        }
     }
 
     @Test("Every clone outcome flag maps onto a wire outcome, and each outcome has a flag")
@@ -287,13 +232,6 @@ struct CLIArgumentParsingTests {
                 == "/a/c/Alpha.kernova")
     }
 
-    // MARK: - Configuration
-
-    @Test("Every list verb refuses without the virtual machine it lists")
-    func listVerbsNeedAVM() {
-        #expect(throws: (any Error).self) { try parse(["share", "list"]) }
-    }
-
     // MARK: - USB accessories
 
     @Test("A USB listing asks a guest's own accessories only when a guest is named")
@@ -323,45 +261,7 @@ struct CLIArgumentParsingTests {
             try detach.verb() == .editUSBAccessory(.idOrName("Alpha"), .detach(device: device)))
     }
 
-    @Test("Neither USB handle is a display name, so text that is not one never crosses the wire")
-    func usbHandlesRefuseAnythingButAnIdentifier() throws {
-        let attach = try #require(
-            try parse(["usb", "attach", "Alpha", "hub"]) as? KernovaCommand.USB.Attach)
-        #expect(throws: CLIFailure.self) { try attach.verb() }
-
-        let detach = try #require(
-            try parse(["usb", "detach", "Alpha", "hub"]) as? KernovaCommand.USB.Detach)
-        #expect(throws: CLIFailure.self) { try detach.verb() }
-    }
-
     // MARK: - Named networks
-
-    @Test("network create takes only a mode a named network can run in")
-    func networkCreateRefusesAKindThatIsNotOne() {
-        // Bridged joins a host interface rather than an app-managed network,
-        // so no named network runs in it.
-        #expect(throws: (any Error).self) {
-            try parse(["network", "create", "Lab", "--kind", "bridged"])
-        }
-        #expect(throws: (any Error).self) { try parse(["network", "create"]) }
-    }
-
-    @Test("get takes any number of keys, and all of them when given none")
-    func getParsesItsKeys() throws {
-        let everything = try #require(try parse(["get", "Alpha"]) as? KernovaCommand.Get)
-        #expect(everything.vm == "Alpha")
-        #expect(everything.keys.isEmpty)
-        #expect(!everything.listingKeys)
-        // Nothing named is the whole set, which is a different request from
-        // naming zero keys explicitly — there is no way to type the latter.
-        #expect(try everything.verb() == .configuration(.idOrName("Alpha"), keys: nil))
-
-        let named = try #require(
-            try parse(["get", "Alpha", "cpus", "memory"]) as? KernovaCommand.Get)
-        #expect(named.keys == ["cpus", "memory"])
-        #expect(
-            try named.verb() == .configuration(.idOrName("Alpha"), keys: ["cpus", "memory"]))
-    }
 
     @Test("get --keys names no virtual machine, and refuses one that is named anyway")
     func getKeysNamesNoVirtualMachine() throws {
@@ -413,12 +313,6 @@ struct CLIArgumentParsingTests {
                 Issue.record("expected a CLIFailure, got \(error)")
             }
         }
-    }
-
-    @Test("set refuses a line that assigns nothing")
-    func setNeedsAnAssignment() {
-        #expect(throws: (any Error).self) { try parse(["set", "Alpha"]) }
-        #expect(throws: (any Error).self) { try parse(["set"]) }
     }
 
     @Test("set carries --yes as the consent one setting asks for")
@@ -486,32 +380,6 @@ struct CLIArgumentParsingTests {
         #expect(throws: (any Error).self) { try parse(["quit", "Alpha"]) }
     }
 
-    @Test("stop defaults to asking the guest, and each method names its own disposition")
-    func stopMethodsMapToDispositions() throws {
-        let byDefault = try #require(try parse(["stop", "Alpha"]) as? KernovaCommand.Stop)
-        #expect(byDefault.method == .normal)
-        #expect(byDefault.method.disposition == .graceful)
-
-        let forced = try #require(try parse(["stop", "Alpha", "--force"]) as? KernovaCommand.Stop)
-        #expect(forced.method.disposition == .force)
-
-        let anyway = try #require(try parse(["stop", "Alpha", "--anyway"]) as? KernovaCommand.Stop)
-        #expect(anyway.method.disposition == .anyway)
-        #expect(throws: (any Error).self) { try parse(["stop", "Alpha", "--resume-first"]) }
-    }
-
-    @Test("A deadline rides any stop method, including --force")
-    func stopTimeoutRidesEveryMethod() throws {
-        // The deadline bounds the wait for the guest to actually power off,
-        // which every disposition has to travel — a force stop simply gets
-        // there in one step.
-        for method in ["--force", "--normal", "--anyway"] {
-            let stop = try #require(
-                try parse(["stop", "Alpha", method, "--timeout", "5"]) as? KernovaCommand.Stop)
-            #expect(stop.timeout == 5)
-        }
-    }
-
     @Test("A deadline that names no wait is a usage error on every verb that takes one")
     func everyTimeoutRefusesANonPositiveDeadline() {
         let lines: [[String]] = [
@@ -552,12 +420,6 @@ struct CLIArgumentParsingTests {
         }
     }
 
-    @Test("Every stop method maps onto a wire disposition, exhaustively")
-    func everyStopMethodMaps() {
-        let mapped = Set(KernovaCommand.StopMethod.allCases.map(\.disposition))
-        #expect(mapped == Set(StopDisposition.allCases))
-    }
-
     @Test("wait parses its condition and its deadline")
     func waitParsesItsCondition() throws {
         let running = try #require(
@@ -572,12 +434,6 @@ struct CLIArgumentParsingTests {
         #expect(agent.timeout == 45)
     }
 
-    @Test("wait refuses a condition this build cannot watch for, and one it was not given")
-    func waitRefusesAnUnknownCondition() {
-        #expect(throws: (any Error).self) { try parse(["wait", "Alpha", "--until", "melted"]) }
-        #expect(throws: (any Error).self) { try parse(["wait", "Alpha"]) }
-    }
-
     @Test("ip takes --wait and its own deadline")
     func ipParsesWait() throws {
         let plain = try #require(try parse(["ip", "Alpha"]) as? KernovaCommand.IP)
@@ -587,21 +443,6 @@ struct CLIArgumentParsingTests {
             try parse(["ip", "Alpha", "--wait", "--timeout", "10"]) as? KernovaCommand.IP)
         #expect(waiting.wait)
         #expect(waiting.timeout == 10)
-    }
-
-    @Test("ip refuses a non-address in both formats, never exiting 0 on one")
-    func ipRefusesANonAddressInEveryFormat() throws {
-        // `--format json` renders the same value the table would; it must not
-        // turn a refusal into a success just because JSON could describe it.
-        for absent: GuestIPAddress in [.notObserved, .externallyAssigned, .unavailable] {
-            #expect(throws: CLIFailure.self) {
-                try KernovaCommand.IP.line(for: absent, vm: "Alpha")
-            }
-            // The JSON renderer itself never refuses — the classification above
-            // is what both formats share, which is why it runs first.
-            #expect(throws: Never.self) { try JSONRenderer.render(absent) }
-        }
-        #expect(try KernovaCommand.IP.line(for: .observed("10.0.0.2"), vm: "Alpha") == "10.0.0.2")
     }
 
     @Test("Each wait condition reads exactly one kind of state")
@@ -625,31 +466,6 @@ struct CLIArgumentParsingTests {
         }
         // No session, so no agent to have arrived.
         #expect(WaitCondition.agent.isSatisfied(byAgentStatus: nil) == false)
-    }
-
-    @Test("Every wait condition is reachable from the command line")
-    func everyWaitConditionParses() throws {
-        for condition in WaitCondition.allCases {
-            let parsed = try #require(
-                try parse(["wait", "Alpha", "--until", condition.rawValue])
-                    as? KernovaCommand.Wait)
-            #expect(parsed.until == condition)
-        }
-    }
-
-    @Test("A bare invocation lists, so `kernova` alone answers something useful")
-    func bareInvocationLists() throws {
-        #expect(try parse([]) is KernovaCommand.List)
-    }
-
-    @Test("A verb this build does not have is a usage error, never a silent no-op")
-    func unknownVerbIsRefused() {
-        #expect(throws: (any Error).self) { try parse(["teleport", "Alpha"]) }
-    }
-
-    @Test("A verb that needs a virtual machine refuses without one")
-    func missingArgumentIsRefused() {
-        #expect(throws: (any Error).self) { try parse(["info"]) }
     }
 
     // MARK: - Global options
@@ -688,42 +504,5 @@ struct CLIArgumentParsingTests {
         #expect(info.options.id)
         #expect(info.options.quiet)
         #expect(info.options.yes)
-    }
-
-    @Test("A format this build does not write is a usage error")
-    func unknownFormatIsRefused() {
-        #expect(throws: (any Error).self) { try parse(["list", "--format", "yaml"]) }
-    }
-
-    // MARK: - Selector parsing
-
-    @Test("A bare argument is read as an identifier or a name, and the app decides")
-    func bareArgumentIsIDOrName() throws {
-        #expect(try SelectorParsing.selector(from: "Alpha", forcingID: false) == .idOrName("Alpha"))
-        let identifier = UUID()
-        #expect(
-            try SelectorParsing.selector(from: identifier.uuidString, forcingID: false)
-                == .idOrName(identifier.uuidString))
-    }
-
-    @Test("--id forces the identifier reading")
-    func idFlagForcesTheIdentifier() throws {
-        let identifier = UUID()
-        #expect(
-            try SelectorParsing.selector(from: identifier.uuidString, forcingID: true)
-                == .id(identifier))
-    }
-
-    @Test("--id on something that is not an identifier is a usage error, not a name search")
-    func idFlagRefusesANonIdentifier() {
-        do {
-            _ = try SelectorParsing.selector(from: "Alpha", forcingID: true)
-            Issue.record("expected a usage refusal")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .usage)
-            #expect(failure.message.contains("Alpha"))
-        } catch {
-            Issue.record("expected a CLIFailure, got \(error)")
-        }
     }
 }

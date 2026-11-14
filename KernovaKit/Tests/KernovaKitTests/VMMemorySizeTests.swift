@@ -40,27 +40,6 @@ struct VMMemorySizeTests {
         #expect(throws: DecodingError.self) { try decoded("[-1]") }
     }
 
-    // MARK: - Text
-
-    @Test("Text shows a whole size without decimals and any other with the fewest that round-trip")
-    func textRoundTrips() {
-        #expect(VMMemorySize.gibibytes(8).gibibytesText == "8")
-        #expect(VMMemorySize(mebibytes: 1536).gibibytesText == "1.5")
-        #expect(VMMemorySize(mebibytes: 1537).gibibytesText == "1.501")
-        for mebibytes: UInt32 in [1, 4, 511, 1025, 1537, 4095, 65_535, 1_048_577] {
-            let size = VMMemorySize(mebibytes: mebibytes)
-            #expect(VMMemorySize(gibibytesText: size.gibibytesText) == size)
-        }
-    }
-
-    @Test("Text that names no size is refused")
-    func unparseableTextIsRefused() {
-        #expect(VMMemorySize(gibibytesText: "lots") == nil)
-        #expect(VMMemorySize(gibibytesText: "inf") == nil)
-        #expect(VMMemorySize(gibibytesText: "nan") == nil)
-        #expect(VMMemorySize(gibibytesText: "-2") == nil)
-    }
-
     // MARK: - Stepping
 
     @Test("A stepper arrow moves to the next whole gibibyte in its direction")

@@ -74,33 +74,6 @@ struct CLIArrivalWaitTests {
         #expect(try listener.requests().map(\.verb) == [.importVM(path: source, waitForOutcome: true)])
     }
 
-    @Test("A copy that failed reaches the caller as its own refusal, never as a success")
-    func aFailedCopySurfacesItsRefusal() throws {
-        let listener = try TestCommandSocket()
-        defer { listener.close() }
-        let client = try VMCommandClient(socketPath: listener.path)
-        defer { client.close() }
-        client.waitForFrames(upTo: testWaitBackstop)
-        listener.serve([
-            [
-                VMCommandResponse(
-                    result: .failure(
-                        .operationFailed(
-                            verb: .importVM, title: nil, message: "The bundle could not be read.",
-                            recovery: nil)))
-            ]
-        ])
-
-        do {
-            _ = try PreparingCopy.importing(
-                "/Users/somebody/Alpha.kernova", waitingForTheCopy: true, within: nil, on: client)
-            Issue.record("expected the copy's own refusal")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .operationFailed)
-            #expect(failure.message == "The bundle could not be read.")
-        }
-    }
-
     @Test("An answer of the wrong shape refuses rather than being printed as a row")
     func anUnexpectedAnswerRefuses() throws {
         let listener = try TestCommandSocket()

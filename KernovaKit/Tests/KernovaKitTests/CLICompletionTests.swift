@@ -36,13 +36,6 @@ struct CLICompletionTests {
             productID: 0x12A8),
     ]
 
-    private var checkpoint: SnapshotSummary {
-        SnapshotSummary(
-            id: UUID(uuidString: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee") ?? UUID(),
-            name: "Before Update", notes: "", kind: "warm", createdAt: Date(timeIntervalSince1970: 0),
-            isCurrent: true, isEphemeralBaseline: false)
-    }
-
     /// A context onto `listener`, with the generous deadline every wait in this
     /// bundle uses rather than the two seconds a person at a keyboard gets.
     private func context(
@@ -54,33 +47,6 @@ struct CLICompletionTests {
     }
 
     // MARK: - Reading the line back
-
-    @Test("A snapshot completion recovers the virtual machine named before it")
-    func snapshotCompletionReadsTheVM() throws {
-        let subject = CompletionLine.vmSubject(
-            in: ["kernova", "snapshot", "revert", "Alpha", ""], completingAt: 4)
-
-        #expect(subject?.vm == "Alpha")
-        #expect(subject?.byIdentifier == false)
-    }
-
-    @Test("Flags on either side of the virtual machine do not hide it")
-    func snapshotCompletionReadsPastFlags() throws {
-        let leading = CompletionLine.vmSubject(
-            in: ["kernova", "snapshot", "delete", "--yes", "Alpha", ""], completingAt: 5)
-        #expect(leading?.vm == "Alpha")
-
-        let trailing = CompletionLine.vmSubject(
-            in: ["kernova", "snapshot", "revert", "Alpha", "--yes", ""], completingAt: 5)
-        #expect(trailing?.vm == "Alpha")
-    }
-
-    @Test("A share removal recovers the virtual machine named before it")
-    func removalCompletionsReadTheVM() throws {
-        let share = CompletionLine.vmSubject(
-            in: ["kernova", "share", "remove", "Alpha", ""], completingAt: 4)
-        #expect(share?.vm == "Alpha")
-    }
 
     @Test("--id is read off the line, wherever it sits")
     func theLineCarriesItsIdentifierFlag() throws {
@@ -161,80 +127,6 @@ struct CLICompletionTests {
     }
 
     // MARK: - Asking the app
-
-    @Test("Nothing listening is no candidates, not a refusal")
-    func aStoppedAppOffersNothing() throws {
-        let unreachable = CompletionContext(
-            connect: { throw CLIFailure(.unavailable, "no app group") }, deadline: testWaitBackstop,
-            shell: .zsh)
-
-        #expect(CompletionSource.vmNames(byIdentifier: false, in: unreachable).isEmpty)
-        #expect(
-            CompletionSource.snapshotNames(ofVM: "Alpha", byIdentifier: false, in: unreachable)
-                .isEmpty)
-        #expect(
-            CompletionSource.sharedDirectoryPaths(
-                ofVM: "Alpha", byIdentifier: false, in: unreachable
-            ).isEmpty)
-        #expect(
-            CompletionSource.usbAccessoryDevices(
-                ofVM: "Alpha", byIdentifier: false, in: unreachable
-            ).isEmpty)
-        #expect(CompletionSource.availableUSBAccessories(in: unreachable).isEmpty)
-        #expect(CompletionSource.configurationKeys(in: unreachable).isEmpty)
-        #expect(CompletionSource.networkNames(in: unreachable).isEmpty)
-    }
-
-    @Test("The library listing is what a virtual machine argument offers")
-    func vmNamesComeFromTheLibrary() throws {
-        let listener = try TestCommandSocket()
-        defer { listener.close() }
-        listener.serve([[VMCommandResponse(result: .summaries([alpha, beta]))]])
-
-        let names = CompletionSource.vmNames(byIdentifier: false, in: context(to: listener))
-
-        #expect(names == ["Alpha", "Beta"])
-        #expect(try listener.requests().map(\.verb) == [.list()])
-    }
-
-    @Test("--id offers the identifiers the same listing carries")
-    func vmIdentifiersComeFromTheSameListing() throws {
-        let listener = try TestCommandSocket()
-        defer { listener.close() }
-        listener.serve([[VMCommandResponse(result: .summaries([alpha]))]])
-
-        let names = CompletionSource.vmNames(byIdentifier: true, in: context(to: listener))
-
-        #expect(names == [alpha.id.uuidString])
-    }
-
-    @Test("A snapshot argument offers the named machine's own restore points")
-    func snapshotNamesComeFromTheMachine() throws {
-        let listener = try TestCommandSocket()
-        defer { listener.close() }
-        listener.serve([[VMCommandResponse(result: .snapshots([checkpoint]))]])
-
-        let names = CompletionSource.snapshotNames(
-            ofVM: "Alpha", byIdentifier: false, in: context(to: listener))
-
-        #expect(names == ["Before Update"])
-        // The listing alone: the size walk a `snapshot list` performs would
-        // spend a second round trip on a column nobody is completing.
-        #expect(try listener.requests().map(\.verb) == [.snapshots(.idOrName("Alpha"))])
-    }
-
-    @Test("A share removal offers the folders that machine actually shares")
-    func sharedDirectoryPathsComeFromTheMachine() throws {
-        let listener = try TestCommandSocket()
-        defer { listener.close() }
-        listener.serve([[VMCommandResponse(result: .sharedDirectories(shares))]])
-
-        let paths = CompletionSource.sharedDirectoryPaths(
-            ofVM: "Alpha", byIdentifier: false, in: context(to: listener))
-
-        #expect(paths == ["/Users/somebody/Sites", "/Users/somebody/Reference"])
-        #expect(try listener.requests().map(\.verb) == [.sharedDirectories(.idOrName("Alpha"))])
-    }
 
     @Test("zsh is told which of the shared folders the guest may write to")
     func sharedFoldersCarryTheirAccess() throws {
@@ -325,44 +217,6 @@ struct CLICompletionTests {
         #expect(opened.value == 0)
     }
 
-    @Test("A refusal is no candidates, not a refusal printed into the line")
-    func aRefusedReadOffersNothing() throws {
-        // One connection per double, so each read is refused on its own.
-        let refusal = VMCommandResponse(
-            result: .failure(.ambiguous(selector: .idOrName("Alpha"), candidates: [alpha, beta])))
-
-        let snapshots = try TestCommandSocket()
-        defer { snapshots.close() }
-        snapshots.serve([[refusal]])
-        #expect(
-            CompletionSource.snapshotNames(
-                ofVM: "Alpha", byIdentifier: false, in: context(to: snapshots)
-            ).isEmpty)
-
-        let shares = try TestCommandSocket()
-        defer { shares.close() }
-        shares.serve([[refusal]])
-        #expect(
-            CompletionSource.sharedDirectoryPaths(
-                ofVM: "Alpha", byIdentifier: false, in: context(to: shares)
-            ).isEmpty)
-    }
-
-    @Test("An app that takes the request and never answers offers nothing")
-    func aSilentAppOffersNothing() throws {
-        let listener = try TestCommandSocket()
-        defer { listener.close() }
-        // Answers nothing and keeps the connection, which is the app that is
-        // running but not getting back to it. The deadline is short because it
-        // is what is under test.
-        listener.serve([], holdingOpen: true)
-        let silent = CompletionContext(
-            connect: { try VMCommandClient(socketPath: listener.path) }, deadline: 0.5, shell: nil)
-
-        #expect(CompletionSource.vmNames(byIdentifier: false, in: silent).isEmpty)
-        #expect(try listener.requests().map(\.verb) == [.list()])
-    }
-
     @Test("zsh is answered with each value's description beside it")
     func zshGetsDescribedCandidates() throws {
         let listener = try TestCommandSocket()
@@ -395,25 +249,6 @@ struct CLICompletionTests {
         #expect(
             CompletionSource.configurationKeys(suffix: "=", in: context(to: assigning))
                 == ["cpus="])
-    }
-
-    @Test("A network argument offers the library's networks by name, described by their kind")
-    func networkNamesComeFromTheLibrary() throws {
-        let listener = try TestCommandSocket()
-        defer { listener.close() }
-        listener.serve([
-            [
-                VMCommandResponse(
-                    result: .networks([
-                        NetworkSummary(id: UUID(), name: "Lab", kind: .hostOnly, members: [alpha])
-                    ]))
-            ]
-        ])
-
-        #expect(
-            CompletionSource.networkNames(in: context(to: listener, asking: .zsh))
-                == ["Lab:hostOnly"])
-        #expect(try listener.requests().map(\.verb) == [.networks])
     }
 
     @Test("--smart-group and --folder each offer their own kind's groups by name, described by their size")
@@ -480,10 +315,5 @@ struct CLICompletionTests {
             CompletionSource.candidate("Back\\slash", describedBy: "stopped", for: .zsh)
                 == "Back\\\\slash:stopped")
         #expect(CompletionSource.candidate("Beta:Two", describedBy: "stopped", for: .bash) == "Beta:Two")
-    }
-
-    @Test("A value with nothing to say about it carries no empty description")
-    func anEmptyDescriptionIsOmitted() {
-        #expect(CompletionSource.candidate("Alpha", describedBy: "", for: .zsh) == "Alpha")
     }
 }

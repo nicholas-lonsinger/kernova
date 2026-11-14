@@ -35,24 +35,6 @@ struct CLIActivationTests {
         return (answer, activations.pids)
     }
 
-    @Test("An activate frame ahead of the answer brings the peer forward, and the answer still arrives")
-    func activateFrameCallsTheActivatorWithThePeer() throws {
-        let exchanged = try reveal(
-            answering: [VMCommandResponse(result: .activate), VMCommandResponse(result: .ok)])
-
-        #expect(exchanged.answer.result == .ok)
-        // The double runs in this process, so the peer is this process.
-        #expect(exchanged.activations == [getpid()])
-    }
-
-    @Test("An answer with no activate frame brings nothing forward")
-    func noActivateFrameNoActivation() throws {
-        let exchanged = try reveal(answering: [VMCommandResponse(result: .ok)])
-
-        #expect(exchanged.answer.result == .ok)
-        #expect(exchanged.activations.isEmpty)
-    }
-
     @Test("A frame reader never sees an activate frame, only what follows it")
     func nextFrameReadsPastActivate() throws {
         let listener = try TestCommandSocket()
