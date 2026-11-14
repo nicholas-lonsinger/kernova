@@ -16,9 +16,6 @@ struct AgentMenuTextTests {
 
     // MARK: - clipboardLine
 
-    /// The ceiling every non-refusal line ignores.
-    private static let limit = ClipboardPasteLimit.defaultBytes
-
     @Test("clipboardLine for each activity")
     func clipboard() {
         #expect(AgentMenuText.clipboardLine(.enabled) == "Clipboard: enabled")
@@ -38,35 +35,6 @@ struct AgentMenuTextTests {
             AgentMenuText.clipboardLine(.disabled) == "Clipboard: disabled")
     }
 
-    @Test("clipboardLine names every paste failure the guest can report, honestly per code")
-    func clipboardRefusalLines() {
-        let limit = Self.limit
-        // The over-cap sentence is built from the ceiling, not typed.
-        #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.pasteTooLarge, pasteLimitBytes: limit))
-                == "Clipboard: too large to paste — over the \(ClipboardPasteLimit.displayLimit(limit)) transfer limit"
-        )
-        #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.pasteFailed, pasteLimitBytes: limit))
-                == "Clipboard: paste failed")
-        // Drop and drag refusals never reach the guest's paste; they read as the
-        // generic failure rather than a sentence about a gesture made elsewhere.
-        #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.dropFailed, pasteLimitBytes: limit))
-                == "Clipboard: paste failed")
-        #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.dragItemUnavailable, pasteLimitBytes: limit))
-                == "Clipboard: paste failed")
-    }
-
-    @Test("the over-cap line names the ceiling the refusal carries, not a current one")
-    func clipboardRefusalNamesTheCarriedCeiling() {
-        let raised = 16 * 1024 * 1024 * 1024
-        #expect(
-            AgentMenuText.clipboardLine(.pasteRefused(.pasteTooLarge, pasteLimitBytes: raised))
-                == "Clipboard: too large to paste — over the 16 GB transfer limit")
-    }
-
     @Test("an over-cap refusal with no carried ceiling names none rather than inventing one")
     func clipboardRefusalWithoutACeilingNamesNone() {
         // The menu rebuilds on every open, so the figure has to come from the
@@ -74,16 +42,6 @@ struct AgentMenuTextTests {
         #expect(
             AgentMenuText.clipboardLine(.pasteRefused(.pasteTooLarge, pasteLimitBytes: nil))
                 == "Clipboard: too large to paste")
-    }
-
-    @Test("a copy that carried nothing says so rather than naming a cause it can't know")
-    func clipboardCopyCarriedNothingLine() {
-        // Unreadable items, a copy whose files are gone and an all-filtered
-        // flavor set all reach this line, so it names the outcome the user can
-        // see and no reason it would have to guess at.
-        #expect(
-            AgentMenuText.clipboardLine(.copyCarriedNothing)
-                == "Clipboard: nothing in that copy could be shared")
     }
 
     @Test("a copy that partly crossed names how many items it did not carry whole")

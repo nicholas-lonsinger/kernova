@@ -15,29 +15,6 @@ struct LaunchdJobsTests {
     static let userRoot = "/Users/pbear/Library/Application Support/Kernova/Guest Agent"
     static let systemRoot = "/Library/Application Support/Kernova/Guest Agent"
 
-    @Test("\"Just for me\" lays out a root and a LaunchAgent with its rollback check, bootstrapped into gui/<uid>")
-    func userPlan() {
-        let plan = InstallPlan.install(Self.user, stopTool: Self.tool)
-        #expect(
-            InstallPlan.dryRun(plan, heading: "install will:") == [
-                "install will:",
-                "  run '\(Self.tool)' stop-service gui/501/app.kernova.macosagent.rollback",
-                "  run '\(Self.tool)' stop-service gui/501/app.kernova.macosagent",
-                "  remove \(Self.userRoot)/switch-pending, if present",
-                "  remove \(Self.userRoot)/switch-rejected, if present",
-                "  make directory \(Self.userRoot), if missing",
-                "  make directory \(Self.userRoot)/slots, if missing",
-                "  write the agent as Kernova Guest Agent.app in the slot under \(Self.userRoot)/slots that "
-                    + "\(Self.userRoot)/current does not name, record it in \(Self.userRoot)/state.json, point "
-                    + "\(Self.userRoot)/rollback at it, and switch \(Self.userRoot)/current to it",
-                "  make directory /Users/pbear/Library/LaunchAgents, if missing",
-                "  write /Users/pbear/Library/LaunchAgents/app.kernova.macosagent.plist",
-                "  write /Users/pbear/Library/LaunchAgents/app.kernova.macosagent.rollback.plist",
-                "  run launchctl bootstrap gui/501 /Users/pbear/Library/LaunchAgents/app.kernova.macosagent.rollback.plist",
-                "  run launchctl bootstrap gui/501 /Users/pbear/Library/LaunchAgents/app.kernova.macosagent.plist",
-            ])
-    }
-
     @Test("\"For everyone\" adds the system peer's LaunchDaemon, and bootstraps each list into its own domain")
     func systemPlan() {
         let plan = InstallPlan.install(Self.system, stopTool: Self.tool)

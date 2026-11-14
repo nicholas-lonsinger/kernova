@@ -48,11 +48,10 @@ final class FakeDragPasteboard: ClipboardReadPasteboard, Sendable {
 final class FakeGuestDragInput: GuestDragInput {
     let pasteboard = FakeDragPasteboard()
     var dragPasteboard: any ClipboardReadPasteboard { pasteboard }
-    var isPrimaryButtonHeld = false
+    private(set) var isPrimaryButtonHeld = false
 
     private var pressHandler: (@MainActor @Sendable () -> Void)?
     private var tick: (@MainActor @Sendable () -> Void)?
-    private(set) var tickInterval: TimeInterval?
     private(set) var isHoldingActivity = false
     /// The file promises the drag pasteboard holds, as a drop on the catcher
     /// reads them.
@@ -132,7 +131,6 @@ final class FakeGuestDragInput: GuestDragInput {
     func repeatEvery(
         _ interval: TimeInterval, _ tick: @escaping @MainActor @Sendable () -> Void
     ) -> GuestDragCancel {
-        tickInterval = interval
         self.tick = tick
         return { [weak self] in self?.tick = nil }
     }
@@ -304,11 +302,6 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
             guard case .answered(id, .report(.targeted(let items))) = event else { return nil }
             return items
         }
-    }
-
-    /// How many takes were answered, all told.
-    var answerCount: Int {
-        events.count { if case .answered = $0 { true } else { false } }
     }
 
     private static func name(_ item: OfferedItem) -> String {

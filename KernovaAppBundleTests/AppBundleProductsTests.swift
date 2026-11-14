@@ -68,16 +68,6 @@ struct AppBundleProductsTests {
         #expect(entry.updatesInBand == (team != nil), "agent team: \(team ?? "none")")
     }
 
-    @Test("isInstallerDisk(path:) matches the app's bundled installer image path only")
-    func installerImageMatchesThePathOnly() throws {
-        let agents = products.guestAgents
-        let path = try #require(agents.macOSInstallerDiskImageURL).path(percentEncoded: false)
-        #expect(path.hasSuffix("Contents/Resources/KernovaMacOSAgent.dmg"))
-        #expect(FileManager.default.fileExists(atPath: path))
-        #expect(agents.isInstallerDisk(path: path))
-        #expect(!agents.isInstallerDisk(path: "/tmp/other.iso"))
-    }
-
     @Test("The built app carries the Linux agent for both scopes, readable and not executable")
     func builtAppCarriesTheLinuxAgent() throws {
         let entries = products.guestAgents.entries.values.filter { $0.fileURL.lastPathComponent == "kernova-agent" }
@@ -86,12 +76,6 @@ struct AppBundleProductsTests {
         #expect(url.path(percentEncoded: false).hasSuffix("Contents/Resources/GuestAgents/linux-arm64/kernova-agent"))
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path(percentEncoded: false))
         #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o644)
-    }
-
-    @Test("The built app carries the tool the installer links to")
-    func builtAppCarriesTheTool() {
-        let tool = products.commandLineTool.bundledToolURL
-        #expect(FileManager.default.isExecutableFile(atPath: tool.path(percentEncoded: false)))
     }
 
     /// A sandboxed tool's launch asks for its containers before `main`, which

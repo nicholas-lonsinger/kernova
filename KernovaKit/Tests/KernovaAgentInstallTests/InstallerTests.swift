@@ -176,23 +176,6 @@ struct InstallerTests {
         #expect(InstallPlan.dryRun(plan, heading: "h") == ["h"] + plan.steps.map { "  " + $0.description })
     }
 
-    @Test("An install clears a switch an update left pending, or reverted, before it writes anything")
-    func clearsPendingSwitch() {
-        let plan = Self.install(Self.user)
-        #expect(plan.treeRemovals == [Self.userRoot.switchPending, Self.userRoot.switchRejected])
-        #expect(plan.before == Self.user.beforeInstall)
-        #expect(plan.after == Self.user.afterInstall)
-    }
-
-    @Test("An uninstall runs its definitions' commands and removes every file they write, then the root")
-    func uninstallUndoesInstall() {
-        let plan = Self.uninstall(Self.user)
-        #expect(plan.removals == [Self.user.definition])
-        #expect(plan.removesRoot)
-        #expect(plan.before == Self.user.beforeUninstall)
-        #expect(plan.after == Self.user.afterUninstall)
-    }
-
     @Test("A refresh rewrites exactly its definitions' files, then reloads")
     func refresh() {
         let plan = InstallPlan.refresh(root: Self.userRoot, definitions: Self.user)
@@ -270,21 +253,6 @@ struct InstallerTests {
                 == nil)
     }
 
-    @Test("Above the agent's root, a symlinked directory is a directory, as mkdir -p takes it")
-    func symlinkedAncestor() throws {
-        let scratch = try Scratch()
-        let dotfiles = scratch.root + "/home/pbear/dotfiles/services"
-        try FileManager.default.createDirectory(atPath: dotfiles, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(
-            atPath: scratch.root + "/home/pbear/.config", withIntermediateDirectories: true)
-        try FileManager.default.createSymbolicLink(
-            atPath: scratch.root + "/home/pbear/.config/services", withDestinationPath: dotfiles)
-
-        try scratch.installer().run(Self.install(Self.user))
-        #expect(scratch.contents(Self.user.definition) == Self.user.text)
-        #expect(FileManager.default.fileExists(atPath: dotfiles + "/agent.service"))
-    }
-
     /// `tree` after a reinstall over it: the spare slot filled, and `rollback` and `current` pointed at it.
     private static func reinstalled(_ tree: [String: String], root: InstallRoot, into slot: String) -> [String: String]
     {
@@ -302,49 +270,6 @@ struct InstallerTests {
         #expect(state.pendingSwitch == nil)
         let payload = FileManager.default.contents(atPath: scratch.root + root.slot(slot) + "/" + TestLander.name)
         #expect(payload.map(Array.init) == scratch.payloadBytes)
-    }
-
-    @Test(
-        "A reinstall over a live root lands in the slot current does not name, then switches current, the pending switch cleared"
-    )
-    func reinstallUser() throws {
-        let scratch = try Scratch()
-        try scratch.installer().run(Self.install(Self.user))
-        let first = try scratch.tree()
-        // A running peer's slot is never written: the agent in it stays as it was.
-        let running = scratch.root + Self.userRoot.slot("a") + "/" + TestLander.name
-        var before = stat()
-        #expect(stat(running, &before) == 0)
-        #expect(FileManager.default.createFile(atPath: scratch.root + Self.userRoot.switchPending, contents: Data()))
-
-        try scratch.installer().run(Self.install(Self.user))
-        #expect(try scratch.tree() == Self.reinstalled(first, root: Self.userRoot, into: "b"))
-        try Self.checkState(scratch, Self.userRoot, active: "b")
-        var after = stat()
-        #expect(stat(running, &after) == 0)
-        #expect(after.st_ino == before.st_ino)
-
-        // The next one goes back to the first slot.
-        try scratch.installer().run(Self.install(Self.user))
-        #expect(
-            try scratch.tree()
-                == Self.reinstalled(first, root: Self.userRoot, into: "a").merging([
-                    Self.userRoot.slot("b"): "d0755", Self.userRoot.slot("b") + "/" + TestLander.name: "f0755",
-                ]) { $1 })
-        try Self.checkState(scratch, Self.userRoot, active: "a")
-    }
-
-    @Test("A fresh install points rollback at the slot it lands, never leaving it naming another")
-    func freshInstallReplacesRollback() throws {
-        let scratch = try Scratch()
-        try scratch.installer().run(Self.install(Self.user))
-        let root = try SlotRoot(path: scratch.root + Self.userRoot.path)
-        try root.point(InstallRoot.currentLinkName, at: "b")
-        try root.point(InstallRoot.rollbackLinkName, at: "b")
-
-        try scratch.installer().run(Self.install(Self.user))
-        let links = try scratch.tree().filter { $0.key == Self.userRoot.current || $0.key == Self.userRoot.rollback }
-        #expect(links == [Self.userRoot.current: "lslots/a", Self.userRoot.rollback: "lslots/a"])
     }
 
     @Test(

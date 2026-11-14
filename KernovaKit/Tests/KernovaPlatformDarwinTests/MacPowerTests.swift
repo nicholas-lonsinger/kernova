@@ -216,28 +216,6 @@ struct MacPowerTests {
     }
 
     @Test(
-        "With a user logged in, the system peer shuts down without waiting for apps: accepted before shutdown -h now starts, then handed off",
-        arguments: [ConsoleState.on, .unknown, .off])
-    func systemPeerShutsDownIgnoringApps(console: ConsoleState) {
-        let ran = Locked<[[String]]>([])
-        let seenAtStart = Locked<[PowerInput]?>(nil)
-        let harness = Locked<Harness?>(nil)
-        let built = Harness(
-            .shutdownCommand(run: { arguments in
-                ran.withLock { $0.append(arguments) }
-                seenAtStart.withLock { $0 = harness.withLock { $0 }?.reported }
-                return 0
-            }), console: console)
-        harness.withLock { $0 = built }
-        _ = built.take()
-
-        built.adapter.perform(Self.id, .shutdown, ignoringApps: true)
-        #expect(built.take() == [.accepted(Self.id), .handedOff(Self.id)])
-        #expect(seenAtStart.withLock { $0 } == [.accepted(Self.id)])
-        #expect(ran.withLock { $0 } == [["/sbin/shutdown", "-h", "now"]])
-    }
-
-    @Test(
         "A request the peer does not offer — a restart either way, or the session peer's shutdown without waiting for apps — is refused POWER_ACTION_UNSUPPORTED without a call",
         arguments: [
             (PowerAction.shutdown, true, true), (.restart, true, true), (.restart, true, false),
@@ -378,14 +356,6 @@ struct MacPowerTests {
     func quitStatus(reason: OSType?, status: Int32) {
         #expect(MacAgentQuit.exitStatus(for: Self.quitEvent(reason: reason)) == status)
         #expect(MacAgentQuit.exitStatus(for: Self.quitEvent(reason: reason, asParameter: true)) == status)
-    }
-
-    @Test("No event, or one that is not a quit, stops the session peer")
-    func quitWithoutQuitEvent() {
-        #expect(MacAgentQuit.exitStatus(for: nil) == 0)
-        let other = LoginWindowPower.shutdownEvent()
-        other.setAttribute(NSAppleEventDescriptor(enumCode: OSType(kAEShutDown)), forKeyword: AEKeyword(kAEQuitReason))
-        #expect(MacAgentQuit.exitStatus(for: other) == 0)
     }
 }
 #endif

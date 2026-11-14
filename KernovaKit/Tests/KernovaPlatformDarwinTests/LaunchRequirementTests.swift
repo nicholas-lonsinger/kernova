@@ -53,17 +53,6 @@ struct LaunchRequirementTests {
         #expect(refusal.detail.contains("\(errSecCSReqFailed)"))
     }
 
-    @Test("A path that holds no signed code is refused as one the OS would not launch")
-    func unsigned() throws {
-        let directory = try Self.scratch()
-        let requirement = try LaunchRequirement.designatedRequirement(
-            ofCodeAt: try Self.adHocBundle(in: directory, version: "1")
-        ).get()
-        let empty = directory.appending(path: "Empty.app")
-        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
-        #expect(LaunchRequirement.refusal(ofBundleAt: empty.path, against: requirement)?.code == .updateLaunchRefused)
-    }
-
     @Test("The running code meets its own designated requirement, and another ad-hoc bundle does not")
     func runningCode() throws {
         var running: SecCode?

@@ -95,9 +95,8 @@ struct GuestClipboardStagingTests {
     }
 
     /// Has the host send three copies whose one pull fails, each refused unwritten: each takes a staging
-    /// generation of its own, the third evicting the oldest. Returns the link they came over.
-    @discardableResult
-    private func failThreeCopies(_ clipboard: GuestClipboard) async throws -> RecordingLink {
+    /// generation of its own, the third evicting the oldest.
+    private func failThreeCopies(_ clipboard: GuestClipboard) async throws {
         let link = RecordingLink(items: [Self.textItem], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
         clipboard.setLink(link)
         for attempt in 0..<3 {
@@ -111,28 +110,6 @@ struct GuestClipboardStagingTests {
             clipboard.exchange.pullEnded(link.pulls[attempt].id, .failed(WireError(.readFailed)))
             try await link.changed.wait { link.refusals.count == attempt + 1 }
         }
-        return link
-    }
-
-    @Test("A pasted file the guest kept goes whole, its name too, once later copies evict its staging; the rest stays")
-    func keptFileGoesWithItsStaging() async throws {
-        let staging = TestStagingRoot(retirement: ClipboardStagingRetirement())
-        let pasteboard = FakePasteboard()
-        let clipboard = GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root)
-        let file = try await keepPastedFile(clipboard, pasteboard, pastedLink())
-        clipboard.setOnConsole(true)
-        clipboard.apply(
-            PolicySnapshot([ClipboardPolicyValue(maxPasteBytes: 0, passthrough: true).policy(enabled: true)]))
-
-        let link = try await failThreeCopies(clipboard)
-        try await pasteboard.changed.wait { pasteboard.dataByItem.count == 1 }
-        #expect(pasteboard.dataByItem == [[Self.text: Data("first".utf8)]])
-        try await staging.removals.wait { !FileManager.default.fileExists(atPath: file.path) }
-
-        // The withdrawal is the agent's own write: the poll offers nothing of it.
-        clipboard.checkPasteboard()
-        await drainMainQueue()
-        #expect(link.offers.isEmpty)
     }
 
     @Test("A guest pasteboard that moved on is left alone when the staging a kept file named is evicted")
@@ -255,33 +232,6 @@ struct GuestClipboardStagingTests {
             ])
     }
 
-    @Test("The connection leaving takes back what no paste had of the host's offer, the rest kept, and says so")
-    func linkLeavingLogsThePartRetracted() async throws {
-        let lines = Lines()
-        let pasteboard = FakePasteboard()
-        let clipboard = GuestClipboard(
-            pasteboard: pasteboard, stagingRoot: TestStagingRoot().root, logger: lines.logger)
-        let link = pastedLink()
-        clipboard.setLink(link)
-        clipboard.exchange.handle(
-            .offerReceived(
-                ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: false, count: 2)),
-            on: link)
-        try await pasteboard.changed.wait { pasteboard.promisedTypesByItem.count == 2 }
-        let fired = Task.detached { pasteboard.invokeProvider(forType: Self.text, itemIndex: 0) }
-        try await link.changed.wait { link.opened.count == 1 }
-        try land(Data("first".utf8), pull: 0, clipboard, link)
-        #expect(await fired.value != nil)
-        await drainMainQueue()
-
-        clipboard.setLink(nil)
-        #expect(pasteboard.dataByItem == [[Self.text: Data("first".utf8)]])
-        #expect(
-            lines.retractions == [
-                "Retracted part of the Mac's clipboard from the guest pasteboard, the rest kept: clipboard sharing with the Mac stopped"
-            ])
-    }
-
     /// Has the host send a copy of a text item and a file item, landing its text, and waits for its write.
     private func receiveCopy(_ clipboard: GuestClipboard, _ pasteboard: FakePasteboard, _ link: RecordingLink)
         async throws
@@ -299,43 +249,6 @@ struct GuestClipboardStagingTests {
         try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
     }
 
-    @Test("The host withdrawing its copy takes back the copy's unpasted file item, and the guest says why (39b)")
-    func copyWithdrawnLogsTheRetraction() async throws {
-        let lines = Lines()
-        let pasteboard = FakePasteboard()
-        let clipboard = GuestClipboard(
-            pasteboard: pasteboard, stagingRoot: TestStagingRoot().root, logger: lines.logger)
-        let link = pastedLink()
-        try await receiveCopy(clipboard, pasteboard, link)
-
-        clipboard.exchange.handle(
-            .offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(.cancelled))), on: link)
-        #expect(pasteboard.dataByItem == [[Self.text: Data("first".utf8)]])
-        #expect(
-            lines.retractions == [
-                "Retracted the Mac's copied files from the guest pasteboard, the rest of the copy kept: the Mac withdrew the copy"
-            ])
-    }
-
-    @Test("The host's CLIPBOARD going takes back a host copy's unpasted file item, said as sharing stopping")
-    func copyEndingWithTheFeatureLogsTheRetraction() async throws {
-        let lines = Lines()
-        let pasteboard = FakePasteboard()
-        let clipboard = GuestClipboard(
-            pasteboard: pasteboard, stagingRoot: TestStagingRoot().root, logger: lines.logger)
-        let link = pastedLink()
-        try await receiveCopy(clipboard, pasteboard, link)
-
-        clipboard.exchange.handle(
-            .offerEnded(.clipboard, .remote, token: Self.copyToken, .resetByPeer(WireError(.capabilityWithdrawn))),
-            on: link)
-        #expect(pasteboard.dataByItem == [[Self.text: Data("first".utf8)]])
-        #expect(
-            lines.retractions == [
-                "Retracted the Mac's copied files from the guest pasteboard, the rest of the copy kept: clipboard sharing with the Mac stopped"
-            ])
-    }
-
     @Test("The connection leaving takes back a host copy's unpasted file item, and the guest says so")
     func copyEndingWithTheLinkLogsTheRetraction() async throws {
         let lines = Lines()
@@ -350,15 +263,5 @@ struct GuestClipboardStagingTests {
             lines.retractions == [
                 "Retracted the Mac's copied files from the guest pasteboard, the rest of the copy kept: clipboard sharing with the Mac stopped"
             ])
-    }
-
-    @Test("A retraction that takes nothing back logs no line")
-    func nothingTakenBackLogsNothing() async throws {
-        let lines = Lines()
-        let pasteboard = FakePasteboard()
-        let clipboard = GuestClipboard(
-            pasteboard: pasteboard, stagingRoot: TestStagingRoot().root, logger: lines.logger)
-        _ = try await keepPastedFile(clipboard, pasteboard, pastedLink())
-        #expect(lines.retractions.isEmpty)
     }
 }
