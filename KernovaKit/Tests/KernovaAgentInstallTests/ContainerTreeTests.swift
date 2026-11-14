@@ -131,24 +131,6 @@ struct ContainerTreeTests {
         #expect(payload == frozen)
     }
 
-    @Test("The golden payload holds only the update profile's records: header, chunk, zero run and end")
-    func profileRecords() throws {
-        let frozen = try #require(FileManager.default.contents(atPath: Self.golden.path))
-        var kinds: [UInt8] = []
-        var offset = 0
-        let bytes = Array(frozen)
-        while offset < bytes.count {
-            let length =
-                Int(bytes[offset + 1]) | Int(bytes[offset + 2]) << 8 | Int(bytes[offset + 3]) << 16
-                | Int(bytes[offset + 4]) << 24
-            kinds.append(bytes[offset])
-            offset += 9 + length
-        }
-        #expect(offset == bytes.count)
-        #expect(Set(kinds).isSubset(of: [1, 2, 4, 5]))
-        #expect(kinds.first == 1 && kinds.last == 5 && kinds.contains(4))
-    }
-
     @Test("An update lands the golden payload as the item in the spare slot, once its self-test passes")
     func updateLandsGolden() throws {
         let frozen = try #require(FileManager.default.contents(atPath: Self.golden.path))

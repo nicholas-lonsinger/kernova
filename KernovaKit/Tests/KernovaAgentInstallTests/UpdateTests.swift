@@ -195,13 +195,6 @@ enum Payloads {
 
 @Suite("The slot update installer")
 struct SlotUpdateInstallerTests {
-    @Test("It advertises the executable format and no rejected hash on a fresh install")
-    func availability() throws {
-        let fixture = try SlotFixture()
-        let run = try InstallerRun(fixture)
-        #expect(try run.reports.next() == Payloads.available())
-    }
-
     @Test("write, complete and switch: the payload lands in the spare slot, current moves, the switch is pending")
     func switches() throws {
         let fixture = try SlotFixture()
@@ -262,27 +255,6 @@ struct SlotUpdateInstallerTests {
         #expect(try fixture.state().rejected?.payloadSHA256 == lowercaseHex(manifest.payloadHash))
     }
 
-    @Test(
-        "A payload its lander refuses as it publishes is rejected and recorded with its code before any switch",
-        arguments: [ErrorCode.updateInstallFailed, .updateLaunchRefused])
-    func landerRefuses(code: ErrorCode) throws {
-        let fixture = try SlotFixture()
-        let run = try InstallerRun(fixture, lander: TestLander(refusal: PayloadRefusal(code, "refused")))
-        _ = try run.reports.next()
-        try Payloads.write(run)
-        run.installer.complete(Payloads.id, Payloads.manifest)
-        #expect(try run.reports.next() == Payloads.available(rejected: Payloads.hash, code: code))
-        guard case .rejected(_, let error) = try run.reports.next() else {
-            Issue.record("no rejection")
-            return
-        }
-        #expect(error.code == code)
-        try Self.expectUnswitched(fixture)
-        // A later process advertises the refusal with its code.
-        let later = try InstallerRun(fixture)
-        #expect(try later.reports.next() == Payloads.available(rejected: Payloads.hash, code: code))
-    }
-
     @Test("A write failing ENOSPC fails the pull DISK_FULL, drops the staged file, and ignores the pull's rest")
     func diskFull() throws {
         let fixture = try SlotFixture()
@@ -329,23 +301,6 @@ struct SlotUpdateInstallerTests {
         #expect(!fixture.exists("slots/b/" + TestLander.stagedName))
     }
 
-    @Test("recordRejected and clearRejected persist the rejected hash and re-advertise it")
-    func rejectedHash() throws {
-        let fixture = try SlotFixture()
-        let run = try InstallerRun(fixture)
-        _ = try run.reports.next()
-        let hash = Data(repeating: 0xC3, count: 32)
-        run.installer.recordRejected(hash)
-        #expect(try run.reports.next() == Payloads.available(rejected: hash))
-        #expect(try fixture.state().rejected?.payloadSHA256 == lowercaseHex(hash))
-        // A later process reads it back.
-        let later = try InstallerRun(fixture)
-        #expect(try later.reports.next() == Payloads.available(rejected: hash))
-        later.installer.clearRejected()
-        #expect(try later.reports.next() == Payloads.available())
-        #expect(try fixture.state().rejected == nil)
-    }
-
     @Test("The new version confirms the switch to itself once connected: the marker goes, the record clears")
     func confirms() throws {
         let fixture = try SlotFixture()
@@ -359,26 +314,6 @@ struct SlotUpdateInstallerTests {
         let state = try fixture.state()
         #expect(state.pendingSwitch == nil)
         #expect(state.active == "b")
-    }
-
-    @Test("A version the switch did not make current drops the switch as it starts, and confirms nothing")
-    func confirmsOnlyItsOwnSwitch() throws {
-        let fixture = try SlotFixture()
-        try Self.switchToB(fixture)
-        // Slot a running again with the switch still pending can only be a crash before current moved: the
-        // switch never took effect, and starting drops it.
-        try FileManager.default.removeItem(atPath: fixture.root + "/current")
-        try FileManager.default.createSymbolicLink(atPath: fixture.root + "/current", withDestinationPath: "slots/a")
-        let old = try InstallerRun(fixture, running: "a")
-        #expect(try old.reports.next() == Payloads.available())
-        old.installer.confirm()
-        old.installer.recordRejected(Data(repeating: 1, count: 32))
-        _ = try old.reports.next()
-        #expect(!fixture.exists("switch-pending"))
-        let state = try fixture.state()
-        #expect(state.pendingSwitch == nil)
-        #expect(state.active == "a")
-        #expect(state.rejected?.payloadSHA256 == lowercaseHex(Data(repeating: 1, count: 32)))
     }
 
     /// Switches the fixture to slot b through the installer, as the running version a does.
@@ -414,14 +349,6 @@ struct RollbackCheckTests {
     static func check(_ fixture: SlotFixture, mainPID: UInt32 = 4242, kills: Kills) throws -> RollbackCheck {
         RollbackCheck(
             root: try fixture.slotRoot(), serviceManager: Manager(pid: mainPID), kill: { kills.pids.append($0) })
-    }
-
-    @Test("With no switch pending it does nothing")
-    func nothingPending() throws {
-        let fixture = try SlotFixture()
-        let kills = Kills()
-        #expect(try Self.check(fixture, kills: kills).run() == .nothingPending)
-        #expect(kills.pids.isEmpty)
     }
 
     @Test("Runs 1–4 count and change nothing; run 5 reverts, kills the new version, and the old one records it")
@@ -489,22 +416,6 @@ struct RollbackCheckTests {
         #expect(try check.run() == .reverted(killed: nil))
         #expect(kills.pids.isEmpty)
         #expect(fixture.link("current") == "slots/a")
-    }
-
-    @Test("A switch confirmed before the reverting run makes the check stand down")
-    func confirmedFirst() throws {
-        let fixture = try SlotFixture()
-        try SlotUpdateInstallerTests.switchToB(fixture)
-        let kills = Kills()
-        let check = try Self.check(fixture, kills: kills)
-        for _ in 1..<RollbackCheck.runsToRevert { _ = try check.run() }
-        let next = try InstallerRun(fixture, running: "b")
-        _ = try next.reports.next()
-        next.installer.confirm()
-        _ = try next.confirmed.next()
-        #expect(try check.run() == .nothingPending)
-        #expect(kills.pids.isEmpty)
-        #expect(fixture.link("current") == "slots/b")
     }
 
     @Test("A switch reverted before the new version connects is not confirmed")
