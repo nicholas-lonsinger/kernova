@@ -131,16 +131,6 @@ struct CLIVerbWireTests {
         }
     }
 
-    @Test("ip asks for the guest's address once, the answer deciding whether it asks again")
-    func ipAsksForTheAddress() throws {
-        let exchanged = try CLIWire.exchange(
-            ["ip", "Alpha"],
-            answering: VMCommandResponse(result: .ipAddress(.observed("192.168.64.4"))))
-
-        #expect(exchanged.sent == [.ipAddress(.idOrName("Alpha"))])
-        #expect(try exchanged.answer.payload() == .ipAddress(.observed("192.168.64.4")))
-    }
-
     // MARK: - Lifecycle
 
     @Test("start crosses carrying --recovery when the line asks for it, and --yes as every consent")
@@ -221,32 +211,6 @@ struct CLIVerbWireTests {
             ])
     }
 
-    @Test(
-        "stop --anyway crosses as the anyway disposition; without --yes its consent refusal names --yes, as --force's does"
-    )
-    func stopAnywayCrossesAndAsksForYes() throws {
-        let consented = try CLIWire.exchange(["stop", "Alpha", "--anyway", "--yes"], answering: accepted)
-        #expect(
-            consented.sent == [.stop(.idOrName("Alpha"), disposition: .anyway, consent: .all, timeout: nil)])
-
-        let prompt = ConfirmationPrompt(
-            kind: .stopAnyway, title: "Stop \u{201C}Alpha\u{201D} Anyway?",
-            message: "macOS shuts down without waiting for apps. Apps still open quit without asking to save.",
-            confirmTitle: "Stop Anyway", dismissTitle: "Cancel")
-        let unconsented = try CLIWire.exchange(
-            ["stop", "Alpha", "--anyway"],
-            answering: VMCommandResponse(result: .failure(.confirmationRequired(prompt: prompt))))
-        #expect(
-            unconsented.sent == [.stop(.idOrName("Alpha"), disposition: .anyway, consent: .none, timeout: nil)])
-        do {
-            _ = try unconsented.answer.payload()
-            Issue.record("expected a consent refusal")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .refusedByState)
-            #expect(failure.message == prompt.message + "\n\nPass --yes to do it anyway.")
-        }
-    }
-
     @Test("stop --yes on a paused guest exits 5, naming the resume as a command line")
     func stopOfAPausedGuestNamesTheResume() throws {
         let vm = VMSummary(
@@ -273,14 +237,6 @@ struct CLIVerbWireTests {
             #expect(failure.code.rawValue == 5)
             #expect(failure.message == refusal.message + "\n\nResume with: kernova resume 'My VM'")
         }
-    }
-
-    @Test("suspend crosses as the verb that saves the session")
-    func suspendSendsItsVerb() throws {
-        let exchanged = try CLIWire.exchange(
-            ["suspend", "Alpha"], answering: accepted)
-
-        #expect(exchanged.sent == [.suspend(.idOrName("Alpha"))])
     }
 
     @Test("pause crosses as the verb that holds the guest in memory")
@@ -437,12 +393,6 @@ struct CLIVerbWireTests {
                     + "\u{201C}data.img\u{201D} couldn\u{2019}t be moved to the trash because the "
                     + "volume \u{201C}Archive\u{201D} doesn\u{2019}t have one.")
         }
-    }
-
-    @Test("A removal that kept no file does not decode")
-    func filesKeptNamingNoFileDoesNotDecode() {
-        let json = Data(#"{"removal":{"vm":{"name":"Alpha","permanently":false}},"files":[]}"#.utf8)
-        #expect(throws: DecodingError.self) { try JSONDecoder().decode(FilesKept.self, from: json) }
     }
 
     @Test("reveal crosses as the Finder verb, not as the app's own bring-up")

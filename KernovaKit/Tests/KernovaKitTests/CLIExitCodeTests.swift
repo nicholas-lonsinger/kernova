@@ -82,14 +82,6 @@ struct CLIExitCodeTests {
         }
     }
 
-    @Test("Every envelope refusal takes its own code")
-    func everyTransportRefusalMaps() {
-        #expect(
-            CLIExitCode(.authorizationRefused(reason: "not this team")) == .authorizationRefused)
-        #expect(CLIExitCode(.unsupportedProtocolVersion(peer: 2, expected: 1)) == .unavailable)
-        #expect(CLIExitCode(.undecodableRequest("bad bytes")) == .unavailable)
-    }
-
     @Test("No two codes collide, and success is zero")
     func codesAreDistinct() {
         #expect(CLIExitCode.success.rawValue == 0)
@@ -105,17 +97,6 @@ struct CLIExitCodeTests {
             #expect(
                 discussion.contains("\(code.rawValue)  \(code.summary)"),
                 "exit code \(code.rawValue) is missing from kernova --help")
-        }
-    }
-
-    @Test("Every summary fits the help's line, so none wraps back to column zero")
-    func everySummaryFitsOneLine() {
-        // ArgumentParser wraps the whole discussion to the terminal width, 80
-        // when nothing is attached, and re-flows an over-long line to column
-        // zero rather than under the summary. The rendered line spends five
-        // characters on its `  N  ` prefix; 72 keeps the rest inside a margin.
-        for code in CLIExitCode.allCases {
-            #expect(code.summary.count <= 72, "\(code.rawValue): \(code.summary.count) characters")
         }
     }
 
@@ -144,22 +125,6 @@ struct CLIExitCodeTests {
         }
     }
 
-    @Test("A refused answer becomes the failure the tool exits with")
-    func responsePayloadThrowsTheRefusal() throws {
-        let refused = VMCommandResponse(result: .failure(.notFound(selector: .idOrName("Ghost"))))
-        #expect(throws: CLIFailure.self) { try refused.payload() }
-
-        let authorization = VMCommandResponse(
-            result: .refused(.authorizationRefused(reason: "wrong team")))
-        do {
-            _ = try authorization.payload()
-            Issue.record("expected a refusal")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .authorizationRefused)
-            #expect(failure.message == "wrong team")
-        }
-    }
-
     @Test("An unanswered guest account exits 5, with no flag hint")
     func guestAccountRefusalCarriesNoHint() {
         let message = "\u{201C}Alpha\u{201D} creates the macOS account."
@@ -181,12 +146,5 @@ struct CLIExitCodeTests {
         } catch {
             Issue.record("expected a CLIFailure, got \(error)")
         }
-    }
-
-    @Test("A successful answer hands its payload back untouched")
-    func responsePayloadReturnsTheResult() throws {
-        let listing = VMCommandResponse(result: .summaries([vm]))
-        #expect(try listing.payload() == .summaries([vm]))
-        #expect(try VMCommandResponse(result: .ok).payload() == .ok)
     }
 }

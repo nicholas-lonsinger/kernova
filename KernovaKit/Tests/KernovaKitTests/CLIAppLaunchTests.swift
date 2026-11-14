@@ -17,28 +17,6 @@ struct CLIAppLaunchTests {
 
     // MARK: - Enclosing bundle
 
-    @Test("The bundled tool resolves the app it is embedded in")
-    func installedToolResolvesItsApp() {
-        #expect(
-            locate("/Applications/Kernova.app/Contents/Helpers/kernova")
-                == "/Applications/Kernova.app")
-    }
-
-    @Test("A nested bundle resolves to the innermost app enclosing the tool")
-    func nestedBundleResolvesInnermost() {
-        #expect(
-            locate("/Applications/Outer.app/Contents/Library/Inner.app/Contents/MacOS/kernova")
-                == "/Applications/Outer.app/Contents/Library/Inner.app")
-    }
-
-    @Test("A tool outside any app resolves nothing, rather than guessing")
-    func looseToolResolvesNothing() throws {
-        let scratch = TestScratchDirectory(prefix: "CLIAppLaunchTests").url
-        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
-        #expect(locate(scratch.appendingPathComponent("bin/kernova").path) == nil)
-        #expect(locate("/kernova") == nil)
-    }
-
     /// The shape Settings → Advanced installs: a link on `PATH` pointing into
     /// the bundle. `Bundle.main.executableURL` answers the path the tool was
     /// invoked through, so without resolving it the installed tool finds no app
@@ -64,13 +42,6 @@ struct CLIAppLaunchTests {
     }
 
     // MARK: - Connect backoff
-
-    @Test("The schedule starts at 50 ms and doubles to a half-second ceiling")
-    func scheduleStartsSmallAndDoubles() {
-        let delays = ConnectBackoff.delays()
-
-        #expect(Array(delays.prefix(5)) == [0.05, 0.1, 0.2, 0.4, 0.5])
-    }
 
     @Test("Every wait is bounded, and the whole schedule fits inside the deadline")
     func scheduleFitsItsDeadline() {

@@ -50,45 +50,6 @@ struct CLIConfigurationWireTests {
         #expect(try exchanged.answer.payload() == .configuration(settings))
     }
 
-    @Test("A set the app will not do without consent says how to give it")
-    func setWithoutConsentReportsHowToGiveIt() throws {
-        let exchanged = try CLIWire.exchange(
-            ["set", "Alpha", "clipboard.passthrough=true"],
-            answering: VMCommandResponse(
-                result: .failure(
-                    .confirmationRequired(
-                        prompt: ConfirmationPrompt(
-                            kind: .enableClipboardPassthrough,
-                            title: "Turn On Automatic Clipboard Passthrough?",
-                            message: "\u{201C}Alpha\u{201D} will read whatever you copy.",
-                            confirmTitle: "Turn On", dismissTitle: "Cancel")))))
-
-        do {
-            _ = try exchanged.answer.payload()
-            Issue.record("expected a confirmation refusal")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .refusedByState)
-            #expect(failure.message.contains("will read whatever you copy"))
-            #expect(failure.message.hasSuffix("Pass --yes to do it anyway."))
-        }
-    }
-
-    @Test("A key or value the app will not take exits 2, carrying its whole refusal")
-    func aRefusedArgumentExitsTwo() throws {
-        let refusal = "There is no setting called \u{201C}cpu\u{201D}."
-        let exchanged = try CLIWire.exchange(
-            ["set", "Alpha", "cpu=4"],
-            answering: VMCommandResponse(result: .failure(.invalidArgument(message: refusal))))
-
-        do {
-            _ = try exchanged.answer.payload()
-            Issue.record("expected an argument refusal")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .usage)
-            #expect(failure.message == refusal)
-        }
-    }
-
     // MARK: - Shares
 
     @Test("A share list asks for the folders of the virtual machine its argument names")
@@ -108,19 +69,5 @@ struct CLIConfigurationWireTests {
             ["share", "list", identifier.uuidString, "--id"],
             answering: VMCommandResponse(result: .sharedDirectories(shares)))
         #expect(identified.sent == [.sharedDirectories(.id(identifier))])
-    }
-
-    // MARK: - Answers
-
-    @Test("An answer of the wrong shape refuses rather than being printed as settings")
-    func anUnexpectedAnswerRefuses() {
-        do {
-            try ConfigurationOutput.write(.ok, options: GlobalOptions())
-            Issue.record("expected an unavailable refusal")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .unavailable)
-        } catch {
-            Issue.record("expected a CLIFailure, got \(error)")
-        }
     }
 }

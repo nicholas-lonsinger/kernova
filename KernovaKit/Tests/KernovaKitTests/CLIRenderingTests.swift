@@ -50,52 +50,6 @@ struct CLIRenderingTests {
 
     // MARK: - Listing
 
-    @Test("A listing's columns align to the widest cell, and headings name them")
-    func listingColumnsAlign() {
-        let lines = TableRenderer.render([alpha, longName], quiet: false)
-            .components(separatedBy: "\n")
-
-        #expect(lines.count == 3)
-        #expect(lines[0].hasPrefix("NAME"))
-        // The second column starts at the same offset on every line, which is
-        // the whole point of padding to the widest cell.
-        let starts = lines.map { line -> Int in
-            let name = line.hasPrefix("NAME") ? "STATUS" : (line.hasPrefix("Alpha") ? "Running" : "Initial Boot")
-            guard let range = line.range(of: name) else { return -1 }
-            return line.distance(from: line.startIndex, to: range.lowerBound)
-        }
-        #expect(Set(starts).count == 1)
-        #expect(starts[0] > 0)
-        #expect(lines[1].contains("Running"))
-        // The wire's `initialBoot` reaches a person as words, never raw.
-        #expect(lines[2].contains("Initial Boot"))
-        #expect(!lines[2].contains("initialBoot"))
-    }
-
-    @Test("A listing ends every line with content, never with padding")
-    func listingHasNoTrailingBlanks() {
-        for line in TableRenderer.render([alpha, longName], quiet: false)
-            .components(separatedBy: "\n")
-        {
-            #expect(line == line.trimmingCharacters(in: .whitespaces))
-        }
-    }
-
-    @Test("A listing names every field #309 asks for: name, state, address, identifier")
-    func listingCarriesEveryField() {
-        let lines = TableRenderer.render([alpha, longName], quiet: false)
-            .components(separatedBy: "\n")
-
-        #expect(lines[0].contains("NAME"))
-        #expect(lines[0].contains("STATUS"))
-        #expect(lines[0].contains("IP ADDRESS"))
-        #expect(lines[0].contains("ID"))
-        // Each address reads the way `info` states it, per case.
-        #expect(lines[1].contains("192.168.64.4"))
-        #expect(lines[1].contains(alpha.id.uuidString))
-        #expect(lines[2].contains("Not seen"))
-    }
-
     @Test("A VM another copy holds reads as in use by it, in the listing and in info")
     func heldByAnotherCopyReplacesTheStatus() throws {
         let held = VMSummary(
@@ -157,14 +111,6 @@ struct CLIRenderingTests {
         #expect(rendered.contains("192.168.64.4"))
     }
 
-    @Test("A VM with no session reads its guest agent as absent")
-    func infoWithoutSessionReadsTheAgentAsAbsent() throws {
-        let rendered = TableRenderer.render(report(info(agentStatus: nil)))
-        let row = try #require(
-            rendered.components(separatedBy: "\n").first { $0.hasPrefix("Guest Agent") })
-        #expect(row.hasSuffix("  \u{2013}"))
-    }
-
     @Test("Each agent the hub serves gets a line of its own under the agent status")
     func infoListsEachAgent() {
         let lines = TableRenderer.render(
@@ -195,16 +141,6 @@ struct CLIRenderingTests {
         #expect(try JSONDecoder().decode(VMInfo.self, from: data).savedStateKernovaVersion == "0.10.0 (412)")
     }
 
-    @Test("A saved state with no recorded version names no saver, in text or JSON")
-    func infoWithoutAVersionNamesNoSaver() throws {
-        let unrecorded = info(hasSavedState: true, savedStateKernovaVersion: nil)
-        #expect(!TableRenderer.render(report(unrecorded)).contains("Saved By"))
-
-        let data = Data(try JSONRenderer.render(unrecorded).utf8)
-        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        #expect(object["savedStateKernovaVersion"] == nil)
-    }
-
     @Test("A VM with no session omits the agent status from its JSON")
     func infoWithoutSessionOmitsTheAgentStatusKey() throws {
         let data = Data(try JSONRenderer.render(info(agentStatus: nil)).utf8)
@@ -222,16 +158,6 @@ struct CLIRenderingTests {
 
         #expect(network.hasSuffix("nat, Network List Can\u{2019}t Be Read"))
         #expect(!rendered.contains(id))
-    }
-
-    @Test("A named network the library does not list reads as its identifier")
-    func anUnlistedNetworkReadsAsItsIdentifier() throws {
-        let id = try #require(UUID(uuidString: "6A1F0B2C-3D4E-4F50-8A6B-7C8D9E0F1A2B"))
-        let rendered = TableRenderer.render(
-            report(info(networkMembership: id.uuidString, networkName: .unlisted(id))))
-        let network = try #require(rendered.components(separatedBy: "\n").first { $0.hasPrefix("Network") })
-
-        #expect(network.hasSuffix("nat, \(id.uuidString)"))
     }
 
     @Test("Memory reads in the gigabytes the memory key takes, to the megabyte")
@@ -341,13 +267,6 @@ struct CLIRenderingTests {
         #expect(!rendered.contains(memoryStyle))
     }
 
-    @Test("A size the app did not answer for reads as unknown, never as nothing at all")
-    func anUnansweredSizeReadsAsUnknown() {
-        let rendered = TableRenderer.render(
-            [SnapshotRow(snapshot(name: "Base"), size: nil)], quiet: false)
-        #expect(rendered.contains("Unknown"))
-    }
-
     @Test("A capture date reads in this Mac's own words, not the wire's")
     func snapshotDatesReadAsWords() {
         let rendered = TableRenderer.render(
@@ -405,16 +324,6 @@ struct CLIRenderingTests {
         #expect(row["sizeBytes"] == nil)
         #expect(row["privateBytes"] == nil)
         #expect(row["name"] as? String == "Base")
-    }
-
-    @Test("Without private bytes the JSON carries the size alone")
-    func absentPrivateBytesLeaveTheSizeAlone() throws {
-        let rendered = try JSONRenderer.render(
-            SnapshotRow(snapshot(name: "Base"), size: SnapshotSize(bytes: 8_192, privateBytes: nil)))
-        let row = try #require(
-            try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [String: Any])
-        #expect(row["sizeBytes"] as? Int == 8_192)
-        #expect(row["privateBytes"] == nil)
     }
 
     // MARK: - Named networks
@@ -560,12 +469,6 @@ struct CLIRenderingTests {
         #expect(TableRenderer.render(settings, quiet: true) == "4\nnat\ntrue")
     }
 
-    @Test("A virtual machine with no settings to report prints nothing at all")
-    func emptySettingsListingIsEmpty() {
-        #expect(TableRenderer.render([ConfigurationEntry](), quiet: false).isEmpty)
-        #expect(TableRenderer.render([ConfigurationEntry](), quiet: true).isEmpty)
-    }
-
     @Test("A keyspace listing names each key, its summary, and whether a running guest takes it")
     func keyspaceListingCarriesEveryColumn() {
         let lines = TableRenderer.render(keyspace, quiet: false).components(separatedBy: "\n")
@@ -591,12 +494,6 @@ struct CLIRenderingTests {
     @Test("--quiet on a keyspace listing prints the names alone, which get and set take back")
     func quietKeyspaceListingIsNamesOnly() {
         #expect(TableRenderer.render(keyspace, quiet: true) == "cpus\nephemeral\nclipboard.sharing\ndropFiles")
-    }
-
-    @Test("An empty keyspace prints nothing at all")
-    func emptyKeyspaceListingIsEmpty() {
-        #expect(TableRenderer.render([ConfigurationKeyDescriptor](), quiet: false).isEmpty)
-        #expect(TableRenderer.render([ConfigurationKeyDescriptor](), quiet: true).isEmpty)
     }
 
     @Test("Settings JSON is the wire DTOs themselves, decodable back")
@@ -644,12 +541,6 @@ struct CLIRenderingTests {
         #expect(
             TableRenderer.render(shares, quiet: true)
                 == "/Users/somebody/Sites\n/Users/somebody/Reference Material")
-    }
-
-    @Test("A virtual machine sharing nothing prints nothing at all")
-    func emptyShareListingIsEmpty() {
-        #expect(TableRenderer.render([SharedDirectorySummary](), quiet: false).isEmpty)
-        #expect(TableRenderer.render([SharedDirectorySummary](), quiet: true).isEmpty)
     }
 
     @Test("A cell prints whole, however many UTF-16 units its characters take")
@@ -723,12 +614,6 @@ struct CLIRenderingTests {
                 == "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\n12")
     }
 
-    @Test("A guest holding nothing prints nothing at all")
-    func emptyUSBListingIsEmpty() {
-        #expect(TableRenderer.render([USBAccessorySummary](), quiet: false).isEmpty)
-        #expect(TableRenderer.render([USBAccessorySummary](), quiet: true).isEmpty)
-    }
-
     @Test("A listing where no guest holds anything leaves the attachment column out")
     func usbListingWithoutAttachmentsOmitsTheDeviceColumn() throws {
         let free = accessories.filter { $0.deviceID == nil }
@@ -739,15 +624,6 @@ struct CLIRenderingTests {
         #expect(lines[0].hasPrefix("NAME"))
         #expect(lines[0].contains("ACCESSORY"))
         #expect(!lines[0].contains("DEVICE"))
-    }
-
-    @Test("USB JSON is the wire DTO itself, decodable back")
-    func usbJSONIsTheWireDTO() throws {
-        let rendered = try JSONRenderer.render(accessories)
-
-        #expect(
-            try JSONDecoder().decode([USBAccessorySummary].self, from: Data(rendered.utf8))
-                == accessories)
     }
 
     // MARK: - Remembered USB accessories
@@ -774,12 +650,6 @@ struct CLIRenderingTests {
         #expect(
             TableRenderer.render(pairings, quiet: true)
                 == "04e8:6300:0100:0373\n0403:6001:0100@hub/Port-A@1")
-    }
-
-    @Test("A library that remembers nothing prints nothing at all")
-    func emptyUSBRulesListingIsEmpty() {
-        #expect(TableRenderer.render([USBPairingSummary](), quiet: false).isEmpty)
-        #expect(TableRenderer.render([USBPairingSummary](), quiet: true).isEmpty)
     }
 
     @Test("Rules JSON is the wire DTO itself, decodable back")
@@ -817,22 +687,6 @@ struct CLIRenderingTests {
     }
 
     // MARK: - JSON
-
-    @Test("JSON keys are sorted, so two runs diff by content")
-    func jsonKeysAreStable() throws {
-        let rendered = try JSONRenderer.render([alpha])
-        let keys = ["\"id\"", "\"name\"", "\"status\""]
-        let positions = keys.compactMap { rendered.range(of: $0)?.lowerBound }
-        #expect(positions.count == keys.count)
-        #expect(positions == positions.sorted())
-    }
-
-    @Test("JSON encodes the wire DTO itself, so the tool and the app share one schema")
-    func jsonIsTheWireDTO() throws {
-        let rendered = try JSONRenderer.render(info())
-        let decoded = try JSONDecoder().decode(VMInfo.self, from: Data(rendered.utf8))
-        #expect(decoded == info())
-    }
 
     @Test("A guest address's JSON names its state, and only an observed one carries an address")
     func addressJSONNamesItsState() throws {

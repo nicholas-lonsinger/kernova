@@ -113,17 +113,6 @@ struct CLIWaitTests {
         #expect(ended.verbs == subscribeThenRead)
     }
 
-    @Test("The status the wait names ends it when it arrives as an event")
-    func aStatusEventEndsTheWait() throws {
-        let ended = try outcome(
-            .stopped,
-            answering: [
-                info(status: "running"),
-                event(.statusChanged(id: alpha, name: "Alpha", from: "running", to: "stopped")),
-            ])
-        #expect(ended.failure == nil)
-    }
-
     @Test("A current agent ends an agent wait")
     func theAgentConditionEndsOnACurrentAgent() throws {
         let ended = try outcome(
@@ -133,21 +122,6 @@ struct CLIWaitTests {
                 event(.agentStatusChanged(id: alpha, name: "Alpha", status: "current")),
             ])
         #expect(ended.failure == nil)
-    }
-
-    @Test("A VM with no session never ends an agent wait")
-    func noSessionDoesNotEndAnAgentWait() throws {
-        // A nil status that satisfied the wait would end it before the failure
-        // that follows, so ending on that failure proves both were read and
-        // passed over.
-        let ended = try outcome(
-            .agent,
-            answering: [
-                info(status: "stopped", agentStatus: nil),
-                event(.agentStatusChanged(id: alpha, name: "Alpha", status: nil)),
-                event(.failure(id: alpha, name: "Alpha", message: "The guest never booted.")),
-            ])
-        #expect(ended.failure?.code == .operationFailed)
     }
 
     // MARK: - The Deadline

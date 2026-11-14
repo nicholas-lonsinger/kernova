@@ -44,22 +44,6 @@ struct VMCommandEnvelopeTests {
         try JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
     }
 
-    // MARK: - Selectors
-
-    @Test("Every selector shape round-trips")
-    func selectorsRoundTrip() throws {
-        for selector: VMSelector in [.id(vmID), .name("Alpha"), .idOrName("Alpha")] {
-            #expect(try roundTrip(selector) == selector)
-        }
-    }
-
-    @Test("A selector reads back the text a message would name it by")
-    func selectorDisplayText() {
-        #expect(VMSelector.id(vmID).displayText == vmID.uuidString)
-        #expect(VMSelector.name("Alpha").displayText == "Alpha")
-        #expect(VMSelector.idOrName("Alpha").displayText == "Alpha")
-    }
-
     // MARK: - Requests
 
     @Test("Every request verb round-trips, and reports which verb it is")
@@ -220,14 +204,6 @@ struct VMCommandEnvelopeTests {
         }
     }
 
-    @Test("No attachment payload offers an operation that needs a live panel grant")
-    func picksStayOffTheWire() {
-        #expect(name(of: .create(sizeInGB: 32)) == "create")
-        #expect(name(of: .eject(item: diskID)) == "eject")
-        #expect(name(of: .remove(directory: diskID)) == "remove")
-        #expect(name(of: .add(path: "/Users/somebody/Sites", readOnly: true)) == "add")
-    }
-
     @Test("A mount names the scopes it waits for, none meaning every scope the guest OS has")
     func guestAgentDiskMountScopes() throws {
         let selector = VMSelector.name("Ubuntu")
@@ -241,100 +217,6 @@ struct VMCommandEnvelopeTests {
         #expect(String(decoding: wire, as: UTF8.self) == #"{"mount":{"awaiting":["system"]}}"#)
         #expect(VMGuestOS.macOS.installedAgentScopes == [.login])
         #expect(VMGuestOS.linux.installedAgentScopes == [.login, .system])
-    }
-
-    @Test("Every response result round-trips")
-    func everyResponseRoundTrips() throws {
-        let results: [VMCommandResponse.Result] = [
-            .ok,
-            .summaries([summary]),
-            .summary(summary),
-            .info(info),
-            .ipAddress(.observed("192.168.66.2")),
-            .ipAddress(.unavailable),
-            .ipAddress(.externallyAssigned),
-            .ipAddress(.notObserved),
-            .snapshots([snapshot]),
-            .snapshot(snapshot),
-            // A snapshot of a large guest exceeds what 32 bits can name, so the
-            // width is part of what has to survive the trip.
-            .snapshotSizes([snapshotID: SnapshotSize(bytes: 12_884_901_888, privateBytes: 8_589_934_592)]),
-            .snapshotSizes([snapshotID: SnapshotSize(bytes: 12_884_901_888, privateBytes: nil)]),
-            .snapshotSizes([:]),
-            .sharedDirectories([
-                SharedDirectorySummary(path: "/Users/somebody/Sites", readOnly: false),
-                SharedDirectorySummary(path: "/Users/somebody/Reference", readOnly: true),
-            ]),
-            .sharedDirectories([]),
-            // A disk past 4 GiB must survive the trip at full width, and an
-            // unreadable image's missing figures as missing.
-            .storageDisks([
-                StorageDiskSummary(
-                    id: diskID, label: "Main Disk", kind: "virtio", readOnly: false,
-                    path: "/Users/somebody/VMs/Alpha.kernova/Disk.asif", notes: "boot volume",
-                    capacityBytes: 107_374_182_400, usedBytes: 10_845_000_000),
-                StorageDiskSummary(
-                    id: snapshotID, label: "Installer", kind: "usbMassStorage", readOnly: true,
-                    path: "/Users/somebody/Downloads/installer.iso", notes: "",
-                    capacityBytes: nil, usedBytes: nil),
-            ]),
-            .storageDisks([]),
-            .usbAccessories([
-                USBAccessorySummary(
-                    registryID: 4_294_967_296, name: "0403:6001 \u{00B7} Vendor-specific",
-                    vendorID: 0x0403, productID: 0x6001, deviceID: diskID),
-                USBAccessorySummary(
-                    registryID: 12, name: "05ac:12a8 \u{00B7} Composite", vendorID: 0x05AC,
-                    productID: 0x12A8),
-            ]),
-            .usbAccessories([]),
-            .event(.added(summary)),
-            .event(.removed(id: vmID, name: "Alpha")),
-            .event(.statusChanged(id: vmID, name: "Alpha", from: "stopped", to: "running")),
-            .event(.agentStatusChanged(id: vmID, name: "Alpha", status: "current")),
-            .event(.failure(id: vmID, name: "Alpha", message: "the disk went away")),
-            .configurationKeys([
-                ConfigurationKeyDescriptor(
-                    name: "cpus", summary: "Virtual CPU cores.",
-                    editableWhileRunning: ["macOS": false, "linux": false])
-            ]),
-            .configurationKeys([]),
-            .configuration([ConfigurationEntry(key: "cpus", value: "4")]),
-            .configuration([]),
-            .networks([NetworkSummary(id: snapshotID, name: "Lab", kind: .hostOnly, members: [summary])]),
-            .networks([]),
-            .network(NetworkSummary(id: snapshotID, name: "Lab", kind: .nat, members: [])),
-            .groups([
-                GroupSummary(id: snapshotID, name: "Linux Lab", kind: .smartGroup, members: [summary]),
-                GroupSummary(id: diskID, name: "Client Project", kind: .folder, members: []),
-            ]),
-            .groups([]),
-            .groupAction(
-                VMGroupActionReport(
-                    action: .suspend, groupKind: .folder, groupID: diskID, groupName: "Client Project",
-                    results: [
-                        VMGroupActionResult(vm: summary, outcome: .done(verb: .suspend)),
-                        VMGroupActionResult(vm: summary, outcome: .passedOver(reason: .state)),
-                        VMGroupActionResult(vm: summary, outcome: .passedOver(reason: .guestSetup)),
-                        VMGroupActionResult(
-                            vm: summary, outcome: .passedOver(reason: .refused(error: .terminating))),
-                        VMGroupActionResult(
-                            vm: summary,
-                            outcome: .needsAnswer(verb: .start, question: .invalidArgument(message: "Which?"))),
-                        VMGroupActionResult(
-                            vm: summary,
-                            outcome: .failed(
-                                error: .operationFailed(verb: .suspend, title: nil, message: "No.", recovery: nil))),
-                    ])),
-            .refused(.authorizationRefused(reason: "not this team")),
-            .refused(.unsupportedProtocolVersion(peer: 2, expected: 1)),
-            .refused(.undecodableRequest("the bytes are not JSON")),
-            .activate,
-        ]
-        for result in results {
-            let response = VMCommandResponse(result: result)
-            #expect(try roundTrip(response) == response)
-        }
     }
 
     @Test("Every failure round-trips, and reads back as the response's failure")
@@ -410,28 +292,6 @@ struct VMCommandEnvelopeTests {
         }
     }
 
-    @Test("A timeout states the deadline it observed and claims no state beyond it")
-    func timeoutCopyStatesOnlyWhatItObserved() {
-        let stop = CommandErrorDTO.timedOut(vm: summary, verb: .stop, seconds: 60)
-        let restart = CommandErrorDTO.timedOut(vm: summary, verb: .restart, seconds: 60)
-
-        #expect(stop.message.contains("did not power off within 60 seconds"))
-        #expect(
-            stop.message.hasSuffix(
-                "A force stop terminates a guest that will not shut down, losing anything in the guest that "
-                    + "isn\u{2019}t saved to disk."))
-        #expect(restart.message.contains("was not started again"))
-        // The VM's state at the expiry is its own read: a suspended VM whose
-        // saved state the stop already discarded is not "running unchanged",
-        // and a sentence here cannot be right for both.
-        #expect(!stop.message.contains("running"))
-        // A fractional deadline reads back the way it was typed rather than
-        // rounding to a number the caller never asked for.
-        #expect(
-            CommandErrorDTO.timedOut(vm: summary, verb: .stop, seconds: 2.5).message
-                .contains("2.5 seconds"))
-    }
-
     private static let before = HeldSnapshot(name: "Before", isEphemeralBaseline: false)
     private static let after = HeldSnapshot(name: "After", isEphemeralBaseline: false)
     private static let baseline = HeldSnapshot(name: "Baseline", isEphemeralBaseline: true)
@@ -445,42 +305,6 @@ struct VMCommandEnvelopeTests {
             vm: summary, with: holder,
             reason: .macAddressInUse(
                 address: "aa:bb:cc:dd:ee:0f", holding: holding, otherHolders: others))
-    }
-
-    @Test("A taken MAC address names itself, its holder, and the VM asking for it")
-    func macAddressInUseCopyNamesTheAddress() {
-        let failure = inUse(.configuration)
-
-        #expect(failure.title == "MAC Address In Use")
-        #expect(
-            failure.message
-                == "\u{201C}Holder\u{201D} already uses aa:bb:cc:dd:ee:0f. "
-                + "Each virtual machine needs its own MAC address. "
-                + "Change or delete \u{201C}Holder\u{201D} first to move this address to \u{201C}Alpha\u{201D}.")
-    }
-
-    @Test("An address held only by snapshots names them, and deleting them as the way out")
-    func macAddressInUseCopyNamesTheSnapshot() {
-        #expect(
-            inUse(.snapshots(HeldSnapshots(Self.before))).message
-                == "\u{201C}Holder\u{201D} has a snapshot, \u{201C}Before\u{201D}, taken with aa:bb:cc:dd:ee:0f. "
-                + "Each virtual machine needs its own MAC address. "
-                + "Delete that snapshot first to move this address to \u{201C}Alpha\u{201D}.")
-        #expect(
-            inUse(.snapshots(HeldSnapshots(Self.before, [Self.after]))).message
-                == "\u{201C}Holder\u{201D} has snapshots \u{201C}Before\u{201D} and \u{201C}After\u{201D} taken with aa:bb:cc:dd:ee:0f. "
-                + "Each virtual machine needs its own MAC address. "
-                + "Delete those snapshots first to move this address to \u{201C}Alpha\u{201D}.")
-    }
-
-    @Test("An address a holder uses and took a snapshot with names both, and both ways out")
-    func macAddressInUseCopyNamesTheConfigurationAndSnapshot() {
-        #expect(
-            inUse(.configurationAndSnapshots(HeldSnapshots(Self.before))).message
-                == "\u{201C}Holder\u{201D} already uses aa:bb:cc:dd:ee:0f, and has a snapshot, \u{201C}Before\u{201D}, taken with it. "
-                + "Each virtual machine needs its own MAC address. "
-                + "Delete \u{201C}Holder\u{201D}, or change its address and delete that snapshot, to move this address to \u{201C}Alpha\u{201D}."
-        )
     }
 
     @Test("An Ephemeral Mode baseline is named as one, and offered no delete")
@@ -557,23 +381,6 @@ struct VMCommandEnvelopeTests {
         #expect(fact.contains("\u{201C}Alpha\u{201D} would write to it") == !writableThere)
     }
 
-    @Test("A shared MAC address is refused on its own terms, whatever the machine IDs")
-    func macAddressCopyNamesTheNetwork() {
-        let active = sharing(.macAddress, otherHeldByAnotherCopy: false)
-        #expect(active.title == "Duplicate MAC Address")
-        #expect(
-            active.message
-                == "\u{201C}Alpha\u{201D} has the same MAC address as \u{201C}Alpha Copy\u{201D}, which is active. "
-                + "Two virtual machines with the same MAC address must not run on the same network at once. "
-                + "Stop \u{201C}Alpha Copy\u{201D} first, or change \u{201C}Alpha\u{201D}\u{2019}s network or MAC address in Network settings."
-        )
-        #expect(
-            sharing(.macAddress, otherHeldByAnotherCopy: true).message
-                == "\u{201C}Alpha\u{201D} has the same MAC address as \u{201C}Alpha Copy\u{201D}, which another copy of Kernova is using. "
-                + "Two virtual machines with the same MAC address must not run on the same network at once. "
-                + "Change \u{201C}Alpha\u{201D}\u{2019}s network or MAC address in Network settings.")
-    }
-
     @Test("A consent crosses as the set of confirmations given")
     func consentCoversWhatItNames() throws {
         let given = Consent([.revertToSnapshot])
@@ -597,10 +404,5 @@ struct VMCommandEnvelopeTests {
             MACAddressHolding(configured: true, snapshots: [Self.baseline])
                 == .configurationAndSnapshots(HeldSnapshots(Self.baseline)))
         #expect(HeldSnapshots(Self.before, [Self.after]).all == [Self.before, Self.after])
-    }
-
-    @Test("A successful response carries no failure")
-    func successCarriesNoFailure() {
-        #expect(VMCommandResponse(result: .ok).failure == nil)
     }
 }

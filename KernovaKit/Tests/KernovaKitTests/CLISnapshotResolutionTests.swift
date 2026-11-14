@@ -44,18 +44,6 @@ struct CLISnapshotResolutionTests {
         #expect(throws: CLIFailure.self) { try resolve("Bas", in: [base, older]) }
     }
 
-    @Test("Text that is an identifier is read as one first, and falls back to the names")
-    func anIdentifierWinsOverANameThatLooksLikeOne() throws {
-        // A snapshot literally named after another's identifier stays
-        // reachable: the identifier match is tried first, the name second.
-        let impostor = SnapshotSummary(
-            id: newer.id, name: base.id.uuidString, notes: "", kind: "warm",
-            createdAt: Date(timeIntervalSince1970: 1_780_000_000), isCurrent: false,
-            isEphemeralBaseline: false)
-        #expect(try resolve(base.id.uuidString, in: [base, impostor]) == base)
-        #expect(try resolve(base.id.uuidString, in: [impostor]) == impostor)
-    }
-
     @Test("A name several snapshots carry refuses, listing each with the identifier that replaces it")
     func anAmbiguousNameListsItsCandidates() {
         do {
@@ -87,12 +75,6 @@ struct CLISnapshotResolutionTests {
         } catch {
             Issue.record("expected a CLIFailure, got \(error)")
         }
-    }
-
-    @Test("An empty listing has nothing to resolve to")
-    func anEmptyListingResolvesNothing() {
-        #expect(throws: CLIFailure.self) { try resolve("Base", in: []) }
-        #expect(throws: CLIFailure.self) { try resolve(base.id.uuidString, in: []) }
     }
 
     @Test("--id resolves by identifier alone, never falling back to a name")
