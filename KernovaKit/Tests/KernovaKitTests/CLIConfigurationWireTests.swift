@@ -70,4 +70,18 @@ struct CLIConfigurationWireTests {
             answering: VMCommandResponse(result: .sharedDirectories(shares)))
         #expect(identified.sent == [.sharedDirectories(.id(identifier))])
     }
+
+    // MARK: - Answers
+
+    @Test("An answer of the wrong shape refuses rather than being printed as settings")
+    func anUnexpectedAnswerRefuses() {
+        do {
+            try ConfigurationOutput.write(.ok, options: GlobalOptions())
+            Issue.record("expected an unavailable refusal")
+        } catch let failure as CLIFailure {
+            #expect(failure.code == .unavailable)
+        } catch {
+            Issue.record("expected a CLIFailure, got \(error)")
+        }
+    }
 }

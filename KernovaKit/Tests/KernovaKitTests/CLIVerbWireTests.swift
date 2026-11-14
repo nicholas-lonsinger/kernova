@@ -239,6 +239,14 @@ struct CLIVerbWireTests {
         }
     }
 
+    @Test("suspend crosses as the verb that saves the session")
+    func suspendSendsItsVerb() throws {
+        let exchanged = try CLIWire.exchange(
+            ["suspend", "Alpha"], answering: accepted)
+
+        #expect(exchanged.sent == [.suspend(.idOrName("Alpha"))])
+    }
+
     @Test("pause crosses as the verb that holds the guest in memory")
     func pauseSendsItsVerb() throws {
         let exchanged = try CLIWire.exchange(["pause", "Alpha"], answering: accepted)

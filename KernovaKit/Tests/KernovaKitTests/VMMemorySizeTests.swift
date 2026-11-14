@@ -35,6 +35,11 @@ struct VMMemorySizeTests {
         #expect(try decoded("[1.0006]").mebibytes == 1025)
     }
 
+    @Test("A negative size is refused")
+    func negativeSizeIsRefused() {
+        #expect(throws: DecodingError.self) { try decoded("[-1]") }
+    }
+
     // MARK: - Stepping
 
     @Test("A stepper arrow moves to the next whole gibibyte in its direction")
