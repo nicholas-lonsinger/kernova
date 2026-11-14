@@ -69,8 +69,8 @@ struct GuestDragOutTests {
 
         /// The guest's drag manager brings a drag of `items` into the catcher.
         @discardableResult
-        func enter(_ items: [GuestDragItem]?, mask: NSDragOperation = [.copy, .move, .generic]) -> NSDragOperation {
-            catcher.draggingEntered(GuestDragCatcher.Drag(sourceMask: mask, items: items))
+        func enter(_ items: [GuestDragItem]?) -> NSDragOperation {
+            catcher.draggingEntered(GuestDragCatcher.Drag(sourceMask: [.copy, .move, .generic], items: items))
         }
     }
 
@@ -547,13 +547,13 @@ struct GuestDragOutTests {
     }
 
     /// Drops the drag `items` take 1 carries on the catcher, the host having
-    /// asked it to deliver when `delivering`, its promises read off `drop` —
-    /// by default one calling each promise in through the rig's receivers.
+    /// asked it to deliver, its promises read off `drop` — by default one
+    /// calling each promise in through the rig's receivers.
     private func drop(
-        _ rig: Rig, _ items: [GuestDragItem], delivering: Bool = true, drop: FakeGuestDragDrop? = nil
+        _ rig: Rig, _ items: [GuestDragItem], drop: FakeGuestDragDrop? = nil
     ) {
         rig.enter(items)
-        if delivering { rig.dragOut.control(takeID(1), .deliver) }
+        rig.dragOut.control(takeID(1), .deliver)
         _ = rig.catcher.performDragOperation(drop: drop ?? FakeGuestDragDrop(items, receivers: rig.input.receivers))
         rig.catcher.concludeDragOperation()
     }
@@ -751,9 +751,9 @@ struct GuestDragOutTests {
     /// Writes `name` into `folder` as the drag's source places a finished
     /// file, whole in one step.
     @discardableResult
-    private func place(_ name: String, in folder: URL, bytes: Int = 8) throws -> URL {
+    private func place(_ name: String, in folder: URL) throws -> URL {
         let url = folder.appendingPathComponent(name)
-        try Data(repeating: 7, count: bytes).write(to: url)
+        try Data(repeating: 7, count: 8).write(to: url)
         return url
     }
 

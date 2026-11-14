@@ -95,9 +95,8 @@ struct GuestClipboardStagingTests {
     }
 
     /// Has the host send three copies whose one pull fails, each refused unwritten: each takes a staging
-    /// generation of its own, the third evicting the oldest. Returns the link they came over.
-    @discardableResult
-    private func failThreeCopies(_ clipboard: GuestClipboard) async throws -> RecordingLink {
+    /// generation of its own, the third evicting the oldest.
+    private func failThreeCopies(_ clipboard: GuestClipboard) async throws {
         let link = RecordingLink(items: [Self.textItem], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
         clipboard.setLink(link)
         for attempt in 0..<3 {
@@ -111,7 +110,6 @@ struct GuestClipboardStagingTests {
             clipboard.exchange.pullEnded(link.pulls[attempt].id, .failed(WireError(.readFailed)))
             try await link.changed.wait { link.refusals.count == attempt + 1 }
         }
-        return link
     }
 
     @Test("A guest pasteboard that moved on is left alone when the staging a kept file named is evicted")

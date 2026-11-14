@@ -184,13 +184,12 @@ struct GuestClipboardTests {
 
     /// Publishes the host's passthrough offer of `item` on `pasteboard` through `clipboard`, over `link`.
     private func receiveOffer(
-        _ item: OfferedItem, concealed: Bool = false, _ clipboard: GuestClipboard, _ pasteboard: FakePasteboard,
-        _ link: RecordingLink
+        _ item: OfferedItem, _ clipboard: GuestClipboard, _ pasteboard: FakePasteboard, _ link: RecordingLink
     ) async throws {
         clipboard.setLink(link)
         clipboard.exchange.handle(
             .offerReceived(
-                ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: concealed, count: 1)),
+                ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: false, count: 1)),
             on: link)
         try await pasteboard.changed.wait { !pasteboard.promisedTypes.isEmpty }
     }
@@ -210,7 +209,7 @@ struct GuestClipboardTests {
     /// The host resetting its offer `code`: `DISABLED_BY_POLICY` is it turning passthrough off,
     /// `CAPABILITY_WITHDRAWN` CLIPBOARD stopping being usable on its side.
     private func passthroughStops(
-        _ clipboard: GuestClipboard, _ link: RecordingLink, _ code: ErrorCode = .disabledByPolicy
+        _ clipboard: GuestClipboard, _ link: RecordingLink, _ code: ErrorCode
     ) {
         clipboard.exchange.handle(
             .offerEnded(.clipboard, .remote, token: Self.hostToken, .resetByPeer(WireError(code))), on: link)
@@ -589,14 +588,14 @@ struct GuestClipboardTests {
         return item
     }
 
-    /// Has the host send `items` as a copy, `concealed` or not, and lands each text pull it opens with `text`.
+    /// Has the host send `item` as a copy, `concealed` or not, and lands each text pull it opens with `text`.
     private func receiveCopy(
-        _ items: OfferedItem..., text: Data, concealed: Bool = false, on rig: Rig, _ link: RecordingLink,
+        _ item: OfferedItem, text: Data, concealed: Bool = false, on rig: Rig, _ link: RecordingLink,
         before landing: () -> Void = {}
     ) async throws {
-        let inline = items.flatMap(\.representations).filter { $0.storage == .inline }.count
+        let inline = item.representations.filter { $0.storage == .inline }.count
         rig.clipboard.exchange.handle(
-            .offerReceived(Self.copyHeader(token: Self.copyToken, count: items.count, concealed: concealed)), on: link)
+            .offerReceived(Self.copyHeader(token: Self.copyToken, count: 1, concealed: concealed)), on: link)
         try await link.changed.wait { link.pulls.count == inline }
         landing()
         for (order, id) in link.pulls {

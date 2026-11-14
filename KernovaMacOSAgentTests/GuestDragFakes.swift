@@ -48,11 +48,10 @@ final class FakeDragPasteboard: ClipboardReadPasteboard, Sendable {
 final class FakeGuestDragInput: GuestDragInput {
     let pasteboard = FakeDragPasteboard()
     var dragPasteboard: any ClipboardReadPasteboard { pasteboard }
-    var isPrimaryButtonHeld = false
+    private(set) var isPrimaryButtonHeld = false
 
     private var pressHandler: (@MainActor @Sendable () -> Void)?
     private var tick: (@MainActor @Sendable () -> Void)?
-    private(set) var tickInterval: TimeInterval?
     private(set) var isHoldingActivity = false
     /// The file promises the drag pasteboard holds, as a drop on the catcher
     /// reads them.
@@ -132,7 +131,6 @@ final class FakeGuestDragInput: GuestDragInput {
     func repeatEvery(
         _ interval: TimeInterval, _ tick: @escaping @MainActor @Sendable () -> Void
     ) -> GuestDragCancel {
-        tickInterval = interval
         self.tick = tick
         return { [weak self] in self?.tick = nil }
     }
@@ -163,8 +161,7 @@ final class FakeGuestDragInput: GuestDragInput {
 }
 
 /// A delivering drop's promises: whether its first promised item offers the
-/// whole-drop exchange and whether its paste location is taken, recording
-/// every call.
+/// whole-drop exchange, recording every call.
 @MainActor
 final class FakeGuestDragDrop: GuestDragDrop {
     enum Call: Equatable {
@@ -177,8 +174,6 @@ final class FakeGuestDragDrop: GuestDragDrop {
 
     /// The items that offer their promised file URL, by index in drag order.
     var offering: Set<Int>
-    /// Whether the paste location is taken.
-    var takesLocation: Bool
     /// The source writing the whole drop at the paste location, once asked.
     var onRequest: ((URL) -> Void)?
     private let promises: [FakePromiseReceiver]
@@ -188,12 +183,10 @@ final class FakeGuestDragDrop: GuestDragDrop {
     private var location: URL?
 
     init(
-        _ dropped: [GuestDragItem]?, offering: Set<Int> = [], takesLocation: Bool = true,
-        receivers: [FakePromiseReceiver] = []
+        _ dropped: [GuestDragItem]?, offering: Set<Int> = [], receivers: [FakePromiseReceiver] = []
     ) {
         self.dropped = dropped
         self.offering = offering
-        self.takesLocation = takesLocation
         promises = receivers
     }
 
@@ -209,8 +202,8 @@ final class FakeGuestDragDrop: GuestDragDrop {
 
     func setPasteLocation(_ folder: URL) -> Bool {
         calls.append(.setPasteLocation(folder))
-        if takesLocation { location = folder }
-        return takesLocation
+        location = folder
+        return true
     }
 
     func requestPromisedFileURL(item index: Int) -> Bool {
@@ -233,14 +226,12 @@ final class FakeCatcherSurface: GuestDragCatcherSurface {
     private(set) var showCount = 0
     /// The items the latest showing presented.
     private(set) var shownItems: [GuestDragItem]?
-    /// Whether a screen is there to cover.
-    var hasScreen = true
 
     func show(items: [GuestDragItem]) -> Bool {
         showCount += 1
         shownItems = items
-        isShown = hasScreen
-        return hasScreen
+        isShown = true
+        return true
     }
 
     func hide() {
@@ -304,11 +295,6 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
             guard case .answered(id, .report(.targeted(let items))) = event else { return nil }
             return items
         }
-    }
-
-    /// How many takes were answered, all told.
-    var answerCount: Int {
-        events.count { if case .answered = $0 { true } else { false } }
     }
 
     private static func name(_ item: OfferedItem) -> String {
