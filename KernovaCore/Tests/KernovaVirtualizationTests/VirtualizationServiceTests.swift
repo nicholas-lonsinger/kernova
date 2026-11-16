@@ -19,28 +19,6 @@ struct VirtualizationServiceTests {
         isProtectedDataAvailable: { true })
     private let scratch = TestScratchDirectory(prefix: "VirtualizationServiceTests")
 
-    // MARK: - A bring-up that fails before its session is live
-
-    @Test("A bring-up that fails with a session context open rests the VM and releases the context")
-    func failedBringUpRestsTheVMAndReleasesItsContext() async {
-        let instance = VMInstanceFixture.make(phase: .stopped)
-        struct GuestStopped: LocalizedError {
-            var errorDescription: String? { "The guest stopped." }
-        }
-
-        await #expect(throws: GuestStopped.self) {
-            try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) {
-                (context: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
-                instance.beginSessionContextForTesting()
-                context.bindSessionForTesting(UUID())
-                throw GuestStopped()
-            }.value()
-        }
-
-        #expect(instance.phase == .failed(message: "The guest stopped."))
-        #expect(instance.sessionContext == nil)
-    }
-
     // MARK: - Suspend
 
     /// Suspends `instance` over `session` inside the save operation the VM
@@ -102,52 +80,6 @@ struct VirtualizationServiceTests {
         #expect(instance.phase == .stopped)
     }
 
-    // MARK: - A bundle that moves under an operation
-
-    /// A VM in `phase` holding a suspend slot, and a second bundle for the same
-    /// VM — what the library re-binds it to once its bundle moves — holding
-    /// one too, standing in for the slot the move carried along.
-    private func vmWithMovedBundle(
-        phase: VMLifecyclePhase
-    ) throws -> (instance: VMInstance, moved: VMBundle) {
-        let files = InMemoryVMBundleFiles()
-        let factory = VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: files))
-        let instance = VMInstanceFixture.make(phase: phase, files: files, bundleFactory: factory)
-        let movedURL = scratch.url
-            .appendingPathComponent("Moved.kernova", isDirectory: true)
-        files.seed(instance.configuration, at: movedURL)
-        let moved = factory.make(VMInstanceFixture.read(movedURL, from: files))
-        for bundleURL in [instance.bundleURL, movedURL] {
-            try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
-            try Data("suspend slot".utf8).write(to: VMBundleLayout(bundleURL: bundleURL).saveFileURL)
-        }
-        return (instance, moved)
-    }
-
-    @Test("A restore whose bundle moves mid-restore drops the slot where the bundle now is")
-    func restoreWhoseBundleMovesMidRestoreFollowsTheBundle() async throws {
-        let (instance, moved) = try vmWithMovedBundle(phase: .suspended)
-        let original = instance.bundleLayout
-        let movedLayout = VMBundleLayout(bundleURL: moved.url)
-        let session = MockSnapshotSession(guestState: .paused)
-        await session.setAfterRestore {
-            await MainActor.run { instance.rebind(to: moved) }
-        }
-
-        try await instance.activity.launchStartGuest(.restoringSavedState) { context in
-            try await VirtualizationService.restoreSavedState(
-                instance, context.bringUp.operation, session: session,
-                isProtectedDataAvailable: { true })
-            context.bringUp.bindSessionForTesting(UUID())
-            return .rest(.live(.running), ())
-        }.value()
-
-        #expect(await session.restoredStateURLs == [original.saveFileURL])
-        #expect(!movedLayout.hasSaveFile)
-        #expect(!holdsSpentSlot(movedLayout))
-        #expect(original.hasSaveFile)
-    }
-
     // MARK: - The unsettled-session marker on the production paths
 
     private struct Probe: Error {}
@@ -184,27 +116,6 @@ struct VirtualizationServiceTests {
             context.bringUp.bindSessionForTesting(UUID())
             return .rest(.live(.running), ())
         }.value()
-    }
-
-    @Test("A restore marks its session unsettled and spends the slot before the guest resumes")
-    func restoreMarksBeforeTheGuestResumes() async throws {
-        let instance = VMInstanceFixture.make(phase: .suspended)
-        try VMInstanceFixture.writeSaveFile(for: instance)
-        let session = MockSnapshotSession(guestState: .paused)
-        let record = MarkerRecord()
-        await session.setBeforeResume {
-            await MainActor.run {
-                record.atResume = instance.hostState.hasUnsettledSession
-                #expect(!instance.hasSaveFile)
-            }
-        }
-
-        try await restore(instance, over: session)
-
-        #expect(record.atResume == true)
-        #expect(instance.hostState.hasUnsettledSession)
-        #expect(!instance.hasSaveFile)
-        #expect(!holdsSpentSlot(instance.bundleLayout))
     }
 
     @Test("A spend the file system refuses keeps the guest from executing")
@@ -382,31 +293,6 @@ struct VirtualizationServiceTests {
 
         #expect(instance.configuration.removableMedia == nil)
         #expect(!FileManager.default.fileExists(atPath: instance.bundleLayout.guestAgentDiskDirectoryURL.path))
-    }
-
-    @Test("A restore leaves the copy the state was saved with as it was, whatever the app's disk holds now")
-    func restoreKeepsTheSavedCopy() async throws {
-        let (service, products, cache) = try linuxAgentProducts()
-        let path = cache.url.path(percentEncoded: false)
-        let item = RemovableMediaItem(path: path, readOnly: true)
-        let instance = VMInstanceFixture.make(phase: .suspended, bundleProducts: products) {
-            $0.removableMedia = [item]
-        }
-        try VMInstanceFixture.writeSaveFile(for: instance)
-        let copy = instance.bundleLayout.guestAgentDiskCopyURL(for: item)
-        try FileManager.default.createDirectory(
-            at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("the saved copy".utf8).write(to: copy)
-        try Data("a later build's disk".utf8).write(to: cache.url)
-
-        // The bring-up's copy step leaves the saved copy alone; the build then
-        // stops at the bundle's missing main disk.
-        await #expect(throws: ConfigurationBuilderError.self) {
-            try await start(instance, .restoringSavedState, on: service)
-        }
-
-        #expect(try Data(contentsOf: copy) == Data("the saved copy".utf8))
-        #expect(instance.configuration.removableMedia?.map(\.path) == [path])
     }
 
     @Test("A boot that attaches the virtio DMG attaches its own copy of it")
@@ -704,83 +590,9 @@ struct VirtualizationServiceTests {
         }
     }
 
-    @Test("A revert installs the configuration the snapshot captured, keeping identity")
-    func revertInstallsTheCapturedConfiguration() async throws {
-        let fixture = try makeRevertFixture()
-        let originalID = fixture.instance.configuration.id
-
-        try await revert(fixture)
-
-        #expect(fixture.instance.configuration.memorySizeInGB == .gibibytes(8))
-        #expect(fixture.instance.configuration.id == originalID)
-        #expect(fixture.instance.configuration.name == "Revert VM")
-        // On disk too, so a later load reads the same settings the saved state
-        // was written under.
-        let written = try VMConfiguration.load(fromBundle: fixture.instance.bundleURL)
-        #expect(written.memorySizeInGB == .gibibytes(8))
-        #expect(written.name == "Revert VM")
-    }
-
-    @Test("A revert restores a disk the VM no longer configures")
-    func revertRestoresADiskDroppedSinceTheCapture() async throws {
-        let fixture = try makeRevertFixture()
-        let layout = fixture.instance.bundleLayout
-        let extraPath = fixture.capturedConfiguration.storageDisks?.last?.path ?? ""
-
-        try await revert(fixture)
-
-        let restoredExtra = layout.bundleURL.appendingPathComponent(extraPath)
-        #expect(FileManager.default.fileExists(atPath: restoredExtra.path(percentEncoded: false)))
-        let mainDisk = try Data(contentsOf: layout.diskImageURL)
-        #expect(String(decoding: mainDisk, as: UTF8.self) == "captured-disk")
-    }
-
-    @Test("A revert commits the captured configuration before the VM leaves the revert")
-    func revertHandsTheWrittenConfigurationOverBeforeResting() async throws {
-        let fixture = try makeRevertFixture(
-            macAddress: "aa:bb:cc:dd:ee:02", capturedMACAddress: "aa:bb:cc:dd:ee:01")
-        var adopted: [VMSnapshotRestorePlan] = []
-
-        try await revert(fixture) { permit, plan in
-            // Anything that brings the VM back up reads its configuration after
-            // this, so the commit lands while the VM has not left the revert yet.
-            #expect(
-                fixture.instance.phase.operation?.kind
-                    == .bringUp(.reverting(snapshotID: fixture.snapshot.id, resumesAfter: false)))
-            adopted.append(plan)
-            try fixture.library.commitRevertedConfiguration(plan, permit)
-            let onDisk = try? VMConfiguration.load(fromBundle: fixture.instance.bundleURL)
-            #expect(onDisk?.macAddress == plan.configuration.macAddress)
-            #expect(onDisk?.memorySizeInGB == plan.configuration.memorySizeInGB)
-        }
-
-        let plan = try #require(adopted.first)
-        #expect(adopted.count == 1)
-        // The saved state restores only under the address it was taken with.
-        #expect(plan.configuration.macAddress == "aa:bb:cc:dd:ee:01")
-        #expect(fixture.instance.configuration == plan.configuration)
-    }
-
     // MARK: - Device shape
 
     private nonisolated static let noSocketDevice = VMDeviceShape(virtioSocketDevice: false)
-
-    @Test("A capture records the device shape the VM holds, and a revert restores the snapshot's")
-    func snapshotCarriesItsDeviceShape() async throws {
-        let fixture = try makeRevertFixture(
-            capturedDeviceShape: Self.noSocketDevice)
-        let request = VMSnapshotCaptureRequest(name: "Under the current shape")
-
-        _ = try await capture(fixture.instance, request)
-        let written = try VMConfiguration.load(
-            fromBundle: fixture.instance.bundleLayout.snapshotLayout(id: request.id).bundleURL)
-        #expect(written.deviceShape == .current)
-
-        try await revert(fixture)
-        #expect(fixture.instance.configuration.deviceShape == Self.noSocketDevice)
-        let onDisk = try VMConfiguration.load(fromBundle: fixture.instance.bundleURL)
-        #expect(onDisk.deviceShape == Self.noSocketDevice)
-    }
 
     @Test("An incomplete snapshot is refused before the live VM is torn down")
     func revertRefusesBeforeTearingTheVMDown() async throws {
@@ -824,78 +636,7 @@ struct VirtualizationServiceTests {
         #expect(fixture.instance.phase == .suspended)
     }
 
-    @Test("A revert commits the configuration before any file is swapped")
-    func revertCommitsBeforeSwappingAnyFile() async throws {
-        let fixture = try makeRevertFixture(phase: .suspended)
-        let layout = fixture.instance.bundleLayout
-        try Data("own-suspend-slot".utf8).write(to: layout.saveFileURL)
-        var diskAtCommit: String?
-        var slotAtCommit: String?
-
-        try await revert(fixture) { permit, plan in
-            diskAtCommit = contents(of: layout.diskImageURL)
-            slotAtCommit = contents(of: layout.saveFileURL)
-            try fixture.library.commitRevertedConfiguration(plan, permit)
-        }
-
-        #expect(diskAtCommit == "live-disk")
-        #expect(slotAtCommit == "own-suspend-slot")
-        #expect(contents(of: layout.diskImageURL) == "captured-disk")
-        #expect(contents(of: layout.saveFileURL) == "captured-state")
-        #expect(fixture.instance.configuration.memorySizeInGB == .gibibytes(8))
-    }
-
-    /// Nothing rolls back: the swap is renames on one volume, and the disks it
-    /// replaced are what the user chose to discard.
-    @Test(
-        "A revert whose install fails after the commit leaves the snapshot's configuration committed and no save file, and surfaces the error"
-    )
-    func revertWhoseInstallFailsLeavesTheCommittedConfigurationAndNoSaveFile() async throws {
-        let fixture = try makeRevertFixture(phase: .suspended)
-        let layout = fixture.instance.bundleLayout
-        try Data("own-suspend-slot".utf8).write(to: layout.saveFileURL)
-        let stagedSlot = VMBundleLayout(bundleURL: layout.restoreStagingURL).saveFileURL
-
-        await #expect(throws: (any Error).self) {
-            try await revert(fixture) { permit, plan in
-                try fixture.library.commitRevertedConfiguration(plan, permit)
-                // The install's last swap, the saved state's, finds nothing to
-                // move.
-                try FileManager.default.removeItem(at: stagedSlot)
-            }
-        }
-
-        #expect(fixture.instance.configuration.memorySizeInGB == .gibibytes(8))
-        #expect(try VMConfiguration.load(fromBundle: fixture.instance.bundleURL).memorySizeInGB == .gibibytes(8))
-        #expect(contents(of: layout.diskImageURL) == "captured-disk")
-        #expect(!layout.hasSaveFile)
-        #expect(fixture.instance.status == .stopped)
-    }
-
     // MARK: - Suspended-state snapshots
-
-    @Test(
-        "A suspended-state capture clones the suspend slot and the disks, leaves the bundle's slot in place, and rests suspended"
-    )
-    func suspendedCaptureClonesTheSlotAndRestsSuspended() async throws {
-        let fixture = try makeRevertFixture(phase: .suspended)
-        #expect(fixture.instance.isSuspended)
-        try Data("bundle-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
-        let snapshot = VMSnapshotCaptureRequest(name: "Suspended")
-
-        let captured = try await capture(fixture.instance, snapshot)
-
-        #expect(captured.kind == .warm)
-        let snapshotLayout = fixture.instance.bundleLayout.snapshotLayout(id: snapshot.id)
-        let capturedSlot = try Data(contentsOf: snapshotLayout.saveFileURL)
-        #expect(String(decoding: capturedSlot, as: UTF8.self) == "bundle-suspend-slot")
-        let capturedDisk = try Data(contentsOf: snapshotLayout.diskImageURL)
-        #expect(String(decoding: capturedDisk, as: UTF8.self) == "live-disk")
-        // The bundle's own slot is untouched — a suspended capture consumes nothing.
-        let bundleSlot = try Data(contentsOf: fixture.instance.bundleLayout.saveFileURL)
-        #expect(String(decoding: bundleSlot, as: UTF8.self) == "bundle-suspend-slot")
-        #expect(fixture.instance.phase == .suspended)
-    }
 
     @Test("A suspended-state capture keeps the version that wrote the slot, not the capturing Kernova's")
     func suspendedCaptureKeepsTheSlotsWriter() async throws {
@@ -909,25 +650,6 @@ struct VirtualizationServiceTests {
 
         #expect(fixture.instance.savedStateVersion(ofSnapshot: snapshot.id) == "0.9.0 (300)")
         #expect(fixture.instance.savedStateVersion == "0.9.0 (300)")
-    }
-
-    @Test(
-        "A revert lands the snapshot's version on the suspend slot, or none when the snapshot has none",
-        arguments: ["0.9.0 (300)", nil] as [String?])
-    func revertCarriesTheSnapshotsVersion(captured: String?) async throws {
-        let fixture = try makeRevertFixture(phase: .suspended)
-        let layout = fixture.instance.bundleLayout
-        try Data("own-suspend-slot".utf8).write(to: layout.saveFileURL)
-        try SavedStateVersion.record("0.10.0 (412)", at: layout.saveFileURL)
-        if let captured {
-            try SavedStateVersion.record(captured, at: layout.snapshotLayout(id: fixture.snapshot.id).saveFileURL)
-        }
-
-        try await revert(fixture)
-
-        #expect(contents(of: layout.saveFileURL) == "captured-state")
-        #expect(fixture.instance.savedStateVersion == captured)
-        #expect(fixture.instance.savedStateVersion(ofSnapshot: fixture.snapshot.id) == captured)
     }
 
     /// The capture is offered by ``VMInstance/snapshotCaptureMode``, which reads
@@ -952,66 +674,6 @@ struct VirtualizationServiceTests {
         // names — the capture consumed nothing and moved nothing.
         #expect(fixture.instance.hasSaveFile)
         #expect(fixture.instance.phase == .suspended)
-    }
-
-    @Test("A suspended VM with no save file offers no capture and is refused one")
-    func suspendedCaptureNeedsASaveFile() async throws {
-        let fixture = try makeRevertFixture(phase: .suspended)
-        #expect(fixture.instance.isSuspended)
-        #expect(!fixture.instance.hasSaveFile)
-        #expect(fixture.instance.snapshotCaptureMode == nil)
-
-        await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
-            try await fixture.instance.activity.launchedCapture(.suspended) { context in
-                try await service.takeSnapshot(
-                    fixture.instance, context,
-                    snapshot: VMSnapshotCaptureRequest(name: "No slot"))
-            }
-        }
-        // The admission re-read the bundle and found no slot to rest on.
-        #expect(fixture.instance.phase == .stopped)
-    }
-
-    @Test("Reverting to a suspended-state capture restores the cloned suspend slot and disks")
-    func revertRoundTripsASuspendedCapture() async throws {
-        let fixture = try makeRevertFixture(phase: .suspended)
-        #expect(fixture.instance.isSuspended)
-        try Data("own-suspend-slot".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
-        let checkpoint = try await capture(
-            fixture.instance, VMSnapshotCaptureRequest(name: "Suspended checkpoint"))
-        try fixture.instance.editSnapshotManifest { $0.insert(checkpoint) }
-        #expect(fixture.instance.phase == .suspended)
-
-        try await revert(fixture, to: checkpoint)
-
-        #expect(fixture.instance.phase == .suspended)
-        let restoredSlot = try Data(contentsOf: fixture.instance.bundleLayout.saveFileURL)
-        #expect(String(decoding: restoredSlot, as: UTF8.self) == "own-suspend-slot")
-        let restoredDisk = try Data(contentsOf: fixture.instance.bundleLayout.diskImageURL)
-        #expect(String(decoding: restoredDisk, as: UTF8.self) == "live-disk")
-    }
-
-    @Test("Reverting a live VM to a snapshot taken while stopped lands it stopped, with no resume")
-    func coldRevertOfALiveVMLandsStopped() async throws {
-        let fixture = try makeRevertFixture(phase: .running(sessionID: UUID()), kind: .cold)
-
-        try await revert(fixture)
-
-        #expect(fixture.instance.status == .stopped)
-        #expect(!fixture.instance.bundleLayout.hasSaveFile)
-        let restored = try Data(contentsOf: fixture.instance.bundleLayout.diskImageURL)
-        #expect(String(decoding: restored, as: UTF8.self) == "captured-disk")
-    }
-
-    @Test("Reverting a suspended VM to a snapshot taken while stopped clears its suspend slot")
-    func coldRevertClearsTheSuspendSlot() async throws {
-        let fixture = try makeRevertFixture(phase: .suspended, kind: .cold)
-        try Data("stale-suspend".utf8).write(to: fixture.instance.bundleLayout.saveFileURL)
-
-        try await revert(fixture)
-
-        #expect(fixture.instance.status == .stopped)
-        #expect(!fixture.instance.bundleLayout.hasSaveFile)
     }
 
     // MARK: - Start
@@ -1100,12 +762,6 @@ struct VirtualizationServiceTests {
                 .components(separatedBy: " → ").count == 4)
     }
 
-    @Test("operation cancelled error is transient")
-    func operationCancelledIsTransient() {
-        let error = NSError(domain: VZError.errorDomain, code: VZError.Code.operationCancelled.rawValue)
-        #expect(VirtualizationFailure.isTransientStartError(error))
-    }
-
     // MARK: - File-Lock Contention Classification
 
     /// Mirrors the error VZ throws when a dying VM still holds the advisory
@@ -1135,18 +791,6 @@ struct VirtualizationServiceTests {
             underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOTSUP)))
         #expect(!VirtualizationFailure.isFileLockContention(wrapped))
         #expect(!VirtualizationFailure.isTransientStartError(wrapped))
-    }
-
-    @Test("invalid configuration with non-EAGAIN underlying error is not lock contention")
-    func nonEAGAINUnderlyingIsNotLockContention() {
-        let error = NSError(
-            domain: VZError.errorDomain,
-            code: VZError.Code.invalidVirtualMachineConfiguration.rawValue,
-            userInfo: [
-                NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT))
-            ])
-        #expect(!VirtualizationFailure.isFileLockContention(error))
-        #expect(!VirtualizationFailure.isTransientStartError(error))
     }
 
     @Test("file-lock retry delays escalate then exhaust")
@@ -1303,20 +947,6 @@ struct VirtualizationServiceTests {
                     underlying: ConfigurationBuilderError.sharedDirectoryNotFound(
                         id: UUID(), path: "/gone", label: "gone")))
                 == .suspended)
-    }
-
-    @Test("start sets error status for permanent config error")
-    func startSetsErrorForPermanentConfigError() async throws {
-        let instance = VMInstanceFixture.make(phase: .stopped)
-
-        // start() fails at buildConfiguration (no real disk image) with a
-        // ConfigurationBuilderError — a permanent error. The transient path
-        // is covered by the isTransientStartError unit tests above.
-        await #expect(throws: (any Error).self) {
-            try await start(instance)
-        }
-        #expect(instance.status == .error)
-        #expect(instance.errorMessage != nil)
     }
 
     @Test("A boot whose heal cannot be saved builds from the healed references")

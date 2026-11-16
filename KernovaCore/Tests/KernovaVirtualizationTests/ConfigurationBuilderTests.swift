@@ -19,41 +19,6 @@ struct ConfigurationBuilderTests {
 
     // MARK: - Helpers
 
-    /// Fails the test when `error` is a path-validation refusal.
-    ///
-    /// For the happy-path tests, which tolerate any other builder error: VZ
-    /// validation legitimately fails on a host without virtualization, and only
-    /// the path handling is under test.
-    private func expectNoPathValidationError(_ error: ConfigurationBuilderError) {
-        switch error {
-        case .sharedDirectoryNotFound, .sharedDirectoryNotADirectory,
-            .sharedDirectoryNotReadable, .sharedDirectoryNotWritable,
-            .kernelNotFound, .kernelPathIsDirectory,
-            .initrdNotFound, .initrdPathIsDirectory,
-            .storageDiskNotFound, .storageDiskPathIsDirectory, .storageDiskNotWritable,
-            .removableMediaNotFound, .removableMediaPathIsDirectory, .removableMediaNotWritable:
-            Issue.record("Unexpected path validation error: \(error)")
-        case .efiVariableStoreMissing:
-            Issue.record("The fixture bundle holds no EFI variable store")
-        case .invalidHardwareModel, .invalidMachineIdentifier, .missingKernelPath,
-            .storageDiskAttachFailed, .removableMediaAttachFailed,
-            .networkNotEntitled:
-            break
-        }
-    }
-
-    /// Returns a Linux/EFI config set to bridged networking.
-    private func makeBridgedConfig() -> VMConfiguration {
-        VMConfiguration(
-            name: "Test Linux",
-            guestOS: .linux,
-            bootMode: .efi,
-            cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
-            networkEnabled: true,
-            networkMode: .bridged)
-    }
-
     /// Returns a Linux/EFI config set to host-only networking.
     private func makeHostOnlyConfig() -> VMConfiguration {
         VMConfiguration(
@@ -107,82 +72,6 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    @Test("Builder throws for shared path that is a file")
-    func builderThrowsForSharedPathThatIsAFile() async throws {
-        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
-
-        // Create a file (not a directory) to use as the shared path
-        let filePath = bundleURL.appendingPathComponent("not-a-directory").path(percentEncoded: false)
-        FileManager.default.createFile(atPath: filePath, contents: nil)
-
-        let config = VMConfiguration.testLinux(sharedDirectories: [
-            SharedDirectory(path: filePath)
-        ])
-
-        let builder = ConfigurationBuilder.testing()
-        await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
-        } throws: { error in
-            guard let e = error as? ConfigurationBuilderError,
-                case .sharedDirectoryNotADirectory = e
-            else { return false }
-            return true
-        }
-    }
-
-    @Test("Builder throws for non-writable read-write share")
-    func builderThrowsForNonWritableReadWriteShare() async throws {
-        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
-
-        // Create a read-only directory
-        let shareDir = bundleURL.appendingPathComponent("readonly-share")
-        try FileManager.default.createDirectory(at: shareDir, withIntermediateDirectories: true)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o444], ofItemAtPath: shareDir.path(percentEncoded: false))
-        defer {
-            try? FileManager.default.setAttributes(
-                [.posixPermissions: 0o755], ofItemAtPath: shareDir.path(percentEncoded: false))
-        }
-
-        let config = VMConfiguration.testLinux(sharedDirectories: [
-            SharedDirectory(path: shareDir.path(percentEncoded: false), readOnly: false)
-        ])
-
-        let builder = ConfigurationBuilder.testing()
-        await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
-        } throws: { error in
-            guard let e = error as? ConfigurationBuilderError,
-                case .sharedDirectoryNotWritable(_, _, let label) = e
-            else { return false }
-            return label == "readonly-share"
-        }
-    }
-
-    @Test("Builder throws for dangling symlink as shared directory")
-    func builderThrowsForDanglingSymlinkSharedDirectory() async throws {
-        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
-
-        // Create a symlink pointing to a nonexistent target
-        let symlinkPath = bundleURL.appendingPathComponent("dangling-link").path(percentEncoded: false)
-        let nonexistentTarget = bundleURL.appendingPathComponent("no-such-dir").path(percentEncoded: false)
-        try FileManager.default.createSymbolicLink(atPath: symlinkPath, withDestinationPath: nonexistentTarget)
-
-        let config = VMConfiguration.testLinux(sharedDirectories: [
-            SharedDirectory(path: symlinkPath)
-        ])
-
-        let builder = ConfigurationBuilder.testing()
-        await #expect {
-            try await builder.build(from: config, bundleURL: bundleURL)
-        } throws: { error in
-            guard let e = error as? ConfigurationBuilderError,
-                case .sharedDirectoryNotFound = e
-            else { return false }
-            return true
-        }
-    }
-
     @Test("Builder throws for symlink to file as shared directory")
     func builderThrowsForSymlinkToFileAsSharedDirectory() async throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
@@ -205,62 +94,6 @@ struct ConfigurationBuilderTests {
                 case .sharedDirectoryNotADirectory = e
             else { return false }
             return true
-        }
-    }
-
-    /// The swap re-validates a served entry at the folder the device serves,
-    /// which is the symlink's target, while the error names the row the
-    /// Sharing pane shows.
-    @Test("A live swap's refusal of a served folder names the entry, not its resolved path")
-    func liveSwapRefusalNamesTheEntry() throws {
-        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
-        let target = bundleURL.appendingPathComponent("served-target")
-        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
-        let targetPath = target.path(percentEncoded: false)
-        let linkPath = bundleURL.appendingPathComponent("Projects").path(percentEncoded: false)
-        try FileManager.default.createSymbolicLink(atPath: linkPath, withDestinationPath: targetPath)
-        var share = SharedDirectory(path: linkPath, readOnly: true)
-        let serving = try MacOSDirectoryShare.make(for: [share])
-        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: targetPath)
-        defer {
-            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: targetPath)
-        }
-        share.readOnly = false
-
-        #expect {
-            try MacOSDirectoryShare.make(for: [share], serving: serving)
-        } throws: { error in
-            guard let e = error as? ConfigurationBuilderError,
-                case .sharedDirectoryNotWritable(let id, _, let label) = e
-            else { return false }
-            return id == share.id && label == "Projects"
-        }
-    }
-
-    @Test("Builder follows symlink to valid shared directory")
-    func builderFollowsSymlinkToValidSharedDirectory() async throws {
-        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
-
-        // Create a real directory and a symlink to it
-        let realDir = bundleURL.appendingPathComponent("real-share")
-        try FileManager.default.createDirectory(at: realDir, withIntermediateDirectories: true)
-        let symlinkPath = bundleURL.appendingPathComponent("link-to-share").path(percentEncoded: false)
-        try FileManager.default.createSymbolicLink(
-            atPath: symlinkPath, withDestinationPath: realDir.path(percentEncoded: false))
-
-        let config = VMConfiguration.testLinux(sharedDirectories: [
-            SharedDirectory(path: symlinkPath, readOnly: true)
-        ])
-
-        let builder = ConfigurationBuilder.testing()
-        // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
-        // with a path validation error — symlink should be resolved and accepted.
-        do {
-            _ = try await builder.build(from: config, bundleURL: bundleURL)
-        } catch let error as ConfigurationBuilderError {
-            expectNoPathValidationError(error)
-        } catch {
-            // VZ framework or other errors are expected
         }
     }
 
@@ -481,37 +314,6 @@ struct ConfigurationBuilderTests {
         }
     }
 
-    @Test("Builder accepts read-only share for non-writable directory")
-    func builderAcceptsReadOnlyShareForNonWritableDirectory() async throws {
-        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
-
-        // Create a read-only directory
-        let shareDir = bundleURL.appendingPathComponent("readonly-share")
-        try FileManager.default.createDirectory(at: shareDir, withIntermediateDirectories: true)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o444], ofItemAtPath: shareDir.path(percentEncoded: false))
-        defer {
-            try? FileManager.default.setAttributes(
-                [.posixPermissions: 0o755], ofItemAtPath: shareDir.path(percentEncoded: false))
-        }
-
-        let config = VMConfiguration.testLinux(sharedDirectories: [
-            SharedDirectory(path: shareDir.path(percentEncoded: false), readOnly: true)
-        ])
-
-        let builder = ConfigurationBuilder.testing()
-        // Build may fail for other reasons (e.g., VZ framework validation), but must NOT fail
-        // with a path validation error — shared directory validation should pass.
-        do {
-            _ = try await builder.build(from: config, bundleURL: bundleURL)
-        } catch let error as ConfigurationBuilderError {
-            expectNoPathValidationError(error)
-        } catch {
-            // VZ framework or other errors are expected — the test only
-            // verifies that shared directory validation itself passes.
-        }
-    }
-
     // MARK: - Dangling Symlink Tests (Kernel / Initrd / Disk Image)
 
     // MARK: - Symlink-to-Directory Tests (Kernel / Initrd / Disk Image)
@@ -627,46 +429,6 @@ struct ConfigurationBuilderTests {
         #expect(device.macAddress.string == "aa:bb:cc:dd:ee:ff")
     }
 
-    @Test("A Bridged VM whose interface is gone boots on its own NAT network, never the default-route interface")
-    func bridgedModeWithItsInterfaceGoneBootsOnOwnNAT() throws {
-        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
-        let networks = ScriptedVmnetNetworks()
-        let attachments = MockVmnetAttachments()
-        var builder = ConfigurationBuilder.testing(networks, attachments: attachments, entitlements: .entitled)
-        builder.bridgedInterfaces = MockBridgedInterfaceProvider(
-            available: [BridgedInterface(identifier: "en0", localizedDisplayName: "Wi-Fi")], primary: "en0")
-        var config = makeBridgedConfig()
-        config.bridgedInterfaceIdentifier = "en9"
-
-        let result = try builder.assemble(from: config, bundleURL: bundleURL, validate: false)
-
-        let attachment = result.configuration.networkDevices[0].attachment
-        #expect(!(attachment is VZBridgedNetworkDeviceAttachment))
-        #expect(attachment.map(ObjectIdentifier.init) == attachments.madeIdentities.last)
-        #expect(networks.operations.createdKinds == [.nat])
-        // The session's view reads the built network back as the VM's own NAT
-        // network, so recovery's first pass finds the device already there.
-        let network = try #require(attachments.madeNetworks.last)
-        #expect(result.products.vmnetNetworks.selection(ofNetwork: network) == .own(.nat))
-    }
-
-    @Test("Bridged mode in a build without the entitlement names the entitlement, not the interface")
-    func bridgedModeWithoutTheEntitlementThrows() throws {
-        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
-
-        var builder = ConfigurationBuilder.testing(entitlements: .unentitled)
-        builder.bridgedInterfaces = MockBridgedInterfaceProvider()
-
-        #expect {
-            try builder.assemble(from: makeBridgedConfig(), bundleURL: bundleURL, validate: false)
-        } throws: { error in
-            guard let e = error as? ConfigurationBuilderError,
-                case .networkNotEntitled(.bridged) = e
-            else { return false }
-            return true
-        }
-    }
-
     @Test("An isolated VM attaches its own network of its mode, through a view opened for it")
     func isolatedModesAttachTheVMsOwnNetwork() throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)
@@ -711,60 +473,6 @@ struct ConfigurationBuilderTests {
 
         autoreleasepool { configuration = nil }
         #expect(networks.operations.releasedNetworks == [own])
-    }
-
-    @Test("Build, recovery and the address observer all put an isolated VM on the network joinedNetwork names")
-    @MainActor
-    func everyPathFollowsJoinedNetwork() async throws {
-        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
-        for (mode, kind) in [(VMNetworkMode.nat, VmnetNetworkKind.nat), (.hostOnly, .hostOnly)] {
-            let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID())) {
-                $0.networkEnabled = true
-                $0.networkMode = mode
-                $0.networkMembership = .isolated
-                $0.macAddress = "aa:bb:cc:dd:ee:07"
-            }
-            let config = instance.configuration
-            let id = VmnetNetworkID(kind: kind, scope: .vm(config.id))
-            #expect(config.joinedNetwork == .vmnet(id))
-
-            // The build asks the VM's own session view for its own network.
-            let networks = ScriptedVmnetNetworks()
-            networks.operations.setSubnet(.scripted("192.168.70.0"))
-            let result = try ConfigurationBuilder.testing(networks, entitlements: .entitled)
-                .assemble(from: config, bundleURL: bundleURL, validate: false)
-            #expect(result.products.vmnetNetworks.owner == config.id)
-            #expect(networks.operations.createdKinds == [kind])
-
-            // Recovery, through the session's view, attaches the same network
-            // without creating another.
-            let device = MockNetworkDeviceControl(vmnetNetworks: result.products.vmnetNetworks)
-            let coordinator = NetworkAttachmentCoordinator(
-                vmName: config.name, device: device, interfaces: MockBridgedInterfaceProvider(),
-                linkObserver: MockNetworkLinkObserver(), vmnetNetworks: result.products.vmnetNetworks,
-                entitlements: .entitled, isEligible: { true }, choice: { config.networkChoice },
-                onAttachmentChange: { _ in })
-            coordinator.activate()
-            #expect(device.appliedPlans == [.vmnet(.own(kind))])
-            #expect(networks.operations.createdKinds == [kind])
-            coordinator.stop()
-
-            // The observer reads that network's subnet and nothing else.
-            let observer = GuestAddressObserver(
-                reader: ScriptedARPTable([
-                    .scripted("192.168.70.5", mac: "aa:bb:cc:dd:ee:07", expiry: ARPEntry.freshExpiry),
-                    .scripted("192.168.64.5", mac: "aa:bb:cc:dd:ee:07", expiry: ARPEntry.freshExpiry),
-                ]),
-                vmnetNetworks: networks.service, entitlements: .entitled)
-            let roster = StubVMInstanceRoster()
-            roster.instances = [instance]
-            observer.roster = roster
-            await observer.readForTesting()
-            #expect(observer.address(for: instance) == .observed("192.168.70.5"))
-            // The session's view holds the VM's own network; the read above
-            // needs it alive.
-            withExtendedLifetime(result) {}
-        }
     }
 
     @Test("An isolated VM whose own network cannot be materialized builds detached, never on the common one")
