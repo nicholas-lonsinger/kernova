@@ -31,4 +31,19 @@ struct VirtualizationPlatformFilesTests {
         try platform.ensureEFIVariableStore(bundleURL: layout.bundleURL)
         #expect(String(decoding: try Data(contentsOf: url), as: UTF8.self) == "guest-written")
     }
+
+    @Test("Platform files for a hardware model that does not decode write nothing")
+    func macPlatformFilesRefuseAnUndecodableModel() throws {
+        let layout = try makeBundle()
+
+        #expect(throws: ConfigurationBuilderError.self) {
+            _ = try VirtualizationPlatformFiles().createMacPlatformFiles(
+                bundleURL: layout.bundleURL, hardwareModel: Data("not a model".utf8))
+        }
+
+        let manager = FileManager.default
+        #expect(!manager.fileExists(atPath: layout.hardwareModelURL.path(percentEncoded: false)))
+        #expect(!manager.fileExists(atPath: layout.machineIdentifierURL.path(percentEncoded: false)))
+        #expect(!manager.fileExists(atPath: layout.auxiliaryStorageURL.path(percentEncoded: false)))
+    }
 }

@@ -33,6 +33,28 @@ struct ConfigurationBuilderTests {
 
     // MARK: - Boot Validation
 
+    @Test("An EFI build over a bundle with no variable store fails naming it, and ensuring the store fixes it")
+    func efiBootWithoutVariableStore() throws {
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true, withEFIVariableStore: false)
+        let builder = ConfigurationBuilder.testing()
+        let storeURL = VMBundleLayout(bundleURL: bundleURL).efiVariableStoreURL
+
+        #expect {
+            try builder.assemble(from: VMConfiguration.testLinux(), bundleURL: bundleURL, validate: false)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError, case .efiVariableStoreMissing = e
+            else { return false }
+            return true
+        }
+        // The builder only reads the bundle.
+        #expect(!FileManager.default.fileExists(atPath: storeURL.path(percentEncoded: false)))
+
+        try VirtualizationPlatformFiles().ensureEFIVariableStore(bundleURL: bundleURL)
+
+        #expect(FileManager.default.fileExists(atPath: storeURL.path(percentEncoded: false)))
+        _ = try builder.assemble(from: VMConfiguration.testLinux(), bundleURL: bundleURL, validate: false)
+    }
+
     @Test("Builder throws for kernel boot without kernel path")
     func kernelBootWithoutPath() async throws {
         let bundleURL = try scratch.makeEngineBundle()
@@ -92,6 +114,33 @@ struct ConfigurationBuilderTests {
         } throws: { error in
             guard let e = error as? ConfigurationBuilderError,
                 case .sharedDirectoryNotADirectory = e
+            else { return false }
+            return true
+        }
+    }
+
+    // MARK: - Kernel / Initrd Path Validation
+
+    @Test("Builder throws for nonexistent initrd path")
+    func builderThrowsForNonexistentInitrdPath() async throws {
+        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
+
+        // Create a real kernel file so we get past that check
+        let kernelPath = bundleURL.appendingPathComponent("vmlinuz").path(percentEncoded: false)
+        FileManager.default.createFile(atPath: kernelPath, contents: Data([0]))
+
+        var config = VMConfiguration(
+            name: "Test Linux", guestOS: .linux, bootMode: .linuxKernel, cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        config.kernelPath = kernelPath
+        config.initrdPath = "/nonexistent/\(UUID().uuidString)/initrd.img"
+
+        let builder = ConfigurationBuilder.testing()
+        await #expect {
+            try await builder.build(from: config, bundleURL: bundleURL)
+        } throws: { error in
+            guard let e = error as? ConfigurationBuilderError,
+                case .initrdNotFound = e
             else { return false }
             return true
         }

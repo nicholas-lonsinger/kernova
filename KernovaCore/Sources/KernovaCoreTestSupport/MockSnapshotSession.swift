@@ -97,6 +97,9 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
         await afterSave?()
     }
 
+    /// The URLs `restoreMachineState(from:)` was handed, in order.
+    private(set) var restoredStateURLs: [URL] = []
+
     /// Runs once the state has been read, before the guest resumes — the
     /// seam a test lands a change mid-restore through.
     private var afterRestore: (@Sendable () async -> Void)?
@@ -114,6 +117,7 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
 
     func restoreMachineState(from url: URL) async throws {
         calls.append("restoreMachineState")
+        restoredStateURLs.append(url)
         if let restoreError { throw restoreError }
         await afterRestore?()
     }

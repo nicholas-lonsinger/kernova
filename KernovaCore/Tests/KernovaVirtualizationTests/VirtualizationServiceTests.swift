@@ -80,6 +80,52 @@ struct VirtualizationServiceTests {
         #expect(instance.phase == .stopped)
     }
 
+    // MARK: - A bundle that moves under an operation
+
+    /// A VM in `phase` holding a suspend slot, and a second bundle for the same
+    /// VM — what the library re-binds it to once its bundle moves — holding
+    /// one too, standing in for the slot the move carried along.
+    private func vmWithMovedBundle(
+        phase: VMLifecyclePhase
+    ) throws -> (instance: VMInstance, moved: VMBundle) {
+        let files = InMemoryVMBundleFiles()
+        let factory = VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: files))
+        let instance = VMInstanceFixture.make(phase: phase, files: files, bundleFactory: factory)
+        let movedURL = scratch.url
+            .appendingPathComponent("Moved.kernova", isDirectory: true)
+        files.seed(instance.configuration, at: movedURL)
+        let moved = factory.make(VMInstanceFixture.read(movedURL, from: files))
+        for bundleURL in [instance.bundleURL, movedURL] {
+            try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
+            try Data("suspend slot".utf8).write(to: VMBundleLayout(bundleURL: bundleURL).saveFileURL)
+        }
+        return (instance, moved)
+    }
+
+    @Test("A restore whose bundle moves mid-restore drops the slot where the bundle now is")
+    func restoreWhoseBundleMovesMidRestoreFollowsTheBundle() async throws {
+        let (instance, moved) = try vmWithMovedBundle(phase: .suspended)
+        let original = instance.bundleLayout
+        let movedLayout = VMBundleLayout(bundleURL: moved.url)
+        let session = MockSnapshotSession(guestState: .paused)
+        await session.setAfterRestore {
+            await MainActor.run { instance.rebind(to: moved) }
+        }
+
+        try await instance.activity.launchStartGuest(.restoringSavedState) { context in
+            try await VirtualizationService.restoreSavedState(
+                instance, context.bringUp.operation, session: session,
+                isProtectedDataAvailable: { true })
+            context.bringUp.bindSessionForTesting(UUID())
+            return .rest(.live(.running), ())
+        }.value()
+
+        #expect(await session.restoredStateURLs == [original.saveFileURL])
+        #expect(!movedLayout.hasSaveFile)
+        #expect(!holdsSpentSlot(movedLayout))
+        #expect(original.hasSaveFile)
+    }
+
     // MARK: - The unsettled-session marker on the production paths
 
     private struct Probe: Error {}
@@ -293,6 +339,31 @@ struct VirtualizationServiceTests {
 
         #expect(instance.configuration.removableMedia == nil)
         #expect(!FileManager.default.fileExists(atPath: instance.bundleLayout.guestAgentDiskDirectoryURL.path))
+    }
+
+    @Test("A restore leaves the copy the state was saved with as it was, whatever the app's disk holds now")
+    func restoreKeepsTheSavedCopy() async throws {
+        let (service, products, cache) = try linuxAgentProducts()
+        let path = cache.url.path(percentEncoded: false)
+        let item = RemovableMediaItem(path: path, readOnly: true)
+        let instance = VMInstanceFixture.make(phase: .suspended, bundleProducts: products) {
+            $0.removableMedia = [item]
+        }
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let copy = instance.bundleLayout.guestAgentDiskCopyURL(for: item)
+        try FileManager.default.createDirectory(
+            at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("the saved copy".utf8).write(to: copy)
+        try Data("a later build's disk".utf8).write(to: cache.url)
+
+        // The bring-up's copy step leaves the saved copy alone; the build then
+        // stops at the bundle's missing main disk.
+        await #expect(throws: ConfigurationBuilderError.self) {
+            try await start(instance, .restoringSavedState, on: service)
+        }
+
+        #expect(try Data(contentsOf: copy) == Data("the saved copy".utf8))
+        #expect(instance.configuration.removableMedia?.map(\.path) == [path])
     }
 
     @Test("A boot that attaches the virtio DMG attaches its own copy of it")
@@ -621,6 +692,22 @@ struct VirtualizationServiceTests {
         #expect(fixture.instance.phase == .suspended)
     }
 
+    // MARK: - Cold snapshots
+
+    @Test("A capture of a stopped VM writes the disks, no saved state, and rests stopped")
+    func coldCaptureWritesDisksAndRestsStopped() async throws {
+        let fixture = try makeRevertFixture()
+        let snapshot = VMSnapshotCaptureRequest(name: "Before first boot")
+
+        _ = try await capture(fixture.instance, snapshot)
+
+        let snapshotLayout = fixture.instance.bundleLayout.snapshotLayout(id: snapshot.id)
+        let captured = try Data(contentsOf: snapshotLayout.diskImageURL)
+        #expect(String(decoding: captured, as: UTF8.self) == "live-disk")
+        #expect(!snapshotLayout.hasSaveFile)
+        #expect(fixture.instance.status == .stopped)
+    }
+
     // MARK: - Suspended-state snapshots
 
     @Test("A suspended-state capture keeps the version that wrote the slot, not the capturing Kernova's")
@@ -765,6 +852,18 @@ struct VirtualizationServiceTests {
     @Test("invalid configuration with underlying EAGAIN is lock contention")
     func eagainUnderInvalidConfigurationIsLockContention() {
         #expect(VirtualizationFailure.isFileLockContention(makeFileLockContentionError()))
+    }
+
+    @Test("lock contention wrapped in a disk attach failure is still lock contention")
+    func wrappedLockContentionIsLockContention() {
+        // The lock is taken on the disk image, so contention surfaces from the
+        // attach — which the builder wraps to carry the item's identity. If the
+        // classifier stopped unwrapping, the bounded retry would never fire and
+        // a post-install auto-boot would fail on its first attempt.
+        let wrapped = ConfigurationBuilderError.storageDiskAttachFailed(
+            id: UUID(), path: "/tmp/Disk.asif", label: "Main Disk",
+            underlying: makeFileLockContentionError())
+        #expect(VirtualizationFailure.isFileLockContention(wrapped))
     }
 
     @Test("a non-contention attach failure stays permanent")
@@ -932,6 +1031,34 @@ struct VirtualizationServiceTests {
                     underlying: ConfigurationBuilderError.sharedDirectoryNotFound(
                         id: UUID(), path: "/gone", label: "gone")))
                 == .suspended)
+    }
+
+    @Test("classifiers see through the restoreFailed wrapper")
+    func classifiersSeeThroughRestoreFailedWrapper() {
+        let limit = NSError(
+            domain: VZError.errorDomain, code: VZError.Code.virtualMachineLimitExceeded.rawValue)
+        #expect(
+            VirtualizationFailure.isVirtualMachineLimitExceeded(
+                VirtualizationError.restoreFailed(underlying: limit)))
+
+        let contention = NSError(
+            domain: VZError.errorDomain,
+            code: VZError.Code.invalidVirtualMachineConfiguration.rawValue,
+            userInfo: [
+                NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EAGAIN))
+            ])
+        let unwrapped = VirtualizationFailure.unwrappedRestoreFailure(
+            VirtualizationError.restoreFailed(underlying: contention))
+        #expect(VirtualizationFailure.isFileLockContention(unwrapped))
+
+        // A non-wrapper error passes through unchanged.
+        let passthrough = VirtualizationFailure.unwrappedRestoreFailure(
+            VirtualizationError.noSaveFile)
+        #expect(passthrough is VirtualizationError)
+        #expect(!VirtualizationFailure.isRestoreFailure(passthrough))
+
+        // The CustomNSError bridge leaves the other cases' descriptions alone.
+        #expect(VirtualizationError.noSaveFile.localizedDescription == "No saved state file found.")
     }
 
     @Test("A boot whose heal cannot be saved builds from the healed references")
