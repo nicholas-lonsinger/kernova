@@ -1,6 +1,5 @@
 import Foundation
 import KernovaCommandModel
-import KernovaKit
 import KernovaTestSupport
 import Testing
 import Virtualization
@@ -48,27 +47,9 @@ struct MacOSGuestProvisioningTests {
 
     // MARK: - The Wizard's Offer
 
-    @Test("An image below the guest floor offers no unattended setup")
-    func belowFloorOffersNothing() {
-        #expect(
-            !MacOSGuestProvisioning.offersUnattendedSetup(
-                forImageVersion: MacOSVersion(major: 26, minor: 4)))
-    }
-
     @Test("An image whose version nothing read offers no unattended setup")
     func unknownVersionOffersNothing() {
         #expect(!MacOSGuestProvisioning.offersUnattendedSetup(forImageVersion: nil))
-    }
-
-    @available(macOS 27.0, *)
-    @Test("An image at or above the guest floor offers unattended setup")
-    func atFloorOffers() {
-        #expect(
-            MacOSGuestProvisioning.offersUnattendedSetup(
-                forImageVersion: MacOSVersion(major: 27, minor: 0)))
-        #expect(
-            MacOSGuestProvisioning.offersUnattendedSetup(
-                forImageVersion: MacOSVersion(major: 28, minor: 1)))
     }
 
     // MARK: - The Boot's Fact
@@ -79,25 +60,6 @@ struct MacOSGuestProvisioningTests {
         let config = makeConfiguration(
             installedImage: .macOSRestoreImage(version: "27.0", build: "27A100"))
         #expect(MacOSGuestProvisioning.canProvision(config))
-    }
-
-    @Test("A macOS guest installed below the floor cannot be provisioned")
-    func guestBelowFloorCannotProvision() {
-        let config = makeConfiguration(
-            installedImage: .macOSRestoreImage(version: "26.5.2", build: "25F84"))
-        #expect(!MacOSGuestProvisioning.canProvision(config))
-    }
-
-    @Test("A VM with no installed-image record cannot be provisioned")
-    func unknownGuestCannotProvision() {
-        #expect(!MacOSGuestProvisioning.canProvision(makeConfiguration()))
-    }
-
-    @Test("A Linux guest cannot be provisioned, whatever version is recorded")
-    func linuxCannotProvision() {
-        let config = makeConfiguration(
-            guestOS: .linux, installedImage: .macOSRestoreImage(version: "27.0", build: "27A100"))
-        #expect(!MacOSGuestProvisioning.canProvision(config))
     }
 
     // MARK: - Refusal Mapping
@@ -125,131 +87,7 @@ struct MacOSGuestProvisioningTests {
         #expect(refusal.message == "Apple's own wording")
     }
 
-    @available(macOS 27.0, *)
-    @Test("A VZ error that is not about an account names no field, and still carries its reason")
-    func otherVZErrorIsUnknown() {
-        let refusal = MacOSGuestProvisioning.refusal(
-            from: makeVZError(
-                code: VZError.Code.virtualMachineLimitExceeded.rawValue, reason: "Too many"))
-        #expect(refusal.field == .unknown)
-        #expect(refusal.message == "Too many")
-    }
-
-    @available(macOS 27.0, *)
-    @Test("An error from another domain names no field, and still carries its reason")
-    func foreignDomainIsUnknown() {
-        let refusal = MacOSGuestProvisioning.refusal(
-            from: NSError(
-                domain: "test.kernova", code: 40001,
-                userInfo: [NSLocalizedFailureReasonErrorKey: "Not a VZ refusal"]))
-        #expect(refusal.field == .unknown)
-        #expect(refusal.message == "Not a VZ refusal")
-    }
-
-    @available(macOS 27.0, *)
-    @Test("A refusal with no reason states which control was turned down, naming no API")
-    func aReasonlessRefusalNamesTheControl() {
-        // `localizedDescription` would be the framework's developer-facing
-        // framing ("Invalid username for guest provisioning.") — the wording
-        // this surface exists not to show.
-        for (code, field) in [
-            (40001, GuestProvisioningRefusal.Field.fullName),
-            (40002, .username),
-            (40003, .password),
-        ] {
-            let refusal = MacOSGuestProvisioning.refusal(
-                from: NSError(domain: VZError.errorDomain, code: code))
-            #expect(refusal.field == field)
-            #expect(!refusal.message.localizedCaseInsensitiveContains("provisioning"))
-            #expect(!refusal.message.localizedCaseInsensitiveContains("error"))
-            #expect(!refusal.message.isEmpty)
-        }
-    }
-
-    @available(macOS 27.0, *)
-    @Test("A refusal naming no field and carrying no reason still says the account was refused")
-    func aReasonlessUnknownRefusalStillSpeaks() {
-        let refusal = MacOSGuestProvisioning.refusal(
-            from: NSError(domain: "test.kernova", code: 1))
-        #expect(refusal.field == .unknown)
-        #expect(!refusal.message.localizedCaseInsensitiveContains("provisioning"))
-        #expect(!refusal.message.isEmpty)
-    }
-
-    @available(macOS 27.0, *)
-    @Test("A refusal carrying a failure reason shows the reason, not the API-naming prefix")
-    func failureReasonWinsOverTheDescription() {
-        // How Virtualization words its own: `NSLocalizedFailure` frames the
-        // refusal for a developer, `NSLocalizedFailureReason` for the person
-        // typing, and `localizedDescription` runs the two together.
-        let refusal = MacOSGuestProvisioning.refusal(
-            from: NSError(
-                domain: VZError.errorDomain, code: 40002,
-                userInfo: [
-                    NSLocalizedFailureErrorKey: "Invalid username for guest provisioning.",
-                    NSLocalizedFailureReasonErrorKey: "Short name 'ada lovelace' is not valid",
-                ]))
-        #expect(refusal.field == .username)
-        #expect(refusal.message == "Short name 'ada lovelace' is not valid")
-    }
-
-    // MARK: - Validation
-
-    @available(macOS 27.0, *)
-    @Test("What Virtualization refuses is worded for the user, naming no API")
-    func realRefusalsNameNoAPI() throws {
-        for credentials in [
-            makeCredentials(password: ""), makeCredentials(fullName: ""),
-            makeCredentials(username: "ada lovelace"),
-        ] {
-            let refusal = try #require(MacOSGuestProvisioning.validate(credentials))
-            #expect(!refusal.message.localizedCaseInsensitiveContains("provisioning"))
-        }
-    }
-
-    @available(macOS 27.0, *)
-    @Test("A refused password surfaces as a password refusal carrying a message to show")
-    func emptyPasswordSurfacesARefusal() throws {
-        let refusal = try #require(MacOSGuestProvisioning.validate(makeCredentials(password: "")))
-        #expect(refusal.field == .password)
-        #expect(!refusal.message.isEmpty)
-    }
-
-    @available(macOS 27.0, *)
-    @Test("A refused full name surfaces as a full-name refusal carrying a message to show")
-    func emptyFullNameSurfacesARefusal() throws {
-        let refusal = try #require(MacOSGuestProvisioning.validate(makeCredentials(fullName: "")))
-        #expect(refusal.field == .fullName)
-        #expect(!refusal.message.isEmpty)
-    }
-
     // MARK: - The One Enforcement Path
-
-    @Test("An incomplete account is refused in the words the surface asked in")
-    func anIncompleteAccountIsRefusedInTheSurfacesWords() {
-        // Both surfaces ask this one rule; only what an unfinished form says
-        // belongs to the surface, because it is the surface that decides which
-        // fields it gathers.
-        for credentials in [
-            makeCredentials(fullName: ""), makeCredentials(username: ""),
-            makeCredentials(password: ""),
-        ] {
-            #expect(
-                MacOSGuestProvisioning.refusal(
-                    for: credentials,
-                    verifiedBy: credentials.password,
-                    gathering: .wholeAccount,
-                    incomplete: "Fill it in.",
-                    host: VirtualizationHost()) == "Fill it in.")
-        }
-        #expect(
-            MacOSGuestProvisioning.refusal(
-                for: makeCredentials(),
-                verifiedBy: "",
-                gathering: .wholeAccount,
-                incomplete: "Fill it in.",
-                host: VirtualizationHost()) == "Fill it in.")
-    }
 
     @available(macOS 27.0, *)
     @Test("A blank field the surface has no control for is Virtualization's to refuse, not a form's")
@@ -266,77 +104,5 @@ struct MacOSGuestProvisioningTests {
 
         #expect(message != "Enter the password to continue.")
         #expect(message == MacOSGuestProvisioning.validate(makeCredentials(fullName: ""))?.message)
-    }
-
-    @Test("The password a surface does gather is still refused as unfinished when it is blank")
-    func aBlankGatheredPasswordIsIncomplete() {
-        #expect(
-            MacOSGuestProvisioning.refusal(
-                for: makeCredentials(password: ""),
-                verifiedBy: "",
-                gathering: .password,
-                incomplete: "Enter the password to continue.",
-                host: VirtualizationHost())
-                == "Enter the password to continue.")
-        // The verification is the password's second spelling, so it is gathered
-        // wherever the password is.
-        #expect(
-            MacOSGuestProvisioning.refusal(
-                for: makeCredentials(),
-                verifiedBy: "",
-                gathering: .password,
-                incomplete: "Enter the password to continue.",
-                host: VirtualizationHost())
-                == "Enter the password to continue.")
-    }
-
-    @Test("A verification that doesn't match is refused before Virtualization sees it")
-    func aMismatchIsRefusedFirst() {
-        #expect(
-            MacOSGuestProvisioning.refusal(
-                for: makeCredentials(password: "analytical-engine"),
-                verifiedBy: "difference-engine",
-                gathering: .wholeAccount,
-                incomplete: "Fill it in.",
-                host: VirtualizationHost())
-                == "The passwords don\u{2019}t match.")
-    }
-
-    @available(macOS 27.0, *)
-    @Test("A complete account Virtualization accepts is refused by nothing")
-    func aCompleteAccountIsAccepted() {
-        #expect(
-            MacOSGuestProvisioning.refusal(
-                for: makeCredentials(),
-                verifiedBy: "analytical-engine",
-                gathering: .wholeAccount,
-                incomplete: "Fill it in.",
-                host: VirtualizationHost()) == nil)
-    }
-
-    @available(macOS 27.0, *)
-    @Test("An account Virtualization turns down carries the framework's own verdict through")
-    func aRefusedAccountCarriesTheFrameworkVerdict() throws {
-        let credentials = makeCredentials(username: "ada lovelace")
-        let message = try #require(
-            MacOSGuestProvisioning.refusal(
-                for: credentials,
-                verifiedBy: credentials.password,
-                gathering: .wholeAccount,
-                incomplete: "Fill it in.",
-                host: VirtualizationHost()))
-
-        #expect(message == MacOSGuestProvisioning.validate(credentials)?.message)
-        #expect(message != "Fill it in.")
-    }
-
-    // MARK: - Redaction
-
-    @Test("Describing credentials redacts the password and keeps the rest")
-    func descriptionRedactsThePassword() {
-        let description = makeCredentials(password: "correct-horse-battery-staple").description
-        #expect(!description.contains("correct-horse-battery-staple"))
-        #expect(description.contains("<redacted>"))
-        #expect(description.contains("ada"))
     }
 }

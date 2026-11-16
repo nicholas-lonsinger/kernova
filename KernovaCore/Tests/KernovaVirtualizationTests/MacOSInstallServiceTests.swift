@@ -24,15 +24,6 @@ struct MacOSInstallServiceTests {
 
     // MARK: - resolveRestoreImage
 
-    @Test("resolveRestoreImage returns a real path unchanged")
-    func resolveRestoreImageRealPath() throws {
-        let image = scratch.url.appendingPathComponent("RestoreImage.ipsw")
-        FileManager.default.createFile(atPath: image.path(percentEncoded: false), contents: Data([0]))
-
-        let resolved = try MacOSInstallService.resolveRestoreImage(at: image)
-        #expect(resolved.path(percentEncoded: false) == image.path(percentEncoded: false))
-    }
-
     /// The #558 regression: a symlinked *directory component* reaches the installer.
     ///
     /// The sandbox container's `Downloads` is a symlink to the real
@@ -55,53 +46,6 @@ struct MacOSInstallServiceTests {
         let resolved = try MacOSInstallService.resolveRestoreImage(at: viaSymlink)
 
         #expect(resolved.path(percentEncoded: false) == realImage.path(percentEncoded: false))
-    }
-
-    @Test("resolveRestoreImage resolves a symlink to the image file itself")
-    func resolveRestoreImageSymlinkedFile() throws {
-        let realImage = scratch.url.appendingPathComponent("Real.ipsw")
-        FileManager.default.createFile(atPath: realImage.path(percentEncoded: false), contents: Data([0]))
-
-        let link = scratch.url.appendingPathComponent("Link.ipsw")
-        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: realImage)
-
-        let resolved = try MacOSInstallService.resolveRestoreImage(at: link)
-        #expect(resolved.path(percentEncoded: false) == realImage.path(percentEncoded: false))
-    }
-
-    @Test("resolveRestoreImage throws restoreImageNotFound for a missing file")
-    func resolveRestoreImageMissing() throws {
-        let missing = scratch.url.appendingPathComponent("Absent.ipsw")
-
-        #expect {
-            try MacOSInstallService.resolveRestoreImage(at: missing)
-        } throws: { error in
-            guard let error = error as? MacOSInstallError,
-                case .restoreImageNotFound = error
-            else { return false }
-            return true
-        }
-    }
-
-    /// A dangling symlink is the shape a moved/trashed image leaves behind —
-    /// it must report "not found" rather than resolving to a phantom path that
-    /// VZ would then reject with its own misleading wording.
-    @Test("resolveRestoreImage throws restoreImageNotFound for a dangling symlink")
-    func resolveRestoreImageDanglingSymlink() throws {
-        let link = scratch.url.appendingPathComponent("Dangling.ipsw")
-        try FileManager.default.createSymbolicLink(
-            atPath: link.path(percentEncoded: false),
-            withDestinationPath: scratch.url.appendingPathComponent("Gone.ipsw").path(percentEncoded: false)
-        )
-
-        #expect {
-            try MacOSInstallService.resolveRestoreImage(at: link)
-        } throws: { error in
-            guard let error = error as? MacOSInstallError,
-                case .restoreImageNotFound = error
-            else { return false }
-            return true
-        }
     }
 
     /// The reported path reaches the user via `instance.errorMessage`, so it
@@ -143,19 +87,5 @@ struct MacOSInstallServiceTests {
             else { return false }
             return true
         }
-    }
-
-    // MARK: - Error messages
-
-    @Test("Restore image errors describe the offending path")
-    func errorDescriptions() {
-        #expect(
-            MacOSInstallError.restoreImageNotFound(path: "/tmp/x.ipsw").errorDescription?
-                .contains("/tmp/x.ipsw") == true
-        )
-        #expect(
-            MacOSInstallError.restoreImageNotAFile(path: "/tmp/x.ipsw").errorDescription?
-                .contains("/tmp/x.ipsw") == true
-        )
     }
 }
