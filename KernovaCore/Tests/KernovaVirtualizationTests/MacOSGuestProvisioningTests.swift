@@ -21,26 +21,22 @@ import Virtualization
 @Suite("macOS Guest Provisioning", .caseScoped)
 struct MacOSGuestProvisioningTests {
     private func makeCredentials(
-        fullName: String = "Ada Lovelace",
-        username: String = "ada",
-        password: String = "analytical-engine",
+        fullName: String,
         logsInAutomatically: Bool = false,
         enablesRemoteLogin: Bool = false
     ) -> GuestProvisioningCredentials {
         GuestProvisioningCredentials(
-            fullName: fullName, username: username, password: password,
+            fullName: fullName, username: "ada", password: "analytical-engine",
             logsInAutomatically: logsInAutomatically, enablesRemoteLogin: enablesRemoteLogin)
     }
 
-    private func makeConfiguration(
-        guestOS: VMGuestOS = .macOS, installedImage: InstalledImage? = nil
-    ) -> VMConfiguration {
+    private func makeConfiguration(installedImage: InstalledImage) -> VMConfiguration {
         var config = VMConfiguration(
             name: "Provisioning VM",
-            guestOS: guestOS,
-            bootMode: guestOS == .macOS ? .macOS : .efi,
-            cpuCount: guestOS.hostCPUCount,
-            memorySizeInGB: guestOS.hostMemorySize)
+            guestOS: .macOS,
+            bootMode: .macOS,
+            cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
         config.installedImage = installedImage
         return config
     }

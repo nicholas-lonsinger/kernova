@@ -614,19 +614,16 @@ struct VirtualizationServiceTests {
     private func makeRevertFixture(
         phase: VMLifecyclePhase = .stopped, kind: VMSnapshotKind = .warm,
         macAddress: String? = nil, capturedMACAddress: String? = nil,
-        deviceShape: VMDeviceShape = .current, capturedDeviceShape: VMDeviceShape? = nil,
-        machineFiles: (any VMBundleMachineFileWorking)? = nil
+        capturedDeviceShape: VMDeviceShape? = nil
     ) throws -> RevertFixture {
         let snapshot = VMSnapshot(name: "Before the update", kind: kind, macAddress: nil)
         let library = makeWiredLibrary(
-            machineFiles: machineFiles
-                ?? VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()))
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()))
         let instance = try library.registerOnDiskFixture(
             name: "Revert VM", phase: phase, snapshots: VMSnapshotManifest(snapshots: [snapshot])
         ) {
             $0.memorySizeInGB = .gibibytes(16)
             $0.macAddress = macAddress
-            $0.deviceShape = deviceShape
         }
         let layout = instance.bundleLayout
         try Data("live-disk".utf8).write(to: layout.diskImageURL)
@@ -635,7 +632,7 @@ struct VirtualizationServiceTests {
         var capturedConfiguration = instance.configuration
         capturedConfiguration.memorySizeInGB = .gibibytes(8)
         capturedConfiguration.macAddress = capturedMACAddress ?? macAddress
-        capturedConfiguration.deviceShape = capturedDeviceShape ?? deviceShape
+        capturedConfiguration.deviceShape = capturedDeviceShape ?? .current
         let extraID = UUID()
         capturedConfiguration.storageDisks = [
             StorageDisk(path: "Disk.asif", isInternal: true),
@@ -771,7 +768,7 @@ struct VirtualizationServiceTests {
     @Test("A capture records the device shape the VM holds, and a revert restores the snapshot's")
     func snapshotCarriesItsDeviceShape() async throws {
         let fixture = try makeRevertFixture(
-            deviceShape: .current, capturedDeviceShape: Self.noSocketDevice)
+            capturedDeviceShape: Self.noSocketDevice)
         let request = VMSnapshotCaptureRequest(name: "Under the current shape")
 
         _ = try await capture(fixture.instance, request)
@@ -1037,7 +1034,7 @@ struct VirtualizationServiceTests {
     // MARK: - Duplicate Identity at Bring-Up
 
     /// Two VMs on one MAC address and network, in one wired library, with the
-    /// first live — the refusal both bring-up tests below expect.
+    /// first live — the refusal the bring-up test below expects.
     private func makeLiveMACPair(
         restingAt phase: VMLifecyclePhase
     ) -> (library: VMLibrary, resting: VMInstance, live: VMInstance) {
