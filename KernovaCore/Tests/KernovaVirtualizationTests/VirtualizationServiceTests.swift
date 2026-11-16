@@ -490,26 +490,19 @@ struct VirtualizationServiceTests {
     private struct RevertFixture {
         let instance: VMInstance
         let snapshot: VMSnapshot
-        /// What the snapshot recorded, which the revert has to install.
-        let capturedConfiguration: VMConfiguration
         /// Holds the instance, as the library a revert hands the written
         /// configuration to.
         let library: VMLibrary
     }
 
-    private func makeRevertFixture(
-        phase: VMLifecyclePhase = .stopped, kind: VMSnapshotKind = .warm,
-        macAddress: String? = nil, capturedMACAddress: String? = nil,
-        capturedDeviceShape: VMDeviceShape? = nil
-    ) throws -> RevertFixture {
-        let snapshot = VMSnapshot(name: "Before the update", kind: kind, macAddress: nil)
+    private func makeRevertFixture(phase: VMLifecyclePhase = .stopped) throws -> RevertFixture {
+        let snapshot = VMSnapshot(name: "Before the update", kind: .warm, macAddress: nil)
         let library = makeWiredLibrary(
             machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()))
         let instance = try library.registerOnDiskFixture(
             name: "Revert VM", phase: phase, snapshots: VMSnapshotManifest(snapshots: [snapshot])
         ) {
             $0.memorySizeInGB = .gibibytes(16)
-            $0.macAddress = macAddress
         }
         let layout = instance.bundleLayout
         try Data("live-disk".utf8).write(to: layout.diskImageURL)
@@ -517,8 +510,6 @@ struct VirtualizationServiceTests {
         // The capture: taken while the VM had 8 GB and a second disk.
         var capturedConfiguration = instance.configuration
         capturedConfiguration.memorySizeInGB = .gibibytes(8)
-        capturedConfiguration.macAddress = capturedMACAddress ?? macAddress
-        capturedConfiguration.deviceShape = capturedDeviceShape ?? .current
         let extraID = UUID()
         capturedConfiguration.storageDisks = [
             StorageDisk(path: "Disk.asif", isInternal: true),
@@ -530,16 +521,11 @@ struct VirtualizationServiceTests {
             at: snapshotLayout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
         try Data("captured-disk".utf8).write(to: snapshotLayout.diskImageURL)
         try Data("captured-extra".utf8).write(to: snapshotLayout.additionalDiskURL(id: extraID))
-        if kind == .warm {
-            try Data("captured-state".utf8).write(to: snapshotLayout.saveFileURL)
-        }
+        try Data("captured-state".utf8).write(to: snapshotLayout.saveFileURL)
         try VMConfiguration.makeJSONEncoder().encode(capturedConfiguration)
             .write(to: snapshotLayout.configURL)
 
-        return RevertFixture(
-            instance: instance, snapshot: snapshot,
-            capturedConfiguration: capturedConfiguration,
-            library: library)
+        return RevertFixture(instance: instance, snapshot: snapshot, library: library)
     }
 
     @Test("A revert to a state captured with the installer disk gives the VM its own copy from the snapshot's")
@@ -560,19 +546,18 @@ struct VirtualizationServiceTests {
         #expect(FileManager.default.fileExists(atPath: snapshotCopy.path(percentEncoded: false)))
     }
 
-    /// Reverts `fixture`'s VM to `snapshot` — the fixture's own unless named —
-    /// inside the revert bring-up the VM admits, handing the written
-    /// configuration to `commitConfiguration`, or to the fixture's library.
+    /// Reverts `fixture`'s VM to the fixture's snapshot inside the revert
+    /// bring-up the VM admits, handing the written configuration to
+    /// `commitConfiguration`, or to the fixture's library.
     private func revert(
-        _ fixture: RevertFixture, to snapshot: VMSnapshot? = nil,
+        _ fixture: RevertFixture,
         commitConfiguration: (@MainActor (borrowing VMEditPermit, VMSnapshotRestorePlan) throws -> Void)? = nil
     ) async throws {
-        let target = snapshot ?? fixture.snapshot
         let commit =
             commitConfiguration ?? { permit, plan in
                 try fixture.library.commitRevertedConfiguration(plan, permit)
             }
-        try await fixture.instance.activity.launchRevert(to: target, resumesAfter: false) {
+        try await fixture.instance.activity.launchRevert(to: fixture.snapshot, resumesAfter: false) {
             context in
             try await service.revertToSnapshot(
                 fixture.instance, context, commitConfiguration: commit)
