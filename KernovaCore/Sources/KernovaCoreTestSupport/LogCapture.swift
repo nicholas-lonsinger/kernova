@@ -14,7 +14,7 @@ final class LogCapture: Sendable {
 
     /// The sink whose records land here.
     var sink: KernovaLogger.ForwardingSink {
-        { [self] level, _, _, segments in
+        KernovaLogger.ForwardingSink { [self] level, _, _, segments in
             recorded.withLock {
                 $0.append(Record(level: level, message: segments.map(\.text).joined()))
             }

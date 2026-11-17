@@ -269,10 +269,12 @@ struct ItemAdapterTests {
         ]
         for (content, storage, path, reason) in cases {
             let records = Locked<[(KernovaLogLevel, [LogSegment])]>([])
-            let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "ItemSource") {
-                level, _, _, segments in
-                records.withLock { $0.append((level, segments)) }
-            }
+            let logger = KernovaLogger(
+                subsystem: "app.kernova.tests", category: "ItemSource",
+                sink: .init {
+                    level, _, _, segments in
+                    records.withLock { $0.append((level, segments)) }
+                })
             let error = try await bench.serveFailure(
                 .success(.tree(path: bench.path(content))), storage, logger: logger)
             #expect(error?.code == .readFailed, "\(content)")
@@ -355,7 +357,8 @@ struct ItemAdapterTests {
 final class Bench: Sendable {
     static let id = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
     /// A logger that records nothing.
-    static let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "ItemSource") { _, _, _, _ in }
+    static let logger = KernovaLogger(
+        subsystem: "app.kernova.tests", category: "ItemSource", sink: .init { _, _, _, _ in })
 
     let scratch: PortableScratchDirectory
 

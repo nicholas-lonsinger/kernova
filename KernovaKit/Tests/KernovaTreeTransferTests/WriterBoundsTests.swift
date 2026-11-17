@@ -112,9 +112,11 @@ struct WriterBoundsTests {
     func removalFailuresAreLogged() throws {
         let landing = try Landing(kernelContainment: true)
         let logged = Locked<[String]>([])
-        let logger = KernovaLogger(subsystem: "app.kernova", category: "TreeWriterTests") { level, _, _, segments in
-            logged.withLock { $0.append("\(level): " + segments.map(\.text).joined()) }
-        }
+        let logger = KernovaLogger(
+            subsystem: "app.kernova", category: "TreeWriterTests",
+            sink: .init { level, _, _, segments in
+                logged.withLock { $0.append("\(level): " + segments.map(\.text).joined()) }
+            })
         let writer = try landing.writer(logger: logger)
         try writer.write(.enterDirectory(directory(depth: 0)))
         let staging = landing.destinationPath + "/" + String(decoding: writer.stagingName, as: UTF8.self)

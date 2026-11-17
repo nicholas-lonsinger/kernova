@@ -21,12 +21,14 @@ struct KernovaLoggerSinkTests {
     @Test("A debug message reaches the sink whether or not the local log records debug")
     func debugReachesTheSink() {
         let records = Locked<[Record]>([])
-        let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "Debug") {
-            level, subsystem, category, segments in
-            records.withLock {
-                $0.append(Record(level: level, subsystem: subsystem, category: category, segments: segments))
-            }
-        }
+        let logger = KernovaLogger(
+            subsystem: "app.kernova.tests", category: "Debug",
+            sink: .init {
+                level, subsystem, category, segments in
+                records.withLock {
+                    $0.append(Record(level: level, subsystem: subsystem, category: category, segments: segments))
+                }
+            })
         let path = "/tmp/x"
 
         logger.log(.debug, "opened \(path)")

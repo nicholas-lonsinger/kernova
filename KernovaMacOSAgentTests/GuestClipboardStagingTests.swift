@@ -194,11 +194,13 @@ struct GuestClipboardStagingTests {
         private let lines = Locked<[String]>([])
 
         var logger: KernovaLogger {
-            KernovaLogger(subsystem: "app.kernova.macosagent", category: "GuestClipboard") {
-                [lines] level, _, _, segments in
-                guard level == .notice else { return }
-                lines.withLock { $0.append(segments.map(\.text).joined()) }
-            }
+            KernovaLogger(
+                subsystem: "app.kernova.macosagent", category: "GuestClipboard",
+                sink: .init {
+                    [lines] level, _, _, segments in
+                    guard level == .notice else { return }
+                    lines.withLock { $0.append(segments.map(\.text).joined()) }
+                })
         }
 
         /// The retraction lines, in order.
