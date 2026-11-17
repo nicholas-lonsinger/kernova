@@ -117,11 +117,7 @@ enum GuestDragFiles {
         then completion: @escaping @Sendable ([Int?]) -> Void
     ) {
         DispatchQueue.global(qos: .userInitiated).async {
-            completion(
-                urls.map { url in
-                    ClipboardPasteboardReader.resolve(filesAt: [url], sizeOf: measureFolder).representations.first?
-                        .byteCount
-                })
+            completion(urls.map { ClipboardPasteboardReader.byteCount(ofItemAt: $0, sizeOf: measureFolder) })
         }
     }
 

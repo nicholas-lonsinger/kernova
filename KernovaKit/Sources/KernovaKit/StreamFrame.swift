@@ -105,9 +105,6 @@ public struct StreamFrameDecoder: Sendable {
         return payload
     }
 
-    /// `true` when no buffered bytes remain.
-    public var isEmpty: Bool { buffer.count == readOffset }
-
     /// Number of buffered bytes not yet consumed.
     public var bufferedByteCount: Int { buffer.count - readOffset }
 

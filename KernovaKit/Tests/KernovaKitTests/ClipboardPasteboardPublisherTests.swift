@@ -12,7 +12,7 @@ import Testing
 @MainActor
 struct ClipboardPasteboardPublisherTests {
     private static let connection = ClipboardConnectionID()
-    private let textUTI = ClipboardContent.utf8TextUTI
+    private let textUTI = NSPasteboard.PasteboardType.string.rawValue
     private let offer = Data(repeating: 1, count: 16)
     private let otherOffer = Data(repeating: 2, count: 16)
     /// A write serving `offer`.

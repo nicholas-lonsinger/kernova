@@ -17,7 +17,7 @@ extension ClipboardOfferSource {
         for (item, offered) in items.enumerated() {
             guard
                 let index = offered.representations.firstIndex(where: {
-                    $0.storage == .inline && $0.type.appleUTI == ClipboardContent.utf8TextUTI
+                    $0.storage == .inline && $0.type.appleUTI == NSPasteboard.PasteboardType.string.rawValue
                 })
             else { continue }
             guard case .bytes(let data)? = try? await serve(item: item, representation: index) else { return nil }
@@ -110,7 +110,8 @@ struct ClipboardPassthroughCoordinatorTests {
             guard refusesOverCopyBudget else {
                 var item = OfferedItem()
                 item.representations = [
-                    ClipboardPassthroughCoordinatorTests.representation(ClipboardContent.utf8TextUTI, .inline)
+                    ClipboardPassthroughCoordinatorTests.representation(
+                        NSPasteboard.PasteboardType.string.rawValue, .inline)
                 ]
                 return [
                     .offer(
@@ -406,7 +407,7 @@ struct ClipboardPassthroughCoordinatorTests {
         // A published guest rep lands under its own UTI, not `.string` — that
         // type only ever holds what `writeText` put there. Read off the main
         // thread, where the publisher's hold parks rather than running an event loop.
-        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let textType = NSPasteboard.PasteboardType.string
         nonisolated(unsafe) let consumer = h.pasteboard
         let served = await Task.detached { consumer.data(forType: textType) }.value
         #expect(served == Data("over the cap".utf8))
@@ -538,14 +539,14 @@ struct ClipboardPassthroughCoordinatorTests {
 
         let baseline = pasteboard.changeCount
         var text = OfferedItem()
-        text.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
+        text.representations = [Self.representation(NSPasteboard.PasteboardType.string.rawValue, .inline)]
         var file = OfferedItem()
         file.representations = [Self.representation("public.data", .file, name: "big.bin")]
         service.simulateInboundOffer([text, file])
 
         // The auto-publish lands promised items on the pasteboard…
         try await published.wait { pasteboard.changeCount > baseline }
-        let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let textType = NSPasteboard.PasteboardType.string
         let types = pasteboard.pasteboardItems?.flatMap(\.types) ?? []
         #expect(types.contains(textType))
         #expect(types.contains(.fileURL))

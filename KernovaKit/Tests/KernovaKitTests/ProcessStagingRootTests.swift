@@ -50,7 +50,7 @@ struct ProcessStagingRootTests {
         #expect(FileManager.default.fileExists(atPath: staging.root.url.path))
         #expect(try ExclusiveFileLock.tryAcquire(at: staging.root.url) == nil)
         let staged = try ClipboardFileStaging(label: "host-vm", root: staging.root)
-            .makeSink(generation: 1, filename: "after.bin").commit()
+            .reserveScratchDirectory(generation: 1)
         #expect(staged.path.hasPrefix(staging.root.url.path + "/"))
         #expect(FileManager.default.fileExists(atPath: staged.path))
     }

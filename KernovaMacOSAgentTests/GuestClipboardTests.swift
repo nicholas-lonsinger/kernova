@@ -71,7 +71,7 @@ struct GuestClipboardTests {
         #expect(rig.clipboard.isOffering)
         copy("passthrough on", rig)
         try await link.changed.wait { link.offers.count == 1 }
-        #expect(offeredUTIs(link) == [[ClipboardContent.utf8TextUTI]])
+        #expect(offeredUTIs(link) == [[NSPasteboard.PasteboardType.string.rawValue]])
     }
 
     @Test("Turning passthrough off withdraws the guest's offer, and later copies are not offered")
@@ -132,7 +132,7 @@ struct GuestClipboardTests {
         let rig = rig()
         var text = OfferedItem()
         var representation = Representation()
-        representation.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
+        representation.type = TypeDescriptor(appleUTI: NSPasteboard.PasteboardType.string.rawValue)
         representation.storage = .inline
         text.representations = [representation]
         let link = RecordingLink(items: [text])
@@ -143,7 +143,7 @@ struct GuestClipboardTests {
             .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: token, concealed: false, count: 1)),
             on: link)
         try await rig.pasteboard.changed.wait { !rig.pasteboard.promisedTypes.isEmpty }
-        #expect(rig.pasteboard.promisedTypes == [NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)])
+        #expect(rig.pasteboard.promisedTypes == [NSPasteboard.PasteboardType.string])
         // The poll does not read the agent's own promise as a copy.
         rig.clipboard.checkPasteboard()
         #expect(link.releases.isEmpty)
@@ -159,7 +159,7 @@ struct GuestClipboardTests {
         let rig = rig()
         var text = OfferedItem()
         var representation = Representation()
-        representation.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
+        representation.type = TypeDescriptor(appleUTI: NSPasteboard.PasteboardType.string.rawValue)
         representation.storage = .inline
         text.representations = [representation]
         let link = RecordingLink(items: [text])
@@ -178,7 +178,7 @@ struct GuestClipboardTests {
             on: link)
         try await rig.pasteboard.changed.wait { !rig.pasteboard.promisedTypes.isEmpty }
         let pasteboard = rig.pasteboard
-        let type = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let type = NSPasteboard.PasteboardType.string
 
         // A paste holds its thread until the pull ends, so it fires off the main actor.
         _ = await Task.detached { pasteboard.invokeProvider(forType: type) }.value
@@ -275,7 +275,7 @@ struct GuestClipboardTests {
         try await receiveOffer(clipboard, pasteboard, link)
 
         // `pbpaste` in the guest lands the Mac's text; AppKit finishes with the provider, the write standing.
-        let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let text = NSPasteboard.PasteboardType.string
         let pasted = Data("pasted before off".utf8)
         let paste = Task.detached { pasteboard.invokeProvider(forType: text) }
         try await landPull(pasted, clipboard, link)
@@ -365,7 +365,7 @@ struct GuestClipboardTests {
     private static func textItem() -> OfferedItem {
         var item = OfferedItem()
         var representation = Representation()
-        representation.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
+        representation.type = TypeDescriptor(appleUTI: NSPasteboard.PasteboardType.string.rawValue)
         representation.storage = .inline
         item.representations = [representation]
         return item
@@ -706,7 +706,7 @@ struct GuestClipboardTests {
 
         try await link.changed.wait { link.releases.contains(Self.copyToken) }
         #expect(
-            rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
+            rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType.string]
                 == Data("from the host".utf8))
         #expect(!FileManager.default.fileExists(atPath: directory))
     }
@@ -826,7 +826,7 @@ struct GuestClipboardTests {
         #expect(
             rig.pasteboard.dataByItem == [
                 [
-                    NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI): Data("hunter2-mac".utf8),
+                    NSPasteboard.PasteboardType.string: Data("hunter2-mac".utf8),
                     NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI): Data(),
                 ]
             ])
@@ -884,7 +884,7 @@ struct GuestClipboardTests {
         try await link.changed.wait { !link.refusals.isEmpty }
         #expect(link.refusals.map(\.code) == [.clipboardFilesWithheld])
         #expect(
-            rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
+            rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType.string]
                 == Data("from the host".utf8))
         #expect(rig.pasteboard.promisedTypes.isEmpty)
     }
@@ -938,7 +938,7 @@ struct GuestClipboardTests {
         await drainMainQueue()
         #expect(rig.pasteboard.changeCount == written)
         #expect(
-            rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
+            rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType.string]
                 == Data("second, newer".utf8))
         #expect(link.refusals.count == 1)
     }

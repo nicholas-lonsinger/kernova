@@ -30,7 +30,7 @@ struct ClipboardItemPullMainThreadTests {
     func performedMainRunLoopBlockCompletesPull() throws {
         let waits = Locked<[NestedEventLoopWait]>([])
         var text = Representation()
-        text.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
+        text.type = TypeDescriptor(appleUTI: NSPasteboard.PasteboardType.string.rawValue)
         text.storage = .inline
         var item = OfferedItem()
         item.representations = [text]
@@ -44,7 +44,7 @@ struct ClipboardItemPullMainThreadTests {
             })
 
         // A parked main thread could never run the completion.
-        let served = try #require(specs.first).provide(ClipboardContent.utf8TextUTI)
+        let served = try #require(specs.first).provide(NSPasteboard.PasteboardType.string.rawValue)
 
         #expect(served == Data("live".utf8))
         let waitsTaken = waits.withLock { $0 }

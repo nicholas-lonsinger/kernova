@@ -93,10 +93,6 @@ package final class HostClipboardPublisher {
         return written
     }
 
-    /// `true` while the host pasteboard still holds this publisher's most recent
-    /// write — nothing (the user included) has replaced it since.
-    var pasteboardHoldsLastWrite: Bool { publisher.holdsLastWrite }
-
     /// Withdraws `withdrawal`'s promises of this publisher's most recent write
     /// when the host pasteboard still holds it and it serves the offer
     /// `token`, and returns what that left: what the offer's end owes a write

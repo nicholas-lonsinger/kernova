@@ -1,7 +1,7 @@
 import Foundation
 import KernovaSynchronization
 
-/// Materializes streamed file representations to real local temp files so a
+/// The local temp directories streamed file representations land in, so a
 /// receiver can put a concrete `public.file-url` on the pasteboard — the only
 /// mechanism by which a Finder **Paste** creates a file. Verified 2026-08-15
 /// (macOS 26): an `NSFilePromiseProvider` written to `NSPasteboard.general`
@@ -10,29 +10,18 @@ import KernovaSynchronization
 /// on the same pasteboard pastes in both.
 ///
 /// One directory per offer generation, kept for as long as its ``Retention``
-/// says; `sweep()` clears everything. Every removal goes through the process
-/// root (``ProcessStagingRoot/remove(_:)``), so a pasteboard item naming a file
-/// in it goes first.
+/// says. Every removal goes through the process root
+/// (``ProcessStagingRoot/remove(_:)``), so a pasteboard item naming a file in it
+/// goes first.
 ///
 /// Each instance owns a private root (the label plus a per-instance component)
-/// under its process's ``ProcessStagingRoot``, so no instance's `sweep()` can
-/// delete files another instance staged — a URL vended to a pasteboard outlives
-/// the session that staged it. Roots left behind by the same process's earlier
-/// instances are reclaimed by `reclaimSiblingRoots()` once nothing can be serving
-/// from them; an exited process's whole root, by the next launch's
-/// ``ProcessStagingRoot/reclaimAbandonedRoots()``.
+/// under its process's ``ProcessStagingRoot``. What retention keeps of it stays
+/// for as long as the process runs, and goes with the whole process root at the
+/// next launch's ``ProcessStagingRoot/reclaimAbandonedRoots()``.
 public final class ClipboardFileStaging: Sendable {
-    /// Queries free capacity (in bytes) for important, user-initiated writes at
-    /// the given directory.
-    public typealias FreeSpaceProvider = @Sendable (URL) -> Int64?
-
     /// Number of recent generation directories ``Retention/newest(_:)`` keeps
     /// alive for staging that replaces what it last vended.
     public static let maxGenerations = 3
-
-    /// Margin kept free above a transfer's size when checking disk space, so a
-    /// transfer never fills the staging volume to the last byte.
-    public static let freeSpaceMargin = 64 * 1024 * 1024
 
     /// How long a generation's directory lives.
     enum Retention: Equatable, Sendable {
@@ -46,77 +35,9 @@ public final class ClipboardFileStaging: Sendable {
         case untilDiscarded
     }
 
-    /// An open append-only sink for one streamed file representation.
-    ///
-    /// Concurrent `write`/`commit`/`abort` are serialized: each does its I/O
-    /// under the lock the handle lives in.
-    public final class Sink: Sendable {
-        private struct State: Sendable {
-            let handle: FileHandle
-            var finished = false
-        }
-
-        /// The local file the bytes are being written to.
-        let url: URL
-
-        private let state: Locked<State>
-
-        init(url: URL, handle: FileHandle) {
-            self.url = url
-            self.state = Locked(State(handle: handle))
-        }
-
-        /// Appends a chunk to the file.
-        ///
-        /// - Throws: any error from `FileHandle.write(contentsOf:)` (e.g. the
-        ///   volume filling mid-stream).
-        public func write(_ data: Data) throws {
-            try state.withLock { state in
-                guard !state.finished else { return }
-                try state.handle.write(contentsOf: data)
-            }
-        }
-
-        /// Closes the file and keeps it; the bytes are complete.
-        ///
-        /// Returns the final URL. Idempotent.
-        ///
-        /// - Throws: an error from `FileHandle.close()`. With `F_NOCACHE` and no
-        ///   `fsync` the kernel can defer a write failure to `close()`, so
-        ///   swallowing it delivers a truncated file that still passed the
-        ///   in-flight digest check. The partial is deleted on a close failure.
-        @discardableResult
-        public func commit() throws -> URL {
-            try state.withLock { state in
-                guard !state.finished else { return url }
-                state.finished = true
-                do {
-                    try state.handle.close()
-                } catch {
-                    ProcessStagingRoot.discard(url)
-                    throw error
-                }
-                return url
-            }
-        }
-
-        /// Closes the file and deletes the partial.
-        ///
-        /// Idempotent.
-        public func abort() {
-            state.withLock { state in
-                guard !state.finished else { return }
-                state.finished = true
-                try? state.handle.close()
-                ProcessStagingRoot.discard(url)
-            }
-        }
-    }
-
     private let processRoot: ProcessStagingRoot
     private let root: URL
     private let retention: Retention
-    private let freeSpaceProvider: FreeSpaceProvider
 
     /// The lock also serializes every filesystem change under ``root``, so the
     /// I/O each method does stays inside its `withLock`.
@@ -175,54 +96,26 @@ public final class ClipboardFileStaging: Sendable {
     /// - Parameters:
     ///   - label: distinguishes co-resident roots (e.g. `"agent"` vs `"host"`).
     ///     The root nests a unique per-instance component under the label, so two
-    ///     same-label instances (a VM's next session) never share a root.
+    ///     same-label instances never share a root.
     ///   - root: the process root the label nests under — ``processRoot`` in
     ///     production.
-    ///   - freeSpaceProvider: queries available capacity; defaults to
-    ///     `volumeAvailableCapacityForImportantUsageKey`.
-    public convenience init(
-        label: String,
-        root: ProcessStagingRoot,
-        freeSpaceProvider: FreeSpaceProvider? = nil
-    ) {
-        self.init(
-            label: label, root: root, retention: .newest(Self.maxGenerations),
-            freeSpaceProvider: freeSpaceProvider)
+    public convenience init(label: String, root: ProcessStagingRoot) {
+        self.init(label: label, root: root, retention: .newest(Self.maxGenerations))
     }
 
     /// Staging whose every generation is a ``lease()``'s, deleted once its last holder lets it go and by
-    /// nothing else. Parameters as ``init(label:root:freeSpaceProvider:)``.
+    /// nothing else. Parameters as ``init(label:root:)``.
     public static func leased(label: String, root: ProcessStagingRoot) -> ClipboardFileStaging {
-        ClipboardFileStaging(label: label, root: root, retention: .untilDiscarded, freeSpaceProvider: nil)
+        ClipboardFileStaging(label: label, root: root, retention: .untilDiscarded)
     }
 
-    init(
-        label: String,
-        root: ProcessStagingRoot,
-        retention: Retention,
-        freeSpaceProvider: FreeSpaceProvider?
-    ) {
+    init(label: String, root: ProcessStagingRoot, retention: Retention) {
         processRoot = root
         self.retention = retention
         self.root =
             root.url
             .appendingPathComponent(label, isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        self.freeSpaceProvider = freeSpaceProvider ?? Self.defaultFreeSpace
-    }
-
-    /// Available capacity for important writes at the staging root's volume, in
-    /// bytes, or `nil` if it can't be determined.
-    public func availableCapacity() -> Int64? {
-        freeSpaceProvider(root)
-    }
-
-    /// Whether `url` points inside this staging root.
-    ///
-    /// The outbound pasteboard poll skips these so a file received from the peer
-    /// is never offered back to it.
-    public func isInStagingRoot(_ url: URL) -> Bool {
-        Self.isURL(url, inside: root)
     }
 
     /// Whether `url` lies in `generation`'s directory.
@@ -240,44 +133,6 @@ public final class ClipboardFileStaging: Sendable {
         let directoryPath = directory.standardizedFileURL.path
         let path = url.standardizedFileURL.path
         return path == directoryPath || path.hasPrefix(directoryPath + "/")
-    }
-
-    /// Whether `byteCount` bytes (plus `margin`) fit on the staging volume.
-    ///
-    /// `volumeAvailableCapacityForImportantUsageKey` **includes purgeable
-    /// space**, so it can exceed raw free bytes (WWDC17 "What's New in
-    /// Foundation"); the margin keeps a transfer from filling the volume to the
-    /// last byte. An unknown capacity is treated as "fits", and a size whose
-    /// margined total leaves `Int64` as "does not fit" — the caller's `byteCount`
-    /// can come from a peer-declared size.
-    public func hasCapacity(
-        forByteCount byteCount: Int, margin: Int = ClipboardFileStaging.freeSpaceMargin
-    ) -> Bool {
-        guard let available = availableCapacity() else { return true }
-        let (needed, overflow) = Int64(byteCount).addingReportingOverflow(Int64(margin))
-        guard !overflow else { return false }
-        return needed <= available
-    }
-
-    /// Opens an append-only sink for a streamed file representation, creating
-    /// (or reusing) the directory for `generation` and evicting what the
-    /// retention no longer keeps.
-    ///
-    /// - Throws: a filesystem error if the directory or file can't be created,
-    ///   or `generation` was discarded.
-    public func makeSink(generation: UInt64, filename: String) throws -> Sink {
-        try state.withLock { state in
-            let dir = try state.directory(
-                for: generation, root: root, processRoot: processRoot, retention: retention)
-            // One multi-file copy can carry two payloads that share a name;
-            // reusing the first's path would collapse the two files into one.
-            let url = NameUniquing.uniqueDestination(in: dir, filename: filename)
-            // `F_NOCACHE` keeps a multi-GB transfer from evicting the page cache.
-            FileManager.default.createFile(atPath: url.path, contents: nil)
-            let handle = try FileHandle(forWritingTo: url)
-            _ = fcntl(handle.fileDescriptor, F_NOCACHE, 1)
-            return Sink(url: url, handle: handle)
-        }
     }
 
     /// Reserves a fresh empty directory under the generation directory for a
@@ -307,17 +162,6 @@ public final class ClipboardFileStaging: Sendable {
         return ClipboardStagingLease(staging: self, generation: generation)
     }
 
-    /// Removes every live generation of this instance's staging at once.
-    ///
-    /// A previous instance's root is out of reach by construction;
-    /// `reclaimSiblingRoots` reclaims those.
-    public func sweep() {
-        state.withLock { state in
-            for generation in state.generationDirs { processRoot.remove(generation.dir) }
-            state.generationDirs.removeAll()
-        }
-    }
-
     /// Removes the directory for `generation`, once the caller knows nothing
     /// can still read from it.
     ///
@@ -331,48 +175,6 @@ public final class ClipboardFileStaging: Sendable {
             else { return }
             processRoot.remove(state.generationDirs.remove(at: index).dir)
         }
-    }
-
-    /// Removes every sibling root under this instance's label — staging left
-    /// behind by the same label's earlier instances in this process — leaving
-    /// this instance's own root untouched. Another process's staging is under
-    /// another process root, out of reach.
-    ///
-    /// Call only when nothing can still be serving from those roots: for a
-    /// receive root, once the host pasteboard no longer holds (or has just
-    /// retracted) the write those files backed.
-    public func reclaimSiblingRoots() {
-        state.withLock { _ in
-            let labelDir = root.deletingLastPathComponent()
-            guard
-                let siblings = try? FileManager.default.contentsOfDirectory(
-                    at: labelDir, includingPropertiesForKeys: nil)
-            else { return }
-            for sibling in siblings where sibling.lastPathComponent != root.lastPathComponent {
-                processRoot.remove(sibling)
-            }
-        }
-    }
-
-    // MARK: - Private
-
-    /// Default free-space query: `volumeAvailableCapacityForImportantUsageKey`
-    /// (Apple's documented key for user-initiated/important writes, vs. the
-    /// opportunistic key for predictive downloads).
-    private static let defaultFreeSpace: FreeSpaceProvider = { url in
-        // The root and any of its parents may not exist yet; a volume query
-        // needs a path that does.
-        var probe = url
-        while !FileManager.default.fileExists(atPath: probe.path), probe.pathComponents.count > 1 {
-            probe.deleteLastPathComponent()
-        }
-        guard
-            let values = try? probe.resourceValues(forKeys: [
-                .volumeAvailableCapacityForImportantUsageKey
-            ]),
-            let capacity = values.volumeAvailableCapacityForImportantUsage
-        else { return nil }
-        return capacity
     }
 }
 
