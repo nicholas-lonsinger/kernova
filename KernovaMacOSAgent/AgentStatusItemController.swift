@@ -1,7 +1,6 @@
 import AppKit
 import KernovaAgentCore
 import KernovaAppKitShared
-import KernovaKit
 import KernovaLogging
 
 /// Owns the agent's menu-bar `NSStatusItem` and its dropdown.

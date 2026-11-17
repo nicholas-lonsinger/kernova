@@ -112,12 +112,6 @@ extension CoreUnits {
                 state: PeerSessionState(sessionID: sessionID), isUnresponsive: unresponsive)
         }
 
-        static func system(instance: Data = instanceA, unresponsive: Bool = false) -> ConflictParty {
-            ConflictParty(
-                claim: PeerClaim(role: .systemPeer, scope: .system, instanceID: instance), state: PeerSessionState(),
-                isUnresponsive: unresponsive)
-        }
-
         @Test(
             "Session peers of different rank → the lower closes DUPLICATE_PEER, retry 60 s",
             arguments: [

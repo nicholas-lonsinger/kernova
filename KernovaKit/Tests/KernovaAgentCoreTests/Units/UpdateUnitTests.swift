@@ -275,12 +275,6 @@ extension CoreUnits {
             #expect(live.hostEvents.contains { if case .diagnostic(.localFault) = $0 { true } else { false } })
         }
 
-        /// The READ_FAILED this run's server reset its pull with.
-        static func readFailed(_ run: HostileRun) -> WireError {
-            for case .update(.closed(_, .resetLocally(let error))) in run.hostEvents { return error }
-            return WireError(.unspecified)
-        }
-
         @Test("The payload source failing → RESET READ_FAILED, and .closed without a result")
         func sourceFailed() {
             let run = Self.serving()

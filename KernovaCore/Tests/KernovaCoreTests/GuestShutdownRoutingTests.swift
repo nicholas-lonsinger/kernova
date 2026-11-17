@@ -2,7 +2,6 @@ import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
 import KernovaCommandModel
-import KernovaSynchronization
 import KernovaTestSupport
 import KernovaWire
 import Testing

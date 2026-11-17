@@ -56,14 +56,6 @@ final class TestAdmissionGate: Sendable {
         }
         next?.resume()
     }
-
-    #if DEBUG
-    /// Permits not currently held, for a test asserting the pool stays balanced.
-    var availableForTesting: Int { state.withLock { $0.available } }
-
-    /// Callers queued for a permit.
-    var waiterCountForTesting: Int { state.withLock { $0.waiters.count } }
-    #endif
 }
 
 // MARK: - TestAdmission

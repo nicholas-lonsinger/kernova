@@ -1,6 +1,5 @@
 import AppIntents
 import Foundation
-import KernovaKit
 
 struct FindSnapshotsIntent: AppIntent {
     static let title: LocalizedStringResource = "Find Snapshots"

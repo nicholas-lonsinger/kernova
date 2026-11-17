@@ -1,6 +1,5 @@
 import Foundation
 import KernovaCommandModel
-import KernovaKit
 
 /// Which content the detail pane shows for a given VM, derived purely from the
 /// VM's lifecycle phase and related flags.

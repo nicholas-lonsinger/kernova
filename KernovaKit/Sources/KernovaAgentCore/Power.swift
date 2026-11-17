@@ -113,7 +113,7 @@ public struct PowerLedger: Sendable, Equatable {
 }
 
 /// The peer's power machine: one request at a time on this peer.
-public struct PowerResponder: FeatureMachine {
+struct PowerResponder: FeatureMachine {
     /// POWER.
     public static let feature = FeatureID.power
 
@@ -142,19 +142,19 @@ public struct PowerResponder: FeatureMachine {
 
     /// A responder over the adapter's last reported availability and the
     /// process's ledger, which may hold a request from an earlier connection.
-    public init(availability: Availability<PowerOffer>, ledger: PowerLedger, generation: ConnectionGeneration) {
+    init(availability: Availability<PowerOffer>, ledger: PowerLedger, generation: ConnectionGeneration) {
         self.availability = availability
         self.ledger = ledger
         self.generation = generation
     }
 
     /// The `PowerCapability` advert, or the adapter's absence.
-    public var localAdvert: LocalAdvert {
+    var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: Availability(availability) { $0.encoded })
     }
 
     /// The acceptance deadline of a request still asked.
-    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? {
+    func nextDeadline(on clock: JudgedClock) -> CoreInstant? {
         request?.deadline?.wake(clock)
     }
 
@@ -167,7 +167,7 @@ public struct PowerResponder: FeatureMachine {
     }
 
     /// Handles a stream event for POWER_REQUEST.
-    public mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
         switch event {
         case .opened(let stream, let body):
             opened(stream, body: body, connection: &connection)
@@ -191,7 +191,7 @@ public struct PowerResponder: FeatureMachine {
     }
 
     /// Handles the adapter's report.
-    public mutating func handle(input: PowerInput, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(input: PowerInput, connection: inout Connection) {
         if case .availability(let availability) = input {
             self.availability = availability
             return
@@ -350,7 +350,7 @@ extension PowerInput {
 // MARK: - Host
 
 /// The host's power machine: one entry per open request stream.
-public struct PowerRequester: FeatureMachine {
+struct PowerRequester: FeatureMachine {
     /// POWER.
     public static let feature = FeatureID.power
     /// The acceptance deadline the host sends.
@@ -375,17 +375,17 @@ public struct PowerRequester: FeatureMachine {
     private(set) var diagnostics: [Diagnostic] = []
 
     /// A requester for one connection.
-    public init(generation: ConnectionGeneration) {
+    init(generation: ConnectionGeneration) {
         self.generation = generation
     }
 
     /// The host advertises POWER available with empty params.
-    public var localAdvert: LocalAdvert {
+    var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: .available(Data()))
     }
 
     /// The soonest acceptance wait of a request still waiting.
-    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? {
+    func nextDeadline(on clock: JudgedClock) -> CoreInstant? {
         entries.compactMap { $0.deadline?.wake(clock) }.min()
     }
 
@@ -399,7 +399,7 @@ public struct PowerRequester: FeatureMachine {
 
     /// Starts a request: opens POWER_REQUEST and ends it at once. `ignoringApps` is sent only toward a peer
     /// whose `PowerCapability` lists `action` in `ignore_apps_actions` (the freeze rules).
-    public mutating func request(
+    mutating func request(
         _ id: PowerRequestID, _ action: PowerAction, ignoringApps: Bool, connection: inout Connection
     ) {
         guard id.generation == generation else { return }
@@ -423,7 +423,7 @@ public struct PowerRequester: FeatureMachine {
     }
 
     /// Handles a stream event for POWER_REQUEST.
-    public mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
         switch event {
         case .message(let stream, let payload):
             guard let index = entries.firstIndex(where: { $0.stream == stream }) else { return }

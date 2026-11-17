@@ -9,7 +9,6 @@ import KernovaAgentCore
 import KernovaAgentHost
 import KernovaAgentRuntime
 import KernovaPortableTestSupport
-import KernovaSynchronization
 import KernovaWire
 import Testing
 

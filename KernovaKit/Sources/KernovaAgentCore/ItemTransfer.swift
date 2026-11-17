@@ -308,7 +308,7 @@ public enum ItemTransferInput: Sendable, Equatable {
 /// after every change to the registry the server resets the pulls of offers it
 /// no longer holds that it has not sent whole, and the client those it has not
 /// committed, before any later input can commit one. Nothing withdraws a commit.
-public struct ItemTransfer: FeatureMachine {
+struct ItemTransfer: FeatureMachine {
     /// ITEM_TRANSFER.
     public static let feature = FeatureID.itemTransfer
 
@@ -321,18 +321,18 @@ public struct ItemTransfer: FeatureMachine {
     private var diagnostics: [Diagnostic] = []
 
     /// A machine for one connection, advertising `availability`.
-    public init(availability: Availability<NoParams>, generation: ConnectionGeneration) {
+    init(availability: Availability<NoParams>, generation: ConnectionGeneration) {
         self.availability = availability
         self.generation = generation
     }
 
     /// The `ItemTransferCapability` advert, or this build's absence.
-    public var localAdvert: LocalAdvert {
+    var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: Availability(availability) { _ in Data() })
     }
 
     /// The machine sets no deadlines.
-    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
+    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     mutating func takeOutputs() -> (outputs: [ItemTransferOutput], diagnostics: [Diagnostic]) {
         defer {
@@ -343,7 +343,7 @@ public struct ItemTransfer: FeatureMachine {
     }
 
     /// Handles an event on a pull stream.
-    public mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
         switch event {
         case .opened(let stream, let body):
             server.opened(
@@ -385,23 +385,23 @@ public struct ItemTransfer: FeatureMachine {
 
     /// Opens an offer of `offer` on a stream of `kind`, an item-set offer kind this role opens; nil when sent,
     /// or why not.
-    public mutating func offer(_ offer: ItemOffer, kind: StreamKind, connection: inout Connection) -> WireError? {
+    mutating func offer(_ offer: ItemOffer, kind: StreamKind, connection: inout Connection) -> WireError? {
         offers.offer(offer, kind: kind, connection: &connection)
     }
 
     /// Withdraws this side's offer of `token`, resetting it with `code`.
-    public mutating func withdraw(_ token: Data, code: ErrorCode = .cancelled, connection: inout Connection) {
+    mutating func withdraw(_ token: Data, code: ErrorCode = .cancelled, connection: inout Connection) {
         offers.withdraw(token, code: code, connection: &connection)
     }
 
     /// Releases the far side's offer of `token`: this side pulls nothing more of it. Once the offer is whole
     /// the release is END with `endBody`, its kind's acceptor END body.
-    public mutating func release(_ token: Data, endBody: Data = Data(), connection: inout Connection) {
+    mutating func release(_ token: Data, endBody: Data = Data(), connection: inout Connection) {
         offers.release(token, endBody: endBody, connection: &connection)
     }
 
     /// Refuses the far side's offer of `token` with `error`: this side pulls nothing of it, and says why.
-    public mutating func refuse(_ token: Data, _ error: WireError, connection: inout Connection) {
+    mutating func refuse(_ token: Data, _ error: WireError, connection: inout Connection) {
         offers.refuse(token, error, connection: &connection)
     }
 
@@ -414,16 +414,16 @@ public struct ItemTransfer: FeatureMachine {
 
     /// Whether a pull this side committed has not had its sink's publish report: its `.pullEnded` is still
     /// owed, though its connection may have finished.
-    public var hasLandingsInFlight: Bool { client.hasLandingsInFlight }
+    var hasLandingsInFlight: Bool { client.hasLandingsInFlight }
 
     /// Cancels a pull this side opened.
-    public mutating func cancel(_ id: ItemPullID, connection: inout Connection) {
+    mutating func cancel(_ id: ItemPullID, connection: inout Connection) {
         guard id.generation == generation else { return }
         client.cancel(id.stream, connection: &connection)
     }
 
     /// Handles the source's answer or the sink's report.
-    public mutating func handle(input: ItemTransferInput, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(input: ItemTransferInput, connection: inout Connection) {
         switch input {
         case .source(let input):
             server.handle(

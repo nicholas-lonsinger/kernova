@@ -8,7 +8,6 @@ import Synchronization
 final class ScriptedARPTable: ARPTableReading {
     private struct State {
         var entries: [ARPEntry]
-        var error: (any Error)?
         var reads = 0
     }
 
@@ -23,18 +22,12 @@ final class ScriptedARPTable: ARPTableReading {
         state.withLock { $0.entries = entries }
     }
 
-    /// Sets the error every later read throws; `nil` clears it.
-    func setError(_ error: (any Error)?) {
-        state.withLock { $0.error = error }
-    }
-
     /// How many reads have run.
     var readCount: Int { state.withLock { $0.reads } }
 
     func entries() throws -> [ARPEntry] {
-        try state.withLock { state in
+        state.withLock { state in
             state.reads += 1
-            if let error = state.error { throw error }
             return state.entries
         }
     }

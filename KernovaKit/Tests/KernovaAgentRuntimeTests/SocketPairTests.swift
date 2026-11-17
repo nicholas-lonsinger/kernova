@@ -108,11 +108,6 @@ extension HostEvent {
         return false
     }
 
-    var isClosed: Bool {
-        if case .closed = self { return true }
-        return false
-    }
-
     var isPower: Bool {
         if case .power = self { return true }
         return false

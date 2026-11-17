@@ -6,7 +6,6 @@ import Foundation
 
 import Dispatch
 import KernovaAgentCore
-import KernovaWire
 
 /// Why a byte stream's call failed.
 public enum ByteStreamError: Error, Sendable, Equatable {

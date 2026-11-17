@@ -23,7 +23,6 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
         var handlers: [(queue: DispatchQueue, handler: @Sendable (HostEvent) -> Void)] = []
         /// How each power peer answers a power request, by connection index.
         var powerAnswers: [Int: @Sendable (PowerAction) -> [PowerRequestResult]] = [:]
-        var shutdowns = 0
     }
 
     private let state = Locked(State())
@@ -38,8 +37,6 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
     package var policies: [PolicySnapshot] { state.withLock(\.policies) }
     /// The bundles each connection was built to offer, in order.
     package var bundles: [[BundledPayload]] { state.withLock(\.bundles) }
-    /// How many accepted streams have been shut down.
-    package var shutdowns: Int { state.withLock(\.shutdowns) }
     /// Whether a hub has started this transport.
     package var isStarted: Bool { state.withLock { $0.acceptor != nil } }
 
@@ -182,7 +179,6 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
                 return !isShutDown
             }
             guard first else { return }
-            probe.state.withLock { $0.shutdowns += 1 }
             released()
             probe.changed.notify()
         }

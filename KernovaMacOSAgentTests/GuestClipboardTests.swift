@@ -232,10 +232,10 @@ struct GuestClipboardTests {
                 == "Clipboard: too large to paste — over the \(ClipboardPasteLimit.displayLimit(limit)) transfer limit")
     }
 
-    /// Publishes the host's passthrough offer of `item` on `pasteboard` through `clipboard`, over `link`.
-    private func receiveOffer(
-        _ item: OfferedItem, _ clipboard: GuestClipboard, _ pasteboard: FakePasteboard, _ link: RecordingLink
-    ) async throws {
+    /// Publishes the host's passthrough offer on `pasteboard` through `clipboard`, over `link`.
+    private func receiveOffer(_ clipboard: GuestClipboard, _ pasteboard: FakePasteboard, _ link: RecordingLink)
+        async throws
+    {
         clipboard.setLink(link)
         clipboard.exchange.handle(
             .offerReceived(
@@ -272,7 +272,7 @@ struct GuestClipboardTests {
         let pasteboard = FakePasteboard()
         let clipboard = GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root)
         let link = RecordingLink(items: [Self.textItem()], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
-        try await receiveOffer(Self.textItem(), clipboard, pasteboard, link)
+        try await receiveOffer(clipboard, pasteboard, link)
 
         // `pbpaste` in the guest lands the Mac's text; AppKit finishes with the provider, the write standing.
         let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
@@ -328,8 +328,7 @@ struct GuestClipboardTests {
             var request = PullRequest()
             request.token = offer.token
             let id = id(stream)
-            let representation = offer.items[0].representations[0]
-            return BlockingCall { [request] in exchange.content(id, request, representation) }
+            return BlockingCall { [request] in exchange.content(id, request) }
         }
         func failure(_ result: Result<ItemContent, WireError>) -> ErrorCode? {
             if case .failure(let error) = result { error.code } else { nil }
@@ -478,9 +477,8 @@ struct GuestClipboardTests {
         var request = PullRequest()
         request.token = copy.token
         let exchange = rig.clipboard.exchange
-        let representation = copy.items[0].representations[0]
         let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
-        let served = try await offCooperativePool { [request] in exchange.content(pull, request, representation) }
+        let served = try await offCooperativePool { [request] in exchange.content(pull, request) }
         #expect(served == .success(.inline(Data("copied in the guest".utf8))))
         #expect(!link.withdrawals.contains(copy.token))
     }

@@ -136,7 +136,7 @@ public struct Installer {
                 }
                 if case .file(let path, _, _) = write { written.append(path) }
             case .write(let write):
-                if try perform(write, source: source), case .file(let path, _, _) = write { written.append(path) }
+                if try perform(write), case .file(let path, _, _) = write { written.append(path) }
             case .remove(let path):
                 try remove(path)
             case .removeRoot:
@@ -180,7 +180,7 @@ public struct Installer {
     private func staged(_ path: String) -> String { stagingRoot + path }
 
     /// Carries out `write`: false when it found the file already holding its text, and wrote nothing.
-    private func perform(_ write: InstallPlan.Write, source: Int32?) throws(Failure) -> Bool {
+    private func perform(_ write: InstallPlan.Write) throws(Failure) -> Bool {
         switch write {
         case .directory(let path, let mode):
             try makeDirectory(path, mode: mode)

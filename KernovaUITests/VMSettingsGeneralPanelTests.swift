@@ -188,7 +188,6 @@ struct VMSettingsGeneralPanelTests {
         "0123456789abcdef" + String(repeating: "5", count: 32) + "fedcba9876543210"
     private static let checksumListURL = URL(
         string: "https://cdimage.ubuntu.com/releases/26.04/SHA256SUMS")!
-    private static let isoURL = URL(string: "https://mirror.example/alpine-3.22-aarch64.iso")!
 
     private static func matched(_ source: DigestSource, filename: String) -> InstallerImageDigest? {
         ExpectedDigest(sha256: sha256, source: source).match(sha256, filename: filename)

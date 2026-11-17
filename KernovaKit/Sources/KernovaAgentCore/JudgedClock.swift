@@ -53,21 +53,21 @@ public struct JudgedClock: Sendable, Equatable {
 /// A deadline on judged time whose expiry is confirmed: found
 /// passed, it fires only at a later evaluation at least `confirmation` of raw
 /// time on that still finds it passed. Whatever ends the judgment replaces it.
-public struct JudgedDeadline: Sendable, Equatable {
+struct JudgedDeadline: Sendable, Equatable {
     /// The judged instant it expires at.
-    public private(set) var expiry: CoreInstant
+    private(set) var expiry: CoreInstant
     private var foundPassedAt: CoreInstant?
     private let confirmation: CoreDuration
 
     /// A deadline `span` of judged time after the clock's current judged instant.
-    public init(after span: CoreDuration, on clock: JudgedClock, confirmation: CoreDuration) {
+    init(after span: CoreDuration, on clock: JudgedClock, confirmation: CoreDuration) {
         expiry = clock.judged.advanced(by: span)
         self.confirmation = confirmation
     }
 
     /// Whether the deadline fires now. A frozen clock judges nothing and restarts
     /// any confirmation.
-    public mutating func evaluate(_ clock: JudgedClock) -> Bool {
+    mutating func evaluate(_ clock: JudgedClock) -> Bool {
         guard !clock.isFrozen, clock.judged >= expiry else {
             foundPassedAt = nil
             return false
@@ -80,7 +80,7 @@ public struct JudgedDeadline: Sendable, Equatable {
     }
 
     /// The raw instant of the next evaluation the deadline needs; nil while frozen.
-    public func wake(_ clock: JudgedClock) -> CoreInstant? {
+    func wake(_ clock: JudgedClock) -> CoreInstant? {
         if let foundPassedAt { return foundPassedAt.advanced(by: confirmation) }
         return clock.rawInstant(whenJudgedReaches: expiry)
     }

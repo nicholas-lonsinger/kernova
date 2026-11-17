@@ -34,7 +34,6 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing {
         var unreadable: Set<BundlePath> = []
         var target: InMemoryVMBundleFiles?
         var lockedElsewhere: Set<URL> = []
-        var lockedElsewhereUnprobed: Set<URL> = []
         var lockedByThisCopy: Set<URL> = []
         var lockErrors: [URL: any Error] = [:]
         /// Which bundle each live holder locks, re-keyed with its bundle.
@@ -176,22 +175,10 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing {
         state.withLock { _ = $0.lockedElsewhere.insert(Self.key(url)) }
     }
 
-    /// Marks the bundle at `url` as one another copy of Kernova takes after
-    /// this copy's last probe: probes read it free, and the next lock attempt
-    /// finds it held — from then on as ``holdElsewhere(_:)`` holds it.
-    func holdElsewhereAfterProbes(_ url: URL) {
-        if let target { return target.holdElsewhereAfterProbes(url) }
-        state.withLock { _ = $0.lockedElsewhereUnprobed.insert(Self.key(url)) }
-    }
-
-    /// Ends the hold ``holdElsewhere(_:)`` or
-    /// ``holdElsewhereAfterProbes(_:)`` stood for.
+    /// Ends the hold ``holdElsewhere(_:)`` stood for.
     func releaseElsewhere(_ url: URL) {
         if let target { return target.releaseElsewhere(url) }
-        state.withLock {
-            _ = $0.lockedElsewhere.remove(Self.key(url))
-            _ = $0.lockedElsewhereUnprobed.remove(Self.key(url))
-        }
+        state.withLock { _ = $0.lockedElsewhere.remove(Self.key(url)) }
     }
 
     /// Thrown by every later lock attempt on the bundle at `url`, as opening a
@@ -351,7 +338,6 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing {
         let key = Self.key(bundleURL)
         let id: UUID? = try state.withLock { state in
             if let error = state.lockErrors[key] { throw error }
-            if state.lockedElsewhereUnprobed.remove(key) != nil { state.lockedElsewhere.insert(key) }
             guard !state.lockedElsewhere.contains(key), state.lockedByThisCopy.insert(key).inserted
             else { return nil }
             let id = UUID()

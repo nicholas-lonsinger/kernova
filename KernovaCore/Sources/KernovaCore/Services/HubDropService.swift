@@ -107,7 +107,7 @@ package final class HubDropService: Sendable {
             hub.offerItems(ItemOffer(token: token, items: source.items), feature: .drop) { [self] result in
                 guard case .failure(let error) = result else { return }
                 DispatchQueue.main.async { [self] in
-                    MainActor.assumeIsolated { refused(token, error, items: source.items.count) }
+                    MainActor.assumeIsolated { refused(token, error) }
                 }
             }
         }
@@ -116,7 +116,7 @@ package final class HubDropService: Sendable {
 
     /// The hub did not open the offer of `token`, for `error`.
     @MainActor
-    private func refused(_ token: Data, _ error: WireError, items: Int) {
+    private func refused(_ token: Data, _ error: WireError) {
         guard let offer = offers.withLock({ $0.removeValue(forKey: token) }) else { return }
         Self.logger.log(.warning, "A drop was not offered: \(error.code, privacy: .public)")
         release(offer.staging, after: offer.promises)

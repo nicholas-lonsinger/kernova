@@ -7,14 +7,6 @@ import Testing
 
 @Suite("LinuxInstallContext Tests", .caseScoped)
 struct LinuxInstallContextTests {
-    private func roundTrip(_ context: LinuxInstallContext) throws
-        -> LinuxInstallContext
-    {
-        let data = try VMConfiguration.makeJSONEncoder().encode(context)
-        return try VMConfiguration.makeJSONDecoder().decode(
-            LinuxInstallContext.self, from: data)
-    }
-
     @Test("A URL pick with a checksum is checked against what the user entered")
     func customURLChecksAgainstEnteredChecksum() async throws {
         let source = LinuxInstallContext.Source.customURL(

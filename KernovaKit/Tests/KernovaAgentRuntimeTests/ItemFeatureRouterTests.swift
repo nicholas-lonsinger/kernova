@@ -57,8 +57,6 @@ private func router<Peer: Sendable>(
 @Suite("Item feature router")
 struct ItemFeatureRouterTests {
     static let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 4))
-    static let take = DragTakeID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 8))
-    static let closed = StreamClosure.resetLocally(WireError(.cancelled))
 
     @Test(
         "Every feature's serve that did not land is logged once, at its level, before its owner hears it; a landed serve or one this side reset is not"

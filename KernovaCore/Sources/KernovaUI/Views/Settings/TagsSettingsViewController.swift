@@ -1,7 +1,6 @@
 import AppKit
 import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 import KernovaLogging
 
 /// The "Tags" pane of the Settings window: the library's tags, each created,

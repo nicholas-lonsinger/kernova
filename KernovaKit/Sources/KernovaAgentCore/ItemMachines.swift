@@ -200,8 +200,8 @@ struct ItemMachines: Sendable {
     }
 
     /// Handles the item source's answer or the item sink's report.
-    mutating func handle(_ input: ItemTransferInput, connection: inout Connection, now: CoreInstant) {
-        transfer.handle(input: input, connection: &connection, now: now)
+    mutating func handle(_ input: ItemTransferInput, connection: inout Connection) {
+        transfer.handle(input: input, connection: &connection)
     }
 
     /// Everything the machines emitted since the last call, each in its emission order.

@@ -193,13 +193,13 @@ public struct PeerEndpoint: Sendable {
         case .peerState(let state):
             if connection.isAcceptingInput { connection.setPeerState(state) }
         case .power(let input):
-            power.handle(input: input, connection: &connection, now: now)
+            power.handle(input: input, connection: &connection)
         case .logs(let input):
-            logs.handle(input: input, connection: &connection, now: now)
+            logs.handle(input: input, connection: &connection)
         case .update(let input):
-            update.handle(input: input, connection: &connection, now: now)
+            update.handle(input: input, connection: &connection)
         case .items(let input):
-            items.handle(input, connection: &connection, now: now)
+            items.handle(input, connection: &connection)
         case .dragTake(let id, let answer):
             items.answer(id, answer, connection: &connection)
         case .itemCommand(let command):

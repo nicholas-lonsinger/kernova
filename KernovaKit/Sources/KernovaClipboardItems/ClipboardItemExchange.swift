@@ -540,12 +540,10 @@ public final class ClipboardItemExchange {
 
     // MARK: Serving
 
-    /// The content of `representation` of this side's offer that pull `id`'s `request` pulls, served from its
+    /// The content of the representation of this side's offer that pull `id`'s `request` pulls, served from its
     /// source. Called on the pull's own queue, never the main thread: it waits for the main actor to read the
     /// source, and for as long as a promise it calls in takes, until the pull or its offer ends.
-    nonisolated public func content(
-        _ id: ItemPullID, _ request: PullRequest, _ representation: Representation
-    ) -> Result<ItemContent, WireError> {
+    nonisolated public func content(_ id: ItemPullID, _ request: PullRequest) -> Result<ItemContent, WireError> {
         dispatchPrecondition(condition: .notOnQueue(.main))
         guard let wait = serves.open(id, token: request.token) else {
             return .failure(WireError(.cancelled, debugDetail: "the pull ended before it was served"))

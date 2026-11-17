@@ -46,15 +46,15 @@ import KernovaWire
 /// Given a budget, the writer charges each entry's landed bytes to an account of its own as it admits the
 /// entry, refusing one the budget cannot hold; the account keeps what it charged once the item is published,
 /// and gives it back when the writer removes what it created.
-public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
+final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     /// The name the item's own entry is created under: in the destination until it is published, or, at an
     /// exact path, that absolute path.
-    public let stagingName: [UInt8]
+    let stagingName: [UInt8]
     /// The name the item's own entry is published under — or, where ``publishing`` keeps both, counted up from —
     /// and the first component of a failure's path once that entry has begun.
-    public let name: [UInt8]
+    let name: [UInt8]
     /// How the item's own entry takes ``name``.
-    public let publishing: PublishName
+    let publishing: PublishName
 
     private let fileSystem: FileSystem
     /// The open destination a staged entry is created in, or ``treeRootDirectory`` for an exact path.
@@ -170,7 +170,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     ///   - budget: What each entry's landed bytes are charged to, beside the acceptance's byte ceiling; an entry
     ///     the budget cannot hold fails `.container(.exceedsByteCeiling)`.
     ///   - logger: Where a staging root the writer could not remove is reported.
-    public init(
+    init(
         name: PublishName, fileSystem: FileSystem, destination: Int32, destinationPathByteCount: Int,
         accepting acceptance: ContainerAcceptance, budget: ByteBudget? = nil,
         logger: KernovaLogger = TreeWriterLog.logger
@@ -200,7 +200,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     ///   - acceptance: What the pull accepts, which every event is held to.
     ///   - budget: What each entry's landed bytes are charged to, as the staged writer charges them.
     ///   - logger: Where an entry the writer could not remove is reported.
-    public init(
+    init(
         exactPath path: [UInt8], fileSystem: FileSystem, accepting acceptance: ContainerAcceptance,
         budget: ByteBudget? = nil, logger: KernovaLogger = TreeWriterLog.logger
     ) {
@@ -228,7 +228,7 @@ public final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     ///
     /// - Throws: ``TreeWriteFailure`` naming the entry that failed; the writer has then removed everything it
     ///   created, and throws the same failure from every later call.
-    public func write(_ event: TreeEvent) throws(TreeWriteFailure) {
+    func write(_ event: TreeEvent) throws(TreeWriteFailure) {
         if case .failed(let failure) = phase { throw failure }
         let admitted: TreeEventSequence.Admitted
         do throws(ContainerError) {

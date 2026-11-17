@@ -1,9 +1,7 @@
 import Foundation
-import KernovaAgentCore
 import KernovaAgentHost
 import KernovaCommandModel
 import KernovaTestSupport
-import KernovaWire
 import Testing
 
 @testable import KernovaCore
@@ -394,30 +392,6 @@ struct EphemeralSessionSettlementTests {
         let clone = try #require(harness.library.instances.first { $0.id == summary.id })
         #expect(!clone.hostState.hasUnsettledSession)
         #expect(instance.hostState.hasUnsettledSession)
-    }
-
-    /// A bundle to import whose last session ended unsettled, holding a warm
-    /// snapshot — its Ephemeral baseline when `ephemeral` — answering it with
-    /// the bundle.
-    private func importSource(
-        in harness: WiredCommandCore, ephemeral: Bool
-    ) throws -> (source: URL, id: UUID) {
-        let (url, config) = try TestScratchDirectory.forCase(prefix: "Imports").importSource(
-            name: "Imported")
-        let snapshot = VMSnapshot(name: "Clean", kind: .warm, macAddress: nil)
-        let writer = VMStagedBundle.fixtureForTesting(at: url, access: CoordinatedBundleFileAccess())
-        try writer.update(.snapshotManifest) { $0 = VMSnapshotManifest(snapshots: [snapshot]) }
-        try writer.update(.hostState) {
-            if ephemeral { $0.applyEphemeralMode(enabled: true, baseline: snapshot.id) }
-            $0.hasUnsettledSession = true
-        }
-        let snapshotConfig = url.appendingPathComponent(
-            VMBundleLayout.snapshotConfigRelativePath(id: snapshot.id))
-        try FileManager.default.createDirectory(
-            at: snapshotConfig.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try VMConfiguration.makeJSONEncoder().encode(config).write(to: snapshotConfig)
-        harness.machineFiles.setCapturedConfiguration(config, for: snapshot.id)
-        return (url, snapshot.id)
     }
 
     /// How the baseline revert a request meets in flight was started.

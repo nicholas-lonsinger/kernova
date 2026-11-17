@@ -1,6 +1,5 @@
 import AppIntents
 import Foundation
-import KernovaKit
 
 /// Writes one configuration key, the value spelled as `kernova set` takes it.
 ///

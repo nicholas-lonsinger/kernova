@@ -215,9 +215,8 @@ struct HubClipboardServiceTests {
         request.token = offer.token
         request.representation = UInt32(index)
         let exchange = instance.hubClipboard.exchange
-        let representation = offer.items[0].representations[index]
         let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
-        return try await offCooperativePool { [request] in exchange.content(pull, request, representation) }
+        return try await offCooperativePool { [request] in exchange.content(pull, request) }
     }
 
     // MARK: - One current clipboard

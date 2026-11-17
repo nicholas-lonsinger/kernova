@@ -67,16 +67,6 @@ struct Scenario: Sendable, CustomTestStringConvertible {
 // MARK: - Expectation helpers
 
 extension SimWorld {
-    func hostClosures(code: ErrorCode) -> Int {
-        checker.closures.filter { entry in
-            guard entry.side == .host else { return false }
-            switch entry.closure {
-            case .closedLocally(let error), .closedByPeer(let error): return error.code == code
-            default: return false
-            }
-        }.count
-    }
-
     func closures(_ side: SimSide, local code: ErrorCode) -> [(time: SimTime, link: Int)] {
         checker.closures.compactMap { entry in
             guard entry.side == side, case .closedLocally(let error) = entry.closure, error.code == code else {

@@ -3,7 +3,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// What a pairing matches, and what a set does when one is written or dropped.
 @Suite("USB Accessory Pairing Tests", .caseScoped)

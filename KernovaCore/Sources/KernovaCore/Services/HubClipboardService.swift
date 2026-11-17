@@ -113,7 +113,7 @@ final class HubClipboardService: ClipboardServicing {
                 if case .pullEnded(_, let id, let result) = event { return exchange.pullEnded(id, result) }
                 MainActorBridge.async { self?.handle(event, from: peer) }
             },
-            content: { exchange.content($0, $1, $2) })
+            content: { id, request, _ in exchange.content(id, request) })
     }
 
     // MARK: - The console peer

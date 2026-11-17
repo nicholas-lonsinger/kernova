@@ -91,10 +91,10 @@ package final class SimPeerProcess {
     func linkEnded(_ link: SimLink, world: SimWorld) {
         guard self.link === link else { return }
         self.link = nil
-        drainEnded(link, world: world)
+        drainEnded(world: world)
     }
 
-    private func drainEnded(_ link: SimLink, world: SimWorld) {
+    private func drainEnded(world: SimWorld) {
         world.drainAgent(index)
     }
 
@@ -103,7 +103,7 @@ package final class SimPeerProcess {
     func handle(_ effect: PeerEffect, link: SimLink, world: SimWorld) {
         switch effect {
         case .power(let power):
-            handlePower(power, link: link, world: world)
+            handlePower(power, world: world)
         case .logs(.mode(let mode)):
             ring.setMode(mode)
         case .logs(.ready):
@@ -163,7 +163,7 @@ package final class SimPeerProcess {
 
     // MARK: Power
 
-    private func handlePower(_ effect: PowerEffect, link: SimLink, world: SimWorld) {
+    private func handlePower(_ effect: PowerEffect, world: SimWorld) {
         powerLedger.record(effect)
         let starts = self.starts
         switch effect {

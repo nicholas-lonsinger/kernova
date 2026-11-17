@@ -8,7 +8,7 @@ import Observation
 /// assert which alert/sheet/wizard the view model asked for, without a real
 /// window.
 ///
-/// Exposes mirror accessors (`showError`, `instanceToDelete`, …) matching the
+/// Exposes mirror accessors (`showError`, `instanceToForceStop`, …) matching the
 /// view model's former observed flags so existing assertions read naturally.
 /// Observable, so a test waits on a presentation with `waitForChange`.
 @MainActor
@@ -27,9 +27,8 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     /// The VMs each start report named — an attachment failure, a message
     /// failure, or the launch account — in the order reported.
     private(set) var startReportVMIDs: [[UUID]] = []
-    private(set) var deleteSheetInstances: [VMInstance] = []
-    /// Parallel to `deleteSheetInstances`: whether each request asked for the
-    /// immediate (bypass-Trash) variant.
+    /// Whether each delete-sheet request asked for the immediate (bypass-Trash)
+    /// variant.
     private(set) var deleteSheetPermanentlyFlags: [Bool] = []
     private(set) var takeSnapshotSheetInstances: [VMInstance] = []
     private(set) var takeSnapshotSheetPurposes: [TakeSnapshotPurpose] = []
@@ -49,7 +48,6 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     private(set) var installerMountedDeliveries: [GuestAgentDiskDelivery] = []
     /// Each Linux install question asked: the VM and the choice it started on.
     private(set) var linuxAgentInstallChoices: [(instance: VMInstance, initial: LinuxAgentInstallChoice)] = []
-    private(set) var creationWizardCount = 0
     /// Pairing prompts raised, each still unanswered until a test answers it.
     private(set) var usbPairingRequests: [USBAccessoryPairingRequest] = []
     /// Guest-account prompts raised, in order.
@@ -109,7 +107,6 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
         startReportVMIDs.append(undone.map(\.vm.id))
     }
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool) {
-        deleteSheetInstances.append(instance)
         deleteSheetPermanentlyFlags.append(permanently)
     }
     func presentTakeSnapshotSheet(for instance: VMInstance, purpose: TakeSnapshotPurpose) {
@@ -158,7 +155,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
             request.answer(stepRouteAnswer)
         }
     }
-    func presentCreationWizard() { creationWizardCount += 1 }
+    func presentCreationWizard() {}
     func focusGuestDisplay(for instance: VMInstance) {
         focusGuestDisplayInstances.append(instance)
     }
@@ -170,15 +167,12 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     var errorTitle: String? { errorTitles.last }
     var errorSubject: AlertSubject? { errorSubjects.last }
     var errorSettingsDestination: SettingsDestination? { errorSettingsDestinations.last ?? nil }
-    var showDeleteSheet: Bool { !deleteSheetInstances.isEmpty }
-    var instanceToDelete: VMInstance? { deleteSheetInstances.last }
     /// Whether the most recent delete-sheet request asked for immediate delete.
     var lastDeleteSheetPermanently: Bool? { deleteSheetPermanentlyFlags.last }
     var showForceStopConfirmation: Bool { !forceStopInstances.isEmpty }
     var instanceToForceStop: VMInstance? { forceStopInstances.last }
     var showRecoveryBootConfirmation: Bool { !recoveryBootInstances.isEmpty }
     var instanceToRecoveryBoot: VMInstance? { recoveryBootInstances.last }
-    var showStopPausedConfirmation: Bool { !pausedStopInstances.isEmpty }
     var instanceToStopPaused: VMInstance? { pausedStopInstances.last }
     var showCancelPreparingConfirmation: Bool { !cancelPreparingArrivals.isEmpty }
     var arrivalToCancel: VMArrival? { cancelPreparingArrivals.last }
@@ -186,7 +180,6 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     var installerMountedVMName: String? { installerMountedNames.last }
     var installerMountedPurpose: GuestAgentInstallerPurpose? { installerMountedPurposes.last }
     var installerMountedDelivery: GuestAgentDiskDelivery? { installerMountedDeliveries.last }
-    var showCreationWizard: Bool { creationWizardCount > 0 }
 }
 
 extension AlertSubject {

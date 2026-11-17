@@ -1,7 +1,6 @@
 import Cocoa
 import KernovaCommandModel
 import KernovaCore
-import KernovaKit
 import KernovaLogging
 import KernovaVirtualization
 

@@ -37,8 +37,6 @@ final class ScriptedStream: ByteStream {
         var handler: (@Sendable (ByteStreamEvent) -> Void)?
         var pending: (@Sendable (ByteStreamError?) -> Void)?
         var writes: [Data] = []
-        var overlappingWrites = 0
-        var readMores = 0
         var shutdowns = 0
     }
 
@@ -60,13 +58,11 @@ final class ScriptedStream: ByteStream {
     }
 
     func readMore() {
-        state.withLock { $0.readMores += 1 }
         note("readMore")
     }
 
     func write(_ chunks: [Data], _ completion: @escaping @Sendable (ByteStreamError?) -> Void) {
         state.withLock { state in
-            if state.pending != nil { state.overlappingWrites += 1 }
             state.pending = completion
             state.writes.append(chunks.reduce(into: Data()) { $0.append($1) })
         }
@@ -112,8 +108,6 @@ final class ScriptedStream: ByteStream {
 
     var hasPendingWrite: Bool { state.withLock { $0.pending != nil } }
     var writeCount: Int { state.withLock { $0.writes.count } }
-    var overlappingWrites: Int { state.withLock { $0.overlappingWrites } }
-    var readMores: Int { state.withLock { $0.readMores } }
     var shutdowns: Int { state.withLock { $0.shutdowns } }
 
     /// The bytes of every write not yet taken.
@@ -184,11 +178,6 @@ final class ManualScheduler: RuntimeScheduler {
         for entry in due { entry.queue.async(execute: entry.fire) }
     }
 
-    /// Moves the clock to `instant` without running any fire.
-    func set(now instant: CoreInstant) {
-        state.withLock { $0.now = instant }
-    }
-
     /// Queues the earliest armed fire now, whatever its deadline: a timer that fires early.
     func fireEarliestEarly() {
         let entry = state.withLock { state -> Entry? in
@@ -212,9 +201,6 @@ enum Fixture {
     static func at(milliseconds: Int64) -> CoreInstant {
         t0.advanced(by: .milliseconds(milliseconds))
     }
-
-    /// When a connection made at `t0` first sends a PING.
-    static let firstPing = t0.advanced(by: ReceiverPolicy.production.pingInterval)
 
     static let hostClaim = PeerClaim(role: .host, versionLabel: "host")
 

@@ -29,9 +29,6 @@ struct AlertWindowSceneTests {
             working: working, displayWindows: displayWindows, library: library, states: all)
     }
 
-    /// The library window, which can act on every VM it lists.
-    private static let library: (window: String, vmIDs: Set<UUID>) = ("library", [vmX, vmY])
-
     @Test("The main window answers when the key window shows another VM")
     func mainWindowAnswersBehindTheKeyWindow() {
         let scene = scene(

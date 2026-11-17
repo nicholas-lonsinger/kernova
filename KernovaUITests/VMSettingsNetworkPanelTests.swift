@@ -160,10 +160,6 @@ struct VMSettingsNetworkPanelTests {
         #expect(item(.hostOnly, in: popUp)?.isEnabled == true)
     }
 
-    enum ClosedTitleCase: CaseIterable, Sendable {
-        case common, isolated, named, unlisted, bridgedAutomatic, bridgedInterface, none
-    }
-
     // MARK: - Networks of a mode
 
     /// Selects the entry titled `title` the way a click does.

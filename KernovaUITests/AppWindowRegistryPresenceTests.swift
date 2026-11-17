@@ -15,17 +15,6 @@ import Testing
 struct AppWindowRegistryPresenceTests {
     private let preferences = makeTestPreferences()
 
-    /// Records the residency calls the registry makes, standing in for the
-    /// controller that answers them in the resident app.
-    private final class StubResidencyHost: WindowResidencyHosting {
-        var prepareCount = 0
-        var syncCount = 0
-        var guiPosture = GUIPosture.foreground
-
-        func prepareToPresentWindow() { prepareCount += 1 }
-        func syncActivationPolicy() { syncCount += 1 }
-    }
-
     private func makeRegistry(focus: RecordingSessionFocus = RecordingSessionFocus()) -> AppWindowRegistry {
         makeWindowRegistry(makeLibraryViewModel(preferences: preferences), focus: focus)
     }

@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import KernovaSynchronization
 
 // MARK: - Seams
 

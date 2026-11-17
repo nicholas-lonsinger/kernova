@@ -6,13 +6,6 @@ import KernovaTestSupport
 
 @testable import KernovaCore
 
-/// The catalog entry `context` carries, or `nil` when it carries another
-/// source.
-func catalogEntry(of context: LinuxInstallContext?) -> LinuxImageCatalogEntry? {
-    guard let context, case .catalogEntry(let entry) = context.source else { return nil }
-    return entry
-}
-
 /// The user-supplied image `context` carries, or `nil` when it carries another
 /// source.
 func customImage(of context: LinuxInstallContext?) -> CustomLinuxImage? {

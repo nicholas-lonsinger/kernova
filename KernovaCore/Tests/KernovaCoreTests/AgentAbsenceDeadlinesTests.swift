@@ -3,7 +3,6 @@ import KernovaAgentHost
 import KernovaCommandModel
 import KernovaAgentRuntime
 import KernovaTestSupport
-import KernovaWire
 import Testing
 
 @testable import KernovaCore

@@ -52,11 +52,11 @@ struct ReservedShortcutTests {
         var received: [Selector] = []
         var isEnabled = true
 
-        @objc func copyGuestClipboardToMac(_ sender: Any?) {
+        @objc func copyGuestClipboardToMac(_: Any?) {
             received.append(#selector(AppDelegate.copyGuestClipboardToMac(_:)))
         }
 
-        @objc func copyMacClipboardToGuest(_ sender: Any?) {
+        @objc func copyMacClipboardToGuest(_: Any?) {
             received.append(#selector(AppDelegate.copyMacClipboardToGuest(_:)))
         }
 

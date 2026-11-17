@@ -21,15 +21,7 @@ import KernovaTestSupport
 /// Lock-based because production reads and writes it from `Task.detached`, so
 /// calls arrive off the test's isolation.
 final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
-    /// One call this store answered, in the order a revert makes them.
-    enum Event: Equatable {
-        case stageRestore
-        case installRestore
-        case sweepRestoreStaging
-    }
-
     private struct State {
-        var events: [Event] = []
         var capturedPaths: [UUID: [String]] = [:]
         var capturedConfigurations: [UUID: VMConfiguration] = [:]
         var discardedIDs: [UUID] = []
@@ -38,7 +30,6 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         var sizes: [UUID: SnapshotSize] = [:]
         var diskSizes: [UUID: VMBundleLayout.DiskSizes] = [:]
         var sizeReads = 0
-        var sizeReadHold: DispatchSemaphore?
         var diskSizeReads = 0
         var diskSizeReadHold: DispatchSemaphore?
         var captureError: (any Error)?
@@ -90,8 +81,6 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         state.withLock { $0.capturedConfigurations[snapshotID] }
     }
 
-    /// The revert calls this store answered, in order.
-    var events: [Event] { state.withLock { $0.events } }
     /// Bundle-relative paths passed to `captureDisks`, keyed by snapshot id.
     var capturedPaths: [UUID: [String]] { state.withLock { $0.capturedPaths } }
     var discardedIDs: [UUID] { state.withLock { $0.discardedIDs } }
@@ -167,13 +156,9 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         }
     }
 
-    func stageRestore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
-        state.withLock { $0.events.append(.stageRestore) }
-    }
+    func stageRestore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {}
 
-    func installRestore(bundleURL: URL, plan: VMSnapshotRestorePlan) throws {
-        state.withLock { $0.events.append(.installRestore) }
-    }
+    func installRestore(bundleURL: URL, plan: VMSnapshotRestorePlan) throws {}
 
     func discardSnapshot(bundleURL: URL, snapshotID: UUID) throws {
         try state.withLock { state in
@@ -187,25 +172,17 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
     }
 
     func sweepRestoreStaging(bundleURL: URL) {
-        state.withLock { state in
-            state.events.append(.sweepRestoreStaging)
-            state.sweptStagingBundleURLs.append(bundleURL)
-        }
+        state.withLock { $0.sweptStagingBundleURLs.append(bundleURL) }
     }
 
     func snapshotSizes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: SnapshotSize] {
-        let (sizes, hold) = state.withLock { state in
+        let sizes = state.withLock { state in
             var sizes: [UUID: SnapshotSize] = [:]
             for id in snapshotIDs { sizes[id] = state.sizes[id] ?? SnapshotSize(bytes: 0, privateBytes: nil) }
             state.sizeReads += 1
-            let hold = state.sizeReadHold
-            state.sizeReadHold = nil
-            return (sizes, hold)
+            return sizes
         }
         sizeReadEntered.notify()
-        if let hold {
-            do { try Backstop("the test's release of the size read").wait(for: hold) } catch { Issue.record(error) }
-        }
         return sizes
     }
 
@@ -248,14 +225,6 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
 
     /// Fires as each size read has taken its figures.
     let sizeReadEntered = AsyncGate()
-
-    /// Holds the next size read, after it has taken its figures, until the
-    /// returned semaphore is signalled — so a test can land it after a later one.
-    func holdNextSizeRead() -> DispatchSemaphore {
-        let hold = DispatchSemaphore(value: 0)
-        state.withLock { $0.sizeReadHold = hold }
-        return hold
-    }
 
     func removeSaveFile(bundleURL: URL) throws {
         try real.removeSaveFile(bundleURL: bundleURL)

@@ -75,17 +75,6 @@ enum HostileItems {
         ("a named INLINE", named(.inline, "note.txt")),
     ]
 
-    /// A real host that received a CLIPBOARD offer of one item, `representation`, from the far peer on stream 1.
-    static func offered(_ representation: Representation) -> HostileRun {
-        let run = HostileRun(local: .host, seed: 1, items: true)
-        run.feed(
-            [
-                peerHello, WireFrames.open(1, .clipboardOfferByPeer, body: header(count: 1)),
-                WireFrames.message(1, SimItems.offer(7, [[representation]]).items[0]), Unit.end(1),
-            ], preamble: true)
-        return run
-    }
-
     static func offerReceived(_ run: HostileRun) -> Bool {
         run.itemOutputs.contains { if case .event(.offerReceived) = $0 { true } else { false } }
     }

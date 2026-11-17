@@ -67,10 +67,6 @@ struct SidebarFilterSortGroupTests {
         return layout.rowKeys.compactMap { key in entries.first { $0.id == key.entryID }?.name }
     }
 
-    private func options(_ filter: VMLibraryFilter) -> SidebarViewOptions {
-        SidebarViewOptions(filter: filter)
-    }
-
     // MARK: - Sort
 
     @Test("Date created sorts newest first; ties keep the manual order")

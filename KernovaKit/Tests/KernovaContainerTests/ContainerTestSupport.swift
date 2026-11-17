@@ -166,8 +166,6 @@ struct Decoded {
     var largestResidue = 0
     /// The most bytes one `bytes` event carried.
     var largestEvent = 0
-
-    var succeeded: Bool { error == nil }
 }
 
 /// Decodes `container` fed in pieces of `pieceSize` bytes (all at once when nil), then finishes.
@@ -270,34 +268,6 @@ struct TreeFixture {
                     resourceForkSize: UInt64(fork.count)), fork
             ),
         ])
-    }
-
-    /// The events this tree decodes to, with each file's bytes as one `bytes` event.
-    var expectedEvents: [TreeEvent] {
-        var events: [TreeEvent] = []
-        var entered = 0
-        for (header, bytes) in entries {
-            while entered > Int(header.depth) {
-                events.append(.leaveDirectory)
-                entered -= 1
-            }
-            switch header.type {
-            case .directory:
-                events.append(.enterDirectory(header))
-                entered += 1
-            case .symlink:
-                events.append(.symlink(header))
-            default:
-                events.append(.beginFile(header))
-                let split = bytes.startIndex + dataSize(of: header)
-                if split > bytes.startIndex { events.append(.bytes(Data(bytes[..<split]))) }
-                if split < bytes.endIndex { events += [.resourceFork, .bytes(Data(bytes[split...]))] }
-                events.append(.finishFile)
-            }
-        }
-        events += Array(repeating: .leaveDirectory, count: entered)
-        events.append(.end)
-        return events
     }
 }
 

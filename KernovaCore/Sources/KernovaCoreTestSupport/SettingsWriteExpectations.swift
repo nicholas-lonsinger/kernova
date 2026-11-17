@@ -12,10 +12,6 @@ extension VMLibrary.SettingsWrite {
         if case .refused(.macAddressInUse) = self { true } else { false }
     }
 
-    var refusedForNoLibrary: Bool {
-        if case .refused(.noLibrary) = self { true } else { false }
-    }
-
     /// The fields a write moved that its permit may not write, when that is
     /// what refused it.
     var fieldsOutsidePermit: [String]? {

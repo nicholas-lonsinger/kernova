@@ -1,6 +1,5 @@
 import AppIntents
 import Foundation
-import KernovaKit
 
 struct CreateNetworkIntent: AppIntent {
     static let title: LocalizedStringResource = "Create Network"

@@ -1,5 +1,4 @@
 import AppKit
-import KernovaAppKitShared
 import KernovaTestSupport
 import Testing
 

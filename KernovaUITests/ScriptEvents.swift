@@ -72,16 +72,6 @@ enum ScriptEvent {
         return comparison
     }
 
-    /// `not <test>`.
-    static func not(_ test: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
-        let terms = NSAppleEventDescriptor.list()
-        terms.insert(test, at: 1)
-        let logical = record(as: "logi")
-        logical.setDescriptor(NSAppleEventDescriptor(enumCode: code("NOT ")), forKeyword: code("logc"))
-        logical.setDescriptor(terms, forKeyword: code("term"))
-        return logical
-    }
-
     private static func reference(
         _ elementClass: String, form: String, _ selector: NSAppleEventDescriptor,
         of container: NSAppleEventDescriptor
@@ -115,11 +105,6 @@ enum ScriptEvent {
     /// `delete <reference>`.
     static func delete(_ reference: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
         event("core", "delo", reference)
-    }
-
-    /// `exists <reference>`.
-    static func exists(_ reference: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
-        event("core", "doex", reference)
     }
 
     /// `make new <class> [at <location>] [with properties <properties>]`.
@@ -197,9 +182,6 @@ struct ScriptReply {
 
     /// The result's items, a list's in order or a lone value's alone.
     var items: [NSAppleEventDescriptor] { descriptor?.items ?? [] }
-
-    /// The result's items as text.
-    var texts: [String] { items.compactMap(\.stringValue) }
 }
 
 /// Dispatches Apple events to the test host the way a script sends them,

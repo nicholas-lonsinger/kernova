@@ -23,15 +23,6 @@ struct VMBundleTests {
         case usbPairings
 
         var testDescription: String { rawValue }
-
-        var relativePath: String {
-            switch self {
-            case .configuration: VMBundleLayout.configRelativePath
-            case .hostState: VMBundleLayout.hostStateRelativePath
-            case .snapshotManifest: VMBundleLayout.snapshotManifestRelativePath
-            case .usbPairings: VMBundleLayout.usbPairingsRelativePath
-            }
-        }
     }
 
     /// A real bundle directory holding `configuration`'s `config.json`.

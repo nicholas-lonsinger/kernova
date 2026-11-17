@@ -22,8 +22,6 @@ struct VMRemovableMediaReconcilerTests {
         let lifecycle: VMLifecycleCoordinator
         let virtualization: MockVirtualizationService
 
-        var reconciler: VMRemovableMediaReconciler { library.removableMedia }
-
         /// The configuration `instance`'s bundle holds.
         func saved(_ instance: VMInstance) -> VMConfiguration? {
             storage.bundles[instance.bundleURL]
