@@ -42,7 +42,7 @@ enum Coder: String, CaseIterable {
     func decode(_ block: Data, size: Int, in workspace: Workspace) -> Int {
         switch self {
         case .swift:
-            return (try? LZ4Block.decompress(block, decompressedSize: size, ceiling: size))?.count ?? -1
+            return (try? LZ4Block.decompress(block, decompressedSize: size))?.count ?? -1
         #if canImport(Compression)
         case .apple:
             return block.withUnsafeBytes { input in
@@ -58,7 +58,7 @@ enum Coder: String, CaseIterable {
     func decoded(_ block: Data, size: Int, in workspace: Workspace) -> Data? {
         switch self {
         case .swift:
-            return try? LZ4Block.decompress(block, decompressedSize: size, ceiling: size)
+            return try? LZ4Block.decompress(block, decompressedSize: size)
         #if canImport(Compression)
         case .apple:
             let written = decode(block, size: size, in: workspace)

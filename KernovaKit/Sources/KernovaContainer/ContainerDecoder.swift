@@ -20,7 +20,7 @@ public struct AdmittedLZ4Chunk: Equatable, Sendable {
     /// - Throws: `ContainerError.lz4` when the block does not decompress to exactly `decompressedSize` bytes.
     public func decompressed() throws(ContainerError) -> Data {
         do {
-            return try LZ4Block.decompress(block, decompressedSize: decompressedSize, ceiling: decompressedSize)
+            return try LZ4Block.decompress(block, decompressedSize: decompressedSize)
         } catch {
             throw .lz4(error)
         }
@@ -189,7 +189,7 @@ public struct ContainerDecoder {
         case .lz4Chunk:
             let declared = Int(littleEndian(UInt32.self, in: payload, at: 0))
             guard declared <= ContainerRecord.maxChunkPayload else {
-                throw .lz4(.sizeOutOfRange(declared: declared, ceiling: ContainerRecord.maxChunkPayload))
+                throw .lz4SizeOutOfRange(declared: declared)
             }
             let progress = try grammar.admitChunk(count: UInt64(declared), lz4: true)
             let chunk = AdmittedLZ4Chunk(

@@ -410,12 +410,6 @@ enum HostileRows {
         } expect: { run in
             run.streamResets.first?.stream == 2 ? [] : ["no RESET on stream 2: \(run.streamResets)"]
         },
-        HostileRow(name: "cancellation → CANCELLED", local: .host, outcome: .streamReset(.cancelled)) { run in
-            run.feed(WireFrames.bytes([HostileRow.peerHello]))
-            let id = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 9)
-            run.command(.requestPower(id, .restart))
-            run.command(.cancelPower(id))
-        },
         HostileRow(
             name: "policy turns LOGS off while open", local: .host, outcome: .streamReset(.disabledByPolicy)
         ) { run in

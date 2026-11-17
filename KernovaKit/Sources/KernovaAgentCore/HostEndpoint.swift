@@ -37,8 +37,6 @@ public enum HostCommand: Sendable, Equatable {
     case setPeerFrozen(Bool)
     /// Ask the peer to perform `action`, without waiting for apps when `ignoringApps`.
     case requestPower(PowerRequestID, PowerAction, ignoringApps: Bool = false)
-    /// Cancel a request still waiting for acceptance.
-    case cancelPower(PowerRequestID)
     /// The VM's policy changed.
     case setPolicy(PolicySnapshot)
     /// The bundled payloads changed; re-sends `UpdateAvailable` and resets a pull it makes stale.
@@ -185,8 +183,6 @@ public struct HostEndpoint: Sendable {
             connection.setPeerFrozen(frozen, now: now)
         case .requestPower(let id, let action, let ignoringApps):
             power.request(id, action, ignoringApps: ignoringApps, connection: &connection)
-        case .cancelPower(let id):
-            power.cancel(id, connection: &connection)
         case .setPolicy(let policy):
             connection.setPolicy(policy)
             notifyAll(.policyChanged, now)

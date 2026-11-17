@@ -68,7 +68,6 @@ package enum TranscriptInput: Sendable, Equatable {
             case .requestPower(let id, let action, let ignoringApps):
                 return "host requestPower id=\(id.rawValue) action=\(action.rawValue)"
                     + (ignoringApps ? " ignoreApps=1" : "")
-            case .cancelPower(let id): return "host cancelPower id=\(id.rawValue)"
             case .close(let code, let retry):
                 return "host close code=\(code.rawValue) retry=\(retry?.milliseconds ?? 0)"
             case .setBundles(let bundles):
@@ -166,7 +165,6 @@ package enum TranscriptInput: Sendable, Equatable {
                 .requestPower(
                     powerID, PowerAction(rawValue: number("action")) ?? .unspecified,
                     ignoringApps: number("ignoreApps") == 1))
-        case ("host", "cancelPower"): self = .host(.cancelPower(powerID))
         case ("host", "close"):
             let retry = number("retry")
             self = .host(.close(code("code"), retryAfter: retry > 0 ? .milliseconds(Int64(retry)) : nil))
