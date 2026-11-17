@@ -290,10 +290,9 @@ struct ClipboardTransferReporterTests {
         reporter.gestureBegan()
         reporter.finish(finish(.itemsSkipped(count: 1), gesture: .drop, at: Date(timeIntervalSince1970: 1)))
 
-        // A second drop loses an item of its own, its transfers all ending
-        // inside the reveal gate. It is a separate gesture over separate
-        // files, so it is owed its own message rather than collapsed into the
-        // one the first drop raised.
+        // A second drop loses an item of its own. It opens no bar, and it is a
+        // separate gesture over separate files, so it is owed its own message
+        // rather than collapsed into the one the first drop raised.
         reporter.gestureBegan()
         let later = finish(.itemsSkipped(count: 1), gesture: .drop, at: Date(timeIntervalSince1970: 2))
         reporter.finish(later)

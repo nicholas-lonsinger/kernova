@@ -2,10 +2,10 @@ import Foundation
 import KernovaLogging
 
 /// One peer's clipboard transfer state, as every surface renders it — the host
-/// keeps one per VM, the guest agent one per process.
+/// keeps one per VM.
 ///
 /// Several producers publish here (a VM's clipboard service, its drop service,
-/// its passthrough coordinator), and the report is the highest-ranked running
+/// its drag out, its passthrough coordinator), and the report is the highest-ranked running
 /// operation, else the last one to finish, else nothing. Whatever the readout
 /// leaves out is counted on it as ``ClipboardProgressSnapshot/pendingBehind``,
 /// so work behind the bar is legible rather than absent. A refusal
@@ -56,8 +56,8 @@ public final class ClipboardTransferReporter {
     ///
     /// Cleared as soon as a later gesture announces itself — ``gestureBegan()``,
     /// or an operation opening a bar — so the same refusal raised by that
-    /// gesture is news again. Announcing is the trigger rather than opening a
-    /// bar: an operation whose transfers all end inside the reveal gate
+    /// gesture is news again. ``gestureBegan()`` covers the gesture that opens
+    /// no bar: an operation whose transfers all end inside the reveal gate
     /// publishes no readout at all, and two gestures that each lost a file
     /// would otherwise reach the user as a single message.
     private var absorbsRepeats = false
