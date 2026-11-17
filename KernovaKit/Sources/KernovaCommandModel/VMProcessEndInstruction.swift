@@ -28,11 +28,11 @@ public struct VMProcessEndInstruction: Codable, Sendable, Hashable {
     /// The command that ends the Virtualization process holding files inside
     /// the bundle at `bundlePath` open.
     ///
-    /// On macOS 27.2 a VM's process was seen holding its own bundle's disk
-    /// image and EFI variable store open, and no other VM's, while Kernova
-    /// held none of them — so the files name that one process. The path is
-    /// one single-quoted shell word, so no character in it is read by the
-    /// shell.
+    /// A VM's process holds files in its own bundle open and Kernova holds
+    /// none of them, so the bundle names that one process
+    /// (docs/research/2026-11-17-sandboxed-app-cannot-end-vm-process.md). The
+    /// path is one single-quoted shell word, so no character in it is read by
+    /// the shell.
     public static func command(endingProcessOfBundleAt bundlePath: String) -> String {
         "kill -9 $(lsof -t -c com.apple.Virtualization -a +D \(shellWord(bundlePath)))"
     }
