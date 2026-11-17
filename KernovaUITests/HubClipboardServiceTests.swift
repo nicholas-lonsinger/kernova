@@ -414,6 +414,22 @@ struct HubClipboardServiceTests {
         #expect(offers(probe).isEmpty)
     }
 
+    @Test(
+        "A copy sent to the guest serves each of its bytes once: the guest lands them, and the copy holds them no more")
+    func copyToGuestServesItsBytesOnce() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        #expect(try hostPasteboard(instance).setString("from the Mac", forType: .string))
+        let copy = try await copyToGuest(instance, probe)
+
+        #expect(await pull(copy, from: instance) == .success(.inline(Data("from the Mac".utf8))))
+        guard case .failure(let error) = await pull(copy, from: instance) else {
+            Issue.record("the copy served its bytes twice")
+            return
+        }
+        #expect(error.code == .itemRepresentationUnavailable)
+    }
+
     // MARK: - Copy Guest Clipboard to Mac
 
     private static let copyToken = Data(repeating: 5, count: 16)
@@ -897,6 +913,22 @@ struct HubClipboardServiceTests {
     }
 
     // MARK: - Lower findings
+
+    @Test("A host offer the connection refused is not the host's latest: a guest offer naming none is taken")
+    func refusedHostOfferIsNotTheLatest() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let coordinator = try runPassthroughByHand(instance)
+        coordinator.pollHostClipboard()
+        #expect(try hostPasteboard(instance).setString("from the Mac", forType: .string))
+        coordinator.pollHostClipboard()
+        try await probe.changed.wait { !offers(probe).isEmpty }
+        probe.deliver(.itemReply(offers(probe)[0].id, .offered(WireError(.internal))), fromConnection: 0)
+        await probe.settle()
+        #expect(instance.hubClipboard.exchange.localSource == nil)
+
+        try await receive(Self.text, on: probe, into: instance)
+    }
 
     @Test("A concealed guest offer's in-memory pulls land against the offer's one budget")
     func memoryPullsShareTheBudget() async throws {
