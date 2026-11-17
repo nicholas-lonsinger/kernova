@@ -261,21 +261,11 @@ final class ExFATVolume {
     }
 
     private static func run(_ tool: String, _ arguments: [String]) throws -> Run {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: tool)
-        process.arguments = arguments
-        let output = Pipe()
-        let errorOutput = Pipe()
-        process.standardOutput = output
-        process.standardError = errorOutput
-        try process.run()
-        let printed = output.fileHandleForReading.readDataToEndOfFile()
-        let complained = errorOutput.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
+        let ran = try ChildProcess(URL(fileURLWithPath: tool), arguments).exit()
         return Run(
             command: ([URL(fileURLWithPath: tool).lastPathComponent] + arguments).joined(separator: " "),
-            status: process.terminationStatus, output: printed,
-            errorOutput: String(decoding: complained, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+            status: ran.status, output: ran.output,
+            errorOutput: String(decoding: ran.errors, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }
 }
 #endif

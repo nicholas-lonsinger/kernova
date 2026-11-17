@@ -22,14 +22,10 @@ struct LaunchRequirementTests {
         ]
         let plist = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
         try plist.write(to: bundle.appending(path: "Contents/Info.plist"))
-        let codesign = Process()
-        codesign.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
-        codesign.arguments = ["--force", "--sign", "-", bundle.path]
-        codesign.standardOutput = FileHandle.nullDevice
-        codesign.standardError = FileHandle.nullDevice
-        try codesign.run()
-        codesign.waitUntilExit()
-        try #require(codesign.terminationStatus == 0, "codesign \(bundle.path)")
+        let codesign = try ChildProcess(
+            URL(fileURLWithPath: "/usr/bin/codesign"), ["--force", "--sign", "-", bundle.path]
+        ).exit()
+        try #require(codesign.status == 0, "codesign \(bundle.path)")
         return bundle.path
     }
 

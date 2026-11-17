@@ -5,7 +5,8 @@
 # rules out could have happened. A test wait ends on the event it waits for,
 # and fails by name at its `Backstop` when the event never comes, through the
 # seams in KernovaPortableTestSupport (`Backstop`, `AsyncGate`,
-# `BlockingCall`) and KernovaCoreTestSupport (`waitForChange`). A wait outside
+# `BlockingCall`, `ChildProcess`) and KernovaCoreTestSupport (`waitForChange`).
+# A wait outside
 # them parks until the test plan's allowance stops the process, naming nothing
 # and losing every result still running in it.
 #
@@ -32,15 +33,17 @@
 # refuse the sleeps that take no real time. A real clock bound to a name first
 # passes unmatched.
 #
-# A wait with no deadline is the second finding, in three shapes a test writes
+# A wait with no deadline is the second finding, in the shapes a test writes
 # only to wait: a raw continuation (`withCheckedContinuation`,
 # `withCheckedThrowingContinuation`, `withUnsafeContinuation`,
 # `withUnsafeThrowingContinuation`) parks through `Backstop.park`; a blocking
-# `.wait()` with no arguments — a semaphore's, a group's, a condition's —
-# blocks through `Backstop.wait(for:)`; and `Task.detached`, which a test
-# reaches for to run a blocking call it then awaits, runs it through
-# `offCooperativePool` or `BlockingCall`. A `.wait()` an `await` precedes is
-# another type's async wait and is not matched.
+# `.wait()` with no arguments — a semaphore's, a group's, a condition's — or
+# one whose `timeout:` is `.distantFuture` blocks through `Backstop.wait(for:)`;
+# `Task.detached`, which a test reaches for to run a blocking call it then
+# awaits, runs it through `offCooperativePool` or `BlockingCall`; and a child
+# process's `waitUntilExit()`, `readDataToEndOfFile()` or `readToEnd()` waits
+# through `ChildProcess`. A `.wait()` an `await` precedes is another type's
+# async wait and is not matched.
 #
 # A number in a wait's `timeout:` argument is the third finding: a wait that
 # expects success takes the `testWaitBackstop` default, and a smaller deadline
@@ -108,6 +111,8 @@ findings=$(perl -e '
         \b (?<continuation> with (?: Checked | Unsafe ) (?: Throwing )? Continuation ) \b
       | \b (?<detached> Task \s* \. \s* detached ) \b
       | (?<blocking> \. \s* wait \s* \( \s* \) )
+      | (?<forever> \. \s* wait \s* \( \s* (?: wall )? [tT]imeout \s* : \s* (?: DispatchTime \s* | DispatchWallTime \s* )? \. \s* distantFuture \b )
+      | (?<child> \. \s* (?: waitUntilExit | readDataToEndOfFile | readToEnd ) \s* \( \s* \) )
     }x;
 
     my $marker = qr{//\s*deadline-under-test\s+-\s+\S};
@@ -194,6 +199,10 @@ findings=$(perl -e '
                 $found{line_at($code, $start)} //= "a raw continuation, which parks with no deadline; park through Backstop.park, or make a double that parks for good a named helper in a test-support module";
             } elsif (defined $+{detached}) {
                 $found{line_at($code, $start)} //= "a detached task, whose value is awaited with no deadline; run a blocking call through offCooperativePool or BlockingCall";
+            } elsif (defined $+{forever}) {
+                $found{line_at($code, $start)} //= "a blocking wait whose deadline never comes; block through Backstop.wait(for:)";
+            } elsif (defined $+{child}) {
+                $found{line_at($code, $start)} //= "a wait on a child process with no deadline; run it through ChildProcess";
             } else {
                 next if substr($code, 0, receiver_start($code, $start)) =~ /\bawait\s*\z/;
                 $found{line_at($code, $start)} //= "a blocking wait with no deadline; block through Backstop.wait(for:)";

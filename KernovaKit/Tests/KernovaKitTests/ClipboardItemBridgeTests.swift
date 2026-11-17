@@ -26,6 +26,8 @@ struct ClipboardItemBridgeTests {
         let source: ClipboardOfferSource
         let items: [OfferedItem]
         let landing: URL
+        /// Where a serve that never ends fails the test.
+        private let waits = OffTaskWaits()
 
         @MainActor
         init(source: ClipboardOfferSource, landing: URL) {
@@ -61,10 +63,10 @@ struct ClipboardItemBridgeTests {
             _ item: Int, _ representation: Int,
             then completion: @escaping @Sendable (ClipboardServedRepresentation?) -> Void
         ) {
-            let source = self.source
+            let (source, waits) = (self.source, waits)
             Task { @MainActor in
                 var served: ClipboardServedRepresentation?
-                await holdUntilReleased {
+                await waits.run {
                     do {
                         served = try await source.served(item: item, representation: representation)
                     } catch is ClipboardServeError {}

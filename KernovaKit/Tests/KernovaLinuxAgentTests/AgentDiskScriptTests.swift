@@ -57,22 +57,13 @@ struct AgentDiskScriptTests {
         func run(
             _ arguments: [String], as prefix: [String] = [], nonInteractive: Bool = true, input: String = ""
         ) throws -> Int32 {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
             var environment = ProcessInfo.processInfo.environment
             environment["PATH"] = path
             environment["NONINTERACTIVE"] = nonInteractive ? "1" : nil
-            process.environment = environment
-            process.arguments = prefix + ["sh", directory.path + "/install.sh"] + arguments
-            let stdin = Pipe()
-            process.standardInput = stdin
-            process.standardOutput = FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
-            try process.run()
-            stdin.fileHandleForWriting.write(Data(input.utf8))
-            try stdin.fileHandleForWriting.close()
-            process.waitUntilExit()
-            return process.terminationStatus
+            return try ChildProcess(
+                URL(fileURLWithPath: "/usr/bin/env"), prefix + ["sh", directory.path + "/install.sh"] + arguments,
+                environment: environment, input: Data(input.utf8)
+            ).exit().status
         }
 
         func recorded() -> [String] {

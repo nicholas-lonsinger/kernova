@@ -26,6 +26,8 @@ struct VMURLGatewayTests {
         /// Fires when the gateway starts waiting, and again when it is let go.
         private let gate = AsyncGate()
         private var isOpen = false
+        /// Where a gate no test opens fails the test.
+        private let waits = OffTaskWaits()
 
         /// Whether the gateway is parked on the readiness await.
         private(set) var isWaiting = false
@@ -34,7 +36,7 @@ struct VMURLGatewayTests {
         func wait() async {
             isWaiting = true
             gate.notify()
-            await holdUntilReleased { try await gate.wait { self.isOpen } }
+            await waits.run { try await gate.wait { self.isOpen } }
         }
 
         /// Lands the library read.

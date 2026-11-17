@@ -147,12 +147,8 @@ struct ShellCompletionInstallerTests {
 
             // One line, so it can be selected out of a callout and pasted.
             #expect(!command.contains("\n"))
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = ["-c", command]
-            try process.run()
-            process.waitUntilExit()
-            #expect(process.terminationStatus == 0)
+            let ran = try ChildProcess(URL(fileURLWithPath: "/bin/sh"), ["-c", command]).exit()
+            #expect(ran.status == 0)
 
             let written = try String(contentsOf: destination, encoding: .utf8)
             #expect(written == shell.loaderScript)

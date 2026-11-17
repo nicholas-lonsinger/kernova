@@ -24,6 +24,8 @@ final class RecordingTransport: DBusTransport, @unchecked Sendable {
     private var phase = Phase.authenticating
     private var serial: UInt32 = 1
     private var isShut = false
+    /// Where a read the test leaves waiting fails the test.
+    private let waits = OffTaskWaits()
 
     /// Blocks, as a socket's read does, until the bus has bytes for the client or shuts — failing with `ETIMEDOUT`
     /// once the hold reaches its backstop, so a connection a test leaves open does not hold its reader thread
@@ -40,7 +42,7 @@ final class RecordingTransport: DBusTransport, @unchecked Sendable {
                 return count
             }
             lock.unlock()
-            guard holdUntilReleased({ try backstop.wait(for: readable) }) else { throw .readFailed(errno: ETIMEDOUT) }
+            guard waits.run({ try backstop.wait(for: readable) }) else { throw .readFailed(errno: ETIMEDOUT) }
         }
     }
 
@@ -106,7 +108,7 @@ final class RecordingTransport: DBusTransport, @unchecked Sendable {
     }
 }
 
-@Suite("Subscriptions register and remove their rules with the bus")
+@Suite("Subscriptions register and remove their rules with the bus", .offTaskWaitsReported)
 struct SubscriptionRuleTests {
     /// The next message written, as its member and its first string argument.
     static func next(_ transport: RecordingTransport) throws -> String {

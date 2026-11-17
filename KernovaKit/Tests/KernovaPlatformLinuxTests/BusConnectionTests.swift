@@ -5,7 +5,7 @@ import KernovaPlatformLinux
 import KernovaPortableTestSupport
 import Testing
 
-@Suite("DBusBusConnection against a private dbus-daemon")
+@Suite("DBusBusConnection against a private dbus-daemon", .offTaskWaitsReported)
 struct BusConnectionTests {
     static let serviceName = "org.kernova.Test"
     static let servicePath: DBusObjectPath = "/org/kernova/Test"
@@ -193,11 +193,12 @@ struct BusConnectionTests {
     static func stalling(arrived: BlockingInbox<String>, release: BlockingInbox<String>)
         -> @Sendable (DBusReceivedMessage) -> DBusMessage?
     {
-        { call in
+        let waits = OffTaskWaits()
+        return { call in
             switch call.header.member {
             case "Hang":
                 arrived.put("arrived")
-                holdUntilReleased { _ = try release.next() }
+                waits.run { _ = try release.next() }
                 return nil
             case "Silent":
                 return nil

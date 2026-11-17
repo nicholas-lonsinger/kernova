@@ -976,10 +976,11 @@ struct DownloadServiceTests {
         let handlerCalls = RequestCounter()
         let started = AsyncGate()
         let release = DispatchSemaphore(value: 0)
+        let waits = OffTaskWaits()
         StubURLProtocol.setHandler { request in
             handlerCalls.increment()
             started.notify()
-            holdUntilReleased { try Backstop("the test's release of the response").wait(for: release) }
+            waits.run { try Backstop("the test's release of the response").wait(for: release) }
             return .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
         }
         defer { StubURLProtocol.setHandler(nil) }

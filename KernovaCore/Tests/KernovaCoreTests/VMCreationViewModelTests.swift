@@ -1029,6 +1029,8 @@ final class OrderedSuspendingMockLocalRestoreImageInspector: LocalRestoreImageIn
     private var calls: [CallState] = []
     /// Notified whenever a new call registers, for ``waitUntilCallCount(_:)``.
     private let callRegisteredGate = AsyncGate()
+    /// Where a hold the test never releases fails the test.
+    private let waits = OffTaskWaits()
 
     nonisolated init() {}
 
@@ -1036,7 +1038,7 @@ final class OrderedSuspendingMockLocalRestoreImageInspector: LocalRestoreImageIn
         let call = CallState()
         calls.append(call)
         callRegisteredGate.notify()
-        await holdUntilReleased { try await call.gate.wait(until: { call.released }) }
+        await waits.run { try await call.gate.wait(until: { call.released }) }
         return InspectedRestoreImage(
             version: "15.6.1", build: "24G90", isSupportedOnThisHost: true)
     }

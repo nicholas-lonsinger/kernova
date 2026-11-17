@@ -177,11 +177,13 @@ private final class SuspendingProbeService: RestoreImageProbing {
     private let gate = AsyncGate()
     private var isProbing = false
     private var isReleased = false
+    /// Where a hold the test never releases fails the test.
+    private let waits = OffTaskWaits()
 
     func probe(_ url: URL) async throws -> ProbedRestoreImage {
         isProbing = true
         gate.notify()
-        await holdUntilReleased { try await gate.wait(until: { self.isReleased }) }
+        await waits.run { try await gate.wait(until: { self.isReleased }) }
         return probeResult
     }
 

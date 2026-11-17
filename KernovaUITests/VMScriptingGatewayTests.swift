@@ -28,6 +28,8 @@ struct VMScriptingGatewayTests {
         /// Fires when the gateway starts waiting, and again when it is let go.
         private let gate = AsyncGate()
         private var isOpen = false
+        /// Where a gate no test opens fails the test.
+        private let waits = OffTaskWaits()
 
         /// Whether the gateway is parked on the readiness await.
         private(set) var isWaiting = false
@@ -41,7 +43,7 @@ struct VMScriptingGatewayTests {
         func wait() async {
             isWaiting = true
             gate.notify()
-            if await !holdUntilReleased({ try await gate.wait { self.isOpen } }) { await parkForever() }
+            if await !waits.run({ try await gate.wait { self.isOpen } }) { await parkForever() }
         }
 
         /// Lands the library read.

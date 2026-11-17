@@ -71,16 +71,15 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     /// Continuation that, when resumed, unblocks the suspended operation.
     private var suspendedContinuation: CheckedContinuation<Void, Never>?
 
-    /// Continuation that signals the test that the mock has entered its suspended state.
+    /// Resumes the test parked in ``waitUntilSuspended(fileID:line:)`` once an
+    /// operation suspends.
     private var suspendedNotification: (@Sendable (()) -> Void)?
 
     /// Waits until the mock is suspended inside an operation.
     ///
-    /// This relies on `@MainActor` cooperative scheduling: the `Task { @MainActor in … }`
-    /// that drives the coordinator will suspend at `withCheckedContinuation` inside
-    /// `suspendIfNeeded()`, yielding back to the main actor run loop. That yield allows
-    /// this method's own `withCheckedContinuation` to execute and observe the stored
-    /// `suspendedContinuation`, confirming the mock has entered its suspended state.
+    /// This and `suspendIfNeeded()` both run on the main actor, so an operation
+    /// either suspended before this checks — and it returns at once — or
+    /// suspends later and resumes the park this arms.
     func waitUntilSuspended(fileID: String = #fileID, line: Int = #line) async throws {
         // If already suspended, return immediately
         if suspendedContinuation != nil { return }

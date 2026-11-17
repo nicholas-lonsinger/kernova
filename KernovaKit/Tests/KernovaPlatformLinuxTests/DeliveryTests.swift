@@ -5,7 +5,7 @@ import KernovaPlatformLinux
 import KernovaPortableTestSupport
 import Testing
 
-@Suite("Handlers run only while their subscription and connection stand")
+@Suite("Handlers run only while their subscription and connection stand", .offTaskWaitsReported)
 struct DeliveryTests {
     /// A service owning the test name, a client subscribed to its Ticks, and
     /// the bus they share.
@@ -31,11 +31,12 @@ struct DeliveryTests {
         let setup = try Setup()
         let events = BlockingInbox<String>()
         let gate = BlockingInbox<String>()
+        let waits = OffTaskWaits()
         let first = try setup.client.subscribe(BusConnectionTests.tickRule) { signal in
             guard case .string(let label)? = try? signal.decodeBody().first else { return }
             events.put("first \(label)")
             if label == "one" {
-                holdUntilReleased { _ = try gate.next() }
+                waits.run { _ = try gate.next() }
             }
         }
         let later = BlockingInbox<String>()
@@ -61,11 +62,12 @@ struct DeliveryTests {
         let setup = try Setup()
         let events = BlockingInbox<String>()
         let gate = BlockingInbox<String>()
+        let waits = OffTaskWaits()
         let client = setup.client
         client.observeDeliveryWaitsForTesting { events.put("waiting") }
         let subscription = try client.subscribe(BusConnectionTests.tickRule) { _ in
             events.put("started")
-            holdUntilReleased { _ = try gate.next() }
+            waits.run { _ = try gate.next() }
             events.put("finished")
         }
         try setup.tick("one")

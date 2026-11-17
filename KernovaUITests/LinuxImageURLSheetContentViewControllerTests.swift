@@ -181,6 +181,8 @@ private final class SuspendingResolveService: LinuxImageResolving {
     private let gate = AsyncGate()
     private var isResolving = false
     private var isReleased = false
+    /// Where a hold the test never releases fails the test.
+    private let waits = OffTaskWaits()
 
     /// Not exercised here: this sheet only ever checks a pasted URL.
     func resolve(_ entry: LinuxImageCatalogEntry) async throws -> ResolvedCatalogImage {
@@ -190,7 +192,7 @@ private final class SuspendingResolveService: LinuxImageResolving {
     func resolve(_ image: CustomLinuxImage) async throws -> ResolvedLinuxImage {
         isResolving = true
         gate.notify()
-        await holdUntilReleased { try await gate.wait(until: { self.isReleased }) }
+        await waits.run { try await gate.wait(until: { self.isReleased }) }
         return result
     }
 

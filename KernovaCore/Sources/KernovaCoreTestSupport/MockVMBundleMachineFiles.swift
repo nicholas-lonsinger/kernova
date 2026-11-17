@@ -38,6 +38,8 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
     }
 
     private let state = Mutex(State())
+    /// Where a hold the test never releases fails the test.
+    private let waits = OffTaskWaits()
 
     /// Where a prepared snapshot's own `config.json` is written, as the real
     /// store writes it into the bundle — what the manifest reads each
@@ -199,7 +201,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         }
         diskSizeReadEntered.notify()
         if let hold {
-            holdUntilReleased { try Backstop("the test's release of the disk size read").wait(for: hold) }
+            waits.run { try Backstop("the test's release of the disk size read").wait(for: hold) }
         }
         return sizes
     }

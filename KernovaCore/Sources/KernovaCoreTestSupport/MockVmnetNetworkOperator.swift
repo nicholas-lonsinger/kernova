@@ -43,6 +43,8 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating {
     }
 
     private let state = Mutex(State())
+    /// Where a hold the test never releases fails the test.
+    private let waits = OffTaskWaits()
 
     /// Sets the subnet every later create reports.
     func setSubnet(_ subnet: IPv4Subnet) {
@@ -80,7 +82,7 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating {
         }
         if let createHold {
             createEntered.notify()
-            holdUntilReleased { try Backstop("the test's release of the create").wait(for: createHold) }
+            waits.run { try Backstop("the test's release of the create").wait(for: createHold) }
         }
         let subnet = try state.withLock { state in
             if let error = state.createNetworkError { throw error }

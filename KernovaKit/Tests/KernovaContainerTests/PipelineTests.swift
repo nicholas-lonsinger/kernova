@@ -12,7 +12,7 @@ import KernovaSynchronization
 import KernovaWire
 import Testing
 
-@Suite("Container pipelines")
+@Suite("Container pipelines", .offTaskWaitsReported)
 struct PipelineTests {
     static let policies: [ChunkCompressionPolicy] = [
         .never,
@@ -70,11 +70,12 @@ struct PipelineTests {
         // so the first four finish last to first.
         let lanes = 4
         let gates = (0..<lanes).map { _ in DispatchSemaphore(value: 0) }
+        let waits = OffTaskWaits()
         let firsts = Locked(Set<Int>())
         let workers = ChunkWorkers(count: lanes) { lane, work in
             let first = firsts.withLock { $0.insert(lane).inserted }
             if first && lane < lanes - 1 {
-                holdUntilReleased { try Backstop("lane \(lane + 1)'s first chunk").wait(for: gates[lane + 1]) }
+                waits.run { try Backstop("lane \(lane + 1)'s first chunk").wait(for: gates[lane + 1]) }
             }
             work()
             if first { gates[lane].signal() }
@@ -251,9 +252,10 @@ struct PipelineTests {
         let expected = sequentiallyDecoded([feedA, feedB], accepting: generous(.file))
 
         let gate = DispatchSemaphore(value: 0)
+        let waits = OffTaskWaits()
         // Four lanes, a window of eight: the held chunk never blocks an append here.
         let workers = ChunkWorkers(count: 4) { _, work in
-            holdUntilReleased { try Backstop("the test's release of the lanes").wait(for: gate) }
+            waits.run { try Backstop("the test's release of the lanes").wait(for: gate) }
             work()
         }
         let pipeline = ContainerDecodePipeline(accepting: generous(.file), workers: workers)
@@ -287,8 +289,9 @@ struct PipelineTests {
         let refusal = try #require(expected.error)
 
         let gate = DispatchSemaphore(value: 0)
+        let waits = OffTaskWaits()
         let workers = ChunkWorkers(count: 2) { _, work in
-            holdUntilReleased { try Backstop("the test's release of the lanes").wait(for: gate) }
+            waits.run { try Backstop("the test's release of the lanes").wait(for: gate) }
             work()
         }
         let pipeline = ContainerDecodePipeline(accepting: generous(.file), workers: workers)

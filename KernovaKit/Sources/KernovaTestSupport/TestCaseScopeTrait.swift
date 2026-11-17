@@ -1,9 +1,10 @@
 import Testing
 
 /// Runs each test case in its own scope: admitted through the shared
-/// `TestAdmission` gate before its body — and its setup — starts, and with a
+/// `TestAdmission` gate before its body — and its setup — starts, with a
 /// scratch ledger in which every ``TestScratchDirectory`` it mints is recorded
-/// and removed when the case ends.
+/// and removed when the case ends, and failing for each wait made for it off
+/// its task that failed (`OffTaskWaits`).
 ///
 /// Queued cases cost one suspended task and arm none of the test's own
 /// backstops; the plan's execution-time allowance runs (`TestAdmission.width`).
@@ -23,8 +24,10 @@ public struct TestCaseScopeTrait: TestTrait, SuiteTrait, TestScoping {
         testCase == nil ? nil : self
     }
 
-    /// Runs the test case holding one admission permit and its own scratch
-    /// ledger, removing the scratch and then returning the permit when it ends.
+    /// Runs the test case holding one admission permit, its own scratch ledger
+    /// and its own ledger of waits made off its task; when it ends, records
+    /// what those waits failed with, then removes the scratch, then returns the
+    /// permit.
     public func provideScope(
         for test: Test,
         testCase: Test.Case?,
@@ -41,12 +44,13 @@ public struct TestCaseScopeTrait: TestTrait, SuiteTrait, TestScoping {
         }
         await TestAdmission.admit()
         defer { TestAdmission.relinquish() }
-        try await TestScratchLedger.scoping(function)
+        try await TestScratchLedger.scoping { try await OffTaskWaits.scope(function) }
     }
 }
 
 extension Trait where Self == TestCaseScopeTrait {
     /// Runs each of this suite's test cases in its own scope: admitted through
-    /// the process-wide gate, with its scratch removed when it ends.
+    /// the process-wide gate, with its scratch removed when it ends, and
+    /// failing for each wait made for it off its task that failed.
     public static var caseScoped: Self { Self() }
 }

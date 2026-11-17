@@ -186,10 +186,11 @@ struct MacPowerTests {
     func cancelWhileShutdownRuns() throws {
         let running = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
+        let waits = OffTaskWaits()
         let harness = Harness(
             .shutdownCommand(run: { _ in
                 running.signal()
-                holdUntilReleased { try Backstop("the test's release of the shutdown").wait(for: release) }
+                waits.run { try Backstop("the test's release of the shutdown").wait(for: release) }
                 return 0
             }), console: .off)
         _ = harness.take()
@@ -247,12 +248,13 @@ struct MacPowerTests {
     func cancelWhileCalling() throws {
         let calling = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
+        let waits = OffTaskWaits()
         let mechanism = MacPowerMechanism(
             graceful: .init(
                 absentDetail: "",
                 call: .answering {
                     calling.signal()
-                    holdUntilReleased { try Backstop("the test's release of the call").wait(for: release) }
+                    waits.run { try Backstop("the test's release of the call").wait(for: release) }
                     return .tookIt
                 }),
             ignoringApps: nil)

@@ -323,8 +323,9 @@ struct HubDragOutTests {
         // The hub's queue while the ask holds the main thread: the guest
         // answers the ask, and once the release reached it, names the promise
         // and never sizes the folder.
+        let waits = OffTaskWaits()
         let hubQueue = Thread {
-            holdUntilReleased {
+            waits.run {
                 try Backstop("the hub's delivery").wait(for: hub.delivering)
                 owner.takes(peer, .report(takeID, .delivering))
                 try Backstop("the display's release").wait(for: display.releases)

@@ -194,17 +194,10 @@ struct ISO9660WriterTests {
 
     /// Runs `arguments` from PATH and answers its standard output; a non-zero exit fails.
     private static func run(_ arguments: [String]) throws -> String {
-        let process = Process()
-        process.executableURL = URL(filePath: "/usr/bin/env")
-        process.arguments = arguments
-        let output = Pipe()
-        process.standardOutput = output
-        try process.run()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let text = String(decoding: data, as: UTF8.self)
-        guard process.terminationStatus == 0 else {
-            throw ISO9660Reader.Failure(description: "\(arguments) exited \(process.terminationStatus): \(text)")
+        let ran = try ChildProcess(URL(filePath: "/usr/bin/env"), arguments).exit()
+        let text = String(decoding: ran.output, as: UTF8.self)
+        guard ran.status == 0 else {
+            throw ISO9660Reader.Failure(description: "\(arguments) exited \(ran.status): \(text)")
         }
         return text
     }

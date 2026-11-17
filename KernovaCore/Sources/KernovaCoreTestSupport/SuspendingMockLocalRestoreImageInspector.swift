@@ -15,13 +15,15 @@ final class SuspendingMockLocalRestoreImageInspector: LocalRestoreImageInspectin
     private let gate = AsyncGate()
     private var isInspecting = false
     private var isReleased = false
+    /// Where a hold the test never releases fails the test.
+    private let waits = OffTaskWaits()
 
     nonisolated init() {}
 
     func inspect(_ url: URL) async throws -> InspectedRestoreImage {
         isInspecting = true
         gate.notify()
-        await holdUntilReleased { try await gate.wait(until: { self.isReleased }) }
+        await waits.run { try await gate.wait(until: { self.isReleased }) }
         return inspectResult
     }
 

@@ -163,6 +163,19 @@ self.condition.wait( )
 _ = group
     .wait()'
 
+expect forever-waits '1 2 3' '_ = semaphore.wait(timeout: .distantFuture)
+_ = group.wait(timeout: DispatchTime.distantFuture)
+_ = semaphore.wait(wallTimeout: .distantFuture)'
+
+expect child-process-waits '1 2 3 5' 'process.waitUntilExit()
+let data = output.fileHandleForReading.readDataToEndOfFile()
+let rest = try errors.fileHandleForReading.readToEnd()
+codesign
+    .waitUntilExit()'
+
+expect child-process '' 'let ran = try ChildProcess(URL(fileURLWithPath: "/bin/sh"), ["-c", command]).exit()
+let chunk = try handle.read(upToCount: 4_096)'
+
 expect awaited-waits '' 'await readiness.wait()
 try await gate.wait()
 let ready = LibraryReadiness(awaitReady: { await read.wait() })

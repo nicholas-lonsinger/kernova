@@ -26,7 +26,7 @@ import Testing
 
 /// A peer's DROP receiver against a real hub: the host offers files from a source folder, and the peer lands
 /// them in its Downloads folder.
-@Suite("Drop receiver")
+@Suite("Drop receiver", .offTaskWaitsReported)
 struct DropReceiverTests {
     /// A hub serving DROP from `source`, and a peer runtime whose receiver lands in `downloads`.
     private final class Bench: Sendable {
@@ -51,14 +51,14 @@ struct DropReceiverTests {
             try FileManager.default.createDirectory(
                 atPath: scratch.path + "/Downloads", withIntermediateDirectories: true)
             let (source, hostEvents, landed, served) = (scratch.path + "/source", hostEvents, landed, served)
-            let (held, released) = (held, released)
+            let (held, released, waits) = (held, released, OffTaskWaits())
             let hostRouter = ItemFeatureRouter<PeerHandle>(
                 drop: ItemFeatureOwner(
                     usable: { _ in }, events: { _, event in hostEvents.record(event) },
                     content: { _, _, representation in
                         served.record(String(decoding: representation.name, as: UTF8.self))
                         if held.withLock({ $0 }) {
-                            holdUntilReleased { try Backstop("the held serve's release").wait(for: released) }
+                            waits.run { try Backstop("the held serve's release").wait(for: released) }
                         }
                         return .success(
                             .tree(path: source + "/" + String(decoding: representation.name, as: UTF8.self)))

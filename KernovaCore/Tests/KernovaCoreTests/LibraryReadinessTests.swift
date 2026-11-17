@@ -13,9 +13,11 @@ struct LibraryReadinessTests {
     private final class LibraryRead {
         private let gate = AsyncGate()
         private var landed = false
+        /// Where a read no test lands fails the test.
+        private let waits = OffTaskWaits()
 
         func wait() async {
-            await holdUntilReleased { try await gate.wait { self.landed } }
+            await waits.run { try await gate.wait { self.landed } }
         }
 
         func land() {

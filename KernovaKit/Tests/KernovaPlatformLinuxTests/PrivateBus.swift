@@ -1,70 +1,48 @@
 #if os(Linux)
-#if canImport(Glibc)
-import Glibc
-#elseif canImport(Musl)
-import Musl
-#endif
-
 import Foundation
 import KernovaDBus
 import KernovaPlatformLinux
+import KernovaPortableTestSupport
+import Testing
 
 /// A private session bus: a `dbus-daemon` of its own, stopped on deinit.
 final class PrivateBus {
     let address: String
-    private let process: Process
+    private let daemon: ChildProcess
 
     init() throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         // An abstract socket leaves nothing in the file system once the
         // daemon is gone.
-        process.arguments = [
-            "dbus-daemon", "--session", "--nofork", "--print-address=1",
-            "--address=unix:abstract=/kernova/tests/\(UUID().uuidString)",
-        ]
-        let output = Pipe()
-        let errors = Pipe()
-        process.standardOutput = output
-        process.standardError = errors
-        try process.run()
-        // This process's copies of the write ends, closed so a daemon that
-        // exits without printing reads as end of file.
-        try output.fileHandleForWriting.close()
-        try errors.fileHandleForWriting.close()
-        // read(2) returns as soon as the daemon prints its address; the daemon
-        // holds the pipe open for as long as it runs.
-        var printed: [UInt8] = []
-        var chunk = [UInt8](repeating: 0, count: 512)
-        while !printed.contains(UInt8(ascii: "\n")) {
-            let count = chunk.withUnsafeMutableBytes {
-                read(output.fileHandleForReading.fileDescriptor, $0.baseAddress, $0.count)
-            }
-            guard count > 0 else {
-                let message = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                throw PrivateBusError.exitedEarly(message)
-            }
-            printed += chunk[0..<count]
+        daemon = try ChildProcess(
+            URL(fileURLWithPath: "/usr/bin/env"),
+            [
+                "dbus-daemon", "--session", "--nofork", "--print-address=1",
+                "--address=unix:abstract=/kernova/tests/\(UUID().uuidString)",
+            ])
+        // The daemon prints its address once it listens, and holds its
+        // output open for as long as it runs.
+        guard let address = try daemon.firstLine() else {
+            throw PrivateBusError.exitedEarly(String(decoding: try daemon.exit().errors, as: UTF8.self))
         }
-        address = String(decoding: printed, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        self.process = process
+        self.address = address.trimmingCharacters(in: .whitespaces)
     }
 
     /// Kills the daemon now, closing every connection to it.
     func killDaemon() {
-        Self.stop(process)
+        Self.stop(daemon)
     }
 
     deinit {
-        // A process spawned from a Dispatch worker thread inherits the signals
-        // that thread blocks, SIGTERM among them, so SIGKILL is what ends it.
-        Self.stop(process)
+        Self.stop(daemon)
     }
 
-    private static func stop(_ process: Process) {
-        guard process.isRunning else { return }
-        kill(process.processIdentifier, SIGKILL)
-        process.waitUntilExit()
+    private static func stop(_ daemon: ChildProcess) {
+        daemon.kill()
+        do {
+            _ = try daemon.exit()
+        } catch {
+            Issue.record(error)
+        }
     }
 
     /// A connection to this bus.

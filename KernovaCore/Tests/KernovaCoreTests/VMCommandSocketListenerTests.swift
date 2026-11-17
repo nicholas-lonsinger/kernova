@@ -46,6 +46,8 @@ struct VMCommandSocketListenerTests {
         private let gate = AsyncGate()
         private var landed: Bool
         private var waiters = 0
+        /// Where a read no test lands fails the test.
+        private let waits = OffTaskWaits()
 
         init(landed: Bool) { self.landed = landed }
 
@@ -59,7 +61,7 @@ struct VMCommandSocketListenerTests {
         func wait() async {
             waiters += 1
             gate.notify()
-            await holdUntilReleased { try await gate.wait { self.landed } }
+            await waits.run { try await gate.wait { self.landed } }
         }
 
         /// Returns once a verb is waiting on the read, throwing at the
