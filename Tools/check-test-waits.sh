@@ -3,16 +3,20 @@
 # inside the span, and a starved CI runner loses the bet: a positive wait
 # fails, and a sleep-then-assert-nothing check passes before the thing it
 # rules out could have happened. A test wait ends on the event it waits for,
-# through the seams in KernovaTestSupport (`AsyncGate`, `testWaitBackstop`)
-# and KernovaCoreTestSupport (`waitForChange`).
+# and fails by name at its `Backstop` when the event never comes, through the
+# seams in KernovaPortableTestSupport (`Backstop`, `AsyncGate`,
+# `BlockingCall`) and KernovaCoreTestSupport (`waitForChange`). A wait outside
+# them parks until the test plan's allowance stops the process, naming nothing
+# and losing every result still running in it.
 #
 # Scope is every tracked Swift file with a directory component ending in
 # `Tests`: a test target, its `Support/` folder included. A test-support module
 # (`…TestSupport/`) is not scanned. A window a test genuinely needs — a
-# backstop, a wait helper's own clock — is a named helper there, its window
-# stated in its `///`, so every suite reaches it through one spelling. Given
-# file arguments, relative ones resolved against the caller's working
-# directory, it scans those instead; its fixture test drives it that way.
+# backstop, a wait helper's own clock, a double that parks for good — is a
+# named helper there, its window stated in its `///`, so every suite reaches it
+# through one spelling. Given file arguments, relative ones resolved against
+# the caller's working directory, it scans those instead; its fixture test
+# drives it that way.
 #
 # A raw real-clock sleep is a call to `Task.sleep`, `Thread.sleep`,
 # `asyncAfter`, or a bare or `Darwin.`-qualified `sleep`, `usleep` or
@@ -28,14 +32,24 @@
 # refuse the sleeps that take no real time. A real clock bound to a name first
 # passes unmatched.
 #
-# A number in a wait's `timeout:` argument is the other finding: a wait that
+# A wait with no deadline is the second finding, in three shapes a test writes
+# only to wait: a raw continuation (`withCheckedContinuation`,
+# `withCheckedThrowingContinuation`, `withUnsafeContinuation`,
+# `withUnsafeThrowingContinuation`) parks through `Backstop.park`; a blocking
+# `.wait()` with no arguments — a semaphore's, a group's, a condition's —
+# blocks through `Backstop.wait(for:)`; and `Task.detached`, which a test
+# reaches for to run a blocking call it then awaits, runs it through
+# `offCooperativePool` or `BlockingCall`. A `.wait()` an `await` precedes is
+# another type's async wait and is not matched.
+#
+# A number in a wait's `timeout:` argument is the third finding: a wait that
 # expects success takes the `testWaitBackstop` default, and a smaller deadline
 # is a window racing the work. A wait is a call whose name starts with `wait`,
-# or `fulfillment`; a `timeout:` passed to any other call configures the
-# subject and is not matched. When the deadline is what the test asserts,
-# `// deadline-under-test - <reason>` on the `timeout:` line or the line above
-# it exempts that argument; a marker without a reason exempts nothing. No
-# marker exempts a sleep.
+# or `fulfillment` or `Backstop`; a `timeout:` passed to any other call
+# configures the subject and is not matched. When the deadline is what the test
+# asserts, `// deadline-under-test - <reason>` on the `timeout:` line or the
+# line above it exempts that argument; a marker without a reason exempts
+# nothing. No marker exempts a sleep or a wait with no deadline.
 #
 # String literals and comments are blanked before matching, so prose may name
 # what it forbids. Reports every finding before failing, and fails on a file
@@ -90,9 +104,43 @@ findings=$(perl -e '
       | $real_clock \s* \. \s* sleep \s* \(
     }x;
 
+    my $unbounded = qr{
+        \b (?<continuation> with (?: Checked | Unsafe ) (?: Throwing )? Continuation ) \b
+      | \b (?<detached> Task \s* \. \s* detached ) \b
+      | (?<blocking> \. \s* wait \s* \( \s* \) )
+    }x;
+
     my $marker = qr{//\s*deadline-under-test\s+-\s+\S};
 
     sub line_at { my ($code, $offset) = @_; return (substr($code, 0, $offset) =~ tr/\n//) + 1 }
+
+    # Where the receiver of the member call whose `.` is at $dot starts: back
+    # over names, `.`, `?`, `!`, balanced subscripts and calls, and a line
+    # break that continues a chain.
+    sub receiver_start {
+        my ($code, $dot) = @_;
+        my $i = $dot - 1;
+        while ($i >= 0) {
+            my $c = substr($code, $i, 1);
+            if ($c =~ /[\w?!.]/) { $i--; next }
+            if ($c =~ /[\])]/) {
+                my $depth = 0;
+                for (; $i >= 0; $i--) {
+                    my $d = substr($code, $i, 1);
+                    if ($d =~ /[\])]/) { $depth++ }
+                    elsif ($d =~ /[\[(]/) { $depth--; last if $depth == 0 }
+                }
+                $i--;
+                next;
+            }
+            if ($c =~ /\s/ && substr($code, $i + 1, 1) eq ".") {
+                $i-- while $i >= 0 && substr($code, $i, 1) =~ /\s/;
+                next;
+            }
+            last;
+        }
+        return $i + 1;
+    }
 
     # The argument list opening at $open, split at its top-level commas:
     # each argument with its offset, or nothing when the list never closes.
@@ -140,9 +188,21 @@ findings=$(perl -e '
             $found{line_at($code, $start)} //= "a raw real-clock sleep; wait on the event through a test-support seam, or make a deliberate window a named helper there";
         }
 
+        while ($code =~ m{$unbounded}g) {
+            my $start = $-[0];
+            if (defined $+{continuation}) {
+                $found{line_at($code, $start)} //= "a raw continuation, which parks with no deadline; park through Backstop.park, or make a double that parks for good a named helper in a test-support module";
+            } elsif (defined $+{detached}) {
+                $found{line_at($code, $start)} //= "a detached task, whose value is awaited with no deadline; run a blocking call through offCooperativePool or BlockingCall";
+            } else {
+                next if substr($code, 0, receiver_start($code, $start)) =~ /\bawait\s*\z/;
+                $found{line_at($code, $start)} //= "a blocking wait with no deadline; block through Backstop.wait(for:)";
+            }
+        }
+
         while ($code =~ m{\b(\w+)\s*\(}g) {
             my ($callee, $open) = ($1, $+[0] - 1);
-            next unless $callee =~ /^(?:wait|fulfillment$)/;
+            next unless $callee =~ /^(?:wait|fulfillment$|Backstop$)/;
             for my $argument (arguments($code, $open)) {
                 my ($offset, $text) = @$argument;
                 next unless $text =~ /^(\s*)timeout\s*:(.*)$/s;
@@ -173,4 +233,4 @@ fi
 
 [ -z "$findings" ] || exit 1
 
-pass "test waits: no test sleeps on the real clock or races a wait against a numeric deadline"
+pass "test waits: no test sleeps on the real clock, waits with no deadline, or races a wait against a numeric deadline"
