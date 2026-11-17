@@ -65,7 +65,6 @@ extension ClipboardPasteboardPublisher {
         _ items: [OfferedItem], concealed: Bool, pasteCeiling limitBytes: Int, puller: any ClipboardItemPulling,
         serving offer: ClipboardWriteSource.Serving
     ) -> ClipboardOfferPublishOutcome {
-        // Nothing of a live offer has landed, so its files have the whole ceiling.
         let plan = ClipboardPromisePolicy.copyPlan(items, room: UInt64(clamping: limitBytes))
         let filesLeftOut: Int
         switch plan {
