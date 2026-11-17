@@ -51,7 +51,7 @@ struct HostClipboardPublisherOutcomeTests {
     /// A live offer of one inline text representation.
     private static var textOffer: CopyToMacItem {
         var representation = Representation()
-        representation.type = TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI)
+        representation.type = TypeDescriptor(appleUTI: NSPasteboard.PasteboardType.string.rawValue)
         representation.storage = .inline
         var item = OfferedItem()
         item.representations = [representation]

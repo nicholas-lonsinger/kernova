@@ -12,7 +12,7 @@ import KernovaLogging
 /// - An exited process's (``retireAbandoned(_:then:)``): nothing of that process's is left to ask, so the items of
 ///   the pasteboard itself are read. Which process wrote one cannot be known; that it names a file about to go
 ///   can, and only such an item goes. A pasteboard that moved on to anything else names none, and is left alone.
-public struct ClipboardStagingRetirement: StagedContentRetirement {
+struct ClipboardStagingRetirement: StagedContentRetirement {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "ClipboardStagingRetirement")
 
     private let ledger: ClipboardWriteLedger
@@ -20,7 +20,7 @@ public struct ClipboardStagingRetirement: StagedContentRetirement {
 
     /// Retirement withdrawing what the writes `ledger` records name, and what `pasteboard` holds of an exited
     /// process's: the general pasteboard, which is the one another process can have left a write on.
-    public init(
+    init(
         ledger: ClipboardWriteLedger = .shared,
         pasteboard: @escaping @MainActor @Sendable () -> any ClipboardPasteboard = { NSPasteboard.general }
     ) {
@@ -30,7 +30,7 @@ public struct ClipboardStagingRetirement: StagedContentRetirement {
 
     /// Withdraws every item a write of this process names under `directories` with, on the main actor, then runs
     /// `remove` off it.
-    public func retire(_ directories: [URL], then remove: @escaping @Sendable () -> Void) {
+    func retire(_ directories: [URL], then remove: @escaping @Sendable () -> Void) {
         let ledger = ledger
         MainActorBridge.async {
             ledger.withdrawItems(namingFilesUnder: directories)
@@ -40,7 +40,7 @@ public struct ClipboardStagingRetirement: StagedContentRetirement {
 
     /// Withdraws every item of the pasteboard naming a file under `roots`, on the main actor, then runs `remove` off
     /// it.
-    public func retireAbandoned(_ roots: [URL], then remove: @escaping @Sendable () -> Void) {
+    func retireAbandoned(_ roots: [URL], then remove: @escaping @Sendable () -> Void) {
         let ledger = ledger
         let pasteboard = pasteboard
         MainActorBridge.async {
@@ -57,7 +57,7 @@ public struct ClipboardStagingRetirement: StagedContentRetirement {
     }
 
     /// Withdraws every item a write of this process names under `root` with, now.
-    @MainActor public func processEnding(_ root: URL) {
+    @MainActor func processEnding(_ root: URL) {
         ledger.withdrawItems(namingFilesUnder: [root])
     }
 

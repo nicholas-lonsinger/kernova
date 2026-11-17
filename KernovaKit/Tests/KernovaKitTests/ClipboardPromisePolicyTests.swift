@@ -9,7 +9,7 @@ import Testing
 /// before a byte of it crosses.
 @Suite("ClipboardPromisePolicy", .caseScoped)
 struct ClipboardPromisePolicyTests {
-    private func inline(_ uti: String = ClipboardContent.utf8TextUTI, size: Int = 8) -> Representation {
+    private func inline(_ uti: String = "public.utf8-plain-text", size: Int = 8) -> Representation {
         .make(TypeDescriptor(appleUTI: uti), .inline, size: size)
     }
 
@@ -42,16 +42,18 @@ struct ClipboardPromisePolicyTests {
         #expect(!ClipboardPromisePolicy.keeps(.make(TypeDescriptor(appleUTI: "public.data"), .unspecified, size: 8)))
     }
 
-    // MARK: - servesFileURL
+    // MARK: - promisedTypes
 
     @Test("only a kept FILE or FOLDER serves .fileURL")
     func servesFileURLForFilesAndFolders() {
-        #expect(ClipboardPromisePolicy.servesFileURL(file("photo.png")))
-        #expect(
-            ClipboardPromisePolicy.servesFileURL(
-                .make(TypeDescriptor(appleUTI: "public.folder"), .folder, size: 0, name: "Album")))
-        #expect(!ClipboardPromisePolicy.servesFileURL(inline()))
-        #expect(!ClipboardPromisePolicy.servesFileURL(inline("public.file-url")))
+        func promised(_ representation: Representation) -> [String] {
+            ClipboardPromisePolicy.promisedTypes(for: item(representation)).map(\.pasteboardType)
+        }
+        let folder = Representation.make(TypeDescriptor(appleUTI: "public.folder"), .folder, size: 0, name: "Album")
+        #expect(promised(file("photo.png")) == ["public.file-url"])
+        #expect(promised(folder) == ["public.file-url"])
+        #expect(promised(inline()) == ["public.utf8-plain-text"])
+        #expect(promised(inline("public.file-url")).isEmpty)
     }
 
     // MARK: - Paste budget

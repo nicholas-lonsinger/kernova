@@ -29,13 +29,6 @@ public enum ClipboardPromisePolicy {
         }
     }
 
-    /// Whether a kept representation is served as `public.file-url` — the
-    /// flavor whose bytes must pull and land inside the OS pasteboard-promise
-    /// deadline.
-    public static func servesFileURL(_ representation: Representation) -> Bool {
-        keeps(representation) && representation.storage != .inline
-    }
-
     /// One pasteboard type a published item promises, and the representation
     /// that serves it.
     public struct PromisedType: Equatable, Sendable {

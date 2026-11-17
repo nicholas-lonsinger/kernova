@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 import KernovaFileTree
-import UniformTypeIdentifiers
 
 /// The one place a local gesture — a Mac copy, a guest copy, a drag onto a VM
 /// display — becomes what is offered for it, on either side of the wire.
@@ -13,81 +12,31 @@ import UniformTypeIdentifiers
 /// message.
 @MainActor
 public enum ClipboardPasteboardReader {
-    /// What ``resolve(filesAt:sizeOf:)`` made of the files it was handed.
-    public struct FileIntake: Sendable {
-        /// One representation per readable item, in the order the URLs came in.
-        public let representations: [ClipboardContent.Representation]
+    // MARK: - Sizing files
 
-        /// How many of the URLs produced no representation.
-        public let skipped: Int
-
-        /// Creates a resolve outcome.
-        public init(representations: [ClipboardContent.Representation], skipped: Int) {
-            self.representations = representations
-            self.skipped = skipped
-        }
-    }
-
-    // MARK: - Resolving files
-
-    /// Resolves copied/dropped files **and folders** into representations, one
-    /// per URL in the order they came in.
+    /// The size a pull of the file or folder at `url` reads: a file's own size;
+    /// a folder's — an OS package such as `.app`/`.rtfd` included — `sizeOf`
+    /// estimate, or `0` when `sizeOf` is `nil` and nothing inside the folder is
+    /// read; `nil` when there is nothing to read (``readableSource(for:opening:)``)
+    /// or the system names no type or size for a file.
     ///
-    /// Synchronous and payload-scaled — every `resourceValues` call is a
-    /// `stat(2)` and a folder's estimate walks its whole tree — so the caller
-    /// runs it off the main actor. A directory, including an OS package such as
-    /// `.app`/`.rtfd`, becomes a `.directory` source representation carrying
-    /// `sizeOf`'s estimate, or `0` when `sizeOf` is `nil` and nothing inside the
-    /// folder is read. A folder is checked at its root only.
-    ///
-    /// The item is named from the URL that was copied or dragged while its
-    /// bytes come from ``readableSource(for:opening:)``, so a symlink crosses as
-    /// its target's content under the name the user acted on — what copying one
-    /// in Finder delivers. Nothing here downloads a dataless file
+    /// Synchronous and payload-scaled — a `stat(2)`, and for a folder a walk of
+    /// its whole tree — so the caller runs it off the main actor. A symlink is
+    /// sized as what it resolves to. Nothing here downloads a dataless file
     /// (``DatalessMaterialization/off``), so a dataless folder's estimate counts
     /// only what is on this Mac.
-    nonisolated public static func resolve(
-        filesAt urls: [URL],
+    nonisolated public static func byteCount(
+        ofItemAt url: URL,
         sizeOf: (@Sendable (URL) -> Int)? = { ClipboardDirectory.estimatedByteCount(at: $0) }
-    ) -> FileIntake {
-        DatalessMaterialization.off.during { resolveLocally(filesAt: urls, sizeOf: sizeOf) }
-    }
-
-    /// ``resolve(filesAt:sizeOf:)``'s work, downloading nothing.
-    nonisolated private static func resolveLocally(
-        filesAt urls: [URL], sizeOf: (@Sendable (URL) -> Int)?
-    ) -> FileIntake {
-        var representations: [ClipboardContent.Representation] = []
-        var skipped = 0
-        for url in urls {
+    ) -> Int? {
+        DatalessMaterialization.off.during {
             guard let source = readableSource(for: url),
-                let values = try? source.resourceValues(forKeys: [
-                    .contentTypeKey, .isDirectoryKey, .fileSizeKey,
-                ])
-            else {
-                skipped += 1
-                continue
-            }
-            // The name the user copied or dragged, whatever the bytes are read
-            // from.
-            let filename = url.lastPathComponent
-            if values.isDirectory == true {
-                representations.append(
-                    ClipboardContent.Representation(
-                        directorySourceURL: source, estimatedByteCount: sizeOf?(source) ?? 0,
-                        filename: filename,
-                        uti: values.contentType?.identifier ?? ClipboardDirectory.uti))
-            } else if let type = values.contentType, let size = values.fileSize {
-                // Size gates nothing: native macOS copies a zero-byte file, so
-                // one crosses at `byteCount == 0`.
-                representations.append(
-                    ClipboardContent.Representation(
-                        uti: type.identifier, fileURL: source, byteCount: size, filename: filename))
-            } else {
-                skipped += 1
-            }
+                let values = try? source.resourceValues(forKeys: [.contentTypeKey, .isDirectoryKey, .fileSizeKey])
+            else { return nil }
+            if values.isDirectory == true { return sizeOf?(source) ?? 0 }
+            guard values.contentType != nil else { return nil }
+            return values.fileSize
         }
-        return FileIntake(representations: representations, skipped: skipped)
     }
 
     /// Where one item's bytes are read from, or `nil` when there are none to

@@ -143,25 +143,20 @@ struct ClipboardPasteboardReaderTests {
         }
     }
 
-    // MARK: - Resolving files
+    // MARK: - Sizing files
 
-    @Test("a symlink crosses as its target's bytes under the name that was copied")
-    func symlinkResolvesToTargetUnderTheCopiedName() throws {
+    @Test("a symlink is sized as what it resolves to")
+    func symlinkIsSizedAsItsTarget() throws {
         let target = scratch.url.appendingPathComponent("target.txt")
         try Data("target body".utf8).write(to: target)
         let link = scratch.url.appendingPathComponent("link.txt")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
 
-        let intake = ClipboardPasteboardReader.resolve(filesAt: [link])
-
-        #expect(intake.skipped == 0)
-        let rep = try #require(intake.representations.first)
-        #expect(rep.filename == "link.txt")
-        #expect(rep.byteCount == Data("target body".utf8).count)
+        #expect(ClipboardPasteboardReader.byteCount(ofItemAt: link) == Data("target body".utf8).count)
     }
 
-    @Test("a file this process cannot open is skipped, not offered as an empty one")
-    func unreadableFileIsSkipped() throws {
+    @Test("a file this process cannot open is not sized")
+    func unreadableFileHasNoSize() throws {
         let readable = scratch.url.appendingPathComponent("readable.txt")
         try Data("body".utf8).write(to: readable)
         let sealed = scratch.url.appendingPathComponent("sealed.txt")
@@ -172,37 +167,25 @@ struct ClipboardPasteboardReaderTests {
                 [.posixPermissions: 0o644], ofItemAtPath: sealed.path)
         }
 
-        let intake = ClipboardPasteboardReader.resolve(filesAt: [readable, sealed])
-
-        #expect(intake.representations.map(\.filename) == ["readable.txt"])
-        #expect(intake.skipped == 1)
+        #expect(ClipboardPasteboardReader.byteCount(ofItemAt: readable) == Data("body".utf8).count)
+        #expect(ClipboardPasteboardReader.byteCount(ofItemAt: sealed) == nil)
     }
 
-    @Test("a folder becomes a directory source rep sized by the injected walk")
-    func folderBecomesADirectorySourceRep() throws {
+    @Test("a folder is sized by the injected walk")
+    func folderIsSizedByTheWalk() throws {
         let folder = scratch.url.appendingPathComponent("Tree", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
 
-        let intake = ClipboardPasteboardReader.resolve(filesAt: [folder], sizeOf: { _ in 4_096 })
-
-        let rep = try #require(intake.representations.first)
-        #expect(rep.isDirectory)
-        #expect(rep.filename == "Tree")
-        #expect(rep.byteCount == 4_096)
+        #expect(ClipboardPasteboardReader.byteCount(ofItemAt: folder, sizeOf: { _ in 4_096 }) == 4_096)
     }
 
-    @Test("with no walk, a folder becomes a directory source rep of no size")
+    @Test("with no walk, a folder is sized 0 whatever it holds")
     func anUnwalkedFolderHasNoSize() throws {
         let folder = scratch.url.appendingPathComponent("Unwalked", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try Data("inside".utf8).write(to: folder.appendingPathComponent("inside.txt"))
 
-        let intake = ClipboardPasteboardReader.resolve(filesAt: [folder], sizeOf: nil)
-
-        let rep = try #require(intake.representations.first)
-        #expect(rep.isDirectory)
-        #expect(rep.directorySourceURL == folder)
-        #expect(rep.byteCount == 0)
+        #expect(ClipboardPasteboardReader.byteCount(ofItemAt: folder, sizeOf: nil) == 0)
     }
 
     // MARK: - The readability check

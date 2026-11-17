@@ -115,9 +115,8 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
         KernovaLogger.bootstrapProcessSink(logs.sink)
         Self.logger.log(.notice, "Kernova Guest Agent \(Self.versionLabel, privacy: .public) started")
 
-        // A live instance's sweep never reaches an exited agent's staging; only
-        // this launch-time reclaim bounds its growth, each item of the
-        // clipboard naming a file there withdrawn first.
+        // Only this launch-time reclaim removes an exited agent's staging, each
+        // item of the clipboard naming a file there withdrawn first.
         let stagingRoot = ClipboardFileStaging.processRoot
         stagingRoot.reclaimAbandonedRoots()
 
