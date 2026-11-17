@@ -56,11 +56,6 @@ final class SlotFixture {
     func contents(_ name: String) -> Data? {
         FileManager.default.contents(atPath: root + "/" + name)
     }
-
-    func mode(_ name: String) -> mode_t? {
-        var info = stat()
-        return lstat(root + "/" + name, &info) == 0 ? info.st_mode & 0o7777 : nil
-    }
 }
 
 /// Values a handler on another thread delivers, read in order.

@@ -170,7 +170,6 @@ struct GuestDragTakeTests {
         name: Data("a.txt".utf8), type: .plainText, isDirectory: false, sizeEstimate: 4)
     /// A plain file as a take lists it: the guest reads no dragged file before the drop, so unsized.
     private static let unsizedFile = DraggedOutItem(name: Data("a.txt".utf8), type: .plainText, isDirectory: false)
-    nonisolated private static let folder = DraggedOutItem(name: Data("Folder".utf8), type: .folder, isDirectory: true)
     private static let promise = DraggedOutItem(
         name: Data("Untitled.jpeg".utf8), type: .jpeg, isDirectory: false, isPromised: true)
     nonisolated private static let namedPromise = DraggedOutItem(

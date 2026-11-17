@@ -177,27 +177,27 @@ public enum DragItems {
 /// This side keeps at most one open: a new offer withdraws the previous one first, `ITEM_OFFER_REPLACED`, so
 /// the far side knows a newer one follows and a pull of the old one ends `ITEM_OFFER_STALE`. A copy
 /// (``ItemOffer/copy``) is not one of them: it withdraws nothing, and nothing but its own end withdraws it.
-public struct ClipboardOffers: FeatureMachine {
+struct ClipboardOffers: FeatureMachine {
     /// CLIPBOARD.
-    public static let feature = FeatureID.clipboard
+    static let feature = FeatureID.clipboard
 
     private let availability: Availability<NoParams>
 
     /// A machine advertising `availability`.
-    public init(availability: Availability<NoParams>) {
+    init(availability: Availability<NoParams>) {
         self.availability = availability
     }
 
     /// The `ClipboardCapability` advert, or the absence.
-    public var localAdvert: LocalAdvert {
+    var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: Availability(availability) { _ in Data() })
     }
 
     /// The machine sets no deadlines.
-    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
+    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     /// Resets every clipboard offer once CLIPBOARD is not usable.
-    public mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
         switch event {
         case .usabilityChanged, .policyChanged: connection.resetStreams(ofUnusable: Self.feature)
         default: break
@@ -206,7 +206,7 @@ public struct ClipboardOffers: FeatureMachine {
 
     /// Withdraws this side's previous clipboard offer, then offers `offer`; nil when opened, or why not. A copy
     /// withdraws nothing.
-    public func offer(_ offer: ItemOffer, items: inout ItemTransfer, connection: inout Connection)
+    func offer(_ offer: ItemOffer, items: inout ItemTransfer, connection: inout Connection)
         -> WireError?
     {
         for token in offer.copy == .notACopy ? items.offers.localTokens(of: Self.feature) : [] {
@@ -219,27 +219,27 @@ public struct ClipboardOffers: FeatureMachine {
 
 /// DROP on one connection: the host's offers of what was dropped onto the VM, any number at once. Only the
 /// host opens a drop offer; a peer's open is refused `UNSUPPORTED_KIND`.
-public struct DropOffers: FeatureMachine {
+struct DropOffers: FeatureMachine {
     /// DROP.
-    public static let feature = FeatureID.drop
+    static let feature = FeatureID.drop
 
     private let availability: Availability<NoParams>
 
     /// A machine advertising `availability`.
-    public init(availability: Availability<NoParams>) {
+    init(availability: Availability<NoParams>) {
         self.availability = availability
     }
 
     /// The `DropCapability` advert, or the absence.
-    public var localAdvert: LocalAdvert {
+    var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: Availability(availability) { _ in Data() })
     }
 
     /// The machine sets no deadlines.
-    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
+    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     /// Resets every drop offer once DROP is not usable.
-    public mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
         switch event {
         case .usabilityChanged, .policyChanged: connection.resetStreams(ofUnusable: Self.feature)
         default: break
@@ -247,7 +247,7 @@ public struct DropOffers: FeatureMachine {
     }
 
     /// Offers `offer` on DROP_OFFER; nil when opened, or why not.
-    public func offer(_ offer: ItemOffer, items: inout ItemTransfer, connection: inout Connection) -> WireError? {
+    func offer(_ offer: ItemOffer, items: inout ItemTransfer, connection: inout Connection) -> WireError? {
         items.offer(offer, kind: .dropOffer, connection: &connection)
     }
 }
@@ -282,9 +282,9 @@ public struct DropLanded: Sendable, Equatable {
 /// calls it off. A take is valid only while the drag offer it names is open, and each offer is taken at most once:
 /// the peer refuses any other take `DRAG_NOT_CURRENT` itself, asks its owner about the rest, and refuses a take
 /// whose offer ends before the owner ended it.
-public struct DragOffers: FeatureMachine {
+struct DragOffers: FeatureMachine {
     /// DRAG.
-    public static let feature = FeatureID.drag
+    static let feature = FeatureID.drag
 
     private struct Take: Sendable {
         var id: DragTakeID
@@ -312,18 +312,18 @@ public struct DragOffers: FeatureMachine {
     private var diagnostics: [Diagnostic] = []
 
     /// A machine for one connection, advertising `availability`.
-    public init(availability: Availability<NoParams>, generation: ConnectionGeneration) {
+    init(availability: Availability<NoParams>, generation: ConnectionGeneration) {
         self.availability = availability
         self.generation = generation
     }
 
     /// The `DragCapability` advert, or the absence.
-    public var localAdvert: LocalAdvert {
+    var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: Availability(availability) { _ in Data() })
     }
 
     /// The machine sets no deadlines.
-    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
+    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     mutating func takeOutputs() -> (events: [DragTakeEvent], diagnostics: [Diagnostic]) {
         defer {
@@ -335,7 +335,7 @@ public struct DragOffers: FeatureMachine {
 
     /// Offers `offer`, a drag in progress, on DRAG_OFFER; nil when opened, or why not. It lists no items: its
     /// take's first `TARGETED` does.
-    public func offer(_ offer: ItemOffer, items: inout ItemTransfer, connection: inout Connection) -> WireError? {
+    func offer(_ offer: ItemOffer, items: inout ItemTransfer, connection: inout Connection) -> WireError? {
         if let refusal = connection.openRefusal(.dragOffer) { return refusal }
         guard offer.items.isEmpty else {
             return WireError(.internal, debugDetail: "a drag offer lists no items; its take does")
@@ -345,7 +345,7 @@ public struct DragOffers: FeatureMachine {
 
     /// Host: takes the far side's open drag offer of `token`, held whole; the take's reports and its one
     /// `.ended` follow.
-    public mutating func take(_ token: Data, items: ItemTransfer, connection: inout Connection) -> Result<
+    mutating func take(_ token: Data, items: ItemTransfer, connection: inout Connection) -> Result<
         DragTakeID, WireError
     > {
         guard items.offers.remoteOffer(token)?.feature == Self.feature else {
@@ -362,7 +362,7 @@ public struct DragOffers: FeatureMachine {
     }
 
     /// Host: tells the peer `control` on take `id`. Dropped once the take has ended.
-    public mutating func control(_ id: DragTakeID, _ control: DragTakeControl, connection: inout Connection) {
+    mutating func control(_ id: DragTakeID, _ control: DragTakeControl, connection: inout Connection) {
         guard id.generation == generation, opened.contains(where: { $0.id == id }) else { return }
         var message = Kernova_V2_DragTakeControl()
         switch control {
@@ -377,7 +377,7 @@ public struct DragOffers: FeatureMachine {
     }
 
     /// Host: calls take `id` off, which the peer hears before any release. Dropped once the take has ended.
-    public mutating func cancel(_ id: DragTakeID, connection: inout Connection) {
+    mutating func cancel(_ id: DragTakeID, connection: inout Connection) {
         guard id.generation == generation, opened.contains(where: { $0.id == id }), connection.canReset(id.stream)
         else { return }
         connection.reset(id.stream, WireError(.cancelled, debugDetail: "the host called the take off"))
@@ -385,7 +385,7 @@ public struct DragOffers: FeatureMachine {
 
     /// Peer: answers an asked take. An answer to a take already ended is dropped. The first `TARGETED` gives
     /// the taken offer its items and lists them; a later one lists none.
-    public mutating func answer(
+    mutating func answer(
         _ id: DragTakeID, _ answer: DragTakeAnswer, items: inout ItemTransfer, connection: inout Connection
     ) {
         guard id.generation == generation, let index = asked.firstIndex(where: { $0.id == id }) else { return }
@@ -427,7 +427,7 @@ public struct DragOffers: FeatureMachine {
     }
 
     /// Resets every drag stream once DRAG is not usable.
-    public mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
         switch event {
         case .usabilityChanged, .policyChanged:
             connection.resetStreams(ofUnusable: Self.feature)

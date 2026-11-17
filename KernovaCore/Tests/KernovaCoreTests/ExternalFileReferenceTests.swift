@@ -51,30 +51,6 @@ struct ExternalFileReferenceTests {
         return config
     }
 
-    // MARK: - Fixture completeness
-
-    /// Every non-nil bookmark `Data` reachable from `value`, found by property
-    /// name (`bookmark`, or any label containing `Bookmark`) rather than by a
-    /// hand-written list of fields.
-    ///
-    /// Scope: this catches a bookmark-carrying field the fixture *populates*
-    /// and the projection drops. A field the fixture leaves nil reflects as an
-    /// empty optional and is invisible here — ``fixtureCoversEveryKind()`` is
-    /// what forces the fixture to grow.
-    private static func storedBookmarks(in value: Any, label: String? = nil) -> [Data] {
-        let mirror = Mirror(reflecting: value)
-        if mirror.displayStyle == .optional {
-            guard let wrapped = mirror.children.first?.value else { return [] }
-            return storedBookmarks(in: wrapped, label: label)
-        }
-        if let label, label.localizedCaseInsensitiveContains("bookmark"),
-            let bookmark = value as? Data
-        {
-            return [bookmark]
-        }
-        return mirror.children.flatMap { storedBookmarks(in: $0.value, label: $0.label) }
-    }
-
     // MARK: - Shape
 
     @Test("The projection yields one reference per populated external field")

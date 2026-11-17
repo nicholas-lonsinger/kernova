@@ -8,7 +8,6 @@ import Dispatch
 import KernovaAgentCore
 import KernovaAgentHost
 import KernovaAgentRuntime
-import KernovaSynchronization
 import KernovaWire
 import Testing
 

@@ -70,9 +70,6 @@ final class TestScratchLedger: Sendable {
 
     private let state = Locked(State())
 
-    /// Every directory recorded so far, in minting order.
-    var recordedURLs: [URL] { state.withLock { $0.urls } }
-
     /// Runs `body` with a fresh ledger as ``current``, then removes every
     /// directory recorded in it, whether `body` returned or threw.
     ///

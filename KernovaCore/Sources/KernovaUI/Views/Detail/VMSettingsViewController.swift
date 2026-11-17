@@ -1,7 +1,6 @@
 import AVFoundation
 import AppKit
 import KernovaCore
-import KernovaKit
 import KernovaLogging
 import UniformTypeIdentifiers
 

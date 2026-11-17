@@ -3,7 +3,6 @@ import KernovaTestSupport
 import System
 import Testing
 
-@testable import KernovaCLICore
 @testable import KernovaCommandModel
 
 /// Which command socket a copy of Kernova answers on: one per copy, named the

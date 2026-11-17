@@ -136,13 +136,6 @@ struct VMScriptingGatewayTests {
         ScriptEvent.every("KvVM", whose: ScriptEvent.equals(firstDiskName, NSAppleEventDescriptor(string: name)))
     }
 
-    /// `every virtual machine whose name of storage disk 1 is not "<name>"`.
-    private static func vms(whoseFirstDiskIsNot name: String) -> NSAppleEventDescriptor {
-        ScriptEvent.every(
-            "KvVM",
-            whose: ScriptEvent.not(ScriptEvent.equals(firstDiskName, NSAppleEventDescriptor(string: name))))
-    }
-
     /// `network "<name>"`.
     private static func network(named name: String) -> NSAppleEventDescriptor {
         ScriptEvent.element("KvNw", named: name)

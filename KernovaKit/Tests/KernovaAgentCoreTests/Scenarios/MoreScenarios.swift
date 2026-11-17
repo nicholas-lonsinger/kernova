@@ -117,10 +117,6 @@ enum IdentityScenarios {
 }
 
 enum LogScenarios {
-    static func record(_ world: SimWorld, _ key: String) {
-        world.marks[key] = Int(world.now / 1_000_000)
-    }
-
     static let all: [Scenario] = [
         Scenario(
             name: "logs: 10,000 records against a reader stall, then recovery",

@@ -105,7 +105,7 @@ final class GuestClipboard {
                 if case .pullEnded(_, let id, let result) = event { return exchange.pullEnded(id, result) }
                 MainActorBridge.async { exchange.handle(event, on: link) }
             },
-            content: { exchange.content($0, $1, $2) },
+            content: { id, request, _ in exchange.content(id, request) },
             policy: { [weak self] policy in MainActorBridge.async { self?.apply(policy) } })
     }
 

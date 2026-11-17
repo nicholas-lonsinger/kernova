@@ -110,10 +110,6 @@ extension CoreUnits {
             run.peerEffects.compactMap { if case .logs(let effect) = $0 { effect } else { nil } }
         }
 
-        static func modes(_ run: HostileRun) -> [LogRingMode] {
-            logEffects(run).compactMap { if case .mode(let mode) = $0 { mode } else { nil } }
-        }
-
         static func readies(_ run: HostileRun) -> Int {
             logEffects(run).count { $0 == .ready }
         }

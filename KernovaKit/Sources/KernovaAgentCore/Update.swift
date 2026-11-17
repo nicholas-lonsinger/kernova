@@ -92,7 +92,7 @@ public enum UpdateServeEvent: Sendable, Equatable {
 
 /// The peer's update client: decides when to pull and checks the
 /// byte count; the rejected hash comes from the installer's reports only.
-public struct UpdateClient: FeatureMachine {
+struct UpdateClient: FeatureMachine {
     /// UPDATE.
     public static let feature = FeatureID.update
 
@@ -117,19 +117,19 @@ public struct UpdateClient: FeatureMachine {
     private(set) var diagnostics: [Diagnostic] = []
 
     /// A client for an install whose payload hash is `ownHash`.
-    public init(availability: Availability<UpdateOffer>, ownHash: Data, generation: ConnectionGeneration) {
+    init(availability: Availability<UpdateOffer>, ownHash: Data, generation: ConnectionGeneration) {
         self.availability = availability
         self.ownHash = ownHash
         self.generation = generation
     }
 
     /// The `UpdateCapability` advert, or the installer's absence.
-    public var localAdvert: LocalAdvert {
+    var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: Availability(availability) { $0.encodedCapability })
     }
 
     /// The client sets no deadlines.
-    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
+    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     mutating func takeOutputs() -> (effects: [PeerEffect], diagnostics: [Diagnostic]) {
         defer {
@@ -146,7 +146,7 @@ public struct UpdateClient: FeatureMachine {
     }
 
     /// Handles a connection event.
-    public mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
         switch event {
         case .sessionEstablished, .usabilityChanged, .slotFreed:
             consider(&connection)
@@ -185,7 +185,7 @@ public struct UpdateClient: FeatureMachine {
     }
 
     /// Handles the installer's report.
-    public mutating func handle(input: UpdateInput, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(input: UpdateInput, connection: inout Connection) {
         switch input {
         case .availability(let availability):
             self.availability = availability
@@ -255,7 +255,7 @@ public struct UpdateClient: FeatureMachine {
 /// more than a read asked for, or bytes no read asked for has failed: the pull
 /// is RESET `READ_FAILED`, which the next connection retries, rather than
 /// reaching the peer as a payload of the wrong size.
-public struct UpdateServer: FeatureMachine {
+struct UpdateServer: FeatureMachine {
     /// UPDATE.
     public static let feature = FeatureID.update
 
@@ -277,17 +277,17 @@ public struct UpdateServer: FeatureMachine {
     private(set) var diagnostics: [Diagnostic] = []
 
     /// A server for one connection.
-    public init(generation: ConnectionGeneration) {
+    init(generation: ConnectionGeneration) {
         self.generation = generation
     }
 
     /// The host advertises UPDATE available with empty params.
-    public var localAdvert: LocalAdvert {
+    var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: .available(Data()))
     }
 
     /// The server sets no deadlines.
-    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
+    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     mutating func takeOutputs() -> (events: [HostEvent], effects: [HostEffect], diagnostics: [Diagnostic]) {
         defer {
@@ -299,7 +299,7 @@ public struct UpdateServer: FeatureMachine {
     }
 
     /// Handles a connection event.
-    public mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
         switch event {
         case .opened(let stream, let body):
             let request = (try? Kernova_V2_UpdatePull(serializedBytes: body)) ?? Kernova_V2_UpdatePull()

@@ -27,7 +27,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     private struct State: Sendable {
         var changeCount = 0
         var prepareCount = 0
-        var writeAttempts = 0
         var lastPrepareOptions: NSPasteboard.ContentsOptions?
         var items: [PromisedItem] = []
         var writeFailuresRemaining = 0
@@ -71,9 +70,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         state.withLock { $0.lastPrepareOptions }
     }
 
-    /// How many times `writeItems(_:)` has been attempted, failures included.
-    public var writeAttempts: Int { state.withLock { $0.writeAttempts } }
-
     /// How many promised providers have been fired, for a test proving one was
     /// *not*.
     public var providerInvocations: Int { state.withLock { $0.providerInvocations } }
@@ -92,9 +88,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     public var dataByItem: [[NSPasteboard.PasteboardType: Data]] {
         state.withLock { $0.items.map(\.data) }
     }
-
-    /// How many promised items the last successful write registered.
-    public var promisedItemCount: Int { state.withLock { $0.items.count } }
 
     /// Makes the next `times` `writeItems(_:)` calls fail, modelling an
     /// OS-level pasteboard write failure.
@@ -126,7 +119,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         deliverOwedFinishes()
         let (written, displaced) = state.withLock {
             state -> (Bool, [any NSPasteboardItemDataProvider & Sendable]) in
-            state.writeAttempts += 1
             guard state.writeFailuresRemaining == 0 else {
                 state.writeFailuresRemaining -= 1
                 return (false, [])

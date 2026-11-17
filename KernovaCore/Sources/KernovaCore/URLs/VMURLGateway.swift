@@ -1,6 +1,5 @@
 import Foundation
 import KernovaCommandModel
-import KernovaKit
 import KernovaLogging
 
 /// The `kernova:` link front door: everything a clicked link asks of Kernova

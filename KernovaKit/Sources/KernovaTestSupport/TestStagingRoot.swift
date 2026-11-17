@@ -1,6 +1,5 @@
 import Foundation
 import KernovaKit
-import KernovaSynchronization
 
 /// A ``ProcessStagingRoot`` under a parent no other test shares, removed with
 /// everything under it when the test case that made it ends.
@@ -12,9 +11,6 @@ public struct TestStagingRoot: Sendable {
 
     /// The parent ``root`` sits under.
     public var parent: URL { scratch.url }
-
-    /// Every removal ``root`` handed its retirement that has run, in order; empty for a root with none.
-    public var removed: [URL] { retirement?.removed ?? [] }
 
     /// Fires once each removal ``root``'s retirement handed back has run; await it instead of polling.
     public var removals: AsyncGate { retirement?.changed ?? AsyncGate() }
@@ -28,7 +24,7 @@ public struct TestStagingRoot: Sendable {
         retirement = nil
     }
 
-    /// A root under a fresh parent whose removals go through `retirement`, each one seen in ``removed`` once it
+    /// A root under a fresh parent whose removals go through `retirement`, each one firing ``removals`` once it
     /// ran; touches no disk.
     public init(retirement: some StagedContentRetirement) {
         let observed = ObservedRetirement(retirement)
@@ -43,38 +39,30 @@ public struct TestStagingRoot: Sendable {
     }
 }
 
-/// A retirement handing everything to another, recording each removal once it ran.
+/// A retirement handing everything to another, announcing each removal once it ran.
 private final class ObservedRetirement: StagedContentRetirement {
     let changed = AsyncGate()
     private let inner: any StagedContentRetirement
-    private let done = Locked<[URL]>([])
 
     init(_ inner: any StagedContentRetirement) {
         self.inner = inner
     }
 
-    var removed: [URL] { done.withLock { $0 } }
-
     func retire(_ directories: [URL], then remove: @escaping @Sendable () -> Void) {
         inner.retire(directories) { [self] in
             remove()
-            ran(directories)
+            changed.notify()
         }
     }
 
     func retireAbandoned(_ roots: [URL], then remove: @escaping @Sendable () -> Void) {
         inner.retireAbandoned(roots) { [self] in
             remove()
-            ran(roots)
+            changed.notify()
         }
     }
 
     @MainActor func processEnding(_ root: URL) {
         inner.processEnding(root)
-    }
-
-    private func ran(_ urls: [URL]) {
-        done.withLock { $0 += urls }
-        changed.notify()
     }
 }

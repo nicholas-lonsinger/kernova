@@ -13,9 +13,9 @@ import MachO
 /// format-4 payload is a container the slot's app bundle was landed from, so, unlike the Linux agent's single
 /// executable, nothing on disk can be hashed back into it. An agent run from no slot, as a development build
 /// run in place is, claims no hash and no scope.
-public enum DarwinIdentity {
+enum DarwinIdentity {
     /// The claim of an agent in `role` labelled `versionLabel`.
-    public static func current(role: PeerRole, versionLabel: String) -> PeerClaim {
+    static func current(role: PeerRole, versionLabel: String) -> PeerClaim {
         let executable = executablePath()
         let running = executable.flatMap(slot(ofExecutable:))
         var hash = Data()
@@ -37,7 +37,7 @@ public enum DarwinIdentity {
     }
 
     /// The architecture this binary runs on.
-    public static var architecture: Architecture {
+    static var architecture: Architecture {
         #if arch(arm64)
         .arm64
         #elseif arch(x86_64)
@@ -51,12 +51,12 @@ public enum DarwinIdentity {
     ///
     /// Reads the decomposed `operatingSystemVersion`: `operatingSystemVersionString` is human-readable,
     /// localized, and documented by Apple as not for parsing.
-    public static var osVersion: String {
+    static var osVersion: String {
         MacOSVersion(ProcessInfo.processInfo.operatingSystemVersion).description
     }
 
     /// The OS build, `kern.osversion`: "24D70".
-    public static var osBuild: String {
+    static var osBuild: String {
         var size = 0
         guard sysctlbyname("kern.osversion", nil, &size, nil, 0) == 0, size > 0 else { return "" }
         var buffer = [CChar](repeating: 0, count: size)
@@ -66,7 +66,7 @@ public enum DarwinIdentity {
 
     /// This process's executable, every symlink resolved: launchd runs it through the install's `current`
     /// link, which `realpath(3)` resolves to the slot.
-    public static func executablePath() -> String? {
+    static func executablePath() -> String? {
         var size: UInt32 = 0
         _ = _NSGetExecutablePath(nil, &size)
         var buffer = [CChar](repeating: 0, count: Int(size) + 1)
@@ -79,7 +79,7 @@ public enum DarwinIdentity {
     /// when the root is `systemRoot` and `.user` anywhere else. Anything else is `.unspecified`, as a
     /// development build run in place is. Every path is canonical, as realpath(3) gives it; a nil system root
     /// does not exist.
-    public static func scope(ofExecutable executable: String, systemRoot: String?, isFile: (String) -> Bool)
+    static func scope(ofExecutable executable: String, systemRoot: String?, isFile: (String) -> Bool)
         -> InstallScope
     {
         guard let slot = slot(ofExecutable: executable), isFile(slot.root + "/state.json") else { return .unspecified }
@@ -88,7 +88,7 @@ public enum DarwinIdentity {
 
     /// The install root and slot `executable` sits in when its path has the slot layout's shape,
     /// `<root>/slots/<slot>/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent`; nil otherwise.
-    public static func slot(ofExecutable executable: String) -> (root: String, slot: String)? {
+    static func slot(ofExecutable executable: String) -> (root: String, slot: String)? {
         let suffix = "/" + MacInstallLayout.appName + "/" + MacInstallLayout.executable
         guard executable.hasSuffix(suffix) else { return nil }
         var components = executable.dropLast(suffix.count).split(separator: "/", omittingEmptySubsequences: false)
@@ -101,7 +101,7 @@ public enum DarwinIdentity {
     }
 
     /// The install root and slot this process's executable sits in; nil when it sits in none.
-    public static func runningSlot() -> (root: String, slot: String)? {
+    static func runningSlot() -> (root: String, slot: String)? {
         executablePath().flatMap(slot(ofExecutable:))
     }
 

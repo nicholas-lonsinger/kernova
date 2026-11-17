@@ -285,14 +285,6 @@ struct VMToolbarManagerTests {
         item(raw, in: toolbar)?.view as? ClipboardToolbarButton
     }
 
-    /// Has a console peer carry `instance`'s clipboard through its hub.
-    private func carryClipboard(on instance: VMInstance) {
-        let peer = PeerHandle(rawValue: 1)
-        instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), consolePeers: [.clipboard: peer]))
-        instance.hubClipboard.setConsolePeer(peer)
-    }
-
     @Test(
         "Each clipboard command's item is a view-backed button sending its action down the responder chain",
         arguments: [

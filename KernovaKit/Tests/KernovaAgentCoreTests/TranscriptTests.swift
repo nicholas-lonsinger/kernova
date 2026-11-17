@@ -4,10 +4,8 @@ import FoundationEssentials
 import Foundation
 #endif
 
-import KernovaAgentCore
 import KernovaAgentSimulation
 import KernovaDigest
-import KernovaWire
 import Testing
 
 /// The golden transcripts, read from the source tree beside this file.

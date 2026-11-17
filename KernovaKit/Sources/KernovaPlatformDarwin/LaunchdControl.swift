@@ -7,17 +7,17 @@ import KernovaAgentInstall
 ///
 /// The check runs as a job of the same domain — the user's GUI session, or `system` — so `launchctl list`,
 /// which lists the caller's domain, lists the peer's job.
-public struct LaunchdServiceManager: ServiceManager {
+struct LaunchdServiceManager: ServiceManager {
     /// The peer's job.
-    public let label: String
+    let label: String
 
     /// The manager of the job `label`.
-    public init(label: String) {
+    init(label: String) {
         self.label = label
     }
 
     /// The peer's process, from `launchctl list`; 0 when its job is not running.
-    public func peerProcessID() throws -> UInt32 {
+    func peerProcessID() throws -> UInt32 {
         let arguments = ["launchctl", "list"]
         let (status, output) = Installer.capture(arguments)
         guard status == 0 else { throw Installer.Failure.command(arguments: arguments, status: status) }
@@ -39,15 +39,15 @@ public struct LaunchdServiceManager: ServiceManager {
 
 /// Stopping a launchd job and waiting until launchd has let it go, as an install needs before it bootstraps the
 /// job's label again.
-public enum LaunchdStop {
+enum LaunchdStop {
     /// How long a job is given to go.
-    public static let limit = DispatchTimeInterval.seconds(10)
+    static let limit = DispatchTimeInterval.seconds(10)
 
     /// Boots `serviceTarget` (`gui/<uid>/<label>` or `system/<label>`) out, then waits until launchd no longer
     /// knows it: `launchctl print` of it fails, as launchctl(1)'s EXIT STATUS gives any subcommand that does not
     /// succeed. True once it is gone, a job that was never loaded included; false when it is still there at
     /// `limit`.
-    public static func stop(_ serviceTarget: String, limit: DispatchTimeInterval = limit) -> Bool {
+    static func stop(_ serviceTarget: String, limit: DispatchTimeInterval = limit) -> Bool {
         _ = quiet(["launchctl", "bootout", serviceTarget])
         let deadline = DispatchTime.now() + limit
         while quiet(["launchctl", "print", serviceTarget]) == 0 {

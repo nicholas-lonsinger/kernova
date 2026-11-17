@@ -59,13 +59,6 @@ struct USBAccessoryInfoTests {
             node: node, claimedBy: held)
     }
 
-    /// A node reporting a serial, in a named receptacle — the shape every
-    /// question about which unit a key names is asked in.
-    private func node(serial: String, in receptacle: String) -> USBAccessoryNodeProperties {
-        USBAccessoryNodeProperties(
-            serialNumber: serial, serialNumberIndex: 3, ioPortPath: receptacle)
-    }
-
     // MARK: - Device Descriptor Parsing
 
     @Test("Parses every field little-endian")

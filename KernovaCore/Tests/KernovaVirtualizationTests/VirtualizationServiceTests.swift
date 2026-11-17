@@ -148,7 +148,6 @@ struct VirtualizationServiceTests {
     /// What a session's marker read at some moment mid-operation.
     @MainActor
     private final class MarkerRecord {
-        var atResume: Bool?
         var settlements = 0
     }
 

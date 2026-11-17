@@ -24,12 +24,6 @@ final class MockFileSystem: FileSystemOperating {
         var removedURLs: [URL] = []
         var trashError: (any Error)?
         var removeError: (any Error)?
-        /// What a held trash waits on; `nil` while no hold is set.
-        var trashHold: DispatchSemaphore?
-        /// Trashes that took the hold and have not yet been signalled.
-        var unreleasedTrashes = 0
-        /// Trashes still parked, signalled or not.
-        var parkedTrashes = 0
     }
 
     private let state = Mutex(State())
@@ -60,50 +54,6 @@ final class MockFileSystem: FileSystemOperating {
         state.withLock { $0.removeError = error }
     }
 
-    // MARK: - Trash Hold
-
-    /// Fires once a `trashItem` call has parked, so a test can observe what
-    /// holds while the trash is in flight.
-    let trashParked = AsyncGate()
-
-    var isTrashParked: Bool { state.withLock { $0.parkedTrashes > 0 } }
-
-    /// Parks every later `trashItem` call until ``resumeTrash()``.
-    ///
-    /// The call blocks the thread it arrives on, because `trashItem` is
-    /// synchronous — production trashes from a detached task, never from the
-    /// main actor a test runs on.
-    func holdTrash() {
-        state.withLock { state in
-            if state.trashHold == nil { state.trashHold = DispatchSemaphore(value: 0) }
-        }
-    }
-
-    /// Releases every parked `trashItem` call.
-    func resumeTrash() {
-        let (hold, parked) = state.withLock { state in
-            defer {
-                state.trashHold = nil
-                state.unreleasedTrashes = 0
-            }
-            return (state.trashHold, state.unreleasedTrashes)
-        }
-        for _ in 0..<parked { hold?.signal() }
-    }
-
-    private func waitOutTrashHold() {
-        let hold = state.withLock { state -> DispatchSemaphore? in
-            guard let hold = state.trashHold else { return nil }
-            state.unreleasedTrashes += 1
-            state.parkedTrashes += 1
-            return hold
-        }
-        guard let hold else { return }
-        trashParked.notify()
-        hold.wait()
-        state.withLock { $0.parkedTrashes -= 1 }
-    }
-
     // MARK: - FileSystemOperating
 
     func fileExists(atPath _: String) -> Bool {
@@ -111,7 +61,6 @@ final class MockFileSystem: FileSystemOperating {
     }
 
     func trashItem(at url: URL) throws {
-        waitOutTrashHold()
         try state.withLock { state in
             if let error = state.trashError { throw error }
             state.trashedURLs.append(url)

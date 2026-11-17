@@ -1,6 +1,5 @@
 import CoreServices
 import Foundation
-import KernovaKit
 
 extension CommandError {
     /// The Apple event error number a script reads this refusal as.

@@ -7,7 +7,7 @@ import KernovaLogging
 import KernovaSynchronization
 
 /// Why a vsock connect to the host did not complete: `.transient` is worth retrying, `.permanent` never is.
-public enum VsockConnectFailure: Error, Sendable, Equatable {
+enum VsockConnectFailure: Error, Sendable, Equatable {
     /// Retry-able: the host not listening yet, transient kernel resource pressure.
     case transient(String)
     /// Not retry-able: the kernel has no `AF_VSOCK` support.
@@ -24,17 +24,17 @@ public enum VsockConnectFailure: Error, Sendable, Equatable {
 /// docs/research/2026-08-06-macos14-vsock-state-blind.md) — so the split sits at the oldest OS the
 /// non-blocking idiom is proven on. A socket that reached the connected state through the blocking connect
 /// behaves normally (docs/research/2026-08-08-macos13-14-vsock-blocking-socket-timeouts.md).
-public enum DarwinVsockConnect {
+enum DarwinVsockConnect {
     private static let logger = KernovaLogger(subsystem: "app.kernova.macosagent", category: "VsockConnect")
 
     /// Ceiling on one connect attempt. vsock is local-only with no SYN dance: a connect is normally immediate
     /// success or immediate `ECONNREFUSED`, so 3 s is a generous ceiling.
-    public static let connectTimeoutSeconds: Int = 3
+    static let connectTimeoutSeconds: Int = 3
 
     /// Opens an `AF_VSOCK / SOCK_STREAM` socket and connects it to the host's `port`, in blocking mode;
     /// `label` names the attempt in the log and keeps its parked-connect budget in `gate` apart from other
     /// labels'.
-    public static func connect(
+    static func connect(
         port: UInt32, label: String, gate: BlockingConnectGate = .process
     ) -> Result<Int32, VsockConnectFailure> {
         let fd = socket(AF_VSOCK, SOCK_STREAM, 0)
@@ -80,7 +80,7 @@ public enum DarwinVsockConnect {
 
     /// Classifies a `socket(AF_VSOCK)` errno as permanent or transient: `EAFNOSUPPORT` and `EPROTONOSUPPORT`
     /// mean the kernel has no `AF_VSOCK` support and will never succeed; everything else may clear up.
-    public static func classifySocketErrno(_ err: Int32, label: String) -> VsockConnectFailure {
+    static func classifySocketErrno(_ err: Int32, label: String) -> VsockConnectFailure {
         switch err {
         case EAFNOSUPPORT, EPROTONOSUPPORT:
             logger.log(
@@ -96,7 +96,7 @@ public enum DarwinVsockConnect {
     }
 
     /// What a bounded blocking `connect(2)` did.
-    public enum BlockingConnectOutcome: Equatable, Sendable {
+    enum BlockingConnectOutcome: Equatable, Sendable {
         case connected
         case failed(errno: Int32)
         /// The deadline passed with the syscall still in the kernel. The worker thread owns `fd` and closes it
@@ -128,7 +128,7 @@ public enum DarwinVsockConnect {
     /// (docs/research/2026-08-02-macos12-vsock-blocking-connect-parks.md), which on the caller's own thread
     /// strands it for the life of the process. Abandoning a thread rather than closing its socket keeps fd
     /// ownership unambiguous: nothing is closed while a syscall still holds it.
-    public static func boundedBlockingConnect(
+    static func boundedBlockingConnect(
         fd: Int32, label: String, port: UInt32, gate: BlockingConnectGate = .process,
         deadline: TimeInterval = TimeInterval(connectTimeoutSeconds),
         connectCall: @escaping @Sendable () -> Int32
@@ -293,7 +293,7 @@ public enum DarwinVsockConnect {
 ///
 /// Exactly one of `finish` and `abandon` sees the other as unfinished, so the fd has exactly one owner and is
 /// never closed while the call is still in flight.
-public final class BlockingConnectHandoff: Sendable {
+final class BlockingConnectHandoff: Sendable {
     private struct State: Sendable {
         var recorded: Int32?
         var abandoned = false
@@ -302,11 +302,11 @@ public final class BlockingConnectHandoff: Sendable {
     private let state = Locked(State())
 
     /// A handoff with nothing recorded.
-    public init() {}
+    init() {}
 
     /// Records the syscall's `errno` (`0` on success): `true` while the waiter is still there — it takes the
     /// socket; `false` once the waiter has abandoned the attempt, leaving the caller holding the socket.
-    public func finish(errno: Int32) -> Bool {
+    func finish(errno: Int32) -> Bool {
         state.withLock { state in
             state.recorded = errno
             return !state.abandoned
@@ -315,7 +315,7 @@ public final class BlockingConnectHandoff: Sendable {
 
     /// Gives up on a syscall that has outrun its deadline: `true` when it had not finished — the worker now
     /// owns the socket; `false` when it beat the deadline, leaving `outcome` readable.
-    public func abandon() -> Bool {
+    func abandon() -> Bool {
         state.withLock { state in
             guard state.recorded == nil else { return false }
             state.abandoned = true
@@ -324,7 +324,7 @@ public final class BlockingConnectHandoff: Sendable {
     }
 
     /// The recorded `errno`, or `nil` while the syscall is still in flight.
-    public var outcome: Int32? { state.withLock { $0.recorded } }
+    var outcome: Int32? { state.withLock { $0.recorded } }
 }
 
 /// Rations blocking `connect(2)` attempts per label once earlier attempts have parked in the kernel.

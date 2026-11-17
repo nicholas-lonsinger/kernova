@@ -469,7 +469,7 @@ package final class SimWorld {
         if let next = pipe.nextReadable, next <= now {
             let size = rng.int(in: 1...pipe.parameters.maxRead)
             let bytes = pipe.read(upTo: size, now: now)
-            let streamFrames = link.observer.delivered(bytes, to: reader, world: self)
+            let streamFrames = link.observer.delivered(bytes, to: reader)
             let before = (events: link.pendingEventCount(reader), streams: link.footprint(reader)?.streamRecords ?? 0)
             let local = localNow(process(of: link, reader))
             switch reader {
@@ -477,7 +477,7 @@ package final class SimWorld {
             case .peer: link.peer?.receive(bytes, now: local)
             }
             checker.pendingEvents(
-                link, reader, before: before.events, streamFrames: streamFrames, streams: before.streams, world: self)
+                link, reader, before: before.events, streamFrames: streamFrames, streams: before.streams)
             drain(link, reader)
             tryWrite(link, reader == .host ? .peer : .host)
             scheduleRead(link, reader)

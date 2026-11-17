@@ -236,7 +236,7 @@ public struct HostEndpoint: Sendable {
     public mutating func handle(_ input: ItemTransferInput, now: CoreInstant) {
         connection.tick(now)
         route(now)
-        items.handle(input, connection: &connection, now: now)
+        items.handle(input, connection: &connection)
         route(now)
     }
 

@@ -77,16 +77,6 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     /// How many times `prepareForNewContents(with:)` has run.
     public var prepareCount: Int { writer.prepareCount }
 
-    /// How many times `writeItems(_:)` has been attempted, failures included.
-    public var writeAttempts: Int { writer.writeAttempts }
-
-    /// Number of promised pasteboard items the last write registered.
-    public var promisedItemCount: Int { writer.promisedItemCount }
-
-    /// Options passed to the most recent `prepareForNewContents(with:)`; `nil`
-    /// until the first promise write.
-    public var lastPrepareOptions: NSPasteboard.ContentsOptions? { writer.lastPrepareOptions }
-
     /// The data each written item holds now, in item order — what a write
     /// placed as real data rather than promised.
     public var dataByItem: [[NSPasteboard.PasteboardType: Data]] { writer.dataByItem }

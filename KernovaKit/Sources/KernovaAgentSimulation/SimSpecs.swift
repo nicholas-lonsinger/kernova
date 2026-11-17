@@ -48,8 +48,6 @@ package struct PowerScript: Sendable {
         self.steps = steps
         self.onCancel = onCancel
     }
-
-    package static let absent = PowerScript(offer: .absent(.notImplemented, debugDetail: ""), steps: [])
 }
 
 /// A fake installer's script and slot metadata.

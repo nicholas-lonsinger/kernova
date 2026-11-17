@@ -150,21 +150,6 @@ struct ConfigFileDecodingTests {
         #expect(repaired.pairings == [pairings[0], pairings[2]])
     }
 
-    /// A preference whose value is a record, as a config file may hold one.
-    private struct Holder: Codable, Equatable {
-        struct Inner: Codable, Equatable {
-            var mode: VMNetworkMode
-        }
-        var inner: Inner
-
-        init(inner: Inner) { self.inner = inner }
-
-        init(from decoder: any Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            inner = try c.decode(Inner.self, forKey: .inner, default: Inner(mode: .nat), in: decoder)
-        }
-    }
-
     // MARK: - Facts
 
     private func snapshotRecordJSON(kind: String?) -> Data {

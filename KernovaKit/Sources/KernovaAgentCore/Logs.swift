@@ -33,7 +33,7 @@ public enum LogDelivery: Sendable, Equatable {
 // MARK: - Peer
 
 /// The peer's log forwarder: at most one LOG_FORWARD per connection.
-public struct LogForwarder: FeatureMachine {
+struct LogForwarder: FeatureMachine {
     /// LOGS.
     public static let feature = FeatureID.logs
 
@@ -50,17 +50,17 @@ public struct LogForwarder: FeatureMachine {
     private(set) var diagnostics: [Diagnostic] = []
 
     /// A forwarder; `availability` is absent when the build forwards no logs.
-    public init(availability: Availability<NoParams>) {
+    init(availability: Availability<NoParams>) {
         self.availability = availability
     }
 
     /// The `LogCapability` advert, or the absence.
-    public var localAdvert: LocalAdvert {
+    var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: Availability(availability) { _ in Data() })
     }
 
     /// The forwarder sets no deadlines.
-    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
+    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     mutating func takeOutputs() -> (effects: [PeerEffect], diagnostics: [Diagnostic]) {
         defer {
@@ -71,7 +71,7 @@ public struct LogForwarder: FeatureMachine {
     }
 
     /// Handles a connection event.
-    public mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
         switch event {
         case .policyChanged:
             if let policy = connection.currentPolicy {
@@ -108,7 +108,7 @@ public struct LogForwarder: FeatureMachine {
     }
 
     /// Handles the sink's and the runtime's input.
-    public mutating func handle(input: LogInput, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(input: LogInput, connection: inout Connection) {
         switch input {
         case .recordsAvailable:
             recordsMayWait = true
@@ -161,7 +161,7 @@ public struct LogForwarder: FeatureMachine {
 // MARK: - Host
 
 /// The host's log receiver.
-public struct LogReceiver: FeatureMachine {
+struct LogReceiver: FeatureMachine {
     /// LOGS.
     public static let feature = FeatureID.logs
     /// The credit-return cap: bytes per second, and the burst.
@@ -172,15 +172,15 @@ public struct LogReceiver: FeatureMachine {
     private(set) var diagnostics: [Diagnostic] = []
 
     /// A receiver for one connection.
-    public init() {}
+    init() {}
 
     /// The host advertises LOGS available.
-    public var localAdvert: LocalAdvert {
+    var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: .available(Kernova_V2_LogCapability().encoded))
     }
 
     /// The receiver sets no deadlines; the connection meters the credit return.
-    public func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
+    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     mutating func takeOutputs() -> (events: [HostEvent], diagnostics: [Diagnostic]) {
         defer {
@@ -191,7 +191,7 @@ public struct LogReceiver: FeatureMachine {
     }
 
     /// Handles a connection event.
-    public mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
         switch event {
         case .opened(let id, _):
             streams.append(id)

@@ -4,7 +4,6 @@ import FoundationEssentials
 import Foundation
 #endif
 
-import KernovaAgentCore
 import KernovaPortableTestSupport
 
 extension SplitMix64 {
@@ -85,7 +84,6 @@ struct Agenda {
     private var heap: [Entry] = []
     private var sequence: UInt64 = 0
 
-    var isEmpty: Bool { heap.isEmpty }
     var nextTime: SimTime? { heap.first?.time }
 
     mutating func push(_ time: SimTime, _ action: @escaping (SimWorld) -> Void) {
@@ -123,26 +121,10 @@ struct Agenda {
     }
 }
 
-/// Deterministic payloads and their stand-in digests: the core counts bytes only,
-/// so the fake installer verifies against this digest instead of SHA-256.
+/// Deterministic payloads.
 package enum SimPayload {
     package static func content(size: Int, tag: UInt64) -> Data {
         var generator = SplitMix64(seed: tag)
         return generator.bytes(size)
-    }
-
-    package static func digest(_ content: Data) -> Data {
-        var digest = Data()
-        for salt in UInt64(1)...4 {
-            var hash = FNV64()
-            hash.add(salt)
-            hash.add(content)
-            var value = hash.value
-            for _ in 0..<8 {
-                digest.append(UInt8(truncatingIfNeeded: value))
-                value >>= 8
-            }
-        }
-        return digest
     }
 }
