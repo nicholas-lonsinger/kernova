@@ -4,7 +4,6 @@ import KernovaAgentCore
 import KernovaAgentHost
 import KernovaAgentRuntime
 import KernovaCommandModel
-import KernovaKit
 import KernovaSynchronization
 import KernovaTestSupport
 import KernovaWire
@@ -12,6 +11,7 @@ import Testing
 
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
+@testable import KernovaKit
 
 /// A VM's clipboard over the guest agent's CLIPBOARD items, driven through its agent hub with a probe standing in
 /// for the guest's connection: what the hub is asked to send, and what the host makes of what the guest sends.
@@ -147,7 +147,7 @@ struct HubClipboardServiceTests {
         probe.deliver(.items(.offerReceived(header)), fromConnection: 0)
     }
 
-    private static let text = item(representation(ClipboardContent.utf8TextUTI, .inline))
+    private static let text = item(representation(NSPasteboard.PasteboardType.string.rawValue, .inline))
 
     /// Installs a running passthrough on `instance`, as turning the setting on does.
     private func startPassthrough(_ instance: VMInstance) throws -> ClipboardPassthroughCoordinator {
@@ -232,7 +232,7 @@ struct HubClipboardServiceTests {
 
         let password = Data("hunter2".utf8)
         let paste = BlockingCall {
-            pasteboard.invokeProvider(forType: NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI))
+            pasteboard.invokeProvider(forType: NSPasteboard.PasteboardType.string)
         }
         try await probe.changed.wait { !pulls(probe).isEmpty }
         let (requestID, order) = try #require(pulls(probe).first)
@@ -287,7 +287,8 @@ struct HubClipboardServiceTests {
         let coordinator = try startPassthrough(instance)
         defer { coordinator.stop() }
         try await receive(Self.text, on: probe, into: instance)
-        try await hostPasteboard(instance).changed.wait { instance.hostClipboardPublisher.pasteboardHoldsLastWrite }
+        let pasteboard = try hostPasteboard(instance)
+        try await pasteboard.changed.wait { !pasteboard.promisedTypes.isEmpty }
 
         probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
         try await waitForChange { !instance.hubClipboard.isConnected }
@@ -297,7 +298,6 @@ struct HubClipboardServiceTests {
         // Passthrough on: nothing is reported.
         #expect(instance.clipboardTransferReport == .idle)
 
-        let pasteboard = try #require(instance.hostClipboardPublisher.pasteboard as? FakePasteboard)
         #expect(pasteboard.setString("copied during the outage", forType: .string))
         probe.deliver(.peerStateChanged(Self.onConsole), fromConnection: 0)
         try await waitForChange { instance.hubClipboard.isConnected }
@@ -469,7 +469,8 @@ struct HubClipboardServiceTests {
     }
 
     private static let textAndFile = item(
-        representation(ClipboardContent.utf8TextUTI, .inline), representation("public.data", .file, name: "a.bin"))
+        representation(NSPasteboard.PasteboardType.string.rawValue, .inline),
+        representation("public.data", .file, name: "a.bin"))
 
     @Test("Copy to Mac leaves a Mac clipboard that changed after the command alone, and says so")
     func copyToMacLeavesAChangedClipboard() async throws {
@@ -498,7 +499,7 @@ struct HubClipboardServiceTests {
         }
     }
 
-    private static let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+    private static let textType = NSPasteboard.PasteboardType.string
 
     @Test(
         "Copy to Mac's item of an unpasted file goes whole with the connection, its name too; the rest stays, and that is said"
@@ -583,7 +584,7 @@ struct HubClipboardServiceTests {
 
         #expect(try await reported(instance, .copy) == .itemsSkipped(count: 2))
         #expect(
-            try hostPasteboard(instance).dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
+            try hostPasteboard(instance).dataByItem.first?[NSPasteboard.PasteboardType.string]
                 == Data("the guest's".utf8))
     }
 
@@ -605,7 +606,7 @@ struct HubClipboardServiceTests {
         try hostPasteboard(instance).failNextWrite()
         try await receive(Self.text, on: probe, into: instance)
         #expect(try await reported(instance, .copy) == .transferFailed)
-        #expect(!instance.hostClipboardPublisher.pasteboardHoldsLastWrite)
+        #expect(try hostPasteboard(instance).promisedTypes.isEmpty)
     }
 
     @Test("A guest copy answering no ask of the host's is refused unread")
@@ -632,7 +633,8 @@ struct HubClipboardServiceTests {
         var file = Self.representation("public.data", .file, name: "big.bin")
         file.sizeEstimate = 3 << 30
         _ = try await copyToMac(
-            Self.item(Self.representation(ClipboardContent.utf8TextUTI, .inline), file), on: probe, into: instance)
+            Self.item(Self.representation(NSPasteboard.PasteboardType.string.rawValue, .inline), file), on: probe,
+            into: instance)
         try await probe.changed.wait { pulls(probe).count == 1 }
         let (requestID, order) = pulls(probe)[0]
         try land(Data("the guest's".utf8), for: order, request: requestID, stream: 3, on: probe)
@@ -642,7 +644,7 @@ struct HubClipboardServiceTests {
                 == .filesLeftOut(count: 1, limitBytes: instance.effectiveClipboardMaxPasteBytes))
         let pasteboard = try hostPasteboard(instance)
         #expect(
-            pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]
+            pasteboard.dataByItem.first?[NSPasteboard.PasteboardType.string]
                 == Data("the guest's".utf8))
         #expect(pasteboard.promisedTypes.isEmpty)
     }
@@ -745,7 +747,8 @@ struct HubClipboardServiceTests {
             probe.deliver(.itemReply(id, .read(items[Int(item)])), fromConnection: 0)
         }
         try await waitForChange { instance.hubClipboard.inboundOfferSeq == shown + 1 }
-        try await hostPasteboard(instance).changed.wait { instance.hostClipboardPublisher.pasteboardHoldsLastWrite }
+        let pasteboard = try hostPasteboard(instance)
+        try await pasteboard.changed.wait { !pasteboard.promisedTypes.isEmpty }
     }
 
     @Test(
@@ -936,13 +939,14 @@ struct HubClipboardServiceTests {
         try runPassthroughByHand(instance)
         try await receive(
             Self.item(
-                Self.representation(ClipboardContent.utf8TextUTI, .inline), Self.representation("public.rtf", .inline)),
+                Self.representation(NSPasteboard.PasteboardType.string.rawValue, .inline),
+                Self.representation("public.rtf", .inline)),
             on: probe, into: instance, concealed: true)
         _ = instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
         let pasteboard = try hostPasteboard(instance)
 
         let first = BlockingCall {
-            pasteboard.invokeProvider(forType: NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI))
+            pasteboard.invokeProvider(forType: NSPasteboard.PasteboardType.string)
         }
         let second = BlockingCall { pasteboard.invokeProvider(forType: .rtf) }
         try await probe.changed.wait { pulls(probe).count == 2 }

@@ -68,20 +68,20 @@ public final class ClipboardTransferOperation: Sendable {
     }
 
     private struct UnitState {
-        /// What this transfer is expected to move; revisable by `unitProgressed`.
-        var expected: UInt64
-        /// Bytes seen, clamped to `expected` and never regressing, so the
-        /// aggregate is monotonic even across a retry that restarts a transfer's
-        /// own count at zero.
-        var observed: UInt64 = 0
+        /// What this transfer is expected to move.
+        let expected: UInt64
         var completed = false
         let name: String?
+
+        /// Bytes this transfer has moved: all it expected once it completed,
+        /// none before.
+        var observed: UInt64 { completed ? expected : 0 }
     }
 
     /// What an event left for `deliver` to run once the lock is released.
     ///
-    /// Deferred because an `os_log` under the lock would put every chunk
-    /// callback behind it.
+    /// Deferred because an `os_log` under the lock would put every event behind
+    /// it.
     private struct Outcome {
         var call: ReporterCall?
         var logs: [LogEvent] = []
@@ -429,39 +429,13 @@ public final class ClipboardTransferOperation: Sendable {
         }
     }
 
-    /// Records one transfer's cumulative byte count.
-    ///
-    /// `totalBytes` is **wire-authoritative**: a non-zero value replaces whatever
-    /// the operation advertised, because the advertised figure can be an estimate
-    /// while the stream carries something else entirely — a directory rep
-    /// advertises a stat-walk size and then streams a compressed archive.
-    public func unitProgressed(id: UInt64, bytesTransferred: UInt64, totalBytes: UInt64 = 0) {
-        apply(id: id, declaring: nil) { state, unit in
-            guard var unitState = state.units[unit] else { return }
-            if totalBytes > 0 { unitState.expected = totalBytes }
-            unitState.observed = max(unitState.observed, min(bytesTransferred, unitState.expected))
-            state.setUnit(unit, unitState)
-            // Does NOT touch `activeUnits`: a chunk callback fires on the
-            // transfer's own lane, so one can land *after* the transfer
-            // finished, and re-adding the unit here would leave the operation
-            // permanently "active" — the idle terminal would never fire and the
-            // readout would stick on screen forever.
-        }
-    }
-
     /// Records one transfer's terminal, crediting a successful one in full.
     public func unitEnded(id: UInt64, succeeded: Bool) {
         apply(id: id, declaring: nil) { state, unit in
             state.activeUnits.removeAll { $0 == unit }
-            guard succeeded, var unitState = state.units[unit] else { return }
-            if !unitState.completed {
-                unitState.completed = true
-                state.completedCount += 1
-            }
-            // Credit the expected byte count in full: the throttle can have
-            // suppressed the final chunks, and a completed transfer must read as
-            // complete.
-            unitState.observed = unitState.expected
+            guard succeeded, var unitState = state.units[unit], !unitState.completed else { return }
+            unitState.completed = true
+            state.completedCount += 1
             state.setUnit(unit, unitState)
         }
     }
@@ -509,12 +483,6 @@ public final class ClipboardTransferOperation: Sendable {
         }
     }
 
-    /// Retires the operation without a finished report — a teardown, where what
-    /// the readout was measuring no longer exists.
-    public func abandon() {
-        deliver(state.withLock { $0.abandon(at: clock.now) })
-    }
-
     /// Whether this operation can still take events.
     ///
     /// A caller that *caches* an operation across events must ask before reusing
@@ -540,9 +508,9 @@ public final class ClipboardTransferOperation: Sendable {
     /// Shared event path.
     ///
     /// `declaring` is non-nil only for `unitBegan`, the one event allowed to
-    /// introduce a transfer. Progress and terminals for an unknown transfer are
-    /// dropped: a chunk landing after the operation ended must never mint a new
-    /// unit, since nothing would arm a terminal for it.
+    /// introduce a transfer. Terminals for an unknown transfer are dropped: one
+    /// landing after the operation ended must never mint a new unit, since
+    /// nothing would arm a terminal for it.
     private func apply(
         id: UInt64, declaring declared: UnitState?, _ mutate: (inout State, UInt64) -> Void
     ) {

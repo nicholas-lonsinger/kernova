@@ -144,7 +144,7 @@ final class FakeGuestDragInput: GuestDragInput {
     /// once.
     func sizeFiles(_ urls: [URL], then completion: @escaping @MainActor @Sendable ([Int?]) -> Void) {
         sized.append(urls)
-        completion(urls.map { ClipboardPasteboardReader.resolve(filesAt: [$0]).representations.first?.byteCount })
+        completion(urls.map { ClipboardPasteboardReader.byteCount(ofItemAt: $0) })
     }
 
     func watchEntries(

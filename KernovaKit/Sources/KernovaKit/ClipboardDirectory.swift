@@ -2,9 +2,6 @@ import Foundation
 
 /// A folder (or OS package) as a clipboard representation offers it.
 public enum ClipboardDirectory {
-    /// UTI for a directory representation.
-    public static let uti = "public.folder"
-
     /// Upper bound on how many entries the estimate walk visits before stopping,
     /// so a pathological tree (or a symlink cycle — the estimate's enumerator
     /// follows links) can't spin unbounded.

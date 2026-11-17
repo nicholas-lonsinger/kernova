@@ -200,7 +200,7 @@ make setup   # one-time per clone; idempotent, rerun any time
 | **swift.org toolchain** | swiftly, the Swift release `.swift-version` pins and its Static Linux SDK, which the app build cross-builds the Linux guest agent with; Xcode's own toolchain stays the default `swift`. |
 | **Ubuntu SDK** | Generated for that release (minutes, about 850 MB); `make dead-code` cross-builds its Linux half with it, and without it reports macOS alone. |
 | **`buildServer.json`** | Gives editors and language servers the project's real compiler flags; build once for them to resolve. |
-| **Periphery** | The pinned release `make dead-code` scans with. |
+| **Periphery** | The pinned release `make dead-code` scans with, built from source with Kernova's fixes (minutes). |
 | **`make doctor`** | Checks toolchain, signing, and hooks against what Kernova needs. |
 
 Then open `Kernova.xcodeproj`, pick the `Kernova` scheme, and run (⌘R). `make` alone lists every build, test, format, and lint target.

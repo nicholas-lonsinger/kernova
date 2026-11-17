@@ -144,7 +144,7 @@ struct GuestDragOutTests {
 
     @Test("a drag the offer limit would cut short is not offered")
     func overTheOfferLimitIsNotOffered() {
-        let limit = ClipboardContent.maxOfferableRepresentations
+        let limit = GuestDraggedItems.offerLimit
         let files = (0..<limit).map { GuestDragItem.file(URL(fileURLWithPath: "/tmp/item-\($0)")) }
 
         #expect(GuestDraggedItems.offerItems(files)?.count == limit)

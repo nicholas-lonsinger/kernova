@@ -97,37 +97,6 @@ struct ClipboardTransferOperationTests {
 
     // MARK: - Aggregation
 
-    @Test("a retry that restarts its own byte count never walks the aggregate back")
-    func clampsMonotonically() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation.unitBegan(id: 1, expectedBytes: 1_000)
-        operation.unitProgressed(id: 1, bytesTransferred: 800)
-        operation.unitProgressed(id: 1, bytesTransferred: 0)
-        operation.finish(.completed)
-        try await drainMainQueue()
-
-        #expect(try #require(recorder.finish?.finalSnapshot).bytesTransferred == 800)
-    }
-
-    @Test("the streamed total replaces what the transfer advertised")
-    func totalIsWireAuthoritative() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation.unitBegan(id: 1, expectedBytes: 1_000)
-        operation.unitProgressed(id: 1, bytesTransferred: 400, totalBytes: 500)
-        operation.finish(.completed)
-        try await drainMainQueue()
-
-        #expect(try #require(recorder.finish?.finalSnapshot).totalBytes == 500)
-    }
-
     @Test("the readout names the transfer that began most recently")
     func tracksTheCurrentItemName() async throws {
         let recorder = Recorder()
@@ -137,10 +106,12 @@ struct ClipboardTransferOperationTests {
 
         operation.unitBegan(id: 1, expectedBytes: 100, name: "first.txt")
         operation.unitBegan(id: 2, expectedBytes: 100, name: "second.txt")
-        operation.unitProgressed(id: 2, bytesTransferred: 50)
+        operation.unitBegan(id: 3, expectedBytes: 100, name: "third.txt")
+        // The first ending moves the bar while the other two are still in flight.
+        operation.unitEnded(id: 1, succeeded: true)
         try await drainMainQueue()
 
-        #expect(recorder.runningSnapshot?.currentItemName == "second.txt")
+        #expect(recorder.runningSnapshot?.currentItemName == "third.txt")
     }
 
     @Test("the declared totals are a floor the transfers revise upward")
@@ -170,21 +141,22 @@ struct ClipboardTransferOperationTests {
 
     // MARK: - Terminals
 
-    @Test("a chunk landing after the terminal cannot resurrect the readout")
+    @Test("a transfer ending after the terminal cannot resurrect the readout")
     func dropsEventsAfterFinishing() async throws {
         let recorder = Recorder()
         let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
         clock.advance(seconds: Self.revealDelay)
 
-        operation.unitBegan(id: 1, expectedBytes: 1_000)
-        operation.unitProgressed(id: 1, bytesTransferred: 300)
+        operation.unitBegan(id: 1, expectedBytes: 300)
+        operation.unitEnded(id: 1, succeeded: true)
+        operation.unitBegan(id: 2, expectedBytes: 700)
         operation.finish(.cancelled)
         try await drainMainQueue()
         let settled = recorder.reports.count
 
-        operation.unitProgressed(id: 1, bytesTransferred: 900)
-        operation.unitEnded(id: 1, succeeded: true)
+        operation.unitEnded(id: 2, succeeded: true)
+        operation.unitBegan(id: 3, expectedBytes: 100)
         try await drainMainQueue()
 
         #expect(recorder.reports.count == settled)
@@ -207,23 +179,6 @@ struct ClipboardTransferOperationTests {
         try await drainMainQueue()
 
         #expect(recorder.finish?.failure == .timedOut)
-        #expect(!operation.isLive)
-    }
-
-    @Test("a teardown retires the readout without reporting a finish")
-    func abandonPublishesNothingFurther() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        try await drainMainQueue()
-        #expect(recorder.runningSnapshot != nil)
-
-        operation.abandon()
-        try await drainMainQueue()
-        #expect(recorder.latest == .idle)
         #expect(!operation.isLive)
     }
 

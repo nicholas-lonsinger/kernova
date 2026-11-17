@@ -66,7 +66,7 @@ struct StreamFrameTests {
         var decoder = StreamFrameDecoder()
         decoder.feed(Data([0x00, 0x00, 0x00, 0x00]))
         #expect(try decoder.nextFrame() == Data())
-        #expect(decoder.isEmpty)
+        #expect(try decoder.nextFrame() == nil)
     }
 
     @Test("decoder throws frameTooLarge when declared size exceeds the cap")

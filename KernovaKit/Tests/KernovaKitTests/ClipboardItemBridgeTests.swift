@@ -161,7 +161,7 @@ struct ClipboardItemBridgeTests {
 
         let source = try await readOffer(pasteboard)
         let representations = single(source)
-        #expect(representations.map(\.type.appleUTI) == [ClipboardContent.utf8TextUTI, "public.rtf"])
+        #expect(representations.map(\.type.appleUTI) == [NSPasteboard.PasteboardType.string.rawValue, "public.rtf"])
         #expect(representations.allSatisfy { $0.storage == .inline && $0.sizeEstimate == 0 && !$0.promised })
         #expect(representations.first?.type.mime == "text/plain")
         #expect(pasteboard.residentReads.isEmpty)
@@ -630,11 +630,13 @@ struct ClipboardItemBridgeTests {
         // event-loop wait serves is `ClipboardItemPullMainThreadTests`.
         let puller = FixedPuller(bytes: Data("x".utf8))
         var item = OfferedItem()
-        item.representations = [.make(TypeDescriptor(appleUTI: ClipboardContent.utf8TextUTI), .inline, size: 0)]
+        item.representations = [
+            .make(TypeDescriptor(appleUTI: NSPasteboard.PasteboardType.string.rawValue), .inline, size: 0)
+        ]
         let specs = ClipboardPasteboardPublisher.itemSpecs(
             for: [item], concealed: false, puller: puller, eventLoopWait: { nil })
 
-        #expect(specs.first?.provide(ClipboardContent.utf8TextUTI) == nil)
+        #expect(specs.first?.provide(NSPasteboard.PasteboardType.string.rawValue) == nil)
         #expect(puller.starts.withLock { $0 } == 0)
     }
 }

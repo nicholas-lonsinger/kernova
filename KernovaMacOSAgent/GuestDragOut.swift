@@ -513,6 +513,9 @@ enum GuestDraggedItems {
     nonisolated static let promisedContentType = NSPasteboard.PasteboardType(
         "com.apple.pasteboard.promised-file-content-type")
 
+    /// The most items a drag offers.
+    nonisolated static let offerLimit = 0xFFFF
+
     /// Every item, in order, or `nil` unless each one is a plain file URL or a
     /// file promise that names its promised type.
     static func items(on pasteboard: any ClipboardReadPasteboard) -> [GuestDragItem]? {
@@ -538,7 +541,7 @@ enum GuestDraggedItems {
 
     /// What to offer for `items`, whose promises `names` names by index and
     /// whose other items `sizes` sizes by index, each with what its pulls are
-    /// served from; `nil` unless every item has a name and the offer limit
+    /// served from; `nil` unless every item has a name and ``offerLimit``
     /// holds them all — a drag that would arrive on the Mac short of what the
     /// user dragged stays in the guest.
     ///
@@ -555,7 +558,7 @@ enum GuestDraggedItems {
         _ items: [GuestDragItem], promises names: [Int: (name: String, landing: GuestDragLanding)] = [:],
         sizes: [Int: Int] = [:]
     ) -> [(item: OfferedItem, source: GuestDragSource)]? {
-        guard items.count <= ClipboardContent.maxOfferableRepresentations else { return nil }
+        guard items.count <= Self.offerLimit else { return nil }
         var offered: [(item: OfferedItem, source: GuestDragSource)] = []
         for (index, item) in items.enumerated() {
             switch item {

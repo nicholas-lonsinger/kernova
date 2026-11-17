@@ -76,7 +76,7 @@ struct ClipboardCopyTests {
         let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry)
         var item = OfferedItem()
         item.representations = [
-            Self.representation(ClipboardContent.utf8TextUTI, .inline),
+            Self.representation(NSPasteboard.PasteboardType.string.rawValue, .inline),
             Self.representation("public.data", .file, name: "a.bin"),
         ]
         let released = AsyncGate()
@@ -93,7 +93,7 @@ struct ClipboardCopyTests {
             })
         #expect(written && holdsCopy)
         #expect(
-            pasteboard.dataByItem == [[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI): Data("text".utf8)]])
+            pasteboard.dataByItem == [[NSPasteboard.PasteboardType.string: Data("text".utf8)]])
         #expect(pasteboard.promisedTypes == [.fileURL])
         #expect(!wasReleased)
 
@@ -131,7 +131,7 @@ struct ClipboardCopyTests {
         let ledger = ClipboardWriteLedger()
         let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
         var item = OfferedItem()
-        item.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
+        item.representations = [Self.representation(NSPasteboard.PasteboardType.string.rawValue, .inline)]
         let puller = CountingPuller(bytes: Data("the far side's".utf8))
         let offer = Data(repeating: 1, count: 16)
         #expect(
@@ -200,7 +200,7 @@ struct ClipboardCopyTests {
         let ledger = ClipboardWriteLedger()
         let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
         var text = OfferedItem()
-        text.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
+        text.representations = [Self.representation(NSPasteboard.PasteboardType.string.rawValue, .inline)]
         var file = OfferedItem()
         file.representations = [Self.representation("public.data", .file, name: "a.bin")]
         #expect(
@@ -230,7 +230,7 @@ struct ClipboardCopyTests {
         let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
         var item = OfferedItem()
         item.representations = [
-            Self.representation(ClipboardContent.utf8TextUTI, .inline),
+            Self.representation(NSPasteboard.PasteboardType.string.rawValue, .inline),
             Self.representation("public.data", .file, name: "a.bin"),
         ]
         let upstream = UpstreamPuller(bytes: Data("upstream text".utf8), url: file)
@@ -537,7 +537,7 @@ struct ClipboardCopyTests {
         -> () -> CountingPuller?
     {
         var item = OfferedItem()
-        item.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
+        item.representations = [Self.representation(NSPasteboard.PasteboardType.string.rawValue, .inline)]
         weak var watched: CountingPuller?
         do {
             let puller = CountingPuller(bytes: Data("a password".utf8))
@@ -560,7 +560,7 @@ struct ClipboardCopyTests {
         let publisher = ClipboardPasteboardPublisher(
             pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
         let watched = writeWatched(publisher, concealed: false)
-        let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let text = NSPasteboard.PasteboardType.string
         #expect(pasteboard.promisedTypesByItem == [[text]])
         #expect(try await offCooperativePool { pasteboard.invokeProvider(forType: text) } == Data("a password".utf8))
         let fires = pasteboard.providerInvocations
@@ -581,7 +581,7 @@ struct ClipboardCopyTests {
         let publisher = ClipboardPasteboardPublisher(
             pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
         let watched = writeWatched(publisher)
-        let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+        let text = NSPasteboard.PasteboardType.string
         #expect(try await offCooperativePool { pasteboard.invokeProvider(forType: text) } == Data("a password".utf8))
 
         #expect(publisher.retractWrite(servingOffer: Self.writeOffer, withdrawing: .unread) == .cleared)
@@ -631,7 +631,7 @@ struct ClipboardCopyTests {
         let ledger = ClipboardWriteLedger()
         let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
         var item = OfferedItem()
-        item.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
+        item.representations = [Self.representation(NSPasteboard.PasteboardType.string.rawValue, .inline)]
         weak var watched: CountingPuller?
         do {
             let puller = CountingPuller(bytes: Data())
@@ -651,7 +651,10 @@ struct ClipboardCopyTests {
                 from: pasteboard, ledger: ledger, staging: staging, copyingTo: Self.connection, sizeOf: nil)
         else { throw TestFailure("no snapshot") }
         #expect(source.concealed)
-        #expect(source.items.map { $0.representations.compactMap(\.type.appleUTI) } == [[ClipboardContent.utf8TextUTI]])
+        #expect(
+            source.items.map { $0.representations.compactMap(\.type.appleUTI) } == [
+                [NSPasteboard.PasteboardType.string.rawValue]
+            ])
         #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("hunter2".utf8)))
     }
 }

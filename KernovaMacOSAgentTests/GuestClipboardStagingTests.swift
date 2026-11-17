@@ -4,12 +4,13 @@ import KernovaAgentCore
 import KernovaClipboardItems
 import KernovaFileTree
 import KernovaItemTransfer
-import KernovaKit
 import KernovaLogging
 import KernovaSynchronization
 import KernovaTestSupport
 import KernovaWire
 import Testing
+
+@testable import KernovaKit
 
 /// What the guest pasteboard keeps of the host's clipboard once the file it names in staging goes, and the lines
 /// the guest logs as it takes the host's clipboard back.
@@ -18,7 +19,7 @@ import Testing
 struct GuestClipboardStagingTests {
     private static let hostToken = Data(repeating: 9, count: 16)
     private static let copyToken = Data(repeating: 6, count: 16)
-    nonisolated private static let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
+    nonisolated private static let text = NSPasteboard.PasteboardType.string
 
     private static func representation(_ uti: String, _ storage: Representation.Storage, name: String = "")
         -> Representation
@@ -33,7 +34,7 @@ struct GuestClipboardStagingTests {
     /// One item of text.
     private static let textItem = {
         var item = OfferedItem()
-        item.representations = [representation(ClipboardContent.utf8TextUTI, .inline)]
+        item.representations = [representation(NSPasteboard.PasteboardType.string.rawValue, .inline)]
         return item
     }()
 
@@ -41,7 +42,8 @@ struct GuestClipboardStagingTests {
     private static let fileItem = {
         var item = OfferedItem()
         item.representations = [
-            representation(ClipboardContent.utf8TextUTI, .inline), representation("public.data", .file, name: "a.bin"),
+            representation(NSPasteboard.PasteboardType.string.rawValue, .inline),
+            representation("public.data", .file, name: "a.bin"),
         ]
         return item
     }()
