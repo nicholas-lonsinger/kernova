@@ -67,15 +67,15 @@ public enum ClipboardPromisePolicy {
     }
 
     /// An offer's paste-bound total against the ceiling in force.
-    public struct PasteBudget: Equatable, Sendable {
+    struct PasteBudget: Equatable, Sendable {
         /// Total declared bytes of every representation served as
         /// `public.file-url`.
-        public let total: UInt64
+        let total: UInt64
         /// The ceiling this total was measured against.
-        public let limit: Int
+        let limit: Int
         /// Whether the set is over the ceiling, and so refused whole. A total
         /// exactly at the cap is within it.
-        public var exceeds: Bool { total > UInt64(limit) }
+        var exceeds: Bool { total > UInt64(limit) }
     }
 
     /// The paste-bound total of `items` against `limit`: the size estimate of
@@ -87,7 +87,7 @@ public enum ClipboardPromisePolicy {
     /// landing 2 of 3 files. A promised representation counts its estimate, 0
     /// while its size is unknown. The sum saturates, so an absurd declared total
     /// fails the cap rather than wrapping under it.
-    public static func pasteBudget(_ items: [OfferedItem], limit: Int) -> PasteBudget {
+    static func pasteBudget(_ items: [OfferedItem], limit: Int) -> PasteBudget {
         var total: UInt64 = 0
         for item in items {
             // A reference names the receiver's own offer: nothing of it crosses the wire.

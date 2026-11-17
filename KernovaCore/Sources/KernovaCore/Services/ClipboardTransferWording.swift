@@ -18,19 +18,18 @@ package struct ClipboardTransferWording: Equatable {
     /// Whether a surface may add that the Mac clipboard still holds what it held
     /// before.
     ///
-    /// True only for the over-cap copy refusal, the one outcome that refuses the
-    /// publish whole and so leaves the previous contents in place; after any
-    /// other failure the sentence would be a guess.
+    /// True only for a copy to the Mac refused over the paste ceiling, which is
+    /// raised only when nothing of the copy was written; after any other
+    /// failure the sentence would be a guess.
     package let mentionsMacClipboardKept: Bool
 
-    /// Shown for a copy to the Mac refused over the deadline-safe cap: a copy
-    /// command's and a passthrough publish's are the same refusal.
     /// What a copy written without its `count` files over `limitBytes` says.
     private static func filesLeftOutMessage(count: Int, limitBytes: Int) -> String {
         let files = count == 1 ? "Its file was" : "Its \(count) files were"
         return "\(files) left out — over the \(ClipboardPasteLimit.displayLimit(limitBytes)) clipboard transfer limit."
     }
 
+    /// What a copy to the Mac refused whole over `limitBytes` says.
     package static func overCopyBudgetMessage(limitBytes: Int) -> String {
         "Too large to copy to your Mac — over the \(ClipboardPasteLimit.displayLimit(limitBytes)) clipboard transfer limit."
     }
@@ -467,8 +466,6 @@ package struct ClipboardTransferWording: Equatable {
             ? "Clipboard: preview from the guest failed" : "Clipboard: paste from the guest failed"
     }
 
-    /// The sentence for `count` unreadable items left out of a send whose rest
-    /// crossed; `item` names one of them.
     private static func quoted(_ name: String) -> String { "\u{201C}\(name)\u{201D}" }
 }
 

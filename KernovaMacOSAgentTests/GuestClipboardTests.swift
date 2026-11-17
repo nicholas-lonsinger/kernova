@@ -747,6 +747,50 @@ struct GuestClipboardTests {
     }
 
     @Test(
+        "A host offer of only files over the paste ceiling leaves the guest's clipboard as it is, let go, refused too large"
+    )
+    func hostOfferOfOversizeFilesAlone() async throws {
+        let noticed = AsyncGate()
+        let pasteboard = FakePasteboard()
+        let clipboard = GuestClipboard(
+            pasteboard: pasteboard, stagingRoot: staging.root, onNotice: { noticed.notify() })
+        var file = Self.textAndFileItem(fileSize: 3 << 30)
+        file.representations.removeFirst()
+        let link = RecordingLink(items: [file])
+        clipboard.setLink(link)
+        #expect(pasteboard.setString("the guest's", forType: .string))
+        let before = pasteboard.changeCount
+
+        clipboard.exchange.handle(
+            .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: false, count: 1)),
+            on: link)
+        try await link.changed.wait { link.releases == [Self.hostToken] }
+        let limit = ClipboardPasteLimit.defaultBytes
+        try await noticed.wait { clipboard.activity == .pasteRefused(.pasteTooLarge, pasteLimitBytes: limit) }
+        #expect(pasteboard.changeCount == before)
+        #expect(pasteboard.items.first?.data(forType: .string) == Data("the guest's".utf8))
+    }
+
+    @Test("A host offer of text and files over the paste ceiling is published without the files, refused too large")
+    func hostOfferLeavesOutOversizeFiles() async throws {
+        let noticed = AsyncGate()
+        let pasteboard = FakePasteboard()
+        let clipboard = GuestClipboard(
+            pasteboard: pasteboard, stagingRoot: staging.root, onNotice: { noticed.notify() })
+        let link = RecordingLink(items: [Self.textAndFileItem(fileSize: 3 << 30)])
+        clipboard.setLink(link)
+
+        clipboard.exchange.handle(
+            .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: false, count: 1)),
+            on: link)
+        try await pasteboard.changed.wait { !pasteboard.promisedTypes.isEmpty }
+        #expect(pasteboard.promisedTypes == [NSPasteboard.PasteboardType.string])
+        let limit = ClipboardPasteLimit.defaultBytes
+        try await noticed.wait { clipboard.activity == .pasteRefused(.pasteTooLarge, pasteLimitBytes: limit) }
+        #expect(link.releases.isEmpty)
+    }
+
+    @Test(
         "The host's ask leaves out a file the agent cannot open, and says how many; of only such files, it is refused READ_FAILED"
     )
     func askLeavesOutUnreadableFiles() async throws {

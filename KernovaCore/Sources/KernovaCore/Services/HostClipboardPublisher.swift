@@ -39,41 +39,16 @@ package final class HostClipboardPublisher {
             pasteboard: pasteboard, providerRegistry: providerRegistry)
     }
 
-    /// Writes the service's guest clipboard items to the host pasteboard as lazy promised items, returning the
-    /// terminal outcome.
+    /// Writes the service's live guest offer to the host pasteboard as lazy promised items within its paste
+    /// ceiling, returning what became of the pasteboard; nothing to write when there is no live offer.
     ///
-    /// A live guest offer publishes from metadata alone — every promised type's bytes are pulled at paste time
-    /// through the offer's puller — so nothing crosses the wire here.
-    package func publish(from service: any ClipboardServicing) -> HostPublishOutcome {
-        var offers: [CopyToMacOffer] = []
-        var droppedReasons: [CopyToMacDropReason] = []
-        for item in service.guestClipboardItems() {
-            switch item {
-            case .offer(let offer): offers.append(offer)
-            case .droppedFile(let reason): droppedReasons.append(reason)
-            }
-        }
-        let specs = offers.flatMap {
-            ClipboardPasteboardPublisher.itemSpecs(
-                for: $0.items, concealed: $0.concealed, servingFileURLs: $0.servingFileURLs, puller: $0.puller)
-        }
-        guard !specs.isEmpty else { return .nothingServed(reasons: droppedReasons) }
-
-        let parts = offers.map {
-            ClipboardWriteSource.Part(
-                items: $0.items, concealed: $0.concealed, servingFileURLs: $0.servingFileURLs, puller: $0.puller)
-        }
-        guard publisher.write(specs, source: ClipboardWriteSource(serving: offers.first?.serving, parts: parts))
-        else {
-            Self.logger.log(.error, "The pasteboard write failed for a host clipboard publish")
-            return .writeFailed
-        }
-        let representationCount = offers.reduce(0) { $0 + $1.items.reduce(0) { $0 + $1.representations.count } }
-        Self.logger.log(
-            .info,
-            "Published the guest's clipboard to the host pasteboard (\(representationCount, privacy: .public) reps, \(specs.count, privacy: .public) items, \(droppedReasons.count, privacy: .public) dropped)"
-        )
-        return .written(representationCount: representationCount, droppedReasons: droppedReasons)
+    /// The write is metadata alone — every promised type's bytes are pulled at paste time through the offer's
+    /// puller — so nothing crosses the wire here.
+    package func publish(from service: any ClipboardServicing) -> ClipboardOfferPublishOutcome {
+        guard let offer = service.guestClipboardOffer() else { return .nothingToWrite }
+        return publisher.publish(
+            offer.items, concealed: offer.concealed, pasteCeiling: offer.limitBytes, puller: offer.puller,
+            serving: offer.serving)
     }
 
     /// Writes the guest's copy `contents`: every representation but a file or folder as data, the files
@@ -100,26 +75,5 @@ package final class HostClipboardPublisher {
     /// (``ClipboardPasteboardPublisher/retractWrite(servingOffer:withdrawing:)``).
     func retractWrite(servingOffer token: Data, withdrawing withdrawal: ClipboardWithdrawal) -> ClipboardRetraction? {
         publisher.retractWrite(servingOffer: token, withdrawing: withdrawal)
-    }
-}
-
-/// The terminal state of a `HostClipboardPublisher.publish(from:)`.
-package enum HostPublishOutcome {
-    /// Nothing could be served — every file payload was dropped and no offer
-    /// promised anything. `reasons` is most-actionable first.
-    case nothingServed(reasons: [CopyToMacDropReason])
-    /// The write succeeded. `droppedReasons` lists payloads that couldn't be
-    /// served alongside the placed items.
-    case written(representationCount: Int, droppedReasons: [CopyToMacDropReason])
-    /// `writeObjects` returned false — nothing was placed.
-    case writeFailed
-
-    /// Payloads this publish could not serve, whether or not anything else was.
-    var droppedReasons: [CopyToMacDropReason] {
-        switch self {
-        case .nothingServed(let reasons): return reasons
-        case .written(_, let droppedReasons): return droppedReasons
-        case .writeFailed: return []
-        }
     }
 }

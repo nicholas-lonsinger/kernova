@@ -77,7 +77,7 @@ final class ClipboardPassthroughCoordinator {
     /// re-observation doesn't re-publish.
     private var lastInboundOfferSeq: UInt64 = 0
 
-    /// The offer whose files the paste ceiling withheld.
+    /// The offer whose files the paste ceiling withheld, written without them or not at all.
     ///
     /// Carries the ceiling that withheld them and what the host pasteboard held
     /// once the refusal settled — the state `republishIfCeilingRaised()` acts on.
@@ -87,7 +87,7 @@ final class ClipboardPassthroughCoordinator {
     /// write, so that field still holds whatever the poll last absorbed and
     /// would answer a question about the poll's timing, not about the user.
     ///
-    /// Cleared by any publish that drops nothing, so only a live refusal is ever
+    /// Cleared by any other publish outcome, so only a live refusal is ever
     /// replayed.
     private var budgetRefusedOffer: (seq: UInt64, ceiling: Int, pasteboardChangeCount: Int)?
 
@@ -325,24 +325,33 @@ final class ClipboardPassthroughCoordinator {
         publishInbound(from: service, seq: seq)
     }
 
-    /// Writes one inbound offer to the host pasteboard, remembering a refusal the
-    /// paste ceiling caused so a later raise can deliver what it withheld.
+    /// Writes one inbound offer to the host pasteboard and reports what the write left out, remembering an offer
+    /// the paste ceiling cut so a later raise can deliver what it withheld.
     private func publishInbound(from service: any ClipboardServicing, seq: UInt64) {
-        let ceiling = instance?.effectiveClipboardMaxPasteBytes ?? ClipboardPasteLimit.defaultBytes
-        let outcome = publisher.publish(from: service)
-        budgetRefusedOffer =
-            outcome.droppedReasons.contains(.overPasteBudget) ? (seq, ceiling, pasteboard.changeCount) : nil
-        if case .writeFailed = outcome { reportUnwritten() }
+        let failure: ClipboardTransferFailure?
+        switch publisher.publish(from: service) {
+        case .nothingToWrite, .written:
+            budgetRefusedOffer = nil
+            failure = nil
+        case .writtenWithoutFiles(let count, let limitBytes):
+            budgetRefusedOffer = (seq, limitBytes, pasteboard.changeCount)
+            failure = .filesLeftOut(count: count, limitBytes: limitBytes)
+        case .tooLarge(let limitBytes):
+            budgetRefusedOffer = (seq, limitBytes, pasteboard.changeCount)
+            failure = .tooLarge(limitBytes: limitBytes)
+        case .writeFailed:
+            budgetRefusedOffer = nil
+            failure = .transferFailed
+        }
+        if let failure {
+            // Each guest copy is a gesture of its own, owed its message even when the one before raised the same.
+            reporter.gestureBegan()
+            reporter.finish(
+                ClipboardTransferFinish(gesture: .copy, outcome: .failed(failure), peerName: instance?.name ?? "?"))
+        }
         #if DEBUG
         onInboundPublishedForTesting?()
         #endif
-    }
-
-    /// Raises the guest's offer the pasteboard refused to take: the Mac's clipboard holds nothing of it.
-    private func reportUnwritten() {
-        let name = instance?.name ?? "?"
-        reporter.gestureBegan()
-        reporter.finish(ClipboardTransferFinish(gesture: .copy, outcome: .failed(.transferFailed), peerName: name))
     }
 
     /// Re-publishes the current offer when a raised paste ceiling would now serve
