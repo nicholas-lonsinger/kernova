@@ -340,6 +340,7 @@ package final class GuestDragTake: GuestDragTaking {
     @ObservationIgnored private let peerName: String
     @ObservationIgnored private let progressRevealDelay: TimeInterval
     @ObservationIgnored private let progressIdleGap: TimeInterval
+    @ObservationIgnored private let clock: any EngineClock
     @ObservationIgnored private let holds: @MainActor () -> Bool
     @ObservationIgnored private let onFinished: @MainActor (GuestDragTake) -> Void
     @ObservationIgnored private let onHostSessionBegan: @MainActor (GuestDragTake) -> Void
@@ -429,7 +430,8 @@ package final class GuestDragTake: GuestDragTaking {
     /// `onFinished` is called once, when the take's stream has closed, its
     /// offers are released or ended, and no write is still pulling;
     /// `onHostSessionBegan` as its Mac session begins. The delivery's naming
-    /// deadline runs on `clock`. Nothing is sent until ``begin()``.
+    /// deadline and each readout's timers run on `clock`. Nothing is sent
+    /// until ``begin()``.
     init(
         transport: any GuestDragTransport, display: any GuestDragDisplay,
         reporter: ClipboardTransferReporter, peerName: String,
@@ -446,6 +448,7 @@ package final class GuestDragTake: GuestDragTaking {
         self.peerName = peerName
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
+        self.clock = clock
         self.delivery = GuestDragDelivery(clock: clock)
         self.holds = holds
         self.onFinished = onFinished
@@ -1085,7 +1088,7 @@ package final class GuestDragTake: GuestDragTaking {
             gesture: .dragOut, direction: .inbound, peerName: peerName,
             expectedBytes: sized.contains { $0.sizeEstimate == 0 } ? nil : sized.reduce(0) { $0 + $1.sizeEstimate },
             expectedItems: items.count,
-            revealDelay: progressRevealDelay, idleGap: progressIdleGap,
+            revealDelay: progressRevealDelay, idleGap: progressIdleGap, clock: clock,
             onCancelRequested: { [weak self] in
                 // Called outside the operation's lock on whichever thread saw
                 // the click, so it hops before touching anything.
