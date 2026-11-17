@@ -19,12 +19,12 @@ enum EnclosingAppBundle {
     /// Ancestors only: an executable whose own name ends in `.app` is a file,
     /// not the bundle it would be launched as.
     static func locate(executable: URL) -> URL? {
-        var candidate = executable.resolvingSymlinksInPath().deletingLastPathComponent()
-        while true {
-            if candidate.pathExtension == "app" { return candidate }
-            let parent = candidate.deletingLastPathComponent()
-            guard parent.path != candidate.path else { return nil }
-            candidate = parent
-        }
+        let ancestors = executable.resolvingSymlinksInPath().pathComponents.dropLast()
+        guard
+            let bundle = ancestors.lastIndex(where: { ($0 as NSString).pathExtension == "app" })
+        else { return nil }
+        return URL(
+            fileURLWithPath: NSString.path(withComponents: Array(ancestors[...bundle])),
+            isDirectory: true)
     }
 }
