@@ -49,15 +49,10 @@ package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
 
     package func captureSuspendSlot(bundleURL: URL, snapshotID: UUID) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
-        let destinationLayout = layout.snapshotLayout(id: snapshotID)
-        let manager = FileManager.default
-        guard manager.fileExists(atPath: layout.saveFileURL.path(percentEncoded: false)) else {
-            throw VMSnapshotError.captureSourceMissing(layout.saveFileURL.lastPathComponent)
-        }
-        // Same volume, so APFS clones the file rather than duplicating its
-        // blocks — the copy shares them with the bundle's suspend slot until
-        // either side writes.
-        try manager.copyItem(at: layout.saveFileURL, to: destinationLayout.saveFileURL)
+        try VMBundleItems.copyItems(
+            [VMBundleLayout.saveFileRelativePath], from: layout.bundleURL,
+            to: layout.snapshotDirectoryURL(id: snapshotID),
+            ifMissing: .fail { VMSnapshotError.captureSourceMissing($0) })
     }
 
     // MARK: - Restore
@@ -111,9 +106,8 @@ package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
     package func stageRestore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         let sourceLayout = layout.snapshotLayout(id: snapshotID)
-        let stagingLayout = VMBundleLayout(bundleURL: layout.restoreStagingURL)
+        let staging = layout.restoreStagingURL
         let manager = FileManager.default
-        let staging = stagingLayout.bundleURL
 
         // A staging directory left behind by an interrupted revert holds clones
         // that may be truncated, so it is discarded rather than resumed.
@@ -121,11 +115,8 @@ package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         do {
             try manager.createDirectory(at: staging, withIntermediateDirectories: true)
             try VMBundleItems.copyItems(
-                plan.relativePaths, from: sourceLayout.bundleURL, to: staging,
-                ifMissing: .unchecked)
-            if plan.kind == .warm {
-                try manager.copyItem(at: sourceLayout.saveFileURL, to: stagingLayout.saveFileURL)
-            }
+                plan.relativePaths + (plan.kind == .warm ? [VMBundleLayout.saveFileRelativePath] : []),
+                from: sourceLayout.bundleURL, to: staging, ifMissing: .unchecked)
         } catch {
             try? manager.removeItem(at: staging)
             throw error
@@ -183,24 +174,25 @@ package struct VMBundleMachineFiles: VMBundleMachineFileWorking {
         try move(staged, replacing: destination)
     }
 
-    /// Renames `source` onto `destination`, replacing whatever is there.
+    /// Renames `source` onto `destination`, replacing whatever is there: a
+    /// file, a directory and what it holds, or a symbolic link, which is
+    /// replaced itself with its target left alone.
     ///
-    /// `replaceItemAt` rather than a remove followed by a copy: it renames the
-    /// replacement in, so `destination` resolves to the old file or the new one
-    /// and never to nothing. Creates no directory, so a move into a bundle that
-    /// is not there fails rather than inventing one.
-    ///
-    /// `destination` ends with `source`'s metadata only: without
-    /// `.usingNewMetadataOnly`, `replaceItemAt` keeps an extended attribute the
-    /// replaced file has and `source` lacks — a saved state's
-    /// ``SavedStateVersion`` among them.
+    /// The two change places in one `renamex_np`, so `destination` resolves to
+    /// the old item or the new one and never to nothing, and ends with
+    /// `source`'s metadata only. Creates no directory, so a move into a bundle
+    /// that is not there fails rather than inventing one.
     private func move(_ source: URL, replacing destination: URL) throws {
-        let manager = FileManager.default
-        if manager.fileExists(atPath: destination.path(percentEncoded: false)) {
-            _ = try manager.replaceItemAt(destination, withItemAt: source, options: .usingNewMetadataOnly)
-        } else {
-            // `replaceItemAt` needs an original to replace.
-            try manager.moveItem(at: source, to: destination)
+        let from = source.path(percentEncoded: false)
+        let to = destination.path(percentEncoded: false)
+        if renamex_np(from, to, UInt32(RENAME_SWAP)) == 0 {
+            // What `destination` held.
+            try FileManager.default.removeItem(at: source)
+            return
+        }
+        // `ENOENT`: nothing at `destination` to change places with.
+        guard errno == ENOENT, rename(from, to) == 0 else {
+            throw VMBundleItems.fileError(errno, at: destination)
         }
     }
 

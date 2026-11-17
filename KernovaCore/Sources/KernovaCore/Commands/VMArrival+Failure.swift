@@ -56,7 +56,10 @@ extension VMArrival {
         guard chain.contains(where: { !filePaths(in: $0).isEmpty }) else {
             return error.localizedDescription
         }
-        let reason = chain.compactMap(posixReason).last
+        let reason =
+            chain.compactMap(posixReason).last
+            ?? (chain.contains { $0.domain == VMBundleItems.SymbolicLinkError.errorDomain }
+                ? VMBundleItems.SymbolicLinkError.cause : nil)
         let ending = reason.map { ": \($0)." } ?? "."
         let named = chain.lazy.compactMap(primaryPath).first
 

@@ -135,6 +135,18 @@ enum VMInstanceFixture {
             at: instance.bundleURL, withIntermediateDirectories: true)
         try Data("suspend slot".utf8).write(to: instance.bundleLayout.saveFileURL)
     }
+
+    /// Makes `instance`'s disk image a symbolic link to a file beside its
+    /// bundle, creating the bundle directory.
+    static func linkDiskImage(of instance: VMInstance) throws {
+        try FileManager.default.createDirectory(
+            at: instance.bundleURL, withIntermediateDirectories: true)
+        let target = instance.bundleURL.deletingLastPathComponent()
+            .appendingPathComponent("\(instance.id.uuidString)-Disk.asif")
+        try Data("disk".utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(
+            at: instance.bundleLayout.diskImageURL, withDestinationURL: target)
+    }
 }
 
 extension VMBundle.Factory {

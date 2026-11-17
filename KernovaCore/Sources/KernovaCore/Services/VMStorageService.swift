@@ -71,7 +71,7 @@ package struct VMStorageService: Sendable {
     /// Named for a UUID minted here rather than the configuration's: an import
     /// keeps the source bundle's id, so a configuration id would give a retried
     /// import the path of an earlier attempt whose discard failed. The directory
-    /// does not exist, which import's `copyItem` requires.
+    /// does not exist, which import's copy requires.
     package func makeStagedBundleURL() throws -> URL {
         try stagingRoot.claim()
         return stagingRoot.url.appendingPathComponent(
