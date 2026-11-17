@@ -304,4 +304,25 @@ struct VMStorageServiceTests {
         #expect(try writer(cloneURL).update(.usbPairings) { _ in }.isEmpty)
         #expect(try !writer(sourceURL).update(.usbPairings) { _ in }.isEmpty)
     }
+
+    @Test("A clone of a bundle whose disk is a symbolic link is refused, naming the link")
+    func cloneOfALinkedDiskIsRefused() throws {
+        let sourceURL = try makeBundle(
+            VMConfiguration(
+                name: "Linked Source", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize))
+        let moved = library.url.appendingPathComponent("Moved.asif")
+        try Data("disk".utf8).write(to: moved)
+        let disk = VMBundleLayout(bundleURL: sourceURL).diskImageURL
+        try FileManager.default.createSymbolicLink(at: disk, withDestinationURL: moved)
+        let cloneURL = try service.makeStagedBundleURL()
+
+        #expect(throws: VMBundleItems.SymbolicLinkError(url: disk)) {
+            try service.cloneVMBundle(from: sourceURL, to: cloneURL, relativePaths: ["Disk.asif"])
+        }
+
+        #expect(
+            !FileManager.default.fileExists(
+                atPath: VMBundleLayout(bundleURL: cloneURL).diskImageURL.path(percentEncoded: false)))
+    }
 }

@@ -55,7 +55,7 @@ package enum VMBundleItems {
 
     /// Copies each file or directory `relativePaths` names from the root at
     /// `source` to the same relative path under `destination`, creating the
-    /// parent directories it needs.
+    /// parent directories it needs. Each is copied as ``copy(_:to:)`` copies.
     package static func copyItems(
         _ relativePaths: [String], from source: URL, to destination: URL, ifMissing: MissingItem
     ) throws {
@@ -66,17 +66,77 @@ package enum VMBundleItems {
             case .unchecked:
                 break
             case .skip, .fail:
-                guard !manager.fileExists(atPath: item.path(percentEncoded: false)) else { break }
+                // Asked of the item itself, so a link whose target is gone is
+                // there, and the copy refuses it as any other link.
+                guard (try? manager.attributesOfItem(atPath: item.path(percentEncoded: false))) == nil else {
+                    break
+                }
                 if case .fail(let error) = ifMissing { throw error(relativePath) }
                 continue
             }
-            let copy = destination.appendingPathComponent(relativePath)
+            let target = destination.appendingPathComponent(relativePath)
             try manager.createDirectory(
-                at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
-            // Same volume, so APFS clones each file rather than duplicating its
-            // blocks — the copy shares them with the original until either
-            // side writes.
-            try manager.copyItem(at: item, to: copy)
+                at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try copy(item, to: target)
         }
+    }
+
+    /// Copies the file or directory tree at `source` to `destination`, which
+    /// must not exist.
+    ///
+    /// A bundle holds real files and directories only, so a symbolic link
+    /// anywhere in the tree, `source` included, fails the copy with a
+    /// ``SymbolicLinkError`` naming it: a copied link would share its target
+    /// with the source.
+    package static func copy(_ source: URL, to destination: URL) throws {
+        let manager = FileManager.default
+        let values = try source.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+        guard values.isSymbolicLink != true else { throw SymbolicLinkError(url: source) }
+        guard values.isDirectory == true else {
+            // On one APFS volume this clones the file rather than duplicating
+            // its blocks — the copy shares them with the original until either
+            // side writes.
+            try manager.copyItem(at: source, to: destination)
+            return
+        }
+        try manager.createDirectory(at: destination, withIntermediateDirectories: false)
+        let sourcePath = source.path(percentEncoded: false)
+        for name in try manager.contentsOfDirectory(atPath: sourcePath) {
+            try copy(source.appendingPathComponent(name), to: destination.appendingPathComponent(name))
+        }
+        // After the contents, so a source directory that denies writing still
+        // copies whole.
+        let copied = copyfile(
+            sourcePath, destination.path(percentEncoded: false), nil, copyfile_flags_t(COPYFILE_METADATA))
+        guard copied == 0 else { throw fileError(errno, at: destination) }
+    }
+
+    /// A symbolic link where a bundle's own file or directory belongs.
+    package struct SymbolicLinkError: LocalizedError, CustomNSError, Equatable {
+        package let url: URL
+
+        /// Why the link stops a copy, worded to follow the name of the file.
+        package static let reason =
+            "It is a symbolic link, and Kernova supports only real files and folders inside a virtual machine"
+
+        package static let errorDomain = "app.kernova.VMBundleItems.SymbolicLink"
+
+        package var errorUserInfo: [String: Any] {
+            [NSFilePathErrorKey: url.path(percentEncoded: false)]
+        }
+
+        package var errorDescription: String? {
+            "\u{201C}\(url.lastPathComponent)\u{201D} could not be copied: \(Self.reason)."
+        }
+    }
+
+    /// A file error naming `url`, over the POSIX error `code`.
+    package static func fileError(_ code: Int32, at url: URL) -> CocoaError {
+        CocoaError(
+            .fileReadUnknown,
+            userInfo: [
+                NSFilePathErrorKey: url.path(percentEncoded: false),
+                NSUnderlyingErrorKey: POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO) as NSError,
+            ])
     }
 }
