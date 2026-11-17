@@ -858,6 +858,30 @@ struct VMInstanceTests {
         #expect(instance.agentAbsenceTimerForTesting == nil)
     }
 
+    @Test("A Force Stop of a running guest cancels the armed watchdog: the channel the stop closed never warns")
+    func forceStopCancelsTheArmedWatchdog() async throws {
+        let instance = makeMacOSInstanceWithAgentInstalled()
+        instance.agentAbsenceGrace = Self.testWatchdogGrace
+        instance.startAgentAbsenceWatch()
+        let armed = try #require(instance.agentAbsenceTimerForTesting)
+
+        // The stop is sent and never completes, as with a VM process that
+        // doesn't answer.
+        let stop = try instance.activity.forceStop {}
+        #expect(instance.status == .forceStopping)
+        #expect(instance.agentAbsenceTimerForTesting == nil)
+
+        // The timer that was armed has run out, by firing or by being
+        // cancelled.
+        await armed.value
+        #expect(instance.missingAgentNoticesForTesting.isEmpty)
+        #expect(!instance.agentExpectedButMissing)
+
+        let session = try #require(instance.liveSessionID)
+        instance.activity.deliverSessionEvent(.stopDidComplete, from: session)
+        try await stop.value()
+    }
+
     @Test("Reading the agents again with nothing changed keeps the armed timer and its deadline")
     func watchdogReevaluationKeepsTheTimer() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()

@@ -217,7 +217,7 @@ struct VMCommandCoreConfigurationTests {
                 try harness.core.setConfiguration(
                     .name("Alpha"), assignments: [assignment], consent: .none)
             }
-            guard case .invalidState(_, _, _, let settings) = error else {
+            guard case .invalidState(_, _, _, let settings, _) = error else {
                 Issue.record("expected invalidState, got \(error)")
                 continue
             }
@@ -231,7 +231,7 @@ struct VMCommandCoreConfigurationTests {
                 assignments: moved + [ConfigurationEntry(key: "serial.socket", value: "true")],
                 consent: .none)
         }
-        guard case .invalidState(_, _, _, let settings) = error else {
+        guard case .invalidState(_, _, _, let settings, _) = error else {
             Issue.record("expected invalidState, got \(error)")
             return
         }

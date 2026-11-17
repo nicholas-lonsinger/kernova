@@ -133,8 +133,12 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         instance.activity.deliverSessionEvent(.guestDidStop, from: sessionID)
     }
 
-    func forceStop(_ instance: VMInstance) async throws {
+    /// Sends the stop, which completes at once as the session event the real
+    /// stop's completion raises.
+    func forceStop(_ instance: VMInstance) throws {
         forceStopCallCount += 1
+        guard let sessionID = instance.liveSessionID else { return }
+        instance.activity.deliverSessionEvent(.stopDidComplete, from: sessionID)
     }
 
     func pause(

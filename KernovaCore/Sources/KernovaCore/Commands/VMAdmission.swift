@@ -519,7 +519,7 @@ package enum VMAdmission {
         if let stop = operation.session?.stopping, request == .sessionAction(.forceStop) {
             return posture == .commit ? .join(stop) : .refuse(.busy(.forceStopping))
         }
-        let holder = holder(of: operation)
+        let holder = operation.holder
         let declaration = holder.declaration
         if posture == .commit, joins(request, operation) {
             return .join(operation.outcome)
@@ -566,18 +566,11 @@ package enum VMAdmission {
         }
     }
 
-    /// The kind whose declaration answers a request during `operation`: the
-    /// operation's own, or ``VMOperationKind/forceStopping`` while a Force
-    /// Stop is terminating its session.
-    private static func holder(of operation: VMOperation) -> VMOperationKind {
-        operation.session?.stopping == nil ? operation.kind : .forceStopping
-    }
-
     /// Whether committing `request` during `operation` joins it — the one
     /// statement of the join rule.
     private static func joins(_ request: Request, _ operation: VMOperation) -> Bool {
         guard let join = join(for: request) else { return false }
-        return holder(of: operation).declaration.joinedBy.contains(join)
+        return operation.holder.declaration.joinedBy.contains(join)
     }
 
     private static func join(for request: Request) -> VMOperationDeclaration.Join? {

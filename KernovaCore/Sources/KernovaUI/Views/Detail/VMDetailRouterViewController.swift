@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
 
 /// Routes the detail pane to the right content for the selected VM's status.
@@ -16,11 +17,13 @@ final class VMDetailRouterViewController: NSViewController {
     private var currentBanner: NSView?
     private var displayed: Rendered?
 
-    /// What the pane last rendered: the route, and whether a settings form it
-    /// shows takes edits.
+    /// What the pane last rendered: the route, whether a settings form it
+    /// shows takes edits, and how to end the VM's process while a Force Stop
+    /// waits on it.
     private struct Rendered: Equatable {
         let route: DetailRoute
         let isReadOnly: Bool
+        let processEnd: VMProcessEndInstruction?
     }
 
     // Reused children.
@@ -88,6 +91,7 @@ final class VMDetailRouterViewController: NSViewController {
             track: { [weak self] in
                 guard let self else { return }
                 _ = self.instance.phase
+                _ = self.instance.processEndInstruction
                 _ = self.instance.detailPaneMode
                 _ = self.instance.setupState
                 _ = self.isSettingsReadOnly
@@ -118,7 +122,9 @@ final class VMDetailRouterViewController: NSViewController {
             }
         // Read only for a route showing the form, so a lock that moves under
         // the display leaves it in place.
-        let rendered = Rendered(route: route, isReadOnly: showsSettings && isSettingsReadOnly)
+        let rendered = Rendered(
+            route: route, isReadOnly: showsSettings && isSettingsReadOnly,
+            processEnd: instance.processEndInstruction)
 
         guard rendered != displayed else { return }
         displayed = rendered
@@ -129,7 +135,7 @@ final class VMDetailRouterViewController: NSViewController {
         let readOnly = rendered.isReadOnly
         switch rendered.route {
         case .transition(let label):
-            placeholderVC.configure(label: label)
+            placeholderVC.configure(label: label, processEnd: rendered.processEnd)
             setContent(child: placeholderVC, banner: nil)
 
         case .settings:

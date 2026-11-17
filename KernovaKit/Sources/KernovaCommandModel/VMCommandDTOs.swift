@@ -782,14 +782,18 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     case ambiguous(selector: VMSelector, candidates: [VMSummary])
     /// The VM's current state does not admit the verb. `settings` names the
     /// assignments a refused `setConfiguration` would have made, empty for
-    /// every other verb.
+    /// every other verb. `processEnd` is how to end the VM's process, while
+    /// that state is a Force Stop waiting on it.
     case invalidState(
-        vm: VMSummary, current: String, allowed: [VMVerb], settings: [ConfigurationEntry] = [])
+        vm: VMSummary, current: String, allowed: [VMVerb], settings: [ConfigurationEntry] = [],
+        processEnd: VMProcessEndInstruction? = nil)
     /// The VM's current state takes the verb, but not this change of it: only
     /// a stopped VM takes `change`.
     case changeTakesStoppedVM(vm: VMSummary, current: String, change: StoppedVMChange)
-    /// The VM has work in flight that the verb would race.
-    case busy(vm: VMSummary, operation: String)
+    /// The VM has work in flight that the verb would race. `processEnd` is
+    /// how to end the VM's process, while that work is a Force Stop waiting
+    /// on it.
+    case busy(vm: VMSummary, operation: String, processEnd: VMProcessEndInstruction? = nil)
     /// Another running copy of Kernova holds the VM.
     case heldByAnotherCopy(vm: VMSummary)
     /// The verb is destructive and no consent was supplied.
@@ -824,8 +828,11 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     /// The app is quitting, and takes nothing new on.
     case terminating
     /// The guest had not powered off `seconds` after the shutdown request, so
-    /// the verb stopped waiting and left the VM as it was.
-    case timedOut(vm: VMSummary, verb: VMVerb, seconds: TimeInterval)
+    /// the verb stopped waiting and left the VM as it was. `processEnd` is how
+    /// to end the VM's process, when the request was a Force Stop still
+    /// waiting on it.
+    case timedOut(
+        vm: VMSummary, verb: VMVerb, seconds: TimeInterval, processEnd: VMProcessEndInstruction? = nil)
     /// The verb ran and did not complete. `title` is the heading the failure
     /// names for itself, `nil` when it has none of its own.
     case operationFailed(
@@ -922,7 +929,7 @@ extension CommandErrorDTO {
                 + "Use one of their identifiers instead: "
                 + candidates.map { "\($0.name) (\($0.id.uuidString))" }.joined(separator: ", ")
                 + "."
-        case .invalidState(let vm, let current, let allowed, let settings):
+        case .invalidState(let vm, let current, let allowed, let settings, let processEnd):
             // The status and the verbs in a person's words, never their raw values:
             // those are the wire's vocabulary, and this sentence goes in front
             // of a person. A refused setting is named by its key and the value
@@ -945,13 +952,15 @@ extension CommandErrorDTO {
                     + (offered.isEmpty
                         ? "Nothing can be done with it in that state."
                         : "What it accepts now: \(offered.joined(separator: ", ")).")
+                    + (processEnd.map { " " + $0.text } ?? "")
             }()
         case .changeTakesStoppedVM(let vm, let current, let change):
             "\u{201C}\(vm.name)\u{201D} is "
                 + "\(VMStatus.phrase(forWireName: current, heldByAnotherCopy: false)). "
                 + change.sentence
-        case .busy(let vm, let operation):
+        case .busy(let vm, let operation, let processEnd):
             "\u{201C}\(vm.name)\u{201D} is busy \(operation). Wait for it to finish, then try again."
+                + (processEnd.map { " " + $0.text } ?? "")
         case .heldByAnotherCopy(let vm):
             "\u{201C}\(vm.name)\u{201D} is in use by another copy of Kernova."
         case .confirmationRequired(let prompt):
@@ -974,15 +983,16 @@ extension CommandErrorDTO {
                 reason: reason)
         case .terminating:
             "Kernova is quitting."
-        case .timedOut(let vm, let verb, let seconds):
+        case .timedOut(let vm, let verb, let seconds, let processEnd):
             // Only what the expiry observed. What state the VM is in is a
             // separate read, and any sentence guessing it here is wrong for
             // some VM that reached the deadline another way.
             "\u{201C}\(vm.name)\u{201D} did not power off within "
                 + "\(Self.deadlineText(seconds)) seconds"
                 + (verb == .restart ? ", so it was not started again. " : ". ")
-                + "A force stop terminates a guest that will not shut down, losing "
-                + "\(StopDisposition.forceLoss)."
+                + (processEnd?.text
+                    ?? "A force stop terminates a guest that will not shut down, losing "
+                    + "\(StopDisposition.forceLoss).")
         case .operationFailed(_, _, let message, _):
             message
         case .filesKept(let kept):

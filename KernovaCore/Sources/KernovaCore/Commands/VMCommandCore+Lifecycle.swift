@@ -756,18 +756,28 @@ extension VMCommandCore {
     /// means. With one, the wait is the verb — and a guest that ignores the
     /// request refuses rather than escalating, because terminating it is a
     /// separate decision with separate consent.
+    ///
+    /// A Force Stop is the termination itself, so its verb is waiting for it
+    /// to end (``awaitForceStop(_:of:within:verb:)``), which `timeout` bounds
+    /// when given.
     func stop(
         _ instance: VMInstance, disposition: StopDisposition, consent: Consent,
         timeout: TimeInterval? = nil
     ) async throws {
-        try await requestStop(instance, disposition: disposition, consent: consent)
+        if let forceStop = try await requestStop(instance, disposition: disposition, consent: consent) {
+            try await awaitForceStop(forceStop, of: instance, within: timeout, verb: .stop)
+            return
+        }
         guard let timeout else { return }
         try await awaitPowerOff(instance, within: timeout, verb: .stop)
     }
 
+    /// Asks the guest to go down the way `disposition` names, answering the
+    /// outcome of the Force Stop it admitted or joined — `nil` for every other
+    /// stop, the discard of a saved state included.
     private func requestStop(
         _ instance: VMInstance, disposition: StopDisposition, consent: Consent
-    ) async throws {
+    ) async throws -> VMOutcome? {
         switch disposition {
         case .graceful:
             // A VM holding a saved state has no guest to send the request to, so
@@ -793,9 +803,10 @@ extension VMCommandCore {
                 } catch {
                     throw failure(error, verb: .stop, on: instance)
                 }
-                return
+                return nil
             }
             try await discardSavedState(instance, discard)
+            return nil
         case .force:
             // Both capabilities, for the reason the graceful branch states: a
             // VM resting on a slot has nothing to terminate and this deletes
@@ -808,13 +819,13 @@ extension VMCommandCore {
             }
             guard let discard = instance.savedStateDiscard else {
                 do {
-                    try await lifecycle.forceStop(instance)
+                    return try lifecycle.forceStop(instance)
                 } catch {
                     throw failure(error, verb: .stop, on: instance)
                 }
-                return
             }
             try await discardSavedState(instance, discard)
+            return nil
         case .anyway:
             try requireStopAnyway(instance, for: .stop)
             guard consent.covers(.stopAnyway) else {
@@ -827,6 +838,7 @@ extension VMCommandCore {
             } catch {
                 throw failure(error, verb: .stop, on: instance)
             }
+            return nil
         }
     }
 
@@ -1229,7 +1241,7 @@ extension VMCommandCore {
             try self.startNow(instance, policy: .command(identity.unattended), resolving: outcome)
         }
         do {
-            try await endSession(instance, disposition: disposition, continuingWith: boot)
+            try await endSession(instance, disposition: disposition, continuingWith: boot, within: timeout)
             try await awaitPowerOff(instance, within: timeout, verb: .restart)
         } catch {
             // The session ending is what the boot is owed to, so once it has
@@ -1270,24 +1282,29 @@ extension VMCommandCore {
     }
 
     /// Ends the session the way a restart's `disposition` names, owing `boot`
-    /// to its end.
+    /// to its end — waiting out a Force Stop, bounded by `timeout` when given.
     private func endSession(
-        _ instance: VMInstance, disposition: StopDisposition, continuingWith boot: VMFollowUp
+        _ instance: VMInstance, disposition: StopDisposition, continuingWith boot: VMFollowUp,
+        within timeout: TimeInterval?
     ) async throws {
+        let forceStop: VMOutcome
         do {
             switch disposition {
             case .graceful:
                 try await lifecycle.requestRestartStop(instance, ignoringApps: false, continuingWith: boot)
+                return
             case .anyway:
                 try await lifecycle.requestRestartStop(instance, ignoringApps: true, continuingWith: boot)
+                return
             case .force:
-                try await lifecycle.forceStop(instance, continuingWith: boot)
+                forceStop = try lifecycle.forceStop(instance, continuingWith: boot)
             }
         } catch is ShutdownIgnoringAppsUntaken {
             throw CommandError.stepRequired(Self.stopAnywayUnavailable(instance, verb: .restart))
         } catch {
             throw failure(error, verb: .stop, on: instance)
         }
+        try await awaitForceStop(forceStop, of: instance, within: timeout, verb: .restart)
     }
 
     /// Refuses a deadline no wait can honor, before anything is asked of the
@@ -1325,6 +1342,37 @@ extension VMCommandCore {
                 "'\(instance.name, privacy: .public)' had not powered off \(seconds, privacy: .public)s after the shutdown request"
             )
             throw CommandError.timedOut(vm: summary(instance), verb: verb, seconds: seconds)
+        }
+    }
+
+    /// Suspends until the Force Stop `stop` of `instance` ends — its session
+    /// gone, or the stop failed — bounded by `seconds` when the caller named
+    /// one, and rethrows how it failed.
+    ///
+    /// - Throws: ``CommandError/timedOut(vm:verb:seconds:processEnd:)`` when
+    ///   the deadline passes first, carrying how the user ends the VM's
+    ///   process. The Force Stop stays pending.
+    private func awaitForceStop(
+        _ stop: VMOutcome, of instance: VMInstance, within seconds: TimeInterval?, verb: VMVerb
+    ) async throws {
+        if let seconds {
+            let ended = await waitForObservedChange(
+                until: { instance.activity.pendingForceStop !== stop },
+                before: ObservedChangeDeadline(seconds: seconds, clock: clock))
+            guard ended else {
+                logger.log(
+                    .notice,
+                    "'\(instance.name, privacy: .public)' was still force stopping \(seconds, privacy: .public)s after the Force Stop"
+                )
+                throw CommandError.timedOut(
+                    vm: summary(instance), verb: verb, seconds: seconds,
+                    processEnd: instance.processEndInstruction)
+            }
+        }
+        do {
+            try await stop.value()
+        } catch {
+            throw failure(error, verb: .stop, on: instance)
         }
     }
 

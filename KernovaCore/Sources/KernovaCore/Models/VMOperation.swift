@@ -87,16 +87,17 @@ package enum VMLifecyclePhase: Sendable, Equatable {
     // MARK: Presentation
 
     /// The settled phase surfaces present: this phase, except for an operation
-    /// that declares ``VMOperationDeclaration/Status/base`` status, which
-    /// presents the phase it started from — so a USB attach or a media
-    /// reconcile never changes what the user sees.
+    /// whose ``VMOperation/holder`` declares
+    /// ``VMOperationDeclaration/Status/base`` status, which presents the phase
+    /// it started from — so a USB attach or a media reconcile never changes
+    /// what the user sees.
     ///
     /// Once that operation's session has ended it presents the at-rest phase
     /// the end names. Whether a suspend slot outlived the session is a bundle
     /// fact no phase holds, so the ending commit is what settles on it.
     var presented: VMLifecyclePhase {
         guard case .operating(let operation) = self,
-            operation.kind.declaration.status == .base
+            operation.holder.declaration.status == .base
         else { return self }
         switch operation.sessionState {
         case .none:
@@ -121,7 +122,7 @@ package enum VMLifecyclePhase: Sendable, Equatable {
         case .livePaused: .paused
         case .suspended: .suspended
         case .operating(let operation):
-            switch operation.kind.declaration.status {
+            switch operation.holder.declaration.status {
             case .shows(let status): status
             case .base: presented.status
             }
@@ -151,7 +152,7 @@ package enum VMLifecyclePhase: Sendable, Equatable {
         case .running, .livePaused: true
         case .stopped, .initialBoot, .failed, .suspended, .removed: false
         case .operating(let operation):
-            switch operation.kind.declaration.holdsIdentity {
+            switch operation.holder.declaration.holdsIdentity {
             case .always: true
             case .viaSession: operation.session != nil
             case .never: false
@@ -165,10 +166,17 @@ package enum VMLifecyclePhase: Sendable, Equatable {
         case .running, .livePaused, .suspended: true
         case .stopped, .initialBoot, .failed, .removed: false
         case .operating(let operation):
-            switch operation.kind.declaration.display {
-            case .shown: true
-            case .hidden: false
-            case .base: presented.hasActiveDisplay
+            // On macOS 27.2.1 the VM process was seen destroying the guest's
+            // display within 150 ms of a stop, so a session a stop is pending
+            // on has no display left to show.
+            if operation.session?.stop != nil {
+                false
+            } else {
+                switch operation.holder.declaration.display {
+                case .shown: true
+                case .hidden: false
+                case .base: presented.hasActiveDisplay
+                }
             }
         }
     }
@@ -260,6 +268,17 @@ package struct VMOperation: Sendable, Equatable {
         return end
     }
 
+    /// The kind whose declaration answers for the operation — what admission
+    /// decides against and every projection presents: its own, or
+    /// ``VMOperationKind/forceStopping`` while a Force Stop is terminating its
+    /// session.
+    ///
+    /// Not what a quit reads (``VMOperationDeclaration/quit``): that is the
+    /// operation's own body, whatever its session is doing.
+    var holder: VMOperationKind {
+        session?.stopping == nil ? kind : .forceStopping
+    }
+
     /// The settled phase a request during the operation is classified against:
     /// where the VM rests once its session has ended — or once the Force Stop
     /// in flight on it lands — and the phase it started from otherwise.
@@ -332,13 +351,45 @@ enum VMOperationSessionState: Sendable, Equatable {
     case ended(VMSessionEnd)
 }
 
-/// A session an operation holds, and whether its guest is executing.
+/// A session an operation holds, whether its guest is executing, and the stop
+/// sent to it while one is in flight.
 struct VMOperationSession: Sendable, Equatable {
     let id: UUID
     var guest: VMGuestRunState
+    var stop: VMSessionStop?
+
+    /// A session holding the Force Stop `stopping`, when given.
+    init(id: UUID, guest: VMGuestRunState, stopping: VMOutcome? = nil) {
+        self.id = id
+        self.guest = guest
+        self.stop = stopping.map(VMSessionStop.forceStop)
+    }
+
     /// The outcome of the Force Stop terminating this session, while one is
     /// in flight; admission refuses new work on the session meanwhile.
-    var stopping: VMOutcome? = nil
+    var stopping: VMOutcome? {
+        guard case .forceStop(let outcome) = stop else { return nil }
+        return outcome
+    }
+}
+
+/// A stop sent to a live session, whose outcome resolves when the session
+/// ends — the stop's completion, or Virtualization ending it some other way
+/// first — or with the stop's error.
+///
+/// Either way the VM process has been told to take the guest down, which it
+/// starts by destroying the guest's display: the session presents none, and a
+/// session that ends meanwhile ended the way the stop asked, whichever
+/// callback reported it.
+enum VMSessionStop: Sendable, Equatable {
+    /// A Force Stop someone asked for, whose outcome every caller of it
+    /// awaits; admission and every projection answer the VM as
+    /// ``VMOperationKind/forceStopping`` meanwhile.
+    case forceStop(VMOutcome)
+    /// The operation holding the session stopping it itself — a revert's
+    /// teardown, the installer's VM — whose body awaits the outcome and then
+    /// ends the session.
+    case byOperation(VMOutcome)
 }
 
 /// Whether a live guest is executing.
@@ -821,9 +872,11 @@ extension VMOperationKind {
                 toleratedSessionActions: stoppable, edits: .baseExcept([]),
                 joinedBy: [.reconcile])
         case .forceStopping:
+            // A quit ends the VM process, which is what the stop waits for.
             return .init(
-                status: .base, holdsIdentity: .viaSession, quit: .waitOut, display: .base,
-                toleratedSessionActions: [], edits: .only(.presentationAndMetadata), joinedBy: [])
+                status: .shows(.forceStopping), holdsIdentity: .viaSession, quit: .interrupt,
+                display: .hidden, toleratedSessionActions: [], edits: .only(.presentationAndMetadata),
+                joinedBy: [])
         case .discardingSavedState:
             return .init(
                 status: .base, holdsIdentity: .never, quit: .notApplicable, display: .base,

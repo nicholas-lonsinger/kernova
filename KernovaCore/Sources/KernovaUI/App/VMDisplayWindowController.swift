@@ -71,6 +71,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             display: instance.session?.virtualMachineSession?.displayHandle,
             isPaused: instance.isLivePaused,
             transitionText: instance.status.transitionLabel,
+            processEnd: instance.processEndInstruction,
             settings: instance.displayViewSettings
         )
         self.backingView = backing
@@ -183,6 +184,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 _ = self.instance.displayViewSettings
                 _ = self.instance.hasLiveEphemeralSession
                 _ = self.instance.name
+                _ = self.instance.processEndInstruction
             },
             apply: { [weak self] in
                 guard let self else { return }
@@ -195,6 +197,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                         display: self.instance.session?.virtualMachineSession?.displayHandle,
                         isPaused: self.instance.isLivePaused,
                         transitionText: status.transitionLabel,
+                        processEnd: self.instance.processEndInstruction,
                         settings: self.instance.displayViewSettings
                     )
                     self.updateToolbarItems()

@@ -209,19 +209,11 @@ package final class VirtualizationService {
         }
     }
 
-    /// Terminates the live guest where it stands.
-    package func forceStop(_ instance: VMInstance) async throws {
+    /// Sends the live guest the stop that terminates it where it stands.
+    package func forceStop(_ instance: VMInstance) throws {
         guard let session = instance.session else { throw VirtualizationError.noVirtualMachine }
-        do {
-            try await session.stop()
-            Self.logger.log(.notice, "Force-stopped VM '\(instance.name, privacy: .public)'")
-        } catch {
-            Self.logger.log(
-                .error,
-                "Failed to force-stop VM '\(instance.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
-            )
-            throw error
-        }
+        session.stop()
+        Self.logger.log(.notice, "Sent a Force Stop to VM '\(instance.name, privacy: .public)'")
     }
 
     // MARK: - Pause / Resume
@@ -242,10 +234,6 @@ package final class VirtualizationService {
             )
             throw error
         }
-        // The grace clock only means something while the guest is executing
-        // — a frozen guest cannot say Hello, so letting it run would blame
-        // the agent for the pause.
-        instance.cancelAgentAbsenceWatchdog()
         Self.logger.log(.notice, "Paused VM '\(instance.name, privacy: .public)'")
         return .rest(.live(.paused), ())
     }
@@ -548,17 +536,17 @@ package final class VirtualizationService {
 
         // A live guest's memory and disks are exactly what the revert replaces,
         // and the user confirmed losing them — so terminate rather than save.
-        if let session = context.bringUp.operation.session {
-            do {
-                try await session.stop()
-            } catch {
-                Self.logger.log(
-                    .warning,
-                    "Terminating '\(instance.name, privacy: .public)' before a revert failed: \(error.localizedDescription, privacy: .public)"
-                )
-            }
+        do {
+            try await context.bringUp.operation.stopSession()
+        } catch {
+            Self.logger.log(
+                .warning,
+                "Terminating '\(instance.name, privacy: .public)' before a revert failed: \(error.localizedDescription, privacy: .public)"
+            )
+            // The stop failed with the VM still live; the revert ends the
+            // session it replaces itself.
+            context.bringUp.operation.endSession()
         }
-        context.bringUp.operation.endSession()
 
         // Staged, then committed, then installed: nothing in the bundle moves
         // until the files are cloned aside and the configuration — which the

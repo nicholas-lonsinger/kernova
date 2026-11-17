@@ -780,6 +780,16 @@ package final class VMInstance {
     package var isKeepingAppAlive: Bool { activity.isKeepingAppAlive }
     package var hasActiveDisplay: Bool { activity.hasActiveDisplay }
 
+    /// How the user ends this VM's process, which Kernova waits on and cannot
+    /// end itself, while a stop of its live session is pending
+    /// (``VMActivity/liveSessionIsStopping``) — a Force Stop, a revert's
+    /// teardown, the installer's VM — and `nil` otherwise.
+    package var processEndInstruction: VMProcessEndInstruction? {
+        guard activity.liveSessionIsStopping else { return nil }
+        return VMProcessEndInstruction(
+            appName: bundleProducts.displayName, bundlePath: bundleURL.path(percentEncoded: false))
+    }
+
     var onSessionBecameAttachable: (@MainActor () -> [VMFollowUp])? {
         get { activity.onSessionBecameAttachable }
         set { activity.onSessionBecameAttachable = newValue }
@@ -1266,16 +1276,12 @@ package final class VMInstance {
 
     /// Reads the agents again: a scope ``MissingAgentRule`` no longer finds
     /// missing stops warning, the expired away peers the hub no longer lists
-    /// are dropped, and the absence watchdog's timer is armed for the earliest
-    /// deadline ``AgentAbsenceDeadlines`` gives — re-armed when that moves,
-    /// cancelled with nothing pending.
+    /// are dropped, and the absence watchdog is evaluated again
+    /// (``evaluateAgentAbsenceWatch(_:)``).
     ///
-    /// The watchdog waits only while the VM is running (a paused guest isn't
-    /// executing, so its silence proves nothing), the session didn't boot into
-    /// Recovery (which never runs the agent), and no install is in progress.
-    /// The first call it can act on in a session with no floor yet — after a
-    /// restore — sets the floor (``startAgentAbsenceWatch()`` sets it
-    /// otherwise).
+    /// The first call the watchdog waits through in a session with no floor
+    /// yet — after a restore — sets the floor (``startAgentAbsenceWatch()``
+    /// sets it otherwise).
     func agentPresenceChanged() {
         guard let context = sessionContext else { return }
         let missing = Set(MissingAgentRule.missing(agentScopePresences).map(\.scope))
@@ -1284,12 +1290,37 @@ package final class VMInstance {
         if !context.expiredAwayOrders.isSubset(of: awayOrders) {
             context.expiredAwayOrders.formIntersection(awayOrders)
         }
-        guard !context.bootedIntoRecovery, status == .running, setupState == nil else {
-            context.cancelAgentAbsenceWatchdog()
-            return
+        if agentAbsenceWatchWaits(in: context), context.agentAbsenceFloor == nil {
+            context.agentAbsenceFloor = Self.agentAbsenceNow
         }
-        if context.agentAbsenceFloor == nil { context.agentAbsenceFloor = Self.agentAbsenceNow }
-        guard let earliest = pendingAgentAbsences(context).map(\.deadline).min() else {
+        evaluateAgentAbsenceWatch(context)
+    }
+
+    /// Called by ``activity`` when the VM's status changes, which the absence
+    /// watchdog waits on (``agentAbsenceWatchWaits(in:)``): leaving running
+    /// cancels it, before a timer already armed can fire. Sets no floor — a
+    /// guest coming back to running is watched from the floor its start,
+    /// resume or first presence change set.
+    func statusDidChange() {
+        guard let context = sessionContext else { return }
+        evaluateAgentAbsenceWatch(context)
+    }
+
+    /// Whether the absence watchdog waits in `context` now: only while the VM
+    /// is running (a paused or stopping guest isn't executing, so its silence
+    /// proves nothing), the session didn't boot into Recovery (which never
+    /// runs the agent), and no install is in progress.
+    private func agentAbsenceWatchWaits(in context: VMSessionContext) -> Bool {
+        !context.bootedIntoRecovery && status == .running && setupState == nil
+    }
+
+    /// Arms the absence watchdog's timer for the earliest deadline
+    /// ``AgentAbsenceDeadlines`` gives while it waits — re-armed when that
+    /// moves — and cancels it otherwise, or with nothing pending.
+    private func evaluateAgentAbsenceWatch(_ context: VMSessionContext) {
+        guard agentAbsenceWatchWaits(in: context),
+            let earliest = pendingAgentAbsences(context).map(\.deadline).min()
+        else {
             context.cancelAgentAbsenceWatchdog()
             return
         }

@@ -277,14 +277,14 @@ extension VMCommandCore {
         guard !refused.isEmpty else { return }
         let error = refusal(
             for: refused.map { $0.key.capability(writing: $0.value) }, on: instance)
-        guard case .invalidState(let vm, let current, let allowed, _) = error else { throw error }
+        guard case .invalidState(let vm, let current, let allowed, _, let processEnd) = error else { throw error }
         var settings: [ConfigurationEntry] = []
         for edit in refused {
             let entry = ConfigurationEntry(key: edit.key.name, value: edit.value)
             if !settings.contains(entry) { settings.append(entry) }
         }
         throw CommandError.invalidState(
-            vm: vm, current: current, allowed: allowed, settings: settings)
+            vm: vm, current: current, allowed: allowed, settings: settings, processEnd: processEnd)
     }
 
     /// Refuses a change that turns automatic clipboard passthrough on without
