@@ -92,10 +92,7 @@ public enum UpdateServeEvent: Sendable, Equatable {
 
 /// The peer's update client: decides when to pull and checks the
 /// byte count; the rejected hash comes from the installer's reports only.
-struct UpdateClient: FeatureMachine {
-    /// UPDATE.
-    public static let feature = FeatureID.update
-
+struct UpdateClient: Sendable {
     private struct Pull: Sendable {
         var id: UpdatePullID
         var manifest: UpdateManifestValue
@@ -128,9 +125,6 @@ struct UpdateClient: FeatureMachine {
         LocalAdvert(version: 1, availability: Availability(availability) { $0.encodedCapability })
     }
 
-    /// The client sets no deadlines.
-    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
-
     mutating func takeOutputs() -> (effects: [PeerEffect], diagnostics: [Diagnostic]) {
         defer {
             outbox.removeAll()
@@ -146,7 +140,7 @@ struct UpdateClient: FeatureMachine {
     }
 
     /// Handles a connection event.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .sessionEstablished, .usabilityChanged, .slotFreed:
             consider(&connection)
@@ -255,10 +249,7 @@ struct UpdateClient: FeatureMachine {
 /// more than a read asked for, or bytes no read asked for has failed: the pull
 /// is RESET `READ_FAILED`, which the next connection retries, rather than
 /// reaching the peer as a payload of the wrong size.
-struct UpdateServer: FeatureMachine {
-    /// UPDATE.
-    public static let feature = FeatureID.update
-
+struct UpdateServer: Sendable {
     private struct Pull: Sendable {
         var id: UpdatePullID
         var manifest: UpdateManifestValue
@@ -286,9 +277,6 @@ struct UpdateServer: FeatureMachine {
         LocalAdvert(version: 1, availability: .available(Data()))
     }
 
-    /// The server sets no deadlines.
-    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
-
     mutating func takeOutputs() -> (events: [HostEvent], effects: [HostEffect], diagnostics: [Diagnostic]) {
         defer {
             outbox.removeAll()
@@ -299,7 +287,7 @@ struct UpdateServer: FeatureMachine {
     }
 
     /// Handles a connection event.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .opened(let stream, let body):
             let request = (try? Kernova_V2_UpdatePull(serializedBytes: body)) ?? Kernova_V2_UpdatePull()

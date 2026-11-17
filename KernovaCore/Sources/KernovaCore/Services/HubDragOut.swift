@@ -5,7 +5,6 @@ import KernovaAgentRuntime
 import KernovaFileTree
 import KernovaItemTransfer
 import KernovaKit
-import KernovaLogging
 import KernovaWire
 import Synchronization
 
@@ -73,8 +72,6 @@ package final class HubDragOut {
     nonisolated private let deliveries = Deliveries()
     /// Each pull, until its one `.pullEnded`.
     @ObservationIgnored private var pulls: [ItemPullID: @MainActor (ItemPullResult) -> Void] = [:]
-
-    private static let logger = KernovaLogger(subsystem: "app.kernova", category: "HubDragOut")
 
     /// An owner landing its pulls through `sink`, reporting them to `reporter`
     /// under the name `peerName` gives, each readout revealed once it has run

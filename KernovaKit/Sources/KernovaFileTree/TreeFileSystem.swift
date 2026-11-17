@@ -40,8 +40,6 @@ public protocol TreeFileSystem {
     func names(in directory: Int32) throws(TreeFileSystemError) -> [[UInt8]]
     /// The target of the symlink `name` in `directory`.
     func linkTarget(of name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> [UInt8]
-    /// Reads up to `buffer.count` bytes, returning `0` at the end of the file.
-    func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer) throws(TreeFileSystemError) -> Int
     /// Reads up to `buffer.count` bytes at `offset`, returning `0` at the end
     /// of the file.
     func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: Int64)

@@ -1,5 +1,6 @@
-import KernovaDBus
 import Testing
+
+@testable import KernovaDBus
 
 /// One message of each type, every header field set somewhere.
 let sampleMessages: [DBusMessage] = {

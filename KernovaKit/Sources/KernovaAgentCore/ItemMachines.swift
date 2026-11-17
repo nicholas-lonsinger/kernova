@@ -104,27 +104,19 @@ struct ItemMachines: Sendable {
         ]
     }
 
-    /// The soonest deadline any machine sets.
-    func nextDeadline(on clock: JudgedClock) -> CoreInstant? {
-        [
-            transfer.nextDeadline(on: clock), clipboard.nextDeadline(on: clock), drop.nextDeadline(on: clock),
-            drag.nextDeadline(on: clock),
-        ].compactMap { $0 }.min()
-    }
-
     /// Tells every machine of a connection-wide event.
-    mutating func notify(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
-        transfer.handle(event, connection: &connection, now: now)
-        clipboard.handle(event, connection: &connection, now: now)
-        drop.handle(event, connection: &connection, now: now)
-        drag.handle(event, connection: &connection, now: now)
+    mutating func notify(_ event: FeatureEvent, connection: inout Connection) {
+        transfer.handle(event, connection: &connection)
+        clipboard.handle(event, connection: &connection)
+        drop.handle(event, connection: &connection)
+        drag.handle(event, connection: &connection)
     }
 
     /// Hands a stream event to the machine owning its kind.
-    mutating func deliver(_ event: FeatureEvent, to owner: KindOwner, connection: inout Connection, now: CoreInstant) {
+    mutating func deliver(_ event: FeatureEvent, to owner: KindOwner, connection: inout Connection) {
         switch owner {
         case .itemTransfer:
-            transfer.handle(event, connection: &connection, now: now)
+            transfer.handle(event, connection: &connection)
         case .itemOffer:
             transfer.handleOffer(event, connection: &connection)
             drag.offersChanged(transfer, connection: &connection)

@@ -33,10 +33,7 @@ public enum LogDelivery: Sendable, Equatable {
 // MARK: - Peer
 
 /// The peer's log forwarder: at most one LOG_FORWARD per connection.
-struct LogForwarder: FeatureMachine {
-    /// LOGS.
-    public static let feature = FeatureID.logs
-
+struct LogForwarder: Sendable {
     private var availability: Availability<NoParams>
     private var stream: StreamID?
     private var ending = false
@@ -59,9 +56,6 @@ struct LogForwarder: FeatureMachine {
         LocalAdvert(version: 1, availability: Availability(availability) { _ in Data() })
     }
 
-    /// The forwarder sets no deadlines.
-    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
-
     mutating func takeOutputs() -> (effects: [PeerEffect], diagnostics: [Diagnostic]) {
         defer {
             outbox.removeAll()
@@ -71,7 +65,7 @@ struct LogForwarder: FeatureMachine {
     }
 
     /// Handles a connection event.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .policyChanged:
             if let policy = connection.currentPolicy {
@@ -161,9 +155,7 @@ struct LogForwarder: FeatureMachine {
 // MARK: - Host
 
 /// The host's log receiver.
-struct LogReceiver: FeatureMachine {
-    /// LOGS.
-    public static let feature = FeatureID.logs
+struct LogReceiver: Sendable {
     /// The credit-return cap: bytes per second, and the burst.
     static let returnRate = (bytesPerSecond: 1_048_576, burst: 262_144)
 
@@ -179,9 +171,6 @@ struct LogReceiver: FeatureMachine {
         LocalAdvert(version: 1, availability: .available(Kernova_V2_LogCapability().encoded))
     }
 
-    /// The receiver sets no deadlines; the connection meters the credit return.
-    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
-
     mutating func takeOutputs() -> (events: [HostEvent], diagnostics: [Diagnostic]) {
         defer {
             outbox.removeAll()
@@ -191,7 +180,7 @@ struct LogReceiver: FeatureMachine {
     }
 
     /// Handles a connection event.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .opened(let id, _):
             streams.append(id)

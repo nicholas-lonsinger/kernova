@@ -224,8 +224,6 @@ public struct LogindSessionState: RawRepresentable, Sendable, Hashable {
     public static let online = LogindSessionState(rawValue: "online")
     /// `active`: logged in and in the foreground.
     public static let active = LogindSessionState(rawValue: "active")
-    /// `closing`: logged out, with processes still running.
-    public static let closing = LogindSessionState(rawValue: "closing")
 }
 
 /// A session's class: `user`, `greeter`, `lock-screen`, among others.
@@ -242,8 +240,6 @@ public struct LogindSessionClass: RawRepresentable, Sendable, Hashable {
     public static let user = LogindSessionClass(rawValue: "user")
     /// `greeter`: a display manager's pseudo-session.
     public static let greeter = LogindSessionClass(rawValue: "greeter")
-    /// `lock-screen`: a display lock screen.
-    public static let lockScreen = LogindSessionClass(rawValue: "lock-screen")
 }
 
 /// The session properties a `LogindSessionChange` carries: those logind

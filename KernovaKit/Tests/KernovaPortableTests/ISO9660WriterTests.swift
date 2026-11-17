@@ -1,10 +1,11 @@
-import KernovaISO9660
 import KernovaPortableTestSupport
 import Testing
 
 #if os(Linux)
 import Foundation
 #endif
+
+@testable import KernovaISO9660
 
 @Suite("ISO9660Writer")
 struct ISO9660WriterTests {
