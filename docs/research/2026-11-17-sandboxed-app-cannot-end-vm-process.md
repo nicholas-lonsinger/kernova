@@ -48,6 +48,10 @@ process was frozen. `kill -9` on the frozen clone's pid, 12 s into its
 unanswered Force Stop, settled that clone in Error and left the other
 running.
 
+The same command, pasted into Terminal.app on this Mac, ended the frozen
+process of a macOS 26.7.2 guest with no privacy prompt and no output, and
+left a Linux guest running.
+
 ## Method
 
 A probe in `VMSession.stop()` logged the stop, then ran the table's calls on
@@ -58,9 +62,8 @@ runs; the release route in one.
 
 ## Not covered
 
-A VM process stuck the way the ASIF deadlock leaves it, where the stop's
+Terminal.app on a Mac where it has never been allowed to read another
+app's container. A VM process stuck the way the ASIF deadlock leaves it, where the stop's
 completion handler was observed never to run even after the kill. The same
 calls from an unsandboxed process. What still held the `VZVirtualMachine`
-after Kernova's references were dropped. `lsof` on a macOS guest's bundle,
-and from Terminal.app, whose access to another app's container is its own
-privacy decision: the commands here ran from a shell that could read it.
+after Kernova's references were dropped.
