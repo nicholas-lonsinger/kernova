@@ -842,11 +842,12 @@ struct VMActivityTests {
                 do {
                     try await context.stopSession()
                 } catch {
+                    #expect(context.sessionID == session)
                     return .failed(.asStarted, error)
                 }
-                // Still held: the operation ends the session it stopped.
-                #expect(context.sessionID == session)
-                context.endSession()
+                // Ended by the completion itself, as the operation's own.
+                #expect(context.sessionID == nil)
+                #expect(context.sessionEnd == .endedByOperation)
                 return .rest(.afterSessionEnd, ())
             }
             try await recorder.stopped.wait { recorder.stops == 1 }
@@ -862,8 +863,10 @@ struct VMActivityTests {
         }
     }
 
-    @Test("A revert whose stop never completes shows how to end the VM's process, and goes on when it ends")
-    func revertStopShowsTheProcessEnd() async throws {
+    @Test(
+        "A revert whose stop never completes shows how to end the VM's process, and goes on when it ends",
+        arguments: ProcessEndArrival.allCases)
+    func revertStopShowsTheProcessEnd(_ arrival: ProcessEndArrival) async throws {
         let session = UUID()
         let (instance, hooks, library) = makeWiredInstance(.running(sessionID: session))
         defer { withExtendedLifetime(library) {} }
@@ -876,7 +879,6 @@ struct VMActivityTests {
             .reverting(snapshotID: snapshotID, resumesAfter: false)
         ) { context in
             try await context.operation.stopSession()
-            context.operation.endSession()
             return .rest(.atRest(.stopped), ())
         }
         try await recorder.stopped.wait { recorder.stops == 1 }
@@ -884,7 +886,16 @@ struct VMActivityTests {
         #expect(instance.processEndInstruction != nil)
         #expect(!instance.hasActiveDisplay)
 
-        // Ending the process from outside, as the instruction says.
+        // Ending the process from outside, as the instruction says, raises
+        // `didStopWithError` — and, where the stop's completion runs at all,
+        // that completion, which can land first.
+        if arrival == .completionThenDelegate {
+            // The session ends with the completion: no live session is left
+            // for a display to show, or for the delegate's event to end again.
+            instance.activity.deliverSessionEvent(.stopDidComplete, from: session)
+            #expect(!instance.hasLiveVirtualMachine)
+            #expect(instance.session == nil)
+        }
         instance.activity.deliverSessionEvent(.didStopWithError(Probe()), from: session)
         try await outcome.value()
         #expect(instance.processEndInstruction == nil)
@@ -1009,6 +1020,16 @@ private final class StopRecordingSession: VMSessionOperating, @unchecked Sendabl
     func restoreMachineState(from url: URL) async throws {}
     func resume(_ execution: borrowing VMGuestExecution) async throws {}
     func detachUSBDevice(uuid: UUID) async throws {}
+}
+
+/// What reaches a VM whose process the user ended from outside while a stop
+/// of it was pending.
+enum ProcessEndArrival: CaseIterable, Sendable {
+    /// `didStopWithError` alone: the stop's completion never runs.
+    case delegateOnly
+    /// The stop's completion, reporting the session ended, then
+    /// `didStopWithError`.
+    case completionThenDelegate
 }
 
 /// The ways Virtualization can end a session a Force Stop is waiting on before

@@ -544,8 +544,10 @@ package final class VirtualizationService {
                 .warning,
                 "Terminating '\(instance.name, privacy: .public)' before a revert failed: \(error.localizedDescription, privacy: .public)"
             )
+            // The stop failed with the VM still live; the revert ends the
+            // session it replaces itself.
+            context.bringUp.operation.endSession()
         }
-        context.bringUp.operation.endSession()
 
         // Staged, then committed, then installed: nothing in the bundle moves
         // until the files are cloned aside and the configuration — which the

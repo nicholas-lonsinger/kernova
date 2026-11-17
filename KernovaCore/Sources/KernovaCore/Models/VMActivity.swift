@@ -1491,14 +1491,9 @@ package final class VMActivity {
                 sessionEnded(.stoppedWithError(message: error.localizedDescription), from: sessionID)
             }
         case .stopDidComplete:
-            guard let sessionID = liveSessionID else { break }
-            // The operation that sent the stop ends its own session; any
-            // other stop is a Force Stop, whose completion is a power-off.
-            if let stop = takeOperationStop(of: sessionID) {
-                stop.resolve(.success(()))
-            } else {
-                sessionEnded(.poweredOff, from: sessionID)
-            }
+            // A completed stop leaves nothing live: the session ends here,
+            // the way its stop asked (``sessionEnded(_:from:)``).
+            if let sessionID = liveSessionID { sessionEnded(.poweredOff, from: sessionID) }
         case .stopDidFail(let error):
             guard let sessionID = liveSessionID else { break }
             if let stop = takeOperationStop(of: sessionID) {
@@ -1527,11 +1522,10 @@ package final class VMActivity {
     /// phase holds the session any longer.
     ///
     /// A session a stop is pending on ended the way that stop asked,
-    /// whichever callback reported its end — ending its process from outside,
-    /// as the pending stop's instruction tells the user to, raises
-    /// `didStopWithError`: powered off for a Force Stop, and ended by the
-    /// operation for the operation's own stop, as its completion would have
-    /// left it.
+    /// whichever callback reported its end — the stop's completion, or
+    /// `didStopWithError` from ending its process outside Kernova, as the
+    /// pending stop's instruction tells the user to: powered off for a Force
+    /// Stop, and ended by the operation for the operation's own stop.
     private func sessionEnded(_ reported: VMSessionEnd, from sessionID: UUID) {
         let pending = liveSessionID == sessionID ? phase.operation?.session?.stop : nil
         let end: VMSessionEnd =
@@ -1714,9 +1708,10 @@ package final class VMActivity {
 
     /// Sends the operation's live session a stop, marked on the session
     /// (``VMSessionStop/byOperation(_:)``), and waits for it to answer:
-    /// returns once the stop completed or the session ended some other way
-    /// first, and throws the stop's error. Returns at once when the operation
-    /// holds no live session.
+    /// returns once the session has ended — the stop completed, or the
+    /// session ended some other way first — and throws the stop's error,
+    /// the session still live. Returns at once when the operation holds no
+    /// live session.
     fileprivate func stopOperationSession() async throws {
         guard case .operating(var operation) = phase, var live = operation.session, let session
         else { return }
@@ -1843,11 +1838,11 @@ package struct VMOperationContext: ~Copyable, Sendable {
     }
 
     /// Stops the operation's live session — a revert's teardown, the
-    /// installer's VM — returning once the stop completed or Virtualization
-    /// ended the session some other way first, whichever came first, and
-    /// throwing the stop's error. The operation still holds the session it
-    /// stopped until ``endSession()``; with no live session there is nothing
-    /// to stop.
+    /// installer's VM — returning once the session has ended, by the stop's
+    /// completion or Virtualization ending it some other way first, and
+    /// throwing the stop's error with the session still live, which
+    /// ``endSession()`` then ends. With no live session there is nothing to
+    /// stop.
     @MainActor package func stopSession() async throws {
         try await activity.stopOperationSession()
     }
