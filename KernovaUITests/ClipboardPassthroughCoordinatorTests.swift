@@ -404,9 +404,8 @@ struct ClipboardPassthroughCoordinatorTests {
         h.service.refusesOverCopyBudget = false
         h.coordinator.republishIfCeilingRaised()
 
-        // A published guest rep lands under its own UTI, not `.string` — that
-        // type only ever holds what `writeText` put there. Read off the main
-        // thread, where the publisher's hold parks rather than running an event loop.
+        // Read off the main thread, where the publisher's hold parks rather than
+        // running an event loop.
         let textType = NSPasteboard.PasteboardType.string
         nonisolated(unsafe) let consumer = h.pasteboard
         let served = await Task.detached { consumer.data(forType: textType) }.value
