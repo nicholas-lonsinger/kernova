@@ -7,7 +7,8 @@ import KernovaCore
 ///
 /// The steps come from the VM's ``GuestSetupState`` and are fixed for the run,
 /// so the indicator is built once at `loadView`; the wording comes from the
-/// ``GuestSetupDescriptor`` the router picks for the flow.
+/// ``GuestSetupDescriptor`` the router picks for the flow. While the
+/// installer's VM is being stopped, how to end its process shows beneath.
 @MainActor
 final class GuestSetupProgressViewController: NSViewController {
     private let instance: VMInstance
@@ -20,6 +21,7 @@ final class GuestSetupProgressViewController: NSViewController {
     private let detailLine2Label = NSTextField(labelWithString: "")
     private let captionLabel = NSTextField(labelWithString: "")
     private let cancelButton = NSButton()
+    private let processEnd = VMProcessEndInstructionView(textColor: .secondaryLabelColor)
 
     /// Line 2 (speed/ETA) refreshes at most once a second; line 1 (bytes/%) and
     /// the progress bar track the smoother's raw ~10 Hz feed.
@@ -110,6 +112,7 @@ final class GuestSetupProgressViewController: NSViewController {
         arranged.append(progressBar)
         arranged.append(detailStack)
         arranged.append(cancelButton)
+        arranged.append(processEnd)
 
         let stack = NSStackView(views: arranged)
         stack.orientation = .vertical
@@ -131,7 +134,10 @@ final class GuestSetupProgressViewController: NSViewController {
         super.viewDidAppear()
         if observation == nil {
             observation = observeRecurring(
-                track: { [weak self] in _ = self?.instance.setupState },
+                track: { [weak self] in
+                    _ = self?.instance.setupState
+                    _ = self?.instance.processEndInstruction
+                },
                 apply: { [weak self] in self?.apply() }
             )
         }
@@ -230,9 +236,9 @@ final class GuestSetupProgressViewController: NSViewController {
     // MARK: - Refresh
 
     private func apply() {
-        guard isViewLoaded, let state = instance.setupState, let step = state.currentStep else {
-            return
-        }
+        guard isViewLoaded else { return }
+        processEnd.instruction = instance.processEndInstruction
+        guard let state = instance.setupState, let step = state.currentStep else { return }
 
         applyStepStates(state)
         progressBar.doubleValue = state.progress.fraction

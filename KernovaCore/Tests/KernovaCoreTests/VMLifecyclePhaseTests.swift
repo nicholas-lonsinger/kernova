@@ -147,7 +147,7 @@ struct VMLifecyclePhaseTests {
             guard case .operating(var operation) = phase, var session = operation.session,
                 operation.kind.declaration.toleratedSessionActions.contains(.forceStop)
             else { continue }
-            session.stopping = VMOutcome()
+            session.stop = .forceStop(VMOutcome())
             operation.sessionState = .live(session)
             let stopping = VMLifecyclePhase.operating(operation)
             swept += 1

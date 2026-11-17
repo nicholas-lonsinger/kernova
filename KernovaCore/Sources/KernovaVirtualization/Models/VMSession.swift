@@ -189,10 +189,27 @@ package actor VMSession: VMSessionOperating {
             self.assumeIsolated { session in
                 let (events, id) = (session.events, session.id)
                 session.vm.stop { error in
-                    events.handle(id, error.map(VMSessionEvent.stopDidFail) ?? .stopDidComplete)
+                    // Called on the VM's queue, where its state is read.
+                    let state = self.assumeIsolated { $0.vm.state }
+                    events.handle(id, Self.stopCompletionEvent(error, state: state))
                 }
             }
         }
+    }
+
+    /// What a stop's completion reports: the session ended — the stop
+    /// succeeded, or failed on a VM no longer live — or the stop failed with
+    /// the VM still live.
+    ///
+    /// `VZVirtualMachine.h` documents that a stop of a VM terminated by an
+    /// internal error fails with that error and leaves the VM in the error
+    /// state — which a VM whose process is ended from outside during the stop
+    /// is, reporting `VZErrorDomain` code 1
+    /// (docs/research/2026-11-17-sandboxed-app-cannot-end-vm-process.md). That
+    /// stop got the end it asked for.
+    static func stopCompletionEvent(_ error: (any Error)?, state: VZVirtualMachine.State) -> VMSessionEvent {
+        guard let error, state.isLive else { return .stopDidComplete }
+        return .stopDidFail(error)
     }
 
     /// Whether VZ reports the VM in a state it can be stopped from.
@@ -495,6 +512,20 @@ package actor VMSession: VMSessionOperating {
                 device.share = share.makeShare()
                 installed()
             }
+        }
+    }
+}
+
+extension VZVirtualMachine.State {
+    /// Whether a VM in this state is still live: anything but
+    /// `VZVirtualMachine.h`'s initial and terminal states — stopped, and the
+    /// internal error a VM terminated by one is left in. A state this build
+    /// doesn't know counts as live, so it is never mistaken for an end.
+    var isLive: Bool {
+        switch self {
+        case .stopped, .error: false
+        case .running, .paused, .starting, .pausing, .resuming, .stopping, .saving, .restoring: true
+        @unknown default: true
         }
     }
 }

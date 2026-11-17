@@ -91,6 +91,7 @@ final class VMDetailRouterViewController: NSViewController {
             track: { [weak self] in
                 guard let self else { return }
                 _ = self.instance.phase
+                _ = self.instance.processEndInstruction
                 _ = self.instance.detailPaneMode
                 _ = self.instance.setupState
                 _ = self.isSettingsReadOnly

@@ -34,19 +34,35 @@ struct VMProcessEndInstructionTests {
         }
     }
 
-    @Test("A timeout on a Force Stop still pending tells the user how to end the process, not to force stop")
-    func timedOutForceStopMessage() {
+    @Test("A refusal carrying the instruction tells the user its command, and a timeout drops its own advice for it")
+    func refusalsCarryTheInstruction() {
         let vm = VMSummary(
             id: UUID(), name: "Alpha", status: "forceStopping", ipAddress: .unavailable,
             heldByAnotherCopy: false)
-        let failure = CommandErrorDTO.timedOut(
-            vm: vm, verb: .stop, seconds: 5,
-            processEnd: VMProcessEndInstruction(appName: "Kernova", bundlePath: "/VMs/1D2C.kernova"))
-        #expect(
-            failure.message
-                == "\u{201C}Alpha\u{201D} did not power off within 5 seconds. Kernova is waiting for this "
-                + "virtual machine\u{2019}s process to end and can\u{2019}t end it itself. If it doesn\u{2019}t "
-                + "end, run this command in Terminal:\n"
-                + "  kill -9 $(lsof -t -c com.apple.Virtualization -a +D '/VMs/1D2C.kernova')")
+        let instruction = VMProcessEndInstruction(appName: "Kernova", bundlePath: "/VMs/1D2C.kernova")
+        let pairs: [(carrying: CommandErrorDTO, plain: CommandErrorDTO)] = [
+            (
+                .timedOut(vm: vm, verb: .stop, seconds: 5, processEnd: instruction),
+                .timedOut(vm: vm, verb: .stop, seconds: 5)
+            ),
+            (
+                .busy(vm: vm, operation: "force stopping", processEnd: instruction),
+                .busy(vm: vm, operation: "force stopping")
+            ),
+            (
+                .invalidState(vm: vm, current: "forceStopping", allowed: [], processEnd: instruction),
+                .invalidState(vm: vm, current: "forceStopping", allowed: [])
+            ),
+        ]
+        for (carrying, plain) in pairs {
+            #expect(carrying.message.contains(instruction.command), "\(carrying)")
+            #expect(!plain.message.contains(instruction.command), "\(plain)")
+        }
+        // A timeout's own advice is to force stop, which is what the
+        // instruction says is already under way.
+        let plainTimeout = pairs[0].plain.message
+        let advice = plainTimeout.drop(while: { $0 != "." }).dropFirst(2)
+        #expect(!advice.isEmpty)
+        #expect(!pairs[0].carrying.message.contains(advice))
     }
 }

@@ -2194,8 +2194,9 @@ struct VMCommandCoreTests {
         #expect(current == .forceStopping)
         #expect(refusedProcessEnd == processEnd)
 
+        // The process ended from outside: the end the Force Stop asked for.
         instance.activity.deliverSessionEvent(.didStopWithError(VirtualizationError.noVirtualMachine), from: session)
-        #expect(instance.status == .error)
+        #expect(instance.status == .stopped)
         #expect(virtualization.forceStopCallCount == 1)
     }
 }

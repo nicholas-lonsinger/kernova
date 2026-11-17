@@ -18,7 +18,6 @@ struct VMStatusTests {
             (.snapshotting, "taking a snapshot"),
             (.restoring, "restoring"),
             (.installing, "installing"),
-            (.forceStopping, "force stopping"),
             (.initialBoot, "not yet booted"),
             (.error, "in an error state"),
         ]
@@ -40,7 +39,6 @@ struct VMStatusTests {
         #expect(VMStatus.saving.transitionLabel == "Suspending\u{2026}")
         #expect(VMStatus.restoring.transitionLabel == "Restoring\u{2026}")
         #expect(VMStatus.snapshotting.transitionLabel == "Taking Snapshot\u{2026}")
-        #expect(VMStatus.forceStopping.transitionLabel == "Force Stopping\u{2026}")
         #expect(VMStatus.stopped.transitionLabel == nil)
         #expect(VMStatus.starting.transitionLabel == nil)
         #expect(VMStatus.running.transitionLabel == nil)

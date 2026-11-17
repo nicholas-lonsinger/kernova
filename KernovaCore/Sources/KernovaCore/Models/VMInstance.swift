@@ -781,10 +781,11 @@ package final class VMInstance {
     package var hasActiveDisplay: Bool { activity.hasActiveDisplay }
 
     /// How the user ends this VM's process, which Kernova waits on and cannot
-    /// end itself, while the VM is ``VMStatus/forceStopping`` — `nil` in every
-    /// other status.
+    /// end itself, while a stop of its live session is pending
+    /// (``VMActivity/liveSessionIsStopping``) — a Force Stop, a revert's
+    /// teardown, the installer's VM — and `nil` otherwise.
     package var processEndInstruction: VMProcessEndInstruction? {
-        guard status == .forceStopping else { return nil }
+        guard activity.liveSessionIsStopping else { return nil }
         return VMProcessEndInstruction(
             appName: bundleProducts.displayName, bundlePath: bundleURL.path(percentEncoded: false))
     }

@@ -25,6 +25,8 @@ struct VMActivityTests {
     private final class Recorder {
         /// How many session ends were settled.
         var settled = 0
+        /// The messages ``VMActivity/onSessionStoppedWithError`` fired with.
+        var stoppedWithError: [String] = []
         var sent = 0
         var terminations = 0
         var phase: VMLifecyclePhase?
@@ -764,7 +766,7 @@ struct VMActivityTests {
 
         #expect(recorder.terminations == 1)
         #expect(instance.activity.pendingForceStop == nil)
-        #expect(instance.phase.operation == nil)
+        #expect(instance.phase == .stopped)
         #expect(instance.activity.sessionContext == nil)
         #expect(recorder.settled == 1)
         // A completion arriving after the end belongs to no session the VM
@@ -858,6 +860,37 @@ struct VMActivityTests {
                 #expect(instance.phase == .stopped)
             }
         }
+    }
+
+    @Test("A revert whose stop never completes shows how to end the VM's process, and goes on when it ends")
+    func revertStopShowsTheProcessEnd() async throws {
+        let session = UUID()
+        let (instance, hooks, library) = makeWiredInstance(.running(sessionID: session))
+        defer { withExtendedLifetime(library) {} }
+        let recorder = StopRecordingSession(id: session)
+        instance.beginSessionContextForTesting().session = recorder
+        let snapshotID = try #require(instance.snapshotManifest.snapshots.first?.id)
+        instance.activity.onSessionStoppedWithError = { hooks.stoppedWithError.append($0) }
+
+        let outcome = try instance.activity.launchAnyBringUp(
+            .reverting(snapshotID: snapshotID, resumesAfter: false)
+        ) { context in
+            try await context.operation.stopSession()
+            context.operation.endSession()
+            return .rest(.atRest(.stopped), ())
+        }
+        try await recorder.stopped.wait { recorder.stops == 1 }
+        #expect(instance.status == .restoring)
+        #expect(instance.processEndInstruction != nil)
+        #expect(!instance.hasActiveDisplay)
+
+        // Ending the process from outside, as the instruction says.
+        instance.activity.deliverSessionEvent(.didStopWithError(Probe()), from: session)
+        try await outcome.value()
+        #expect(instance.processEndInstruction == nil)
+        #expect(instance.phase == .stopped)
+        #expect(instance.activity.lastFailure == nil)
+        #expect(hooks.stoppedWithError.isEmpty)
     }
 
     /// One operation of every kind that holds a live session, admitted from

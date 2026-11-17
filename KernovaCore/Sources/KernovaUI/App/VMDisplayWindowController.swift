@@ -185,6 +185,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                 _ = self.instance.displayViewSettings
                 _ = self.instance.hasLiveEphemeralSession
                 _ = self.instance.name
+                _ = self.instance.processEndInstruction
             },
             apply: { [weak self] in
                 guard let self else { return }

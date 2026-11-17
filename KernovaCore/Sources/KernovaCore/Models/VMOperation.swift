@@ -166,10 +166,17 @@ package enum VMLifecyclePhase: Sendable, Equatable {
         case .running, .livePaused, .suspended: true
         case .stopped, .initialBoot, .failed, .removed: false
         case .operating(let operation):
-            switch operation.holder.declaration.display {
-            case .shown: true
-            case .hidden: false
-            case .base: presented.hasActiveDisplay
+            // On macOS 27.2.1 the VM process was seen destroying the guest's
+            // display within 150 ms of a stop, so a session a stop is pending
+            // on has no display left to show.
+            if operation.session?.stop != nil {
+                false
+            } else {
+                switch operation.holder.declaration.display {
+                case .shown: true
+                case .hidden: false
+                case .base: presented.hasActiveDisplay
+                }
             }
         }
     }
@@ -344,13 +351,45 @@ enum VMOperationSessionState: Sendable, Equatable {
     case ended(VMSessionEnd)
 }
 
-/// A session an operation holds, and whether its guest is executing.
+/// A session an operation holds, whether its guest is executing, and the stop
+/// sent to it while one is in flight.
 struct VMOperationSession: Sendable, Equatable {
     let id: UUID
     var guest: VMGuestRunState
+    var stop: VMSessionStop?
+
+    /// A session holding the Force Stop `stopping`, when given.
+    init(id: UUID, guest: VMGuestRunState, stopping: VMOutcome? = nil) {
+        self.id = id
+        self.guest = guest
+        self.stop = stopping.map(VMSessionStop.forceStop)
+    }
+
     /// The outcome of the Force Stop terminating this session, while one is
     /// in flight; admission refuses new work on the session meanwhile.
-    var stopping: VMOutcome? = nil
+    var stopping: VMOutcome? {
+        guard case .forceStop(let outcome) = stop else { return nil }
+        return outcome
+    }
+}
+
+/// A stop sent to a live session, whose outcome resolves when the session
+/// ends — the stop's completion, or Virtualization ending it some other way
+/// first — or with the stop's error.
+///
+/// Either way the VM process has been told to take the guest down, which it
+/// starts by destroying the guest's display: the session presents none, and a
+/// session that ends meanwhile ended the way the stop asked, whichever
+/// callback reported it.
+enum VMSessionStop: Sendable, Equatable {
+    /// A Force Stop someone asked for, whose outcome every caller of it
+    /// awaits; admission and every projection answer the VM as
+    /// ``VMOperationKind/forceStopping`` meanwhile.
+    case forceStop(VMOutcome)
+    /// The operation holding the session stopping it itself — a revert's
+    /// teardown, the installer's VM — whose body awaits the outcome and then
+    /// ends the session.
+    case byOperation(VMOutcome)
 }
 
 /// Whether a live guest is executing.
@@ -833,9 +872,7 @@ extension VMOperationKind {
                 toleratedSessionActions: stoppable, edits: .baseExcept([]),
                 joinedBy: [.reconcile])
         case .forceStopping:
-            // On macOS 27.2.1 the VM process was seen destroying its display
-            // within 150 ms of the stop, so the last frame it drew is stale.
-            // A quit ends the process, which is what the stop waits for.
+            // A quit ends the VM process, which is what the stop waits for.
             return .init(
                 status: .shows(.forceStopping), holdsIdentity: .viaSession, quit: .interrupt,
                 display: .hidden, toleratedSessionActions: [], edits: .only(.presentationAndMetadata),

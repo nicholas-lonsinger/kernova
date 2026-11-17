@@ -235,6 +235,8 @@ final class DetailContainerViewController: NSViewController {
                 _ = self.viewModel.selectedInstance?.displayMode
                 _ = self.viewModel.selectedInstance?.detailPaneMode
                 _ = self.viewModel.selectedInstance?.hasLiveVirtualMachine
+                _ = self.viewModel.selectedInstance?.hasActiveDisplay
+                _ = self.viewModel.selectedInstance?.processEndInstruction
                 // Everything `displayViewSettings` reads, so a settings change —
                 // and a fullscreen transition, which moves what system-key
                 // forwarding resolves to — reaches the live view.
@@ -246,6 +248,7 @@ final class DetailContainerViewController: NSViewController {
                     if let inst = self.viewModel.instances.first(where: { $0.id == id }) {
                         _ = inst.status
                         _ = inst.hasLiveVirtualMachine
+                        _ = inst.hasActiveDisplay
                         _ = inst.displayMode
                         _ = inst.displayViewSettings
                     }
