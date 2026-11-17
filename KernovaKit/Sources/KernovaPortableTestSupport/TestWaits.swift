@@ -109,38 +109,34 @@ public struct Backstop: Sendable {
     // caller's isolation, so it is never referenced by name.
     // periphery:ignore:parameters isolation
     /// Suspends until `start`'s `resume` runs, answering the value it was
-    /// given; throws ``failure(_:)`` once the deadline passes first, and
-    /// `CancellationError` once the waiting task is cancelled first.
+    /// given; throws ``failure(_:)`` once the deadline passes first.
     ///
     /// `start` runs at once, in the caller's isolation, and hands `resume` to
     /// whatever will answer: a completion handler, a queue, a list of waiters.
     /// `resume` may run on any thread, before `start` returns included. Only
     /// its first call counts, and a call after the wait has ended changes
     /// nothing, so what the wait gave up on may still make it.
+    ///
+    /// Cancelling the waiting task does not end the wait: a double that holds
+    /// the code under test until the test releases it parks here too, and
+    /// holds through a cancel the way the work it stands in for would.
     public func park<T: Sendable>(
         isolation: isolated (any Actor)? = #isolation,
         _ start: (_ resume: @escaping @Sendable (T) -> Void) -> Void
     ) async throws -> T {
-        let parked = Parked<T>()
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                parked.install(continuation)
-                start { parked.settle(.success($0)) }
-                parked.arm(self)
-            }
-        } onCancel: {
-            parked.settle(.failure(CancellationError()))
+        try await withCheckedThrowingContinuation { continuation in
+            let parked = Parked(continuation)
+            start { parked.settle(.success($0)) }
+            parked.arm(self)
         }
     }
 
     /// Runs `operation` in a task of its own, answering what it returns or
     /// rethrowing what it throws; throws ``failure(_:)`` once the deadline
-    /// passes first, and `CancellationError` once the waiting task is
-    /// cancelled first.
+    /// passes first.
     ///
-    /// Either way the operation is cancelled and left to stop in its own time,
-    /// so this returns at the deadline even when the operation ignores
-    /// cancellation.
+    /// At the deadline the operation is cancelled and left to stop in its own
+    /// time, so this returns even when the operation ignores cancellation.
     public func run<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T {
         var task: Task<Void, Never>?
         defer { task?.cancel() }
@@ -210,24 +206,19 @@ private func hundredths(_ seconds: TimeInterval) -> String {
     return "\(hundredths / 100)." + String(repeating: "0", count: 2 - fraction.count) + fraction
 }
 
-/// One park's outcome, settled once: by what `start` handed `resume` to, by
-/// the deadline, or by a cancel — whichever comes first.
+/// One park's outcome, settled once: by what `start` handed `resume` to, or by
+/// the deadline, whichever comes first.
 private final class Parked<T: Sendable>: Sendable {
     private struct State: Sendable {
+        /// The parked wait, until it is settled.
         var continuation: CheckedContinuation<T, any Error>?
-        var outcome: Result<T, any Error>?
         var expiry: Expiry?
     }
 
-    private let state = Locked(State())
+    private let state: Locked<State>
 
-    /// Hands the continuation the outcome, at once when it is already settled.
-    func install(_ continuation: CheckedContinuation<T, any Error>) {
-        let settled = state.withLock { state in
-            if state.outcome == nil { state.continuation = continuation }
-            return state.outcome
-        }
-        if let settled { continuation.resume(with: settled) }
+    init(_ continuation: CheckedContinuation<T, any Error>) {
+        state = Locked(State(continuation: continuation))
     }
 
     /// Settles with `backstop`'s failure once it expires, unless something
@@ -235,7 +226,7 @@ private final class Parked<T: Sendable>: Sendable {
     func arm(_ backstop: Backstop) {
         let expiry = Expiry(backstop) { [self] in settle(.failure(backstop.failure())) }
         let armed = state.withLock { state in
-            guard state.outcome == nil else { return false }
+            guard state.continuation != nil else { return false }
             state.expiry = expiry
             return true
         }
@@ -245,8 +236,6 @@ private final class Parked<T: Sendable>: Sendable {
     /// Settles with `outcome` unless already settled.
     func settle(_ outcome: Result<T, any Error>) {
         let (continuation, expiry) = state.withLock { state in
-            guard state.outcome == nil else { return (CheckedContinuation<T, any Error>?.none, Expiry?.none) }
-            state.outcome = outcome
             defer { (state.continuation, state.expiry) = (nil, nil) }
             return (state.continuation, state.expiry)
         }

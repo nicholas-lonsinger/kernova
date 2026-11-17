@@ -54,15 +54,6 @@ struct BackstopTests {
         }
     }
 
-    @Test("A park whose task is cancelled ends with CancellationError, not at its deadline")
-    func cancelledPark() async {
-        let parked = Task {
-            let _: Int = try await Backstop("a callback nothing makes").park { _ in }
-        }
-        parked.cancel()
-        await #expect(throws: CancellationError.self) { try await parked.value }
-    }
-
     @Test("A blocking wait takes a signal, and fails at its deadline, naming the wait, when none comes")
     func blockingWait() throws {
         let semaphore = DispatchSemaphore(value: 0)
