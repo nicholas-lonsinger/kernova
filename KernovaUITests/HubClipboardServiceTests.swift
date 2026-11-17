@@ -239,7 +239,7 @@ struct HubClipboardServiceTests {
         #expect(order.landing == .memory)
         try land(password, for: order, request: requestID, stream: 3, on: probe)
 
-        #expect(try await paste.value() == password)
+        #expect(try await paste.returned() == password)
         let exchangeStaging = ClipboardFileStaging.processRoot.url
             .appendingPathComponent("host-\(instance.configuration.id.uuidString)")
         #expect(!FileManager.default.fileExists(atPath: exchangeStaging.path))
@@ -351,7 +351,7 @@ struct HubClipboardServiceTests {
         // The guest sends nothing more, and then its clipboard moves on.
         endGuestOffer(on: probe)
 
-        #expect(try await paste.value() == nil)
+        #expect(try await paste.returned() == nil)
         try await probe.changed.wait { cancels(probe) == [pull] }
     }
 
@@ -732,7 +732,7 @@ struct HubClipboardServiceTests {
         try await probe.changed.wait { pulls(probe).count == before + 1 }
         let (request, order) = pulls(probe)[before]
         try land(content, for: order, request: request, stream: stream, on: probe)
-        return try await paste.value()
+        return try await paste.returned()
     }
 
     /// Has passthrough write the guest's offer of `items` to the Mac, `concealed` or not.
@@ -957,8 +957,8 @@ struct HubClipboardServiceTests {
         #expect(budget.limit == UInt64(instance.effectiveClipboardMaxPasteBytes))
 
         endGuestOffer(on: probe)
-        #expect(try await first.value() == nil)
-        #expect(try await second.value() == nil)
+        #expect(try await first.returned() == nil)
+        #expect(try await second.returned() == nil)
     }
 
     // MARK: - A pasted file and its staging

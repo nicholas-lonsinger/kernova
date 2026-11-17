@@ -168,7 +168,7 @@ struct VMSettingsStoragePanelTests {
         #expect(findLabel(withText: "In-bundle disk image", in: panel) != nil)
         #expect(findLabel(withText: stickPath, in: panel) != nil)
 
-        await vc.overviewForTesting.attachmentSizeTaskForTesting?.value
+        try await vc.overviewForTesting.attachmentSizeTaskForTesting?.joined()
 
         let used = DataFormatters.formatBytes(3_000_000_000)
         let allocated = DataFormatters.formatBytes(64_000_000_000)
@@ -181,7 +181,7 @@ struct VMSettingsStoragePanelTests {
         files.setDiskSizes(
             VMBundleLayout.DiskSizes(onDiskBytes: 5_000_000_000, capacityBytes: 64_000_000_000), for: main.id)
         vc.showCategory(.storage)
-        await vc.overviewForTesting.attachmentSizeTaskForTesting?.value
+        try await vc.overviewForTesting.attachmentSizeTaskForTesting?.joined()
         #expect(findLabel(withText: "\(grown) (used) / \(allocated) (allocated)", in: panel) != nil)
     }
 

@@ -77,7 +77,7 @@ struct VMInstanceAgentHubTests {
     }
 
     @Test("Row 3, macOS: a session agent that connected this session and left reads disconnected, never warning")
-    func sessionAgentGoneReadsDisconnected() async {
+    func sessionAgentGoneReadsDisconnected() async throws {
         let instance = Self.instance(guestOS: .macOS, session: "1.0")
         var session = Self.peer(1, standing: .current)
         session.os = .macOS
@@ -86,7 +86,7 @@ struct VMInstanceAgentHubTests {
         #expect(instance.agentPresentation?.status == .connecting(expected: "1.0"))
         instance.agentAbsenceGrace = .milliseconds(10)
         instance.startAgentAbsenceWatch()
-        await instance.agentAbsenceTimerForTesting?.value
+        try await instance.agentAbsenceTimerForTesting?.joined()
         #expect(instance.agentPresentation?.status == .disconnected(last: "1.0"))
         #expect(instance.agentPresentation?.status.wireName == "disconnected")
         #expect(instance.agentPresentation?.windowLines == [.init(title: "Session agent", state: "Disconnected")])
@@ -164,11 +164,11 @@ struct VMInstanceAgentHubTests {
     // MARK: Cold boot and the login screen
 
     @Test("The window and `kernova info` list the same agents in the same order, each with its wire status")
-    func windowAndInfoAgree() async {
+    func windowAndInfoAgree() async throws {
         let instance = Self.linuxInstance(system: "1.0")
         instance.agentAbsenceGrace = .milliseconds(10)
         instance.startAgentAbsenceWatch()
-        await instance.agentAbsenceTimerForTesting?.value
+        try await instance.agentAbsenceTimerForTesting?.joined()
         #expect(instance.warnedMissingAgents.map(\.scope) == [.system])
         defer { instance.cancelAgentAbsenceWatchdog() }
 
@@ -206,7 +206,7 @@ struct VMInstanceAgentHubTests {
     }
 
     @Test("Row 2, Linux: a session agent seen before but not this session warns, though the system peer is connected")
-    func sessionAgentNotYetThisSessionWarns() async {
+    func sessionAgentNotYetThisSessionWarns() async throws {
         let instance = Self.linuxInstance(session: "0.9", system: "1.0")
         instance.publishAgentHubSnapshotForTesting(
             Self.snapshot([Self.peer(2, role: .systemPeer, standing: .current)]))
@@ -214,7 +214,7 @@ struct VMInstanceAgentHubTests {
         #expect(instance.agentAbsenceTimerForTesting != nil)
         instance.agentAbsenceGrace = .milliseconds(10)
         instance.startAgentAbsenceWatch()
-        await instance.agentAbsenceTimerForTesting?.value
+        try await instance.agentAbsenceTimerForTesting?.joined()
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "0.9"))
         #expect(instance.missingAgentNoticesForTesting.count == 1)
         #expect(instance.missingAgentNoticesForTesting.first?.contains("login agent, last seen 0.9") == true)
@@ -237,7 +237,7 @@ struct VMInstanceAgentHubTests {
     }
 
     @Test("Row 3, Linux: a session agent that connected this session never warns once its user logs out")
-    func sessionAgentLogoutNeverWarns() async {
+    func sessionAgentLogoutNeverWarns() async throws {
         let instance = Self.linuxInstance(session: "1.0", system: "1.0")
         let session = Self.peer(1, standing: .current)
         let system = Self.peer(2, role: .systemPeer, standing: .current)
@@ -246,7 +246,7 @@ struct VMInstanceAgentHubTests {
         // Armed only to forget the away line.
         instance.agentAbsenceGrace = .milliseconds(10)
         instance.startAgentAbsenceWatch()
-        await instance.agentAbsenceTimerForTesting?.value
+        try await instance.agentAbsenceTimerForTesting?.joined()
         #expect(instance.agentPresentation?.status == .current(version: "1.0"))
         #expect(
             instance.agentPresentation?.windowLines == [
@@ -258,7 +258,7 @@ struct VMInstanceAgentHubTests {
     }
 
     @Test("Uninstalled for everyone: past the grace the system service warns, the session agent disconnected beside it")
-    func everyoneUninstallWarns() async {
+    func everyoneUninstallWarns() async throws {
         let instance = Self.instance(guestOS: .macOS)
         let session = Self.peer(1, standing: .current)
         let system = Self.peer(2, role: .systemPeer, standing: .current)
@@ -267,7 +267,7 @@ struct VMInstanceAgentHubTests {
             Self.snapshot([], away: [(system, relaunching: false), (session, relaunching: false)]))
         instance.agentAbsenceGrace = .milliseconds(10)
         instance.startAgentAbsenceWatch()
-        await instance.agentAbsenceTimerForTesting?.value
+        try await instance.agentAbsenceTimerForTesting?.joined()
         #expect(instance.agentPresentation?.status == .expectedMissing(expected: "1.0"))
         #expect(
             instance.agentPresentation?.windowLines == [
@@ -346,7 +346,7 @@ struct VMInstanceAgentHubTests {
         #expect(context.agentAbsenceTimerDeadline == bobAway.since + grace)
         defer { instance.cancelAgentAbsenceWatchdog() }
 
-        await instance.agentAbsenceTimerForTesting?.value
+        try await instance.agentAbsenceTimerForTesting?.joined()
         #expect(instance.agentHubSnapshot.away == [aliceAway])
         #expect(
             instance.agentPresentation?.windowLines == [

@@ -297,7 +297,7 @@ struct VMIntentGatewayTests {
         #expect(vm.liveSessionID == session)
 
         vm.deliverSessionEvent(.guestDidStop, from: session)
-        try await restart.value
+        try await restart.joined()
 
         #expect(vm.status == .running)
         #expect(vm.liveSessionID != session)
@@ -380,7 +380,7 @@ struct VMIntentGatewayTests {
 
         release.continuation.yield(())
         release.continuation.finish()
-        await search.value
+        try await search.joined()
 
         #expect(terms == ["sonoma"])
         #expect(harness.revealedInLibrary.isEmpty)

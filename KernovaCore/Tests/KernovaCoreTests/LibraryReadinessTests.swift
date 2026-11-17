@@ -15,7 +15,7 @@ struct LibraryReadinessTests {
         private var landed = false
 
         func wait() async {
-            try? await gate.wait { self.landed }
+            await holdUntilReleased { try await gate.wait { self.landed } }
         }
 
         func land() {
@@ -31,7 +31,7 @@ struct LibraryReadinessTests {
         #expect(!readiness.hasLanded)
 
         read.land()
-        await readiness.ready()
+        try await Backstop("LibraryReadiness.ready()").run { await readiness.ready() }
 
         #expect(readiness.hasLanded)
     }

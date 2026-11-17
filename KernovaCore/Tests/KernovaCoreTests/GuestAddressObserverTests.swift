@@ -82,7 +82,7 @@ struct GuestAddressObserverTests {
     // MARK: - What is observed
 
     @Test("A Bridged VM that recovery put on its own NAT network is observed on that network")
-    func bridgedVMOnItsOwnNATIsObserved() async {
+    func bridgedVMOnItsOwnNATIsObserved() async throws {
         let vmnet = Self.subnetted()
         let guest = vm(.bridged)
         // The host offers no interface, so recovery attaches the VM's own NAT
@@ -92,7 +92,7 @@ struct GuestAddressObserverTests {
             vmnetNetworks: vmnet.service.sessionNetworks(ownedBy: guest.configuration.id))
         let coordinator = attachNetworkCoordinator(to: guest, device: device, entitlements: .entitled)
         coordinator.activate()
-        await coordinator.vmnetMaterializationTaskForTesting?.value
+        try await coordinator.vmnetMaterializationTaskForTesting?.joined()
         let observer = makeObserver(
             ScriptedARPTable([Self.entry("192.168.90.5"), Self.entry("192.168.64.5")]), vmnet: vmnet)
         roster.instances = [guest]
@@ -131,7 +131,7 @@ struct GuestAddressObserverTests {
         roster.instances = []
         let loop = try #require(observer.readTaskForTesting)
         clock.release(clock.parked[0])
-        await loop.value
+        try await loop.joined()
 
         #expect(observer.readTaskForTesting == nil)
         #expect(table.readCount == 2)

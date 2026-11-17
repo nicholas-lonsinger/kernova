@@ -21,7 +21,7 @@ final class SuspendingMockLocalRestoreImageInspector: LocalRestoreImageInspectin
     func inspect(_ url: URL) async throws -> InspectedRestoreImage {
         isInspecting = true
         gate.notify()
-        try? await gate.wait(until: { self.isReleased })
+        await holdUntilReleased { try await gate.wait(until: { self.isReleased }) }
         return inspectResult
     }
 

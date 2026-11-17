@@ -143,7 +143,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(delete.isBusy)
 
         diskImages.resumeCreateDiskImage()
-        try await creation.value
+        try await creation.joined()
 
         #expect(instance.phase == .stopped)
         #expect(instance.configuration.cpuCount == cpus)
@@ -583,7 +583,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.removableMedia.attachCallCount == 0)
 
         diskImages.resumeCreateDiskImage()
-        try await creation.value
+        try await creation.joined()
         // The reconcile the edit owed runs once the creation lets the VM go.
         try await waitForChange { instance.phase == .running(sessionID: sessionID) }
 

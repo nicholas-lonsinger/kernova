@@ -182,7 +182,7 @@ struct VMCommandCoreGroupActionTests {
         #expect(reported.report == nil)
 
         held.activity.deliverSessionEvent(.guestDidStop, from: heldSession)
-        try await restartAll.value
+        try await restartAll.joined()
 
         let report = try #require(reported.report)
         #expect(report.results.map(\.vm.name) == ["Held", "Other"])
@@ -250,7 +250,7 @@ struct VMCommandCoreGroupActionTests {
         #expect(report.results.first { $0.vm.name == "Ready" }?.outcome == .done(verb: .start))
         #expect(report.undone.isEmpty)
         gate.release()
-        await arrival.settle()
+        try await arrival.settle()
     }
 
     // MARK: - Unattended bring-ups
@@ -263,7 +263,7 @@ struct VMCommandCoreGroupActionTests {
         }
 
         await #expect(throws: VMCommandCore.UnattendedGuestSetupRefusal.self) {
-            try await harness.core.startNow(fresh, recovery: false, policy: .group).value()
+            try await harness.core.startNow(fresh, recovery: false, policy: .group).resolved()
         }
         #expect(fresh.status == .initialBoot)
         #expect(VMCommandCore.StartPolicy.group.presence == .unattended)
@@ -337,8 +337,8 @@ struct VMCommandCoreGroupActionTests {
         try await drainMainQueue()
         #expect(held.activity.queuedFollowUpCountForTesting == 1)
         deletion.release()
-        try await deleting.value
-        let results = await pass.value
+        try await deleting.joined()
+        let results = try await pass.joined()
 
         #expect(results.map(\.outcome) == [.passedOver(reason: .removed)])
         #expect(harness.virtualization.startCallCount == 0)
@@ -367,9 +367,9 @@ struct VMCommandCoreGroupActionTests {
             .id(held.id), assignments: [VMConfigurationKeyRegistry.autoStart.assigning(false)], consent: .none)
 
         copy.release()
-        try await copied.value()
-        let results = await pass.value
-        try await start.outcome.value()
+        try await copied.resolved()
+        let results = try await pass.joined()
+        try await start.outcome.resolved()
 
         #expect(results.map(\.outcome) == [.passedOver(reason: .leftGroup)])
         #expect(harness.virtualization.startCallCount == 1)
@@ -410,7 +410,7 @@ struct VMCommandCoreGroupActionTests {
         try await harness.virtualization.waitUntilSuspended()
         running.cancel()
         harness.virtualization.resumeSuspended()
-        let report = try await running.value
+        let report = try await running.joined()
 
         #expect(report.results.map(\.outcome) == [.done(verb: .start), .passedOver(reason: .cancelled)])
         #expect(harness.virtualization.startCallCount == 1)
@@ -432,7 +432,7 @@ struct VMCommandCoreGroupActionTests {
         try await midRun()
         harness.virtualization.shouldSuspendOnStart = false
         harness.virtualization.resumeSuspended()
-        return try await running.value
+        return try await running.joined()
     }
 
     // MARK: - Membership during the run

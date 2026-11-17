@@ -318,7 +318,7 @@ extension HubDropServiceTests {
 
         receiver.deliver(0)
         let release = try #require(instance.dropService.stagingReleasesForTesting.first)
-        await release.value
+        try await release.joined()
         #expect(!FileManager.default.fileExists(atPath: staging.path))
     }
 }

@@ -396,7 +396,7 @@ struct SidebarFilterSortGroupTests {
             })
 
         gate.release()
-        _ = await arrival.settle()
+        _ = try await arrival.settle()
     }
 
     @Test("A host interface's title follows the host's interfaces from one pass to the next")

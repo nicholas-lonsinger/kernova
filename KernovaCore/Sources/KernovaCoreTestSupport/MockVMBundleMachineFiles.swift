@@ -199,9 +199,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         }
         diskSizeReadEntered.notify()
         if let hold {
-            do { try Backstop("the test's release of the disk size read").wait(for: hold) } catch {
-                Issue.record(error)
-            }
+            holdUntilReleased { try Backstop("the test's release of the disk size read").wait(for: hold) }
         }
         return sizes
     }

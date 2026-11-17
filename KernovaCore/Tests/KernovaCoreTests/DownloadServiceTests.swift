@@ -653,7 +653,7 @@ struct DownloadServiceTests {
         continuation.finish()
 
         do {
-            try await streamTask.value
+            try await streamTask.joined()
             Issue.record("Expected CancellationError")
         } catch is CancellationError {
             // Expected
@@ -979,9 +979,7 @@ struct DownloadServiceTests {
         StubURLProtocol.setHandler { request in
             handlerCalls.increment()
             started.notify()
-            do { try Backstop("the test's release of the response").wait(for: release) } catch {
-                Issue.record(error)
-            }
+            holdUntilReleased { try Backstop("the test's release of the response").wait(for: release) }
             return .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
         }
         defer { StubURLProtocol.setHandler(nil) }
@@ -999,7 +997,7 @@ struct DownloadServiceTests {
             #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
             adopted = await service.adoptExistingFile(at: source, as: destination)
         }
-        try await download.value
+        try await download.joined()
 
         #expect(!adopted)
         #expect(try Data(contentsOf: destination) == payload)

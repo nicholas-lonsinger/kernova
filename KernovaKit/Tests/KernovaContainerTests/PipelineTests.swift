@@ -74,9 +74,7 @@ struct PipelineTests {
         let workers = ChunkWorkers(count: lanes) { lane, work in
             let first = firsts.withLock { $0.insert(lane).inserted }
             if first && lane < lanes - 1 {
-                do { try Backstop("lane \(lane + 1)'s first chunk").wait(for: gates[lane + 1]) } catch {
-                    Issue.record(error)
-                }
+                holdUntilReleased { try Backstop("lane \(lane + 1)'s first chunk").wait(for: gates[lane + 1]) }
             }
             work()
             if first { gates[lane].signal() }
@@ -255,7 +253,7 @@ struct PipelineTests {
         let gate = DispatchSemaphore(value: 0)
         // Four lanes, a window of eight: the held chunk never blocks an append here.
         let workers = ChunkWorkers(count: 4) { _, work in
-            do { try Backstop("the test's release of the lanes").wait(for: gate) } catch { Issue.record(error) }
+            holdUntilReleased { try Backstop("the test's release of the lanes").wait(for: gate) }
             work()
         }
         let pipeline = ContainerDecodePipeline(accepting: generous(.file), workers: workers)
@@ -290,7 +288,7 @@ struct PipelineTests {
 
         let gate = DispatchSemaphore(value: 0)
         let workers = ChunkWorkers(count: 2) { _, work in
-            do { try Backstop("the test's release of the lanes").wait(for: gate) } catch { Issue.record(error) }
+            holdUntilReleased { try Backstop("the test's release of the lanes").wait(for: gate) }
             work()
         }
         let pipeline = ContainerDecodePipeline(accepting: generous(.file), workers: workers)

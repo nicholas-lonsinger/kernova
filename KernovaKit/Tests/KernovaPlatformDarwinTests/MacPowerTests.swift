@@ -189,9 +189,7 @@ struct MacPowerTests {
         let harness = Harness(
             .shutdownCommand(run: { _ in
                 running.signal()
-                do { try Backstop("the test's release of the shutdown").wait(for: release) } catch {
-                    Issue.record(error)
-                }
+                holdUntilReleased { try Backstop("the test's release of the shutdown").wait(for: release) }
                 return 0
             }), console: .off)
         _ = harness.take()
@@ -254,9 +252,7 @@ struct MacPowerTests {
                 absentDetail: "",
                 call: .answering {
                     calling.signal()
-                    do { try Backstop("the test's release of the call").wait(for: release) } catch {
-                        Issue.record(error)
-                    }
+                    holdUntilReleased { try Backstop("the test's release of the call").wait(for: release) }
                     return .tookIt
                 }),
             ignoringApps: nil)

@@ -225,7 +225,7 @@ struct GuestClipboardTests {
         let limit = ClipboardPasteLimit.defaultBytes
         clipboard.exchange.pullEnded(link.opened[0], .failed(WireError(.tooLarge, limit: UInt64(limit))))
 
-        #expect(try await paste.value() == nil)
+        #expect(try await paste.returned() == nil)
         try await noticed.wait { clipboard.activity == .pasteRefused(.pasteTooLarge, pasteLimitBytes: limit) }
         #expect(
             AgentMenuText.clipboardLine(clipboard.activity)
@@ -279,7 +279,7 @@ struct GuestClipboardTests {
         let pasted = Data("pasted before off".utf8)
         let paste = BlockingCall { pasteboard.invokeProvider(forType: text) }
         try await landPull(pasted, clipboard, link)
-        #expect(try await paste.value() == pasted)
+        #expect(try await paste.returned() == pasted)
         pasteboard.finishProvider(itemIndex: 0)
         try await drainMainQueue()
 
@@ -342,11 +342,11 @@ struct GuestClipboardTests {
         let ended = pull(2, of: offer)
         try await calledIn.wait { first.callIns == 1 }
         exchange.handle(.serveEnded(.clipboard, id(2), .closed(.connectionLost)), on: link)
-        #expect(failure(try await ended.value()) == .cancelled)
+        #expect(failure(try await ended.returned()) == .cancelled)
 
         // A pull whose end came before its content was asked for is not served at all.
         exchange.handle(.serveEnded(.clipboard, id(4), .closed(.connectionLost)), on: link)
-        #expect(failure(try await pull(4, of: offer).value()) == .cancelled)
+        #expect(failure(try await pull(4, of: offer).returned()) == .cancelled)
 
         let second = FakeFilePromiseReceiver(
             files: [("b.png", .file(Data("b".utf8)))], fileType: "public.png", deferred: true)
@@ -355,7 +355,7 @@ struct GuestClipboardTests {
         try await calledIn.wait { second.callIns == 1 }
         exchange.handle(
             .offerEnded(.clipboard, .local, token: replacing.token, .resetLocally(WireError(.cancelled))), on: link)
-        #expect(failure(try await withdrawn.value()) == .itemRepresentationUnavailable)
+        #expect(failure(try await withdrawn.returned()) == .itemRepresentationUnavailable)
     }
 
     // MARK: - One current clipboard

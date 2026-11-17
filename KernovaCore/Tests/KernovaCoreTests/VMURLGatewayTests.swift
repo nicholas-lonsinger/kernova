@@ -34,7 +34,7 @@ struct VMURLGatewayTests {
         func wait() async {
             isWaiting = true
             gate.notify()
-            try? await gate.wait { self.isOpen }
+            await holdUntilReleased { try await gate.wait { self.isOpen } }
         }
 
         /// Lands the library read.
@@ -144,7 +144,7 @@ struct VMURLGatewayTests {
         #expect(trace.steps.isEmpty)
 
         readiness.open()
-        await handled.value
+        try await handled.joined()
         #expect(wired.surfacedDisplays == [sonoma.id])
     }
 

@@ -324,12 +324,10 @@ struct HubDragOutTests {
         // answers the ask, and once the release reached it, names the promise
         // and never sizes the folder.
         let hubQueue = Thread {
-            do {
+            holdUntilReleased {
                 try Backstop("the hub's delivery").wait(for: hub.delivering)
                 owner.takes(peer, .report(takeID, .delivering))
                 try Backstop("the display's release").wait(for: display.releases)
-            } catch {
-                Issue.record(error)
             }
             owner.takes(peer, .report(takeID, .named([Data("IMG_0042.jpeg".utf8)])))
         }

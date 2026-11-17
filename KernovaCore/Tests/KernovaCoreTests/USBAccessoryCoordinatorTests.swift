@@ -400,7 +400,7 @@ struct USBAccessoryCoordinatorTests {
         instance.handleSessionEvent(.guestDidStop)
         #expect(instance.activity.queuedFollowUpCountForTesting == 0)
         service.resumeAttach()
-        _ = await held.value
+        _ = try await held.joined()
 
         #expect(nothingPending(in: h))
         #expect(service.attachedRegistryIDs == [1])

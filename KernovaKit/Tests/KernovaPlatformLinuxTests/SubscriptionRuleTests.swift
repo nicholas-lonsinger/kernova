@@ -26,7 +26,8 @@ final class RecordingTransport: DBusTransport, @unchecked Sendable {
     private var isShut = false
 
     /// Blocks, as a socket's read does, until the bus has bytes for the client or shuts — failing with `ETIMEDOUT`
-    /// at the backstop, so a connection a test leaves open does not hold its reader thread for good.
+    /// once the hold reaches its backstop, so a connection a test leaves open does not hold its reader thread
+    /// for good.
     func read(into buffer: UnsafeMutableRawBufferPointer) throws(DBusTransportError) -> Int {
         let backstop = Backstop("RecordingTransport.read(into:)")
         while true {
@@ -39,7 +40,7 @@ final class RecordingTransport: DBusTransport, @unchecked Sendable {
                 return count
             }
             lock.unlock()
-            do { try backstop.wait(for: readable) } catch { throw .readFailed(errno: ETIMEDOUT) }
+            guard holdUntilReleased({ try backstop.wait(for: readable) }) else { throw .readFailed(errno: ETIMEDOUT) }
         }
     }
 

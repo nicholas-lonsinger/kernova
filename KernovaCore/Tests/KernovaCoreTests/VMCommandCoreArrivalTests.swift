@@ -225,7 +225,7 @@ struct VMCommandCoreArrivalTests {
 
         let started = try await harness.core.importVM(from: source.url, waitForOutcome: false)
         let arrival = try #require(harness.library.arrivals.first)
-        #expect(await arrival.settle() == nil)
+        #expect(try await arrival.settle() == nil)
 
         #expect(harness.failures.isEmpty)
         #expect(checkRequests.value == 1)
@@ -252,7 +252,7 @@ struct VMCommandCoreArrivalTests {
         library.moveEntries(fromOffsets: IndexSet(integer: slot), toOffset: target)
         #expect(preferences.vmOrder == [first.id, started.id, last.id])
         #expect(library.selectedID == started.id)
-        #expect(await arrival.settle() == nil)
+        #expect(try await arrival.settle() == nil)
 
         let row = try #require(library.entries.compactMap(\.unreadable).first)
         #expect(library.selectedID == row.id)
@@ -390,7 +390,7 @@ struct VMCommandCoreArrivalTests {
         try harness.core.cancelPreparing(.id(started.id), consent: .all)
         hold.signal()
 
-        #expect(await arrival.settle() == nil)
+        #expect(try await arrival.settle() == nil)
         #expect(storage.deleteVMBundleCallCount == 1)
         #expect(harness.library.arrivals.isEmpty)
         #expect(harness.library.entries.count == 1)
@@ -420,7 +420,7 @@ struct VMCommandCoreArrivalTests {
                 == [arrival.destinationURL.appendingPathComponent("Disk.asif").path(percentEncoded: false)])
         #expect(disks.allSatisfy { $0.capacityBytes == nil && $0.usedBytes == nil })
         hold.signal()
-        await arrival.settle()
+        try await arrival.settle()
     }
 
     // MARK: - Cancel Around the Rename
@@ -449,7 +449,7 @@ struct VMCommandCoreArrivalTests {
 
         // The auto-start chains off a VM the outcome delivers, and the outcome
         // is the cancel.
-        await #expect(throws: CancellationError.self) { try await arrival.settled.value }
+        await #expect(throws: CancellationError.self) { try await arrival.settled.joined() }
         #expect(storage.deleteVMBundleCallCount == 1)
         #expect(storage.bundleIdentity(at: destination) == nil)
         #expect(harness.library.entries.isEmpty)
@@ -472,7 +472,7 @@ struct VMCommandCoreArrivalTests {
         try harness.core.cancelPreparing(.id(arrival.id), consent: .all)
         hold.signal()
 
-        let error = try await #require(throws: CommandError.self) { try await waiter.value }
+        let error = try await #require(throws: CommandError.self) { try await waiter.joined() }
         guard case .operationFailed(_, _, let message, _) = error else {
             Issue.record("expected the clone's cancel, got \(error)")
             return
@@ -501,7 +501,7 @@ struct VMCommandCoreArrivalTests {
 
         // The bundle the Trash turned down is still in the VMs directory, so
         // it is the VM it now is, and nothing follows the arrival with it.
-        #expect(await arrival.settle() == nil)
+        #expect(try await arrival.settle() == nil)
         #expect(storage.deleteVMBundleCallCount == 1)
         #expect(Set(harness.library.instances.map(\.id)) == [source.id, row.id])
         #expect(harness.library.arrivals.isEmpty)
@@ -675,7 +675,7 @@ struct VMCommandCoreArrivalTests {
         #expect(storage.lastCloneRelativePaths == stateBoundPaths(of: source))
         #expect(source.status == .cloning)
         hold.signal()
-        let row = try await waiter.value
+        let row = try await waiter.joined()
 
         #expect(await session.calls == ["pauseIfRunning", "saveMachineState", "resumeIfPaused"])
         #expect(await session.guestState == .running)

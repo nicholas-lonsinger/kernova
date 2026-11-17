@@ -4,6 +4,15 @@ import FoundationEssentials
 import Foundation
 #endif
 import CKernovaShims
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#elseif canImport(Musl)
+import Musl
+#elseif canImport(WinSDK)
+import WinSDK
+#endif
 // Apple's Dispatch marks its source protocols `Sendable`; swift-corelibs-libdispatch
 // does not, though dispatch objects are thread-safe on every platform.
 #if canImport(Darwin)
@@ -12,6 +21,10 @@ import Dispatch
 @preconcurrency import Dispatch
 #endif
 import KernovaSynchronization
+
+#if canImport(Testing)
+import Testing
+#endif
 
 // MARK: - Test-session OS activity
 
@@ -76,7 +89,7 @@ public struct Backstop: Sendable {
     /// The wait's name and where it was armed, as its failure leads with them.
     private let wait: String
     private let continuousStart = kernova_monotonic_nanoseconds()
-    private let uptimeStart = kernova_uptime_nanoseconds()
+    private let uptimeStart = uptimeNanoseconds()
 
     /// Starts the deadline of the wait `name`, armed at `fileID`:`line`.
     ///
@@ -99,7 +112,7 @@ public struct Backstop: Sendable {
     /// The failure a fired backstop throws: the wait's name and site, what did
     /// not happen in time, `detail` when given, and how late the backstop fired.
     public func failure(_ detail: String? = nil) -> TestFailure {
-        let uptimeElapsed = Self.seconds(kernova_uptime_nanoseconds() &- uptimeStart)
+        let uptimeElapsed = Self.seconds(uptimeNanoseconds() &- uptimeStart)
         return TestFailure(
             "\(wait) did not end within \(timeout) s" + (detail.map { ": " + $0 } ?? "")
                 + backstopDiagnosis(timeout: timeout, continuousElapsed: elapsed, uptimeElapsed: uptimeElapsed))
@@ -197,6 +210,24 @@ func backstopDiagnosis(
             + " throttling, process suspension) alongside a stuck condition"
     }
     return text + ")"
+}
+
+/// Nanoseconds on a monotonic clock that stops while the machine sleeps —
+/// Darwin `CLOCK_UPTIME_RAW`, Linux `CLOCK_MONOTONIC`, Windows
+/// `QueryUnbiasedInterruptTime` — set against `kernova_monotonic_nanoseconds`,
+/// which keeps counting, to tell how much of a wait the machine slept.
+private func uptimeNanoseconds() -> UInt64 {
+    #if canImport(Darwin)
+    return clock_gettime_nsec_np(CLOCK_UPTIME_RAW)
+    #elseif canImport(WinSDK)
+    var hundreds: ULONGLONG = 0
+    _ = QueryUnbiasedInterruptTime(&hundreds)
+    return UInt64(hundreds) * 100
+    #else
+    var now = timespec()
+    clock_gettime(CLOCK_MONOTONIC, &now)
+    return UInt64(now.tv_sec) * 1_000_000_000 + UInt64(now.tv_nsec)
+    #endif
 }
 
 /// `seconds` with two decimal places.
@@ -298,7 +329,7 @@ public final class BlockingCall<T: Sendable>: Sendable {
 
     /// What the call returned, once it has; throws `Backstop.failure(_:)` when
     /// it is still blocked at the deadline, leaving it to return to nothing.
-    public func value(fileID: String = #fileID, line: Int = #line) async throws -> T {
+    public func returned(fileID: String = #fileID, line: Int = #line) async throws -> T {
         try await Backstop("the blocking call", fileID: fileID, line: line).park { resume in
             let returned = state.withLock { state -> T? in
                 switch state {
@@ -319,8 +350,75 @@ public final class BlockingCall<T: Sendable>: Sendable {
 public func offCooperativePool<T: Sendable>(
     fileID: String = #fileID, line: Int = #line, _ body: @escaping @Sendable () -> T
 ) async throws -> T {
-    try await BlockingCall(body).value(fileID: fileID, line: line)
+    try await BlockingCall(body).returned(fileID: fileID, line: line)
 }
+
+// MARK: - Task joins
+
+extension Task {
+    /// The task's value, once it has ended; throws `Backstop.failure(_:)`
+    /// when it is still running at the deadline, leaving it to run on.
+    ///
+    /// A join parks until the task ends, and the task may itself wait on
+    /// anything, so a test joins a task through this rather than `value`.
+    public func joined(fileID: String = #fileID, line: Int = #line) async throws -> Success {
+        try await joinedResult(fileID: fileID, line: line).get()
+    }
+
+    /// The task's result, once it has ended, waited for as
+    /// ``joined(fileID:line:)`` waits.
+    public func joinedResult(fileID: String = #fileID, line: Int = #line) async throws -> Result<Success, Failure> {
+        try await Backstop("the joined task", fileID: fileID, line: line).run { await self.result }
+    }
+}
+
+// MARK: - Holds
+
+#if canImport(Testing)
+/// Runs `wait`, the wait on which a test double holds the code under test
+/// until the test releases it, answering whether the test did.
+///
+/// When the wait reaches its backstop instead, the failure is recorded as an
+/// issue at the caller's location, naming the hold, and this answers `false`: the
+/// hold fails its test by name, and the double goes on as it chooses — most
+/// stop holding rather than keep a thread or a task for good.
+@discardableResult
+public func holdUntilReleased(
+    fileID: String = #fileID, filePath: String = #filePath, line: Int = #line, column: Int = #column,
+    _ wait: () throws -> Void
+) -> Bool {
+    do {
+        try wait()
+        return true
+    } catch {
+        Issue.record(
+            error, sourceLocation: SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column))
+        return false
+    }
+}
+
+// `isolation` uses the Swift `isolated` keyword to run `wait` in the
+// caller's isolation, so it is never referenced by name.
+// periphery:ignore:parameters isolation
+/// Runs `wait`, the wait on which a test double holds the code under test
+/// until the test releases it, as the blocking overload does, parking
+/// instead of blocking.
+@discardableResult
+public func holdUntilReleased(
+    isolation: isolated (any Actor)? = #isolation,
+    fileID: String = #fileID, filePath: String = #filePath, line: Int = #line, column: Int = #column,
+    _ wait: () async throws -> Void
+) async -> Bool {
+    do {
+        try await wait()
+        return true
+    } catch {
+        Issue.record(
+            error, sourceLocation: SourceLocation(fileID: fileID, filePath: filePath, line: line, column: column))
+        return false
+    }
+}
+#endif
 
 // MARK: - AsyncGate
 

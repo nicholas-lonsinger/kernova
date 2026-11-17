@@ -76,10 +76,10 @@ struct ForceRestartTests {
         let forceStop = Task { @MainActor in
             try await instance.activity.forceStop { Issue.record("A joined Force Stop terminated again") }
         }
-        await #expect(throws: VMContinuationStopped.self) { try await boot.outcome.value() }
+        await #expect(throws: VMContinuationStopped.self) { try await boot.outcome.resolved() }
         termination.release()
-        try await forceRestartStop.value
-        try await forceStop.value
+        try await forceRestartStop.joined()
+        try await forceStop.joined()
 
         #expect(!instance.activity.liveSessionContinues)
         #expect(instance.status == .stopped)

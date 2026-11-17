@@ -185,7 +185,7 @@ struct VMCommandCoreTests {
         #expect(harness.revealedInLibrary == [arrival.id])
         #expect(harness.surfacedDisplays.isEmpty)
         gate.release()
-        await arrival.settle()
+        try await arrival.settle()
     }
 
     /// What a surfacing verb did, in order, under an installed requester.
@@ -237,7 +237,7 @@ struct VMCommandCoreTests {
         // release cannot land ahead of it.
         Task { @MainActor in harness.virtualization.resumeSuspended() }
         try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-        try await first.value
+        try await first.joined()
 
         #expect(harness.virtualization.startCallCount == 1)
         #expect(instance.status == .running)
@@ -262,7 +262,7 @@ struct VMCommandCoreTests {
         #expect(error.isBusy)
 
         harness.virtualization.resumeSuspended()
-        try await first.value
+        try await first.joined()
     }
 
     @Test("A resume arriving while a restore is in flight joins it")
@@ -277,7 +277,7 @@ struct VMCommandCoreTests {
 
         Task { @MainActor in harness.virtualization.resumeSuspended() }
         try await harness.core.resume(.id(instance.id), consent: .none)
-        try await first.value
+        try await first.joined()
 
         #expect(instance.status == .running)
     }
@@ -500,7 +500,7 @@ struct VMCommandCoreTests {
         #expect(vm.id == arrival.id)
         #expect(operation == "clone")
         gate.release()
-        await arrival.settle()
+        try await arrival.settle()
     }
 
     @Test("cancelGuestSetup without consent refuses with the confirmation naming the running step")
@@ -590,7 +590,7 @@ struct VMCommandCoreTests {
 
         try core.cancelGuestSetup(.id(instance.id), consent: .all)
         installService.release()
-        await instance.setupOperationTask?.value
+        try await instance.setupOperationTask?.joined()
 
         #expect(harness.virtualization.startCallCount == 0)
         #expect(instance.status == .initialBoot)
@@ -1005,7 +1005,7 @@ struct VMCommandCoreTests {
         #expect(harness.storage.deleteVMBundleCallCount == 0)
 
         harness.virtualization.resumeSuspended()
-        try await revert.value
+        try await revert.joined()
     }
 
     @Test("A permanent delete says so in the consent it asks for")
@@ -1166,7 +1166,7 @@ struct VMCommandCoreTests {
         // with what it wrote.
         #expect(harness.library.entries.contains { $0.id == arrival.id })
         gate.release()
-        #expect(await arrival.settle() == nil)
+        #expect(try await arrival.settle() == nil)
         #expect(!harness.library.entries.contains { $0.id == arrival.id })
         #expect(harness.storage.discardedStagedURLs == harness.storage.stagedBundleURLs)
         #expect(harness.storage.publishBundleCallCount == 0)
@@ -1300,7 +1300,7 @@ struct VMCommandCoreTests {
         #expect(operation == "being cloned")
         #expect(harness.library.instances.contains { $0.id == instance.id })
         hold.signal()
-        await harness.library.arrivals.first { $0.id == clone.id }?.settle()
+        try await harness.library.arrivals.first { $0.id == clone.id }?.settle()
     }
 
     @Test("A repeat delete of an already-removed VM refuses as not found")
@@ -1535,7 +1535,7 @@ struct VMCommandCoreTests {
         instance.handleSessionEvent(.guestDidStop)
         #expect(instance.agentPresentation?.status == nil)
 
-        while let event = await events.next() {
+        while let event = try await events.next() {
             guard case .agentStatusChanged(let id, _, let status) = event else { continue }
             #expect(id == instance.id)
             #expect(status == nil)
@@ -1589,7 +1589,7 @@ struct VMCommandCoreTests {
             .id(instance.id), outcome: .newMachine, waitForOutcome: false)
 
         var failure: VMLibraryEvent?
-        while let event = await events.next() {
+        while let event = try await events.next() {
             if case .failure = event {
                 failure = event
                 break
@@ -1648,7 +1648,7 @@ struct VMCommandCoreTests {
         let events = harness.core.events()
 
         try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-        await instance.setupOperationTask?.value
+        try await instance.setupOperationTask?.joined()
 
         // Transient: the VM is back where a retry starts, its phase holding no
         // message.
@@ -1670,7 +1670,7 @@ struct VMCommandCoreTests {
         let events = harness.core.events()
 
         try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-        await instance.setupOperationTask?.value
+        try await instance.setupOperationTask?.joined()
 
         #expect(instance.status == .initialBoot)
         #expect(harness.failures.isEmpty)
@@ -1914,7 +1914,7 @@ struct VMCommandCoreTests {
             startAfterCreate: true,
             guestAccountPassword: "analytical-engine")
         let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
-        let created = try #require(await arrival.settle())
+        let created = try #require(try await arrival.settle())
         try await waitForChange { created.hasLiveSession }
 
         // The boot the create chained carried the wizard's password, so the user
@@ -2019,8 +2019,8 @@ struct VMCommandCoreTests {
         try await clock.sleepRequested.wait { clock.parked.count == 2 }
 
         instance.activity.deliverSessionEvent(.guestDidStop, from: session)
-        try await first.value
-        try await second.value
+        try await first.joined()
+        try await second.joined()
 
         // The second boot joined the first rather than meeting the VM the
         // first brought up.
@@ -2142,7 +2142,7 @@ struct VMCommandCoreTests {
         // the deadline expire is what proves the wait was still running: had the
         // pause settled it, the stop would already have returned successfully.
         clock.release(try #require(clock.parked.first))
-        let error = try await #require(throws: CommandError.self) { try await stop.value }
+        let error = try await #require(throws: CommandError.self) { try await stop.joined() }
         guard case .timedOut(_, let verb, _) = error else {
             Issue.record("Expected a timeout refusal, got \(error)")
             return
@@ -2170,17 +2170,23 @@ extension CommandError {
 /// case asserting on the order changes arrived in flattens the batches back
 /// out.
 private struct VMLibraryEventReader {
-    private var batches: AsyncStream<[VMLibraryEvent]>.AsyncIterator
+    private let batches: AsyncStream<[VMLibraryEvent]>
     private var pending: [VMLibraryEvent] = []
 
     init(_ stream: AsyncStream<[VMLibraryEvent]>) {
-        batches = stream.makeAsyncIterator()
+        batches = stream
     }
 
-    /// The next event, awaiting another batch once the current one is spent.
-    mutating func next() async -> VMLibraryEvent? {
+    /// The next event, awaiting another batch once the current one is spent, or `nil` once the stream ends.
+    mutating func next(fileID: String = #fileID, line: Int = #line) async throws -> VMLibraryEvent? {
+        let backstop = Backstop("VMLibraryEventReader.next()", fileID: fileID, line: line)
+        let batches = batches
         while pending.isEmpty {
-            guard let batch = await batches.next() else { return nil }
+            let batch = try await backstop.run {
+                var iterator = batches.makeAsyncIterator()
+                return await iterator.next()
+            }
+            guard let batch else { return nil }
             pending = batch
         }
         return pending.removeFirst()

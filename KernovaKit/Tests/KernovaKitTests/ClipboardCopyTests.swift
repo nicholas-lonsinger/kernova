@@ -39,8 +39,8 @@ struct ClipboardCopyTests {
         #expect(pasteboard.residentReads == [.string, .rtf])
 
         pasteboard.setItem([(.string, Data("copied since".utf8))])
-        #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("text".utf8)))
-        #expect(try await source.serve(item: 0, representation: 1) == .bytes(Data("{\\rtf1 rich}".utf8)))
+        #expect(try await source.served(item: 0, representation: 0) == .bytes(Data("text".utf8)))
+        #expect(try await source.served(item: 0, representation: 1) == .bytes(Data("{\\rtf1 rich}".utf8)))
     }
 
     // MARK: - The copy's write
@@ -149,7 +149,7 @@ struct ClipboardCopyTests {
         #expect(reference.offer == offer && reference.item == 0 && reference.representation == 0)
         #expect(source.standsOnItsPasteboard)
         // The far side fills a reference itself: nothing of it is served from here.
-        await #expect(throws: ClipboardServeError.unavailable) { try await source.serve(item: 0, representation: 0) }
+        await #expect(throws: ClipboardServeError.unavailable) { try await source.served(item: 0, representation: 0) }
         pasteboard.setString("copied since", forType: .string)
         #expect(!source.standsOnItsPasteboard)
     }
@@ -253,8 +253,8 @@ struct ClipboardCopyTests {
 
         // The text is the snapshot's; the file is pulled from upstream only when pulled.
         pasteboard.setString("copied since", forType: .string)
-        #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("upstream text".utf8)))
-        #expect(try await source.serve(item: 0, representation: 1) == .file(file))
+        #expect(try await source.served(item: 0, representation: 0) == .bytes(Data("upstream text".utf8)))
+        #expect(try await source.served(item: 0, representation: 1) == .file(file))
         #expect(upstream.filePulls == 1)
 
         // The upstream offer ends: the snapshot says so, and its file is served no more.
@@ -267,8 +267,8 @@ struct ClipboardCopyTests {
         }
         upstream.end()
         try await ended.wait { heard.withLock { $0 } }
-        await #expect(throws: ClipboardServeError.unavailable) { try await source.serve(item: 0, representation: 1) }
-        #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("upstream text".utf8)))
+        await #expect(throws: ClipboardServeError.unavailable) { try await source.served(item: 0, representation: 1) }
+        #expect(try await source.served(item: 0, representation: 0) == .bytes(Data("upstream text".utf8)))
     }
 
     // MARK: - Bounds and independence
@@ -305,7 +305,7 @@ struct ClipboardCopyTests {
         #expect(kept.storage == .file && !kept.promised && kept.sizeEstimate == 3)
 
         pasteboard.setItem([(.string, Data("copied since".utf8))])
-        guard case .file(let served) = try await source.serve(item: 0, representation: 0) else {
+        guard case .file(let served) = try await source.served(item: 0, representation: 0) else {
             Issue.record("the called-in file was not served")
             return
         }
@@ -403,7 +403,7 @@ struct ClipboardCopyTests {
         #expect(source.items.count == 1)
         #expect(item.representations.compactMap(\.type.appleUTI) == crossing)
         #expect(item.representations.allSatisfy { $0.storage == .inline })
-        #expect(try await source.serve(item: 0, representation: 1) == .bytes(Data("jpeg".utf8)))
+        #expect(try await source.served(item: 0, representation: 1) == .bytes(Data("jpeg".utf8)))
 
         // Passthrough's offer reads the item by the same rule.
         guard case .offer(let offer, let offerLost) = await ClipboardPasteboardReader.readOffer(from: pasteboard)
@@ -441,13 +441,13 @@ struct ClipboardCopyTests {
         #expect(source.items.count == 1)
         #expect(item.representations.map(\.type.appleUTI) == crossing)
         #expect(item.representations.map(\.storage) == [.file, .inline, .inline, .inline])
-        guard case .file(let served) = try await source.serve(item: 0, representation: 0) else {
+        guard case .file(let served) = try await source.served(item: 0, representation: 0) else {
             throw TestFailure("the file was not served")
         }
         #expect(served.lastPathComponent == "notes.txt")
-        #expect(try await source.serve(item: 0, representation: 1) == .bytes(Data("notes.txt".utf8)))
-        #expect(try await source.serve(item: 0, representation: 2) == .bytes(Data("icns".utf8)))
-        #expect(try await source.serve(item: 0, representation: 3) == .bytes(Data("private".utf8)))
+        #expect(try await source.served(item: 0, representation: 1) == .bytes(Data("notes.txt".utf8)))
+        #expect(try await source.served(item: 0, representation: 2) == .bytes(Data("icns".utf8)))
+        #expect(try await source.served(item: 0, representation: 3) == .bytes(Data("private".utf8)))
 
         // Passthrough's offer reads the item by the same rule.
         guard case .offer(let offer, let offerLost) = await ClipboardPasteboardReader.readOffer(from: pasteboard)
@@ -489,11 +489,11 @@ struct ClipboardCopyTests {
         #expect(source.items.count == 1)
         #expect(item.representations.compactMap(\.type.appleUTI) == ["public.jpeg"] + crossing)
         #expect(item.representations.map(\.storage) == [.file] + crossing.map { _ in .inline })
-        guard case .file(let served) = try await source.serve(item: 0, representation: 0) else {
+        guard case .file(let served) = try await source.served(item: 0, representation: 0) else {
             throw TestFailure("the called-in file was not served")
         }
         #expect(served.lastPathComponent == "photo.jpeg")
-        #expect(try await source.serve(item: 0, representation: 2) == .bytes(Data("jpeg".utf8)))
+        #expect(try await source.served(item: 0, representation: 2) == .bytes(Data("jpeg".utf8)))
 
         // Passthrough's offer reads the item by the same rule.
         guard
@@ -516,7 +516,7 @@ struct ClipboardCopyTests {
             guard
                 case .snapshot(let source, _) = await ClipboardPasteboardReader.readSnapshot(
                     from: pasteboard, staging: staging, copyingTo: Self.connection, sizeOf: nil),
-                case .file(let url) = try await source.serve(item: 0, representation: 0)
+                case .file(let url) = try await source.served(item: 0, representation: 0)
             else { throw TestFailure("no snapshot of \(name)") }
             return (source, url)
         }
@@ -524,7 +524,7 @@ struct ClipboardCopyTests {
         var later: [ClipboardOfferSource] = []
         for index in 1...4 { later.append(try await snapshotOfAPromise("later-\(index).png").0) }
         #expect(FileManager.default.fileExists(atPath: file.path))
-        #expect(try await first?.serve(item: 0, representation: 0) == .file(file))
+        #expect(try await first?.served(item: 0, representation: 0) == .file(file))
 
         first = nil
         #expect(!FileManager.default.fileExists(atPath: file.path))
@@ -655,6 +655,6 @@ struct ClipboardCopyTests {
             source.items.map { $0.representations.compactMap(\.type.appleUTI) } == [
                 [NSPasteboard.PasteboardType.string.rawValue]
             ])
-        #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("hunter2".utf8)))
+        #expect(try await source.served(item: 0, representation: 0) == .bytes(Data("hunter2".utf8)))
     }
 }

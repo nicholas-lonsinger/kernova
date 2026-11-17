@@ -107,7 +107,7 @@ struct NetworkAttachmentCoordinatorTests {
     // MARK: - Session start
 
     @Test("A live switch between vmnet-backed modes supersedes the in-flight materialization")
-    func liveSwitchSupersedesInFlightMaterialization() async {
+    func liveSwitchSupersedesInFlightMaterialization() async throws {
         let h = makeHarness(
             choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil),
             entitled: true,
@@ -130,7 +130,7 @@ struct NetworkAttachmentCoordinatorTests {
         h.coordinator.configurationChanged()
         h.device.refusedPlans = []
 
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+        try await h.coordinator.vmnetMaterializationTaskForTesting?.joined()
         #expect(h.materializeRequests.contains(.nat))
         #expect(h.subnet(.nat, .common) != nil)
         #expect(h.device.appliedPlans.last == .vmnet(.common(.nat)))
@@ -165,7 +165,7 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(!h.coordinator.isPending)
 
         createHold.signal()
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+        try await h.coordinator.vmnetMaterializationTaskForTesting?.joined()
 
         #expect(h.subnet(.hostOnly, .vm(h.owner)) != nil)
         #expect(h.subnet(.hostOnly, .named(lab)) == nil)
@@ -197,7 +197,7 @@ struct NetworkAttachmentCoordinatorTests {
     // MARK: - Disconnect
 
     @Test("A persistent attach-fail loop escalates the ladder and ends pending")
-    func persistentAttachFailureEscalatesLadderThenRestsPending() async {
+    func persistentAttachFailureEscalatesLadderThenRestsPending() async throws {
         let h = makeHarness(
             choice: NetworkChoice(mode: .nat, bridgedInterfaceIdentifier: nil),
             devicePlan: .nat,
@@ -222,7 +222,7 @@ struct NetworkAttachmentCoordinatorTests {
                 Issue.record("Expected a scheduled retry on rung \(rung)")
                 return
             }
-            await retry.value
+            try await retry.joined()
             #expect(h.device.appliedPlans.count == rung + 1)
         }
 
@@ -236,7 +236,7 @@ struct NetworkAttachmentCoordinatorTests {
     }
 
     @Test("A Bridged VM whose interface is gone joins its own NAT network, never the default-route interface")
-    func goneInterfaceJoinsOwnNATNotPrimary() async {
+    func goneInterfaceJoinsOwnNATNotPrimary() async throws {
         let h = makeHarness(
             choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1"),
             devicePlan: .bridged("en1"),
@@ -251,7 +251,7 @@ struct NetworkAttachmentCoordinatorTests {
         h.provider.setPrimary("en0")
         h.device.plan = nil
         h.coordinator.attachmentWasDisconnected(error: TestFailure("undock"))
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+        try await h.coordinator.vmnetMaterializationTaskForTesting?.joined()
 
         #expect(!h.device.appliedPlans.contains(.bridged("en0")))
         #expect(h.device.currentPlan == .vmnet(.own(.nat)))
@@ -261,7 +261,7 @@ struct NetworkAttachmentCoordinatorTests {
     }
 
     @Test("Automatic with a default-route interface that can't be bridged joins its own NAT network")
-    func automaticWithUnbridgeablePrimaryJoinsOwnNAT() async {
+    func automaticWithUnbridgeablePrimaryJoinsOwnNAT() async throws {
         let h = makeHarness(
             choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: nil),
             available: [Self.wiFi, Self.ethernet],
@@ -269,7 +269,7 @@ struct NetworkAttachmentCoordinatorTests {
             entitled: true)
 
         h.coordinator.activate()
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+        try await h.coordinator.vmnetMaterializationTaskForTesting?.joined()
 
         #expect(h.device.appliedPlans == [.vmnet(.own(.nat))])
         #expect(!h.coordinator.isPending)
@@ -277,14 +277,14 @@ struct NetworkAttachmentCoordinatorTests {
     }
 
     @Test("A Bridged VM on its own NAT network goes back to its interface the moment the host offers it")
-    func returningInterfaceIsReclaimedFromOwnNAT() async {
+    func returningInterfaceIsReclaimedFromOwnNAT() async throws {
         let h = makeHarness(
             choice: NetworkChoice(mode: .bridged, bridgedInterfaceIdentifier: "en1"),
             available: [Self.wiFi],
             primary: "en0",
             entitled: true)
         h.coordinator.activate()
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+        try await h.coordinator.vmnetMaterializationTaskForTesting?.joined()
         #expect(h.device.currentPlan == .vmnet(.own(.nat)))
 
         h.provider.setAvailable([Self.wiFi, Self.ethernet])
@@ -313,7 +313,7 @@ struct NetworkAttachmentCoordinatorTests {
         #expect(h.coordinator.vmnetMaterializationTaskForTesting != nil)
         createHold.signal()
         h.coordinator.stop()
-        await h.coordinator.vmnetMaterializationTaskForTesting?.value
+        try await h.coordinator.vmnetMaterializationTaskForTesting?.joined()
     }
 
     @Test("An Automatic bridge holds its interface across a default-route change")
@@ -362,7 +362,7 @@ struct NetworkAttachmentCoordinatorTests {
     // MARK: - Backoff retries
 
     @Test("A ladder exhausted on a materialized vmnet network rests pending until the next link event")
-    func exhaustedLadderOnMaterializedNetworkRestsPending() async {
+    func exhaustedLadderOnMaterializedNetworkRestsPending() async throws {
         let h = makeHarness(
             choice: NetworkChoice(mode: .nat, bridgedInterfaceIdentifier: nil),
             entitled: true,
@@ -378,7 +378,7 @@ struct NetworkAttachmentCoordinatorTests {
             Issue.record("Expected a scheduled retry")
             return
         }
-        await retry.value
+        try await retry.joined()
         #expect(h.device.appliedPlans.count == 2)
 
         // Exhausted: nothing retries, and nothing rematerializes the network.

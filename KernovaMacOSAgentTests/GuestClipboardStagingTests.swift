@@ -80,7 +80,7 @@ struct GuestClipboardStagingTests {
             let fired = BlockingCall { pasteboard.invokeProvider(forType: type, itemIndex: item) }
             try await link.changed.wait { link.opened.count == index + 1 }
             try land(paste.bytes, pull: index, clipboard, link)
-            #expect(try await fired.value() != nil)
+            #expect(try await fired.returned() != nil)
         }
         clipboard.setLink(nil)
         try await pasteboard.changed.wait { pasteboard.promisedTypes.isEmpty }
@@ -222,7 +222,7 @@ struct GuestClipboardStagingTests {
         let fired = BlockingCall { pasteboard.invokeProvider(forType: Self.text) }
         try await link.changed.wait { link.opened.count == 1 }
         try land(Data("hunter2-mac".utf8), pull: 0, clipboard, link)
-        #expect(try await fired.value() == Data("hunter2-mac".utf8))
+        #expect(try await fired.returned() == Data("hunter2-mac".utf8))
         try await drainMainQueue()
 
         clipboard.exchange.handle(

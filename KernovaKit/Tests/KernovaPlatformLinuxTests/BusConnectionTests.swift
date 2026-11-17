@@ -197,7 +197,7 @@ struct BusConnectionTests {
             switch call.header.member {
             case "Hang":
                 arrived.put("arrived")
-                _ = try? release.next()
+                holdUntilReleased { _ = try release.next() }
                 return nil
             case "Silent":
                 return nil

@@ -41,12 +41,7 @@ struct VMScriptingGatewayTests {
         func wait() async {
             isWaiting = true
             gate.notify()
-            do {
-                try await gate.wait { self.isOpen }
-            } catch {
-                Issue.record("readiness gate was never opened: \(error)")
-                await parkForever()
-            }
+            if await !holdUntilReleased({ try await gate.wait { self.isOpen } }) { await parkForever() }
         }
 
         /// Lands the library read.
@@ -710,7 +705,7 @@ struct VMScriptingGatewayTests {
         #expect(alpha.status == .running)
 
         readiness.open()
-        try await run.value
+        try await run.joined()
         #expect(virtualization.pauseCallCount == 1)
         #expect(alpha.status == .paused)
     }

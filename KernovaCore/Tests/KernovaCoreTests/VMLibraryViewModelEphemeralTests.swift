@@ -127,8 +127,8 @@ struct VMLibraryViewModelEphemeralTests {
     }
 
     /// Awaits every revert a power-off started, if it started any.
-    private func settleEphemeralRevert(_ harness: Harness) async {
-        await harness.viewModel.library.waitForRevertsToSettle()
+    private func settleEphemeralRevert(_ harness: Harness) async throws {
+        try await harness.viewModel.library.waitForRevertsToSettle()
     }
 
     // MARK: - Power-off
@@ -138,7 +138,7 @@ struct VMLibraryViewModelEphemeralTests {
         let harness = try await makeHarness()
 
         await harness.viewModel.stop(harness.instance)
-        await settleEphemeralRevert(harness)
+        try await settleEphemeralRevert(harness)
 
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
         #expect(harness.instance.snapshotManifest.currentID == harness.baseline.id)
@@ -156,7 +156,7 @@ struct VMLibraryViewModelEphemeralTests {
 
         #expect(harness.viewModel.library.hasRevertInFlight)
         #expect(harness.viewModel.quitMustWaitOut)
-        await settleEphemeralRevert(harness)
+        try await settleEphemeralRevert(harness)
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
     }
 
@@ -181,7 +181,7 @@ struct VMLibraryViewModelEphemeralTests {
         editedHostState.hasUnsettledSession = false
 
         await harness.viewModel.stop(instance)
-        await settleEphemeralRevert(harness)
+        try await settleEphemeralRevert(harness)
 
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
         #expect(instance.configuration.clipboardSharingEnabled == capturedSharing)
@@ -195,7 +195,7 @@ struct VMLibraryViewModelEphemeralTests {
         harness.virtualization.revertToSnapshotError = VMSnapshotError.snapshotMissingSavedState
 
         await harness.viewModel.stop(harness.instance)
-        await settleEphemeralRevert(harness)
+        try await settleEphemeralRevert(harness)
 
         #expect(presenter.showError)
         // The files never landed, so the VM's state does not descend from the
@@ -210,7 +210,7 @@ struct VMLibraryViewModelEphemeralTests {
         let harness = try await makeHarness(unsettled: true)
 
         #expect(harness.instance.status == .restoring)
-        await settleEphemeralRevert(harness)
+        try await settleEphemeralRevert(harness)
 
         #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
         #expect(!harness.instance.hostState.hasUnsettledSession)
@@ -226,9 +226,9 @@ struct VMLibraryViewModelEphemeralTests {
         harness.storage.files.setReplaceError(
             CocoaError(.fileWriteNoPermission), for: VMBundleLayout.snapshotManifestRelativePath)
 
-        await harness.viewModel.deleteSnapshot(
+        try await harness.viewModel.deleteSnapshot(
             harness.instance, snapshot: harness.baseline, turningOffEphemeralMode: true
-        ).value
+        ).joined()
 
         #expect(presenter.showError)
         #expect(!harness.instance.hostState.ephemeralModeEnabled)
@@ -245,9 +245,9 @@ struct VMLibraryViewModelEphemeralTests {
     func plainDeleteOfTheBaselineAsksAgain() async throws {
         let harness = try await makeHarness(phase: .stopped)
 
-        await harness.viewModel.deleteSnapshot(
+        try await harness.viewModel.deleteSnapshot(
             harness.instance, snapshot: harness.baseline, turningOffEphemeralMode: false
-        ).value
+        ).joined()
 
         #expect(presenter.deleteSnapshots == [harness.baseline])
         #expect(!presenter.showError)

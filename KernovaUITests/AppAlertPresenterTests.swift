@@ -107,7 +107,7 @@ struct AppAlertPresenterTests {
     // MARK: - One delete per VM
 
     @Test("A delete for a second VM is a sheet of its own, with its own disposition")
-    func eachVMHasItsOwnDelete() async {
+    func eachVMHasItsOwnDelete() async throws {
         let h = makeHarness()
         let (presenter, viewModel) = (h.presenter, h.viewModel)
         let vmA = makeInstance(name: "A", in: viewModel)
@@ -115,8 +115,8 @@ struct AppAlertPresenterTests {
 
         presenter.presentDeleteSheet(for: vmA, permanently: true)
         presenter.presentDeleteSheet(for: vmB, permanently: false)
-        await presenter.deleteResolutionForTesting(of: vmA.id)?.value
-        await presenter.deleteResolutionForTesting(of: vmB.id)?.value
+        try await presenter.deleteResolutionForTesting(of: vmA.id)?.joined()
+        try await presenter.deleteResolutionForTesting(of: vmB.id)?.joined()
 
         // No window, so both wait — neither retargets nor drops the other.
         #expect(presenter.waitingCountForTesting == 2)
@@ -126,7 +126,7 @@ struct AppAlertPresenterTests {
     // MARK: - Shown sheet is authoritative (no silent drop)
 
     @Test("A gesture for the VM whose delete sheet is up is ignored; another VM's waits its turn")
-    func shownSheetIgnoresItsVMAndQueuesAnother() async {
+    func shownSheetIgnoresItsVMAndQueuesAnother() async throws {
         let h = makeHarness()
         let (presenter, viewModel) = (h.presenter, h.viewModel)
         h.showLibrary()
@@ -134,7 +134,7 @@ struct AppAlertPresenterTests {
         let vmB = makeInstance(name: "B", in: viewModel)
 
         presenter.presentDeleteSheet(for: vmA)
-        await presenter.deleteResolutionForTesting(of: vmA.id)?.value
+        try await presenter.deleteResolutionForTesting(of: vmA.id)?.joined()
         #expect(presenter.waitingCountForTesting == 0)  // drained → shown, not queued
 
         // The modal sheet is authoritative: a repeat gesture cannot change it.
@@ -142,7 +142,7 @@ struct AppAlertPresenterTests {
         #expect(presenter.deleteDispositionsForTesting == [vmA.id: false])
 
         presenter.presentDeleteSheet(for: vmB)
-        await presenter.deleteResolutionForTesting(of: vmB.id)?.value
+        try await presenter.deleteResolutionForTesting(of: vmB.id)?.joined()
         #expect(presenter.waitingCountForTesting == 1)
 
         #expect(h.dismissShownAlert(.cancel))
@@ -153,21 +153,21 @@ struct AppAlertPresenterTests {
     }
 
     @Test("A delete after the window under a shown sheet closed is accepted, not blocked")
-    func deleteAcceptedAfterTheWindowUnderTheSheetCloses() async {
+    func deleteAcceptedAfterTheWindowUnderTheSheetCloses() async throws {
         let h = makeHarness()
         let (presenter, viewModel) = (h.presenter, h.viewModel)
         h.showLibrary()
         let vmA = makeInstance(name: "A", in: viewModel)
 
         presenter.presentDeleteSheet(for: vmA)
-        await presenter.deleteResolutionForTesting(of: vmA.id)?.value  // vmA's sheet is shown
+        try await presenter.deleteResolutionForTesting(of: vmA.id)?.joined()  // vmA's sheet is shown
 
         // The window closing must end the shown delete synchronously;
         // otherwise the next gesture for the VM would find it still on screen.
         h.closeLibrary()
         h.showLibrary()
         presenter.presentDeleteSheet(for: vmA)
-        await presenter.deleteResolutionForTesting(of: vmA.id)?.value
+        try await presenter.deleteResolutionForTesting(of: vmA.id)?.joined()
 
         #expect(presenter.deleteDispositionsForTesting == [vmA.id: false])
         // The close took the prior sheet down with it, so the new sheet goes
@@ -179,13 +179,13 @@ struct AppAlertPresenterTests {
     // MARK: - Teardown
 
     @Test("Closing the window under the delete sheet cancels it and clears all in-flight state")
-    func closingTheWindowClearsInFlightState() async {
+    func closingTheWindowClearsInFlightState() async throws {
         let h = makeHarness()
         let (presenter, viewModel) = (h.presenter, h.viewModel)
         h.showLibrary()
         let vmA = makeInstance(name: "A", in: viewModel)
         presenter.presentDeleteSheet(for: vmA, permanently: true)
-        await presenter.deleteResolutionForTesting(of: vmA.id)?.value
+        try await presenter.deleteResolutionForTesting(of: vmA.id)?.joined()
         #expect(h.isShowingAlert)
 
         h.closeLibrary()
@@ -198,7 +198,7 @@ struct AppAlertPresenterTests {
     // MARK: - Real off-main resolve path (#366)
 
     @Test("De-dup holds across the real off-main external-resolution probe")
-    func dedupAcrossRealOffMainResolve() async {
+    func dedupAcrossRealOffMainResolve() async throws {
         let h = makeHarness()
         let (presenter, viewModel) = (h.presenter, h.viewModel)
         let vm = makeInstanceWithExternalDisk(name: "Ext", in: viewModel)
@@ -209,7 +209,7 @@ struct AppAlertPresenterTests {
         presenter.presentDeleteSheet(for: vm, permanently: false)
         let task = presenter.deleteResolutionForTesting(of: vm.id)
         presenter.presentDeleteSheet(for: vm, permanently: true)
-        await task?.value
+        try await task?.joined()
 
         #expect(presenter.waitingCountForTesting == 1)
         #expect(presenter.deleteDispositionsForTesting == [vm.id: true])

@@ -981,7 +981,7 @@ struct GuestDragOutTests {
         try burst.fail("IMG_0002.JPG")
         try burst.write("IMG_0003.JPG", contents: Data(count: 3))
 
-        #expect(failureCode(try await pull.value()) == .itemRepresentationUnavailable)
+        #expect(failureCode(try await pull.returned()) == .itemRepresentationUnavailable)
     }
 
     @Test("a promised folder is served once its folder lands, and a file in its place is unavailable")
@@ -991,13 +991,13 @@ struct GuestDragOutTests {
         let folder = try #require(album.destination)
         let pull = try await startPull(rig, token: try rig.token(), item: 1)
         try album.writeFolder("Album")
-        #expect(try await pull.value() == .success(.tree(path: folder.appendingPathComponent("Album").path)))
+        #expect(try await pull.returned() == .success(.tree(path: folder.appendingPathComponent("Album").path)))
 
         let flat = FakePromiseReceiver(names: ["Album"])
         let (other, _) = try deliveredRig(["public.folder"], receivers: [flat])
         let refused = try await startPull(other, token: try other.token(), item: 1)
         try flat.write("Album", contents: Data("not a folder".utf8))
-        #expect(failureCode(try await refused.value()) == .itemRepresentationUnavailable)
+        #expect(failureCode(try await refused.returned()) == .itemRepresentationUnavailable)
     }
 
     @Test("the offer ending while a pull waits on its promise answers the pull unavailable")
@@ -1009,7 +1009,7 @@ struct GuestDragOutTests {
         let pull = try await startPull(rig, token: token, item: 1)
         rig.dragOut.offerEnded(token)
 
-        #expect(failureCode(try await pull.value()) == .itemRepresentationUnavailable)
+        #expect(failureCode(try await pull.returned()) == .itemRepresentationUnavailable)
     }
 
     // MARK: - Letting the promises go
@@ -1034,7 +1034,7 @@ struct GuestDragOutTests {
             let pull = try await startPull(rig, token: token, item: 1)
             try photo.write("IMG_0001.HEIC", contents: Data(count: 8))
             #expect(
-                try await pull.value() == .success(.tree(path: folder.appendingPathComponent("IMG_0001.HEIC").path)))
+                try await pull.returned() == .success(.tree(path: folder.appendingPathComponent("IMG_0001.HEIC").path)))
             await rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
             #expect(exists(folder))
             rig.dragOut.offerEnded(token)

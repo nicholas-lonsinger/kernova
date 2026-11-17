@@ -171,7 +171,7 @@ struct VMToolbarManagerTests {
         #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
 
         suspending.resumeSuspended()
-        try await resume.value()
+        try await resume.resolved()
     }
 
     @Test("makeToolbarItem returns separate bordered pop-out and fullscreen items")
@@ -276,7 +276,7 @@ struct VMToolbarManagerTests {
         }
 
         gate.release()
-        await arrival.settle()
+        try await arrival.settle()
     }
 
     // MARK: - Clipboard commands

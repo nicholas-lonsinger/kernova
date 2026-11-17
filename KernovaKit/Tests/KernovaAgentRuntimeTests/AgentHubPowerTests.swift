@@ -45,7 +45,7 @@ struct AgentHubPowerTests {
         let ready = try await harness.snapshot { $0.power == .agent(.sessionPeer) }
         #expect(ready.routing == nil)
 
-        #expect(await harness.hub.requestPower(.shutdown) == .handedOff)
+        #expect(try await harness.requestPower(.shutdown) == .handedOff)
         #expect(power.performed.elements.count == 1)
         #expect(harness.hostLogs.elements.contains { $0.contains("Asking the session peer (session 1") })
         try await close([session], harness)
@@ -58,12 +58,12 @@ struct AgentHubPowerTests {
         let power = FakePowerAdapter(accepts: false)
         let session = try await connect(harness, power)
 
-        async let outcome = harness.hub.requestPower(.shutdown)
+        async let outcome = harness.requestPower(.shutdown)
         var performed = power.performed.waiter()
         let id = try await performed.next { _ in true }
         power.report(.refused(id, WireError(.powerNotPermitted)))
 
-        guard case .untaken(let refusals) = await outcome else {
+        guard case .untaken(let refusals) = try await outcome else {
             Issue.record("not the ACPI press")
             return
         }
@@ -79,13 +79,13 @@ struct AgentHubPowerTests {
         let session = try await connect(harness, power)
         _ = try await harness.snapshot { $0.power == .agent(.sessionPeer) }
 
-        async let outcome = harness.hub.requestPower(.shutdown)
+        async let outcome = harness.requestPower(.shutdown)
         let accepted = try await harness.snapshot { $0.routing?.stage == .accepted }
         #expect(
             accepted.routing
                 == PowerRoutingProgress(action: .shutdown, ignoringApps: false, role: .sessionPeer, stage: .accepted))
         // A second request while the first runs is refused at once.
-        #expect(await harness.hub.requestPower(.shutdown) == .busy)
+        #expect(try await harness.requestPower(.shutdown) == .busy)
 
         var performed = power.performed.waiter()
         let id = try await performed.next { _ in true }
@@ -93,7 +93,7 @@ struct AgentHubPowerTests {
         _ = try await harness.snapshot { $0.routing?.stage == .waitingOnApps(Self.blocking) }
         power.report(.blocked(id, Self.blocking))
 
-        #expect(await outcome == .blocked(Self.blocking))
+        #expect(try await outcome == .blocked(Self.blocking))
         _ = try await harness.snapshot { $0.routing == nil }
         try await close([session], harness)
     }
@@ -105,11 +105,11 @@ struct AgentHubPowerTests {
         let power = FakePowerAdapter(handsOff: false)
         let session = try await connect(harness, power)
 
-        async let outcome = harness.hub.requestPower(.shutdown)
+        async let outcome = harness.requestPower(.shutdown)
         _ = try await harness.snapshot { $0.routing?.stage == .accepted }
         harness.hub.detach()
 
-        #expect(await outcome == .lostAfterAcceptance)
+        #expect(try await outcome == .lostAfterAcceptance)
         try await close([session], harness)
     }
 
@@ -129,12 +129,12 @@ struct AgentHubPowerTests {
         let ready = try await harness.snapshot { $0.shutsDownIgnoringApps }
         #expect(ready.power == .absent(.notOnConsole))
 
-        #expect(await harness.hub.requestPower(.shutdown) == .untaken(refusals: []))
-        #expect(await harness.hub.requestPower(.restart) == .untaken(refusals: []))
+        #expect(try await harness.requestPower(.shutdown) == .untaken(refusals: []))
+        #expect(try await harness.requestPower(.restart) == .untaken(refusals: []))
         #expect(sessionPower.performed.elements.isEmpty)
         #expect(systemPower.performed.elements.isEmpty)
 
-        #expect(await harness.hub.requestPower(.shutdown, ignoringApps: true) == .handedOff)
+        #expect(try await harness.requestPower(.shutdown, ignoringApps: true) == .handedOff)
         #expect(systemPower.performedIgnoringApps.elements.count == 1)
         try await close([session, system], harness)
     }
@@ -152,7 +152,7 @@ struct AgentHubPowerTests {
         // Beside no session peer: nothing takes a graceful shutdown, and the system peer takes the one ignoring apps.
         let alone = try await harness.snapshot { $0.shutsDownIgnoringApps }
         #expect(alone.power == .absent(.notOnConsole))
-        #expect(await harness.hub.requestPower(.shutdown) == .untaken(refusals: []))
+        #expect(try await harness.requestPower(.shutdown) == .untaken(refusals: []))
         #expect(systemPower.performed.elements.isEmpty)
 
         // Beside the console session's peer: it takes the graceful shutdown; the system peer, the one ignoring apps.
@@ -160,9 +160,9 @@ struct AgentHubPowerTests {
         let session = try await connect(harness, sessionPower, peers: 2)
         let ready = try await harness.snapshot { $0.power == .agent(.sessionPeer) }
         #expect(ready.shutsDownIgnoringApps)
-        #expect(await harness.hub.requestPower(.shutdown) == .handedOff)
+        #expect(try await harness.requestPower(.shutdown) == .handedOff)
         #expect(sessionPower.performed.elements.count == 1)
-        #expect(await harness.hub.requestPower(.shutdown, ignoringApps: true) == .handedOff)
+        #expect(try await harness.requestPower(.shutdown, ignoringApps: true) == .handedOff)
         #expect(systemPower.performedIgnoringApps.elements.count == 1)
         try await close([session, system], harness)
     }
@@ -178,7 +178,7 @@ struct AgentHubPowerTests {
 
         let snapshot = try await harness.snapshot { $0.peers.count == 2 && $0.features[.power].isAvailable }
         #expect(snapshot.power == .absent(.notOnConsole))
-        #expect(await harness.hub.requestPower(.shutdown) == .untaken(refusals: []))
+        #expect(try await harness.requestPower(.shutdown) == .untaken(refusals: []))
         try await close([session, system], harness)
     }
 }

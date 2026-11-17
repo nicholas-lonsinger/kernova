@@ -158,7 +158,7 @@ struct VMSessionContextTests {
             #expect(second !== first)
             #expect(instance.sessionContext === second)
             return .rest(.atRest(.stopped), ())
-        }.value()
+        }.resolved()
         // A bring-up that ends at rest releases the context it left open.
         #expect(instance.sessionContext == nil)
     }
@@ -179,7 +179,7 @@ struct VMSessionContextTests {
             #expect(session.serialOutputPipe === result.serialOutputPipe)
             #expect(instance.liveRemovableMedia == [media])
             return .rest(.atRest(.stopped), ())
-        }.value()
+        }.resolved()
     }
 
     // MARK: - Runtime removable media write surface
@@ -215,7 +215,7 @@ struct VMSessionContextTests {
             instance.adoptBuildProducts(context, Self.buildProducts(coldRemovableMedia: [coldBooted]))
             context.bindSessionForTesting(UUID())
             return .rest(.live(.running), ())
-        }.value()
+        }.resolved()
 
         instance.recordAttachedMedia(carried, for: sessionA)
         instance.forgetAttachedMedia(deviceID: carried.id, for: sessionA)

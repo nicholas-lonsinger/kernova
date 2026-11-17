@@ -172,7 +172,7 @@ struct AppTerminationGateTests {
         #expect(spy.endings.isEmpty)
 
         gate.release()
-        try await trash.value()
+        try await trash.resolved()
         try await spy.ended.wait { spy.endings.count == 1 }
         #expect(spy.endings == [.terminate])
     }
@@ -190,7 +190,7 @@ struct AppTerminationGateTests {
         #expect(spy.endings.isEmpty)
 
         gate.release()
-        await arrival.settle()
+        try await arrival.settle()
         try await spy.ended.wait { spy.endings.count == 1 }
     }
 
@@ -214,7 +214,7 @@ struct AppTerminationGateTests {
         #expect(spy.endings.isEmpty)
 
         gate.release()
-        try await save.value()
+        try await save.resolved()
         try await spy.ended.wait { spy.endings.count == 1 }
         #expect(stuck.phase == .suspended)
     }

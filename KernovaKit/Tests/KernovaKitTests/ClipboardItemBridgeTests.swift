@@ -63,7 +63,13 @@ struct ClipboardItemBridgeTests {
         ) {
             let source = self.source
             Task { @MainActor in
-                completion(try? await source.serve(item: item, representation: representation))
+                var served: ClipboardServedRepresentation?
+                await holdUntilReleased {
+                    do {
+                        served = try await source.served(item: item, representation: representation)
+                    } catch is ClipboardServeError {}
+                }
+                completion(served)
             }
         }
     }
@@ -208,7 +214,7 @@ struct ClipboardItemBridgeTests {
         pasteboard.setString("second", forType: .string)
 
         await #expect(throws: ClipboardServeError.unavailable) {
-            try await source.serve(item: 0, representation: 0)
+            try await source.served(item: 0, representation: 0)
         }
         #expect(pasteboard.residentReads.isEmpty)
     }
@@ -310,7 +316,7 @@ struct ClipboardItemBridgeTests {
         #expect(landed.lastPathComponent == "photo.png")
         #expect(try Data(contentsOf: landed) == pngBytes)
 
-        guard case .file(let again) = try await serve(source, item: 0, representation: 0) else {
+        guard case .file(let again) = try await source.served(item: 0, representation: 0) else {
             Issue.record("expected the promised file")
             return
         }
@@ -333,7 +339,7 @@ struct ClipboardItemBridgeTests {
         let names = source.items.map { $0.representations.first?.name }
         #expect(names == [Data("Untitled.png".utf8), Data("Export".utf8)])
         #expect(source.items.map { $0.representations.first?.storage } == [.file, .folder])
-        guard case .folder(let landed) = try await serve(source, item: 1, representation: 0) else {
+        guard case .folder(let landed) = try await source.served(item: 1, representation: 0) else {
             Issue.record("expected the promised folder")
             return
         }
@@ -357,17 +363,7 @@ struct ClipboardItemBridgeTests {
         let source = try await readOffer(promisePasteboard(), promises: [receiver])
 
         await #expect(throws: ClipboardServeError.readFailed) {
-            try await serve(source, item: 0, representation: 0)
-        }
-    }
-
-    /// `source`'s serve of `representation` of `item`, under the backstop: serving a promise waits on its
-    /// source's call-in, which sets no deadline of its own (`CalledInFilePromise.File.landed`).
-    private func serve(
-        _ source: ClipboardOfferSource, item: Int, representation: Int, fileID: String = #fileID, line: Int = #line
-    ) async throws -> ClipboardServedRepresentation {
-        try await Backstop("ClipboardOfferSource.serve(item:representation:)", fileID: fileID, line: line).run {
-            try await source.serve(item: item, representation: representation)
+            try await source.served(item: 0, representation: 0)
         }
     }
 
@@ -398,13 +394,13 @@ struct ClipboardItemBridgeTests {
         #expect(source.items.map { $0.representations.map(\.name) } == [[Data("a.png".utf8)], [Data("b.png".utf8)]])
         // The source reports its second file first: it lands on that file's item, not the first one owed.
         receiver.deliver(1)
-        guard case .file(let second) = try await serve(source, item: 1, representation: 0) else {
+        guard case .file(let second) = try await source.served(item: 1, representation: 0) else {
             Issue.record("expected the second file")
             return
         }
         #expect(try Data(contentsOf: second) == Data("b".utf8))
         receiver.deliver(0)
-        guard case .file(let first) = try await serve(source, item: 0, representation: 0) else {
+        guard case .file(let first) = try await source.served(item: 0, representation: 0) else {
             Issue.record("expected the first file")
             return
         }

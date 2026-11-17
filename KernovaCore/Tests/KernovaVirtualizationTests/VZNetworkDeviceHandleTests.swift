@@ -38,31 +38,28 @@ struct VZNetworkDeviceHandleTests {
 
     /// Runs behind the correction's main-actor hop, which the serial main
     /// executor enqueued ahead of this.
-    private func drainCorrection() async {
-        await Task { @MainActor in }.value
-    }
 
     @Test("A build finding nothing at install time clears the applied mirror")
-    func buildFoundNothingClearsMirror() async {
+    func buildFoundNothingClearsMirror() async throws {
         let harness = makeHarness()
         #expect(harness.handle.apply(.nat))
         #expect(harness.handle.currentPlan == .nat)
 
         harness.install.reportBuildFoundNothing(ofApplyAt: 0)
-        await drainCorrection()
+        try await drainMainQueue()
 
         #expect(harness.handle.currentPlan == nil)
     }
 
     @Test("A build failure reported after a newer apply leaves that apply's plan")
-    func staleBuildFailureLeavesNewerApply() async {
+    func staleBuildFailureLeavesNewerApply() async throws {
         let harness = makeHarness()
         #expect(harness.handle.apply(.nat))
         #expect(harness.handle.apply(.vmnet(.common(.hostOnly))))
         #expect(harness.install.applyCount == 2)
 
         harness.install.reportBuildFoundNothing(ofApplyAt: 0)
-        await drainCorrection()
+        try await drainMainQueue()
 
         #expect(harness.handle.currentPlan == .vmnet(.common(.hostOnly)))
     }

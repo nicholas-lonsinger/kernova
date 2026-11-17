@@ -59,7 +59,7 @@ struct VMCommandSocketListenerTests {
         func wait() async {
             waiters += 1
             gate.notify()
-            try? await gate.wait { self.landed }
+            await holdUntilReleased { try await gate.wait { self.landed } }
         }
 
         /// Returns once a verb is waiting on the read, throwing at the

@@ -129,7 +129,7 @@ struct VMGroupIntentTests {
         virtualization.shouldSuspendOnStart = false
         virtualization.resumeSuspended()
 
-        let done = try await action.value
+        let done = try await action.joined()
 
         #expect(done.map(\.id) == [beta.id, alpha.id])
         #expect(beta.status == .running && alpha.status == .running)

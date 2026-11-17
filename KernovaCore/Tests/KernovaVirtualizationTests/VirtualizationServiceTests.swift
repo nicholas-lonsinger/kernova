@@ -118,7 +118,7 @@ struct VirtualizationServiceTests {
                 isProtectedDataAvailable: { true })
             context.bringUp.bindSessionForTesting(UUID())
             return .rest(.live(.running), ())
-        }.value()
+        }.resolved()
 
         #expect(await session.restoredStateURLs == [original.saveFileURL])
         #expect(!movedLayout.hasSaveFile)
@@ -160,7 +160,7 @@ struct VirtualizationServiceTests {
                 isProtectedDataAvailable: { true })
             context.bringUp.bindSessionForTesting(UUID())
             return .rest(.live(.running), ())
-        }.value()
+        }.resolved()
     }
 
     @Test("A spend the file system refuses keeps the guest from executing")
@@ -291,7 +291,7 @@ struct VirtualizationServiceTests {
             try await context.bringUp.operation.executingGuest { _ in }
             _ = try context.bringUp.operation.liveExecution()
             return .rest(.live(.running), ())
-        }.value()
+        }.resolved()
     }
 
     /// A Linux agent whose disk is written into `scratch`, and a service and products bundling it.
@@ -631,7 +631,7 @@ struct VirtualizationServiceTests {
             context in
             try await service.revertToSnapshot(
                 fixture.instance, context, commitConfiguration: commit)
-        }.value()
+        }.resolved()
     }
 
     /// Captures `snapshot` from `instance` inside the capture operation the VM
@@ -761,7 +761,7 @@ struct VirtualizationServiceTests {
             case .rest(let rest, _): .rest(rest, ())
             case .failed(let rest, let error): .failed(rest, error)
             }
-        }.value()
+        }.resolved()
     }
 
     // MARK: - Duplicate Identity at Bring-Up
@@ -909,11 +909,11 @@ struct VirtualizationServiceTests {
     /// the VM rests.
     private func restAfterFailedBringUp(
         _ kind: VMBringUpKind, on instance: VMInstance, with error: any Error
-    ) async -> VMLifecyclePhase {
-        _ = try? await instance.activity.launchAnyBringUp(kind) {
+    ) async throws -> VMLifecyclePhase {
+        _ = try await instance.activity.launchAnyBringUp(kind) {
             (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
             throw error
-        }.value()
+        }.resolution()
         return instance.phase
     }
 
@@ -950,15 +950,15 @@ struct VirtualizationServiceTests {
             let instance = VMInstanceFixture.make(phase: .suspended)
             try VMInstanceFixture.writeSaveFile(for: instance)
             #expect(
-                await restAfterFailedBringUp(.guestStart(.restoringSavedState), on: instance, with: failure.error)
+                try await restAfterFailedBringUp(.guestStart(.restoringSavedState), on: instance, with: failure.error)
                     == .suspended, "\(failure.label)")
         }
     }
 
     @Test("Without a suspend slot, a start failure rests where it classifies")
-    func restingPhaseAfterLifecycleFailureWithoutASlot() async {
+    func restingPhaseAfterLifecycleFailureWithoutASlot() async throws {
         // A permanent start failure rests at `.failed` carrying the message.
-        let permanent = await restAfterFailedBringUp(
+        let permanent = try await restAfterFailedBringUp(
             .guestStart(.starting(recovery: false)), on: VMInstanceFixture.make(phase: .stopped),
             with: VirtualizationError.noVirtualMachine)
         #expect(permanent.status == .error)
@@ -966,7 +966,7 @@ struct VirtualizationServiceTests {
 
         // A transient start failure rests stopped with no message.
         #expect(
-            await restAfterFailedBringUp(
+            try await restAfterFailedBringUp(
                 .guestStart(.starting(recovery: false)), on: VMInstanceFixture.make(phase: .stopped),
                 with: NSError(
                     domain: VZError.errorDomain, code: VZError.Code.operationCancelled.rawValue))
@@ -1024,7 +1024,7 @@ struct VirtualizationServiceTests {
             phase: .suspended, snapshots: VMSnapshotManifest(snapshots: [snapshot]))
         try VMInstanceFixture.writeSaveFile(for: instance)
         #expect(
-            await restAfterFailedBringUp(
+            try await restAfterFailedBringUp(
                 .reverting(snapshotID: snapshot.id, resumesAfter: true), on: instance,
                 with: VirtualizationError.revertResumeFailed(
                     underlying: ConfigurationBuilderError.sharedDirectoryNotFound(

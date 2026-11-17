@@ -169,9 +169,7 @@ struct BlockingConnectTests {
         #expect(
             DarwinVsockConnect.boundedBlockingConnect(fd: pipeEnds[0], label: "t", port: 1, gate: gate, deadline: 0.05)
             {
-                do { try Backstop("the test's release of the connect").wait(for: release) } catch {
-                    Issue.record(error)
-                }
+                holdUntilReleased { try Backstop("the test's release of the connect").wait(for: release) }
                 return 0
             } == .abandoned)
         #expect(gate.parkedCount("t") == 1)

@@ -58,9 +58,7 @@ struct DropReceiverTests {
                     content: { _, _, representation in
                         served.record(String(decoding: representation.name, as: UTF8.self))
                         if held.withLock({ $0 }) {
-                            do { try Backstop("the held serve's release").wait(for: released) } catch {
-                                Issue.record(error)
-                            }
+                            holdUntilReleased { try Backstop("the held serve's release").wait(for: released) }
                         }
                         return .success(
                             .tree(path: source + "/" + String(decoding: representation.name, as: UTF8.self)))

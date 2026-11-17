@@ -17,11 +17,6 @@ uint32_t kernova_crc32c_hardware_update(uint32_t crc, const uint8_t *bytes, size
 /// `QueryInterruptTimePrecise`. The origin is arbitrary.
 uint64_t kernova_monotonic_nanoseconds(void);
 
-/// Nanoseconds on a monotonic clock that stops while the machine sleeps:
-/// Darwin `CLOCK_UPTIME_RAW`, Linux `CLOCK_MONOTONIC`, Windows
-/// `QueryUnbiasedInterruptTimePrecise`. The origin is arbitrary.
-uint64_t kernova_uptime_nanoseconds(void);
-
 #if defined(__linux__)
 /// Creates a non-blocking, close-on-exec `AF_VSOCK` stream socket and starts
 /// connecting it to `port` at `cid`. Returns the descriptor, with

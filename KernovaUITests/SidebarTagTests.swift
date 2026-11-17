@@ -104,7 +104,7 @@ struct SidebarTagTests {
             #expect(subject.hasSnapshots == (outcome == .exactCopy), "\(outcome)")
             // The tag filter lists it, so registering it selects it.
             #expect(viewModel.selectedID == arrival.id, "\(outcome)")
-            await viewModel.awaitArrivals()
+            try await viewModel.awaitArrivals()
         }
     }
 
@@ -137,7 +137,7 @@ struct SidebarTagTests {
         #expect(subject.hasSnapshots)
         // The tag filter lists it, so the import selects it.
         #expect(viewModel.selectedID == arrival.id)
-        await viewModel.awaitArrivals()
+        try await viewModel.awaitArrivals()
     }
 
     // MARK: - Grouping

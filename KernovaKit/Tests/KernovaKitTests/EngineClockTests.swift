@@ -55,7 +55,7 @@ struct EngineClockTests {
             withUnsafeCurrentTask { $0?.cancel() }
             try await clock.sleep(for: 0)
         }
-        await #expect(throws: CancellationError.self) { try await task.value }
+        await #expect(throws: CancellationError.self) { try await task.joined() }
     }
 
     @Test(
@@ -80,6 +80,6 @@ struct EngineClockTests {
         }
         try await started.wait { running.withLock { $0 } }
         task.cancel()
-        await #expect(throws: CancellationError.self) { try await task.value }
+        await #expect(throws: CancellationError.self) { try await task.joined() }
     }
 }

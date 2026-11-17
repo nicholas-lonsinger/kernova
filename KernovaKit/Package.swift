@@ -80,8 +80,8 @@ var targets: [Target] = [
         swiftSettings: sharedSwiftSettings
     ),
     // The C calls the portable targets make without importing an OS module:
-    // the CRC32C instructions, the monotonic clocks that count and skip sleep,
-    // the vsock connect, whose `sockaddr_vm` neither Glibc nor Musl exports, and
+    // the CRC32C instructions, the monotonic clock that counts sleep, the
+    // vsock connect, whose `sockaddr_vm` neither Glibc nor Musl exports, and
     // the `openat2` and `renameat2` system calls, which musl does not wrap.
     .target(
         name: "CKernovaShims",

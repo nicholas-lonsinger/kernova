@@ -35,7 +35,7 @@ struct DeliveryTests {
             guard case .string(let label)? = try? signal.decodeBody().first else { return }
             events.put("first \(label)")
             if label == "one" {
-                _ = try? gate.next()
+                holdUntilReleased { _ = try gate.next() }
             }
         }
         let later = BlockingInbox<String>()
@@ -65,7 +65,7 @@ struct DeliveryTests {
         client.observeDeliveryWaitsForTesting { events.put("waiting") }
         let subscription = try client.subscribe(BusConnectionTests.tickRule) { _ in
             events.put("started")
-            _ = try? gate.next()
+            holdUntilReleased { _ = try gate.next() }
             events.put("finished")
         }
         try setup.tick("one")

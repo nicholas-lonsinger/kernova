@@ -628,7 +628,7 @@ struct VMSettingsSystemPanelTests {
         // re-run it, or the button stays dead until the VM's state moves.
         vc.viewWillDisappear()
         vc.viewDidAppear()
-        await panel.serialLogProbeForTesting?.value
+        try await panel.serialLogProbeForTesting?.joined()
 
         #expect(reveal.isEnabled)
     }

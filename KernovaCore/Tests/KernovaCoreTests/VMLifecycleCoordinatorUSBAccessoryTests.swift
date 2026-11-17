@@ -77,7 +77,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
 
         #expect(instance.phase.operation?.kind == .attachingUSB(registryID: 1))
         #expect(instance.phase.operation?.outcome === outcome)
-        try await outcome.value()
+        try await outcome.resolved()
         #expect(held.registryIDs == [1])
         #expect(instance.liveUSBAccessories.map(\.accessory.registryID) == [1])
         #expect(instance.phase == .running(sessionID: sessionID))
@@ -109,9 +109,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         service.accessories.append(MockUSBAccessoryService.accessory(registryID: 5))
         service.suspendNextAttach = true
 
-        async let attach: Void = {
-            _ = try? await coordinator.attachUSBAccessory(5, to: first, for: firstSession)
-        }()
+        let attach = Task { try await coordinator.attachUSBAccessory(5, to: first, for: firstSession) }
         try await service.attachStarted()
 
         // Reserved in the admission of the first attach, before VZ was asked.
@@ -124,7 +122,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         #expect(service.attachedRegistryIDs == [5])
 
         service.resumeAttach()
-        await attach
+        _ = try await attach.joinedResult()
         #expect(first.liveUSBAccessories.map(\.accessory.registryID) == [5])
         #expect(second.liveUSBAccessories.isEmpty)
     }
@@ -159,11 +157,11 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         let gate = GatedStep()
         virtualization.takeSnapshotGate = gate
 
-        async let snapshot: Void = {
-            _ = try? await coordinator.takeSnapshot(
-                first, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")
-            ) { _, _ in }
-        }()
+        let snapshot = Task {
+            try await coordinator.takeSnapshot(first, mode: .live, snapshot: VMSnapshotCaptureRequest(name: "Snap")) {
+                _, _ in
+            }
+        }
         try await gate.waitUntilEntered()
         // The stick comes back under a new handle while the capture holds the
         // first VM, so its return waits behind the capture — and the other VM
@@ -172,7 +170,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         #expect(first.activity.queuedFollowUpCountForTesting == 1)
         try await coordinator.attachUSBAccessory(11, to: second, for: secondSession)
         gate.release()
-        await snapshot
+        if case .failure(let failure as TestFailure) = try await snapshot.joinedResult() { throw failure }
 
         // The owed attach was decided when the capture freed the VM, and
         // refused as held: nothing was asked of VZ for it.
@@ -195,14 +193,12 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         service.nextDeviceID = deviceID
         service.suspendNextAttach = true
 
-        async let attach: Void = {
-            _ = try? await coordinator.attachUSBAccessory(7, to: instance, for: sessionID)
-        }()
+        let attach = Task { try await coordinator.attachUSBAccessory(7, to: instance, for: sessionID) }
         try await service.attachStarted()
         // The guest goes away while VZ is capturing the device.
         instance.handleSessionEvent(.guestDidStop)
         service.resumeAttach()
-        await attach
+        _ = try await attach.joinedResult()
 
         // VZ captured it, so leaving it captured by a VM nothing holds would
         // strand the user's hardware — it goes back.

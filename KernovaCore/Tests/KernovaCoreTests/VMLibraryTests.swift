@@ -222,7 +222,7 @@ struct VMLibraryTests {
         ) { context in
             try install(context.operation.permit)
             return .rest(.atRest(.stopped), ())
-        }.value()
+        }.resolved()
         #expect(reverting.configuration.macAddress == address)
     }
 
@@ -356,7 +356,7 @@ struct VMLibraryTests {
             library.guestAddresses.address(for: instance) == .observed("192.168.64.4")
         }
         loop.cancel()
-        await loop.value
+        try await loop.joined()
     }
 
     // MARK: - Selected Instance

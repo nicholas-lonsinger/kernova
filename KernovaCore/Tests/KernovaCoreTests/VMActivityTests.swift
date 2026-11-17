@@ -122,7 +122,7 @@ struct VMActivityTests {
             startRecorder.operation = starting.phase.operation
             startRecorder.guestStart = context.kind
             return .rest(.asStarted, ())
-        }.value()
+        }.resolved()
         #expect(startRecorder.operation?.kind == .bringUp(.guestStart(.starting(recovery: false))))
         #expect(startRecorder.guestStart == .starting(recovery: false))
 
@@ -142,7 +142,7 @@ struct VMActivityTests {
             revertRecorder.operation = reverting.phase.operation
             revertRecorder.revertedTo = (context.snapshot.id, context.resumesAfter)
             return .rest(.asStarted, ())
-        }.value()
+        }.resolved()
         #expect(
             revertRecorder.operation?.kind
                 == .bringUp(.reverting(snapshotID: snapshot.id, resumesAfter: false)))
@@ -177,7 +177,7 @@ struct VMActivityTests {
                     try await instance.activity.launchAnyBringUp(bringUp) {
                         (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
                         throw Probe()
-                    }.value()
+                    }.resolved()
                 } else {
                     try await instance.activity.perform(try #require(VMNonBringUpKind(kind))) {
                         (_: borrowing VMOperationContext) -> VMOperationEnding<Void> in
@@ -195,7 +195,7 @@ struct VMActivityTests {
             try await booting.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) {
                 (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
                 throw Probe()
-            }.value()
+            }.resolved()
         }
         #expect(booting.phase == .failed(message: message))
         #expect(!booting.hasLiveVirtualMachine)
@@ -388,12 +388,12 @@ struct VMActivityTests {
 
         try await gate.waitUntilEntered()
         gate.release()
-        try await outcome.value()
+        try await outcome.resolved()
 
         #expect(recorder.phase == .stopped)
         #expect(recorder.operation == nil)
         #expect(recorder.hookSawResolved == false)
-        await recorder.hookProbe?.value
+        try await recorder.hookProbe?.joined()
         #expect(recorder.resolvedAtWhenEnded == true)
         #expect((try? recorder.whenEndedResult?.get()) != nil)
     }
@@ -424,7 +424,7 @@ struct VMActivityTests {
         #expect(outcome.task?.isCancelled == true)
         try await cancelled.wait { recorder.sent == 1 }
 
-        await #expect(throws: CancellationError.self) { try await outcome.value() }
+        await #expect(throws: CancellationError.self) { try await outcome.resolved() }
         #expect(instance.phase == .initialBoot)
     }
 
@@ -443,7 +443,7 @@ struct VMActivityTests {
         }
         #expect(instance.phase.operation?.kind == .deletingSnapshot)
         gate.release()
-        try await outcome.value()
+        try await outcome.resolved()
 
         try instance.activity.remove()
         #expect(instance.phase == .removed)
@@ -528,10 +528,10 @@ struct VMActivityTests {
         #expect(instance.activity.queuedFollowUpCountForTesting == 4)
 
         holdGate.release()
-        try await hold.value()
+        try await hold.resolved()
         #expect(order.admitted == ["revert"])
         revertGate.release()
-        for item in owed { try await item.outcome.value() }
+        for item in owed { try await item.outcome.resolved() }
         #expect(order.admitted == ["revert", "first", "second", "third"])
         #expect(instance.phase == .stopped)
         expectQueueHeldByAnOperation(instance)
@@ -554,19 +554,19 @@ struct VMActivityTests {
         instance.activity.deliverSessionEvent(.guestDidStop, from: session)
 
         await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
-            try await scoped.outcome.value()
+            try await scoped.outcome.resolved()
         }
         #expect(instance.activity.queuedFollowUpCountForTesting == 1)
         let late = followUp("late", .pausing, on: instance, scope: .session(session), order: order)
         instance.activity.follow(late)
         await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
-            try await late.outcome.value()
+            try await late.outcome.resolved()
         }
         #expect(instance.activity.queuedFollowUpCountForTesting == 1)
 
         holdGate.release()
-        try await hold.value()
-        try await unscoped.outcome.value()
+        try await hold.resolved()
+        try await unscoped.outcome.resolved()
         #expect(order.admitted == ["copy"])
     }
 
@@ -582,16 +582,16 @@ struct VMActivityTests {
         #expect(instance.activity.queuedFollowUpCountForTesting == 1)
 
         gate.release()
-        try await deletion.value
+        try await deletion.joined()
 
         #expect(instance.phase == .removed)
         await #expect(throws: VMAdmissionRefusal(refusal: .removed)) {
-            try await owed.outcome.value()
+            try await owed.outcome.resolved()
         }
         let late = followUp("late", .copyingOut(.stopped), on: instance, order: order)
         instance.activity.follow(late)
         await #expect(throws: VMAdmissionRefusal(refusal: .removed)) {
-            try await late.outcome.value()
+            try await late.outcome.resolved()
         }
         #expect(order.admitted.isEmpty)
         #expect(instance.activity.queuedFollowUpCountForTesting == 0)
@@ -619,13 +619,13 @@ struct VMActivityTests {
         #expect(instance.activity.queuedFollowUpCountForTesting == 2)
 
         holdGate.release()
-        try await hold.value()
+        try await hold.resolved()
         #expect(order.admitted == ["first"])
         #expect(instance.activity.queuedFollowUpCountForTesting == 0)
         expectQueueHeldByAnOperation(instance)
 
         passGate.release()
-        try await second.outcome.value()
+        try await second.outcome.resolved()
         #expect(order.admitted == ["first"])
         #expect(instance.phase == .running(sessionID: session))
     }
@@ -658,12 +658,12 @@ struct VMActivityTests {
         instance.activity.withdraw(elsewhere)
 
         holdGate.release()
-        try await hold.value()
+        try await hold.resolved()
         #expect(order.admitted == ["first"])
         #expect(instance.activity.queuedFollowUpCountForTesting == 0)
         passGate.release(throwing: Probe())
-        await #expect(throws: Probe.self) { try await first.outcome.value() }
-        await #expect(throws: Probe.self) { try await duplicate.outcome.value() }
+        await #expect(throws: Probe.self) { try await first.outcome.resolved() }
+        await #expect(throws: Probe.self) { try await duplicate.outcome.resolved() }
         #expect(order.admitted == ["first"])
     }
 
@@ -737,8 +737,8 @@ struct VMActivityTests {
         }
 
         terminate.release(throwing: Probe())
-        await #expect(throws: Probe.self) { try await first.value }
-        await #expect(throws: Probe.self) { try await second.value }
+        await #expect(throws: Probe.self) { try await first.joined() }
+        await #expect(throws: Probe.self) { try await second.joined() }
         #expect(recorder.terminations == 0)
         #expect(instance.phase == .running(sessionID: session))
         #expect(recorder.settled == 0)
@@ -789,7 +789,7 @@ struct VMActivityTests {
             #expect(recorder.settled == 0, "\(kind)")
 
             gate.release()
-            try await outcome.value()
+            try await outcome.resolved()
             #expect(instance.phase == .stopped, "\(kind)")
             #expect(recorder.settled == 1, "\(kind)")
             withExtendedLifetime(library) {}
@@ -811,7 +811,7 @@ struct VMActivityTests {
             #expect(instance.phase.operation?.session == VMOperationSession(id: session, guest: .running))
             #expect(instance.liveSessionID == session)
             return .rest(.live(.running), ())
-        }.value()
+        }.resolved()
 
         #expect(recorder.sessionID == nil)
         #expect(instance.phase == .running(sessionID: session))

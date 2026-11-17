@@ -27,9 +27,9 @@ struct LinuxImageURLSheetContentViewControllerTests {
     }
 
     /// Runs Check and awaits the production task rather than polling for it.
-    private func check(_ vc: LinuxImageURLSheetContentViewController) async {
+    private func check(_ vc: LinuxImageURLSheetContentViewController) async throws {
         findButton(titled: "Check", in: vc.view)?.performClick(nil)
-        await vc.checkTaskForTesting?.value
+        try await vc.checkTaskForTesting?.joined()
     }
 
     /// The URL field, then the checksum field, in the order they are laid out.
@@ -45,14 +45,14 @@ struct LinuxImageURLSheetContentViewControllerTests {
     }
 
     @Test("A successful check enables Use and records the image")
-    func successfulCheckEnablesUse() async {
+    func successfulCheckEnablesUse() async throws {
         let resolve = MockLinuxImageResolveService()
         resolve.resolveResult = makeResolvedLinuxImage(
             isoURLString: Self.isoURL, filename: "alpine-3.22-aarch64.iso")
         let vc = makeSheet(
             resolve: resolve, initialURL: Self.isoURL, initialChecksum: Self.digest)
 
-        await check(vc)
+        try await check(vc)
 
         #expect(resolve.resolveCallCount == 1)
         #expect(resolve.lastResolvedCustomImage?.sha256 == Self.digest)
@@ -65,13 +65,13 @@ struct LinuxImageURLSheetContentViewControllerTests {
     }
 
     @Test("A check with no checksum says the download won't be verified")
-    func unverifiedCheckSaysSo() async {
+    func unverifiedCheckSaysSo() async throws {
         let resolve = MockLinuxImageResolveService()
         resolve.resolveResult = makeResolvedLinuxImage(
             isoURLString: Self.isoURL, filename: "alpine-3.22-aarch64.iso")
         let vc = makeSheet(resolve: resolve, initialURL: Self.isoURL)
 
-        await check(vc)
+        try await check(vc)
 
         #expect(resolve.lastResolvedCustomImage?.sha256 == nil)
         #expect(vc.checkedImage?.sha256 == nil)
@@ -84,12 +84,12 @@ struct LinuxImageURLSheetContentViewControllerTests {
     }
 
     @Test("A failed check leaves Use disabled and shows the reason")
-    func failedCheckKeepsUseDisabled() async {
+    func failedCheckKeepsUseDisabled() async throws {
         let resolve = MockLinuxImageResolveService()
         resolve.resolveError = LinuxImageURLError.unreachable(statusCode: 404)
         let vc = makeSheet(resolve: resolve, initialURL: Self.isoURL)
 
-        await check(vc)
+        try await check(vc)
 
         #expect(vc.checkedImage == nil)
         #expect(findButton(titled: "Use", in: vc.view)?.isEnabled == false)
@@ -97,7 +97,7 @@ struct LinuxImageURLSheetContentViewControllerTests {
     }
 
     @Test("Choosing hands the checked image to onChoose")
-    func chooseReports() async {
+    func chooseReports() async throws {
         let resolve = MockLinuxImageResolveService()
         let vc = makeSheet(resolve: resolve, initialURL: Self.isoURL, initialChecksum: Self.digest)
         var chosen: CustomLinuxImage?
@@ -109,7 +109,7 @@ struct LinuxImageURLSheetContentViewControllerTests {
         }
         vc.onCancel = { cancelCount += 1 }
 
-        await check(vc)
+        try await check(vc)
         findButton(titled: "Use", in: vc.view)?.performClick(nil)
 
         #expect(chosen?.url.absoluteString == Self.isoURL)
@@ -137,7 +137,7 @@ struct LinuxImageURLSheetContentViewControllerTests {
         let vc = makeSheet(
             resolve: MockLinuxImageResolveService(), initialURL: Self.isoURL,
             initialChecksum: Self.digest)
-        await check(vc)
+        try await check(vc)
         #expect(vc.checkedImage != nil)
 
         // A verdict paired with one digest must not survive onto another.
@@ -162,7 +162,7 @@ struct LinuxImageURLSheetContentViewControllerTests {
         urlField.stringValue = "https://mirror.example/other-3.22-aarch64.iso"
         vc.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
         resolve.release()
-        await inFlight.value
+        try await inFlight.joined()
 
         // The first URL's answer must not become the second's verdict.
         #expect(vc.checkedImage == nil)
@@ -190,7 +190,7 @@ private final class SuspendingResolveService: LinuxImageResolving {
     func resolve(_ image: CustomLinuxImage) async throws -> ResolvedLinuxImage {
         isResolving = true
         gate.notify()
-        try? await gate.wait(until: { self.isReleased })
+        await holdUntilReleased { try await gate.wait(until: { self.isReleased }) }
         return result
     }
 

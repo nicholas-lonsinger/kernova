@@ -10,6 +10,7 @@ import KernovaAgentHost
 import KernovaAgentRuntime
 import KernovaAgentSimulation
 import KernovaLogging
+import KernovaPortableTestSupport
 import KernovaSynchronization
 import KernovaWire
 
@@ -230,6 +231,16 @@ final class HubHarness: Sendable {
     /// Opens a connection through the transport, answering its peer end, or `nil` when refused.
     func connect() -> MemoryStream? {
         transport.connect()
+    }
+
+    /// The hub's answer to a power request, once it has one: the request waits for its peer's report.
+    func requestPower(
+        _ action: PowerAction, ignoringApps: Bool = false, fileID: String = #fileID, line: Int = #line
+    ) async throws -> PowerRoutingOutcome {
+        let hub = hub
+        return try await Backstop("AgentHub.requestPower", fileID: fileID, line: line).run {
+            await hub.requestPower(action, ignoringApps: ignoringApps)
+        }
     }
 
     /// A `PeerAgentRuntime` dialing this hub's transport.
