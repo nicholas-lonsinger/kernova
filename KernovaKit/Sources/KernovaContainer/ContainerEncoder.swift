@@ -57,16 +57,6 @@ public struct ContainerEncoder {
         written(try admission.end())
     }
 
-    /// The records carrying the current entry's next `count` bytes, all zero, as
-    /// `ContainerRecordAdmission.zeros(_:)` admits them.
-    ///
-    /// - Parameter count: The zero bytes, no more than the entry's data, or its fork, still owes.
-    /// - Returns: The records' bytes, possibly none while zeros are pending.
-    /// - Throws: `ContainerError` when no entry owes bytes or `count` is more than it owes.
-    public mutating func zeros(_ count: UInt64) throws(ContainerError) -> Data {
-        written(try admission.zeros(count))
-    }
-
     /// The records `event` adds, as `ContainerRecordAdmission.admit(_:)` admits them.
     ///
     /// - Parameter event: The next event of a tree in depth-first pre-order.

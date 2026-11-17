@@ -41,9 +41,8 @@ public enum ClipboardProgressFormat {
     /// What is live behind the readout ("2 more transfers pending"), or `nil`
     /// when the bar on screen is the whole of the work.
     ///
-    /// "Pending" rather than "queued": some of what it counts is a batch waiting
-    /// its turn, and some is a second transfer already running where only one
-    /// readout can be shown.
+    /// "Pending" rather than "queued": what it counts is already running, where
+    /// only one readout can be shown.
     public static func pendingNote(count: Int) -> String? {
         guard count > 0 else { return nil }
         return "\(count) more transfer\(count == 1 ? "" : "s") pending"

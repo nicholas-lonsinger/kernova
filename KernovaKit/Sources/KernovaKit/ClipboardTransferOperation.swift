@@ -90,7 +90,6 @@ public final class ClipboardTransferOperation: Sendable {
     /// One publication to the reporter, resolved under the lock.
     private enum ReporterCall: Sendable {
         case running(ClipboardProgressSnapshot, since: Date)
-        case queued
         case finished(ClipboardTransferFinish)
         case retire
     }
@@ -171,9 +170,6 @@ public final class ClipboardTransferOperation: Sendable {
         /// Whether the reveal gate has been passed — once true, the readout is on
         /// screen and the terminal must clear it.
         var revealed = false
-        /// Whether anything has been published, so a terminal inside the reveal
-        /// gate knows it has nothing to retire.
-        var published = false
         var isFinished = false
         /// The armed idle terminal, `nil` while none is.
         ///
@@ -260,7 +256,6 @@ public final class ClipboardTransferOperation: Sendable {
                 lastActiveName = name
             }
             guard admits else { return Outcome(logs: logs) }
-            published = true
             let snapshot = snapshot(at: now, header: header)
             logs.append(.emission(snapshot))
             return Outcome(call: .running(snapshot, since: header.startedDate), logs: logs)
@@ -295,10 +290,7 @@ public final class ClipboardTransferOperation: Sendable {
             let logs: [LogEvent] = [ended(label, at: now)]
             // A refusal is owed an answer whether or not a bar ever appeared; a
             // completion nobody saw has nothing to say.
-            guard revealed || isFailure else {
-                return published ? Outcome(call: .retire, logs: logs) : Outcome(logs: logs)
-            }
-            published = true
+            guard revealed || isFailure else { return Outcome(logs: logs) }
             let finish = ClipboardTransferFinish(
                 gesture: header.gesture, outcome: outcome, peerName: header.peerName, date: Date())
             return Outcome(call: .finished(finish), logs: logs)
@@ -310,7 +302,7 @@ public final class ClipboardTransferOperation: Sendable {
             isFinished = true
             cancelIdleTerminal()
             let logs: [LogEvent] = [ended("abandoned", at: now)]
-            guard published else { return Outcome(logs: logs) }
+            guard revealed else { return Outcome(logs: logs) }
             return Outcome(call: .retire, logs: logs)
         }
 
@@ -396,26 +388,6 @@ public final class ClipboardTransferOperation: Sendable {
     }
 
     // MARK: - Transfer events
-
-    /// Announces the operation as accepted but not yet moving bytes, so the
-    /// reporter counts it behind whatever readout is on screen.
-    ///
-    /// The gesture is already done from the user's side — the files are dropped,
-    /// the peer has the offer — and only the peer decides when to pull, which it
-    /// does one job at a time. Without this the operation is invisible until its
-    /// first byte, and a batch waiting its turn looks like a batch that never
-    /// happened. It never becomes the readout itself: nothing has begun, so a bar
-    /// for it would be a frozen one.
-    public func markQueued() {
-        deliver(
-            state.withLock { state -> Outcome in
-                guard !state.isFinished, !state.published else { return Outcome() }
-                // Counts as a publication, so a terminal that never reveals
-                // still retires the entry this leaves behind.
-                state.published = true
-                return Outcome(call: .queued)
-            })
-    }
 
     /// Records that one of this operation's transfers started, declaring it if
     /// this is the first the operation has heard of it.
@@ -558,8 +530,6 @@ public final class ClipboardTransferOperation: Sendable {
                 switch call {
                 case .running(let snapshot, let since):
                     reporter.publish(from: self, .running(snapshot, since: since))
-                case .queued:
-                    reporter.queued(self)
                 case .finished(let finish):
                     reporter.publish(from: self, .finished(finish))
                 case .retire:

@@ -3,9 +3,6 @@
 /// The agents hash their own payloads with it; the host hashes the same files with CryptoKit, and the tests
 /// hold the two to the same answers.
 public struct SHA256: Sendable {
-    /// The digest's length in bytes.
-    public static let byteCount = 32
-
     private var state: (UInt32, UInt32, UInt32, UInt32, UInt32, UInt32, UInt32, UInt32) = (
         0x6a09_e667, 0xbb67_ae85, 0x3c6e_f372, 0xa54f_f53a, 0x510e_527f, 0x9b05_688c, 0x1f83_d9ab, 0x5be0_cd19
     )

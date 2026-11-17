@@ -6,23 +6,8 @@ import Foundation
 
 import KernovaWire
 
-/// One feature's machine for one role. An endpoint holds one stored property
-/// per machine and routes each stream event to the machine owning its kind.
-public protocol FeatureMachine: Sendable {
-    /// The feature the machine implements.
-    static var feature: FeatureID { get }
-    /// What this side advertises for the feature now; the endpoint republishes on change.
-    var localAdvert: LocalAdvert { get }
-    /// Handles one connection-level event for the machine's streams.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant)
-    /// When the machine next needs `.deadline`, on the connection's raw time
-    /// (`JudgedClock.external` converts it to the caller's timeline), computed
-    /// from `clock` as it is now. Every machine receives every `.deadline`.
-    func nextDeadline(on clock: JudgedClock) -> CoreInstant?
-}
-
 /// What an endpoint tells a feature machine.
-public enum FeatureEvent: Sendable, Equatable {
+enum FeatureEvent: Sendable, Equatable {
     /// The far side's Hello was read.
     case sessionEstablished
     /// Some input to `Connection.usability(_:)` changed.

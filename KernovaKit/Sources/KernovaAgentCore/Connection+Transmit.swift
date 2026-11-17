@@ -10,7 +10,7 @@ extension Connection {
     /// The next frames to write, in transmit order, built from pending state:
     /// at least one whole frame even past `maxBytes`; nil when nothing is pending
     /// and after the final transmit.
-    public mutating func pollTransmit(maxBytes: Int) -> Transmit? {
+    package mutating func pollTransmit(maxBytes: Int) -> Transmit? {
         guard state != .finished, !finalHandedOut else { return nil }
         var chunks: [Data] = []
         var used = 0
@@ -215,7 +215,7 @@ extension Connection {
     // MARK: - Session commands
 
     /// Replaces this side's adverts and queues a `CapabilityUpdate` when they changed.
-    public mutating func setLocalAdverts(_ adverts: [(FeatureID, LocalAdvert)]) {
+    package mutating func setLocalAdverts(_ adverts: [(FeatureID, LocalAdvert)]) {
         let sorted = Self.sortedAdverts(adverts)
         guard sorted != localAdverts else { return }
         localAdverts = sorted
@@ -229,7 +229,7 @@ extension Connection {
 
     /// Peer only: queues a `PeerState` snapshot when the state changed. The
     /// session id is fixed for the connection.
-    public mutating func setPeerState(_ state: PeerSessionState) {
+    package mutating func setPeerState(_ state: PeerSessionState) {
         guard role != .host else { return misuse("setPeerState on the host") }
         guard state != lastPeerState else { return }
         if let lastPeerState, role == .sessionPeer, lastPeerState.sessionID != state.sessionID {
@@ -243,7 +243,7 @@ extension Connection {
     }
 
     /// Host only: replaces the policy and, once the peer's Hello is read, queues a `PolicyUpdate`.
-    public mutating func setPolicy(_ policy: PolicySnapshot) {
+    package mutating func setPolicy(_ policy: PolicySnapshot) {
         guard role == .host else { return misuse("setPolicy on a peer") }
         guard policy != currentPolicy else { return }
         currentPolicy = policy
@@ -253,7 +253,7 @@ extension Connection {
 
     /// Host only: replaces the bundles and, once the peer's Hello is read, queues
     /// an `UpdateAvailable` when the offer for this peer changed.
-    public mutating func setBundles(_ bundles: [BundledPayload]) {
+    package mutating func setBundles(_ bundles: [BundledPayload]) {
         guard role == .host else { return misuse("setBundles on a peer") }
         let before = offeredUpdate
         hostBundles = bundles

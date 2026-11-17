@@ -1,7 +1,6 @@
 import Foundation
 import KernovaAgentHost
 import KernovaCommandModel
-import KernovaKit
 import KernovaLogging
 import Synchronization
 import Testing
@@ -11,6 +10,7 @@ import KernovaTestSupport
 #endif
 
 @testable import KernovaCore
+@testable import KernovaKit
 
 // `waitForChange` below is here rather than in KernovaTestSupport: it is built
 // on the core's `waitForObservedChange`, and only the core's and the app's

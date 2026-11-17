@@ -29,15 +29,6 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     private var state: State
     private let writer: TreeWriter<FileSystem>
 
-    /// The container bytes held: those not yet decoded, and the window's.
-    var heldByteCount: Int {
-        guard case .receiving(let decoder) = state else { return 0 }
-        return decoder.bufferedByteCount + decoder.heldBytes
-    }
-
-    /// The name the item is created under: in the destination until it is published, or its exact path.
-    public var stagingName: [UInt8] { writer.stagingName }
-
     /// A receiver landing what `acceptance` admits in `destination`, as the item `name`.
     ///
     /// - Parameters:
@@ -86,8 +77,8 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
         }
     }
 
-    /// Lands every entry still decompressing and confirms the container ended whole: the item is staged, under
-    /// ``stagingName``, until ``publish()``.
+    /// Lands every entry still decompressing and confirms the container ended whole: the item is staged until
+    /// ``publish()``.
     ///
     /// - Throws: ``TreeWriteFailure``, for a container that did not end whole or an entry that could not land;
     ///   nothing created then remains.

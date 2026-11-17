@@ -82,9 +82,6 @@ public struct PeerAgent: Sendable {
         return clock.external(dialAt)
     }
 
-    /// The current connection's generation, once one has connected.
-    public var currentGeneration: ConnectionGeneration { generation }
-
     /// The dial connected; the driver makes the endpoint with the generation returned. Nil once the agent
     /// has stopped or parked: the stream is the caller's to shut down.
     public mutating func dialSucceeded(now: CoreInstant) -> ConnectionGeneration? {

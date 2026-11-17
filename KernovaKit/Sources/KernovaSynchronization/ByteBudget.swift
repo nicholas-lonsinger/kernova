@@ -51,9 +51,6 @@ public final class ByteBudget: Sendable, Equatable {
 
         deinit { giveBack() }
 
-        /// What it holds of the budget.
-        public var charged: UInt64 { state.withLock(\.charged) }
-
         /// Charges `bytes` more, or nothing when the budget has fewer left.
         ///
         /// - Returns: whether it charged them.

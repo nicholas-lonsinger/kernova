@@ -129,10 +129,6 @@ private final class MemoryFileSystem: TreeFileSystem {
         throw Self.missing
     }
 
-    func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer) throws(TreeFileSystemError) -> Int {
-        throw Self.badDescriptor
-    }
-
     func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: Int64)
         throws(TreeFileSystemError) -> Int
     {

@@ -113,29 +113,23 @@ public func makePlatformEngineClock() -> any EngineClock {
 /// Suspends through `ContinuousClock`, which counts time asleep, matching
 /// `now`'s timebase.
 @available(macOS 13.0, *)
-public struct ContinuousEngineClock: EngineClock {
+struct ContinuousEngineClock: EngineClock {
     private let clock = ContinuousClock()
 
-    /// Creates a continuous-clock instance.
-    public init() {}
-
     /// The current reading of the shared timeline.
-    public var now: EngineInstant { .now }
+    var now: EngineInstant { .now }
 
     /// Suspends via `ContinuousClock.sleep(until:)`.
-    public func sleep(for interval: TimeInterval) async throws {
+    func sleep(for interval: TimeInterval) async throws {
         try await clock.sleep(until: clock.now + .seconds(schedulable(interval)))
     }
 }
 
 /// The macOS 12 fallback engine clock, suspending in bounded slices because no
 /// `Swift.Clock` is available to sleep on.
-public struct MonotonicEngineClock: EngineClock {
-    /// Creates a monotonic-clock instance.
-    public init() {}
-
+struct MonotonicEngineClock: EngineClock {
     /// The current reading of the shared timeline.
-    public var now: EngineInstant { .now }
+    var now: EngineInstant { .now }
 
     /// Suspends until `interval` seconds of `CLOCK_MONOTONIC` time have passed.
     ///
@@ -143,7 +137,7 @@ public struct MonotonicEngineClock: EngineClock {
     /// sleep, so a single call would violate this protocol's counts-time-asleep
     /// contract; sleeping in bounded slices and re-reading the deadline clock
     /// caps the post-resume overshoot at one slice.
-    public func sleep(for interval: TimeInterval) async throws {
+    func sleep(for interval: TimeInterval) async throws {
         try Task.checkCancellation()
         let deadline = EngineInstant(
             nanoseconds: now.nanoseconds &+ UInt64(schedulable(interval) * 1_000_000_000))

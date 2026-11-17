@@ -1,17 +1,17 @@
 /// The D-Bus specification's size and depth limits.
-public enum DBusLimits {
+enum DBusLimits {
     /// The most bytes a signature holds.
-    public static let maximumSignatureLength = 255
+    static let maximumSignatureLength = 255
     /// The most arrays one signature nests, and separately the most structs.
-    public static let maximumSignatureNesting = 32
+    static let maximumSignatureNesting = 32
     /// The most containers — arrays, structs and variants — a value nests.
-    public static let maximumValueNesting = 64
+    static let maximumValueNesting = 64
     /// The most bytes an array's data holds.
-    public static let maximumArrayLength = 1 << 26
+    static let maximumArrayLength = 1 << 26
     /// The most bytes a message holds, header and body together.
-    public static let maximumMessageLength = 1 << 27
+    static let maximumMessageLength = 1 << 27
     /// The most bytes a bus, interface, member or error name holds.
-    public static let maximumNameLength = 255
+    static let maximumNameLength = 255
 }
 
 /// A valid D-Bus signature: zero or more single complete types.

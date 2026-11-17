@@ -1,9 +1,10 @@
 import Darwin
 import Foundation
-import KernovaKit
 // `testWaitBackstop` lives in the portable module so the portable test targets share it.
 @_exported import KernovaPortableTestSupport
 import KernovaSynchronization
+
+@testable import KernovaKit
 
 // MARK: - Test-session OS activity
 

@@ -3,15 +3,15 @@
 /// backwards, so a clock that steps back neither charges the far side nor stops
 /// the core's timers. Judged time advances only while the far side is running
 /// and this side was not itself suspended.
-public struct JudgedClock: Sendable, Equatable {
+package struct JudgedClock: Sendable, Equatable {
     /// The core's monotonic time.
-    public private(set) var raw: CoreInstant
+    package private(set) var raw: CoreInstant
     /// Time charged to the far side.
-    public private(set) var judged: CoreInstant
+    package private(set) var judged: CoreInstant
     /// Whether the far side is frozen (the VM is live-paused); nothing is judged.
-    public private(set) var isFrozen = false
+    package private(set) var isFrozen = false
     /// The latest input's `now`, on the caller's timeline.
-    public private(set) var lastInput: CoreInstant
+    package private(set) var lastInput: CoreInstant
     let suspendedStep: CoreDuration
 
     init(now: CoreInstant, suspendedStep: CoreDuration) {
@@ -34,7 +34,7 @@ public struct JudgedClock: Sendable, Equatable {
     }
 
     /// A raw instant on the caller's timeline, for `nextDeadline`.
-    public func external(_ instant: CoreInstant?) -> CoreInstant? {
+    package func external(_ instant: CoreInstant?) -> CoreInstant? {
         instant.map { lastInput.advanced(by: raw.duration(to: $0)) }
     }
 

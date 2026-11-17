@@ -1,3 +1,5 @@
+// periphery:ignore:all - reached only in a build compiled with KERNOVA_AGENT_FAULT_HANG_BEFORE_HELLO
+
 import KernovaAgentCore
 import KernovaLogging
 

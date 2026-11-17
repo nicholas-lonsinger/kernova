@@ -75,6 +75,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
     /// Retained so the signal source stays armed for the process lifetime.
     private var sigintSource: DispatchSourceSignal?
 
+    // periphery:ignore - a token whose lifetime is the value: App Nap stays off only while it is held
     /// Keeps App Nap off for as long as the session peer runs, without
     /// keeping the guest awake. App Nap throttles the timers of an app the
     /// user isn't looking at, an accessory app included (Energy Efficiency

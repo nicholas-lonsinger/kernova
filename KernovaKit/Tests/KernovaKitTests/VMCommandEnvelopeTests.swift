@@ -142,6 +142,7 @@ struct VMCommandEnvelopeTests {
 
     // MARK: - Responses
 
+    // periphery:ignore - never called: an exhaustive switch, so a wire case added stops compiling here
     /// Every storage-disk edit the wire offers, named exhaustively.
     ///
     /// An attach added to the payload stops compiling here: a pick carries a
@@ -159,6 +160,7 @@ struct VMCommandEnvelopeTests {
         }
     }
 
+    // periphery:ignore - never called: an exhaustive switch, so a wire case added stops compiling here
     /// Every removable-media edit the wire offers, named exhaustively for the
     /// reason ``name(of:)`` states — and with no create either, because the
     /// user picks that disk's destination.
@@ -172,6 +174,7 @@ struct VMCommandEnvelopeTests {
         }
     }
 
+    // periphery:ignore - never called: an exhaustive switch, so a wire case added stops compiling here
     /// Every shared-directory edit the wire offers, named exhaustively for the
     /// reason ``name(of:)`` states — the add is here because the app obtains
     /// the grant for the path itself.

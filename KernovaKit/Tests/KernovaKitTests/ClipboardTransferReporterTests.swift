@@ -85,12 +85,16 @@ struct ClipboardTransferReporterTests {
         #expect(shown.bytesTransferred == 20)
         #expect(since == late)
 
+        // The older one's next tick leaves the newer one on the readout.
+        reporter.publish(from: first, .running(snapshot(bytes: 11), since: early))
+        #expect(runningSnapshot(reporter)?.bytesTransferred == 20)
+
         reporter.retire(second)
         guard case .running(let restored, _) = reporter.report else {
             Issue.record("expected the earlier operation's readout back")
             return
         }
-        #expect(restored.bytesTransferred == 10)
+        #expect(restored.bytesTransferred == 11)
     }
 
     // MARK: - Dwell
@@ -272,8 +276,8 @@ struct ClipboardTransferReporterTests {
         #expect(reporter.report == .finished(later))
     }
 
-    @Test("the same refusal from a later gesture is announced again, bar or no bar")
-    func reannouncesAfterAnOperationThatOpenedNoBar() {
+    @Test("the same refusal from a later gesture is announced again, though no bar opened between")
+    func reannouncesAfterAGestureThatOpenedNoBar() {
         let clock = GatedEngineClock()
         let reporter = makeReporter(clock: clock)
         var announced: [ClipboardTransferFinish] = []
@@ -283,29 +287,16 @@ struct ClipboardTransferReporterTests {
         }
 
         // One drop lost an item of its batch and said so.
-        let first = makeOperation(reporter, gesture: .drop)
-        reporter.queued(first)
-        reporter.publish(
-            from: first,
-            .finished(
-                finish(
-                    .itemsSkipped(count: 1), gesture: .drop,
-                    at: Date(timeIntervalSince1970: 1))))
+        reporter.gestureBegan()
+        reporter.finish(finish(.itemsSkipped(count: 1), gesture: .drop, at: Date(timeIntervalSince1970: 1)))
 
-        // The next drop ran to its end inside the reveal gate: it announced
-        // itself as queued and retired without ever opening a bar.
-        let quick = makeOperation(reporter, gesture: .drop)
-        reporter.queued(quick)
-        reporter.retire(quick)
-
-        // A third drop loses an item of its own. It is a separate gesture over
-        // separate files, so it is owed its own message rather than collapsed
-        // into the one the first drop raised.
-        let third = makeOperation(reporter, gesture: .drop)
-        reporter.queued(third)
-        let later = finish(
-            .itemsSkipped(count: 1), gesture: .drop, at: Date(timeIntervalSince1970: 2))
-        reporter.publish(from: third, .finished(later))
+        // A second drop loses an item of its own, its transfers all ending
+        // inside the reveal gate. It is a separate gesture over separate
+        // files, so it is owed its own message rather than collapsed into the
+        // one the first drop raised.
+        reporter.gestureBegan()
+        let later = finish(.itemsSkipped(count: 1), gesture: .drop, at: Date(timeIntervalSince1970: 2))
+        reporter.finish(later)
 
         #expect(reporter.report == .finished(later))
         #expect(announced.count == 2)
@@ -349,39 +340,7 @@ struct ClipboardTransferReporterTests {
         #expect(runningSnapshot(reporter)?.pendingBehind == 1)
     }
 
-    @Test("a queued operation takes the readout once it opens a bar of its own")
-    func aQueuedOperationTakesTheReadoutWhenItStarts() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let waiting = makeOperation(reporter, gesture: .drop)
-        let started = makeOperation(reporter, gesture: .drop)
-
-        // The drop joins the live set when it is offered, so it is the *oldest*
-        // entry while the peer is still busy with something offered after it.
-        reporter.queued(waiting)
-        reporter.publish(from: started, .running(snapshot(bytes: 1, gesture: .drop), since: Date()))
-        #expect(runningSnapshot(reporter)?.bytesTransferred == 1)
-
-        reporter.publish(from: waiting, .running(snapshot(bytes: 2, gesture: .drop), since: Date()))
-        #expect(runningSnapshot(reporter)?.bytesTransferred == 2)
-    }
-
     // MARK: - Work behind the readout
-
-    @Test("a queued operation is counted on the readout rather than replacing it")
-    func aQueuedOperationIsCountedOnTheReadout() {
-        let clock = GatedEngineClock()
-        let reporter = makeReporter(clock: clock)
-        let running = makeOperation(reporter, gesture: .drop)
-        let waiting = makeOperation(reporter, gesture: .drop)
-
-        reporter.publish(from: running, .running(snapshot(bytes: 1, gesture: .drop), since: Date()))
-        #expect(runningSnapshot(reporter)?.pendingBehind == 0)
-
-        reporter.queued(waiting)
-        #expect(runningSnapshot(reporter)?.bytesTransferred == 1)
-        #expect(runningSnapshot(reporter)?.pendingBehind == 1)
-    }
 
     @Test("an operation that started is counted behind the readout that outranks it")
     func aRunningOperationUnderTheReadoutIsCountedToo() {
