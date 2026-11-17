@@ -256,6 +256,83 @@ struct VMBundleMachineFilesTests {
                 atPath: fixture.layout.restoreStagingURL.path(percentEncoded: false)))
     }
 
+    /// Moves the bundle's `file` out of the bundle and leaves a symbolic link
+    /// to it in its place, answering where the file went.
+    private func moveOutAndLink(_ file: URL) throws -> URL {
+        let target = scratch.url.appendingPathComponent("\(UUID().uuidString)-\(file.lastPathComponent)")
+        try FileManager.default.moveItem(at: file, to: target)
+        try FileManager.default.createSymbolicLink(at: file, withDestinationURL: target)
+        return target
+    }
+
+    @Test("Capturing a bundle whose disk or suspend slot is a symbolic link is refused, naming the link")
+    func captureOfLinkedFilesIsRefused() throws {
+        let fixture = try makeFixture()
+        try Data("suspended".utf8).write(to: fixture.layout.saveFileURL)
+        _ = try moveOutAndLink(fixture.layout.diskImageURL)
+        _ = try moveOutAndLink(fixture.layout.saveFileURL)
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles())
+        let snapshotID = UUID()
+        let prepared = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID, configuration: fixture.configuration)
+
+        #expect(throws: VMBundleItems.SymbolicLinkError(url: fixture.layout.diskImageURL)) {
+            try store.captureDisks(
+                bundleURL: fixture.bundleURL, snapshotID: snapshotID, relativePaths: prepared.relativePaths)
+        }
+        #expect(throws: VMBundleItems.SymbolicLinkError(url: fixture.layout.saveFileURL)) {
+            try store.captureSuspendSlot(bundleURL: fixture.bundleURL, snapshotID: snapshotID)
+        }
+    }
+
+    @Test("A revert replaces a disk the bundle now holds as a symbolic link, leaving the link's target as it was")
+    func revertReplacesALinkedDisk() throws {
+        let fixture = try makeFixture()
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles())
+        let snapshotID = UUID()
+        let prepared = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID, configuration: fixture.configuration)
+        try store.captureDisks(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID, relativePaths: prepared.relativePaths)
+
+        // Since the capture the disk was moved out behind a link, and the VM ran.
+        let moved = try moveOutAndLink(fixture.layout.diskImageURL)
+        try Data("diverged".utf8).write(to: moved)
+
+        let plan = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .cold)
+        try restore(with: store, fixture, snapshotID: snapshotID, plan: plan)
+
+        #expect(contents(of: fixture.layout.diskImageURL) == "main-disk")
+        #expect(
+            try fixture.layout.diskImageURL.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink == false)
+        #expect(contents(of: moved) == "diverged")
+    }
+
+    @Test("A revert replaces the installer copies the bundle holds with the ones the snapshot captured")
+    func revertReplacesTheInstallerCopies() throws {
+        let fixture = try makeFixture()
+        let manager = FileManager.default
+        let copies = fixture.layout.guestAgentDiskDirectoryURL
+        try manager.createDirectory(at: copies, withIntermediateDirectories: true)
+        try Data("captured".utf8).write(to: copies.appendingPathComponent("Agent.iso"))
+        let store = VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles())
+        let snapshotID = UUID()
+        let prepared = try store.prepareSnapshot(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID, configuration: fixture.configuration)
+        try store.captureDisks(
+            bundleURL: fixture.bundleURL, snapshotID: snapshotID, relativePaths: prepared.relativePaths)
+
+        // Since the capture the copy was replaced and another attached.
+        try Data("replaced".utf8).write(to: copies.appendingPathComponent("Agent.iso"))
+        try Data("later".utf8).write(to: copies.appendingPathComponent("Later.iso"))
+
+        let plan = try store.planRestore(bundleURL: fixture.bundleURL, snapshotID: snapshotID, kind: .cold)
+        try restore(with: store, fixture, snapshotID: snapshotID, plan: plan)
+
+        #expect(try manager.contentsOfDirectory(atPath: copies.path(percentEncoded: false)) == ["Agent.iso"])
+        #expect(contents(of: copies.appendingPathComponent("Agent.iso")) == "captured")
+    }
+
     @Test("The restore plan lists what the snapshot captured, not what the VM configures now")
     func planListsTheCapturedDisks() throws {
         let extraID = UUID()

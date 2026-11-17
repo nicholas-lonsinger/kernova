@@ -293,36 +293,11 @@ final class HubClipboardService: ClipboardServicing {
         }
     }
 
-    /// The guest's live offer, whole. A file set over the paste ceiling is offered without its file URLs, each
-    /// withheld one reported dropped.
-    func guestClipboardItems() -> [CopyToMacItem] {
-        guard let remote, remote.isOpen else { return [] }
-        let ceiling = maxPasteBytes()
-        let budget = ClipboardPromisePolicy.pasteBudget(remote.items, limit: ceiling)
-        var items: [CopyToMacItem] = []
-        if budget.exceeds {
-            Self.logger.log(
-                .warning,
-                "Refused the guest's files: they total \(budget.total, privacy: .public) bytes, over the \(ceiling, privacy: .public)-byte cap"
-            )
-            reportRefusal(gesture: .copy, .tooLarge(limitBytes: ceiling))
-            for item in remote.items {
-                for promised in ClipboardPromisePolicy.promisedTypes(for: item) where promised.isFileURL {
-                    items.append(.droppedFile(.overPasteBudget))
-                }
-            }
-        }
-        let servingFileURLs = !budget.exceeds
-        if remote.items.contains(where: {
-            !ClipboardPromisePolicy.promisedTypes(for: $0, servingFileURLs: servingFileURLs).isEmpty
-        }) {
-            items.append(
-                .offer(
-                    CopyToMacOffer(
-                        serving: remote.serving, items: remote.items, concealed: remote.concealed,
-                        servingFileURLs: servingFileURLs, puller: remote)))
-        }
-        return items
+    func guestClipboardOffer() -> CopyToMacOffer? {
+        guard let remote, remote.isOpen else { return nil }
+        return CopyToMacOffer(
+            serving: remote.serving, items: remote.items, concealed: remote.concealed, limitBytes: maxPasteBytes(),
+            puller: remote)
     }
 
     // MARK: - The guest's offer

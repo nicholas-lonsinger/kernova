@@ -20,14 +20,10 @@ final class ClipboardNoticeViewController: NSViewController {
     }
 
     override func loadView() {
-        var rows: [NSView] = [
+        installCalloutStack(rows: [
             makeCalloutHeadline(wording.headline),
             makeCalloutBody(wording.message),
-        ]
-        if wording.mentionsMacClipboardKept {
-            rows.append(makeCalloutBody("The Mac clipboard still has its previous contents."))
-        }
-        installCalloutStack(rows: rows)
+        ])
     }
 
     override func viewDidLayout() {

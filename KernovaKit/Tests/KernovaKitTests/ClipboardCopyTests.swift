@@ -136,7 +136,8 @@ struct ClipboardCopyTests {
         let offer = Data(repeating: 1, count: 16)
         #expect(
             publisher.publish(
-                [item], concealed: false, puller: puller, serving: .init(token: offer, connection: Self.connection)))
+                [item], concealed: false, pasteCeiling: .max, puller: puller,
+                serving: .init(token: offer, connection: Self.connection)) == .written)
 
         guard
             case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
@@ -205,8 +206,9 @@ struct ClipboardCopyTests {
         file.representations = [Self.representation("public.data", .file, name: "a.bin")]
         #expect(
             publisher.publish(
-                [text, file], concealed: false, puller: FilePuller(url: URL(fileURLWithPath: "/tmp/a.bin")),
-                serving: .init(token: Data(repeating: 1, count: 16), connection: ClipboardConnectionID())))
+                [text, file], concealed: false, pasteCeiling: .max,
+                puller: FilePuller(url: URL(fileURLWithPath: "/tmp/a.bin")),
+                serving: .init(token: Data(repeating: 1, count: 16), connection: ClipboardConnectionID())) == .written)
 
         guard
             case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
@@ -236,8 +238,8 @@ struct ClipboardCopyTests {
         let upstream = UpstreamPuller(bytes: Data("upstream text".utf8), url: file)
         #expect(
             publisher.publish(
-                [item], concealed: false, puller: upstream,
-                serving: .init(token: Data(repeating: 1, count: 16), connection: ClipboardConnectionID())))
+                [item], concealed: false, pasteCeiling: .max, puller: upstream,
+                serving: .init(token: Data(repeating: 1, count: 16), connection: ClipboardConnectionID())) == .written)
 
         guard
             case .snapshot(let source, let lost) = await ClipboardPasteboardReader.readSnapshot(
@@ -544,8 +546,8 @@ struct ClipboardCopyTests {
             watched = puller
             #expect(
                 publisher.publish(
-                    [item], concealed: concealed, puller: puller,
-                    serving: .init(token: Self.writeOffer, connection: Self.connection)))
+                    [item], concealed: concealed, pasteCeiling: .max, puller: puller,
+                    serving: .init(token: Self.writeOffer, connection: Self.connection)) == .written)
         }
         return { watched }
     }

@@ -61,10 +61,6 @@ struct ClipboardPassthroughCoordinatorTests {
         var isConnected = true
         private(set) var inboundOfferSeq: UInt64 = 0
 
-        /// Where this stand-in reports its own refusals, as the real transport
-        /// does — the VM's transfer report.
-        @ObservationIgnored var reporter: ClipboardTransferReporter?
-
         /// One copy the poll offered.
         struct Forwarded {
             let copy: ClipboardOfferSource
@@ -86,10 +82,12 @@ struct ClipboardPassthroughCoordinatorTests {
             return texts
         }
 
-        /// Makes `guestClipboardItems` refuse the way `HubClipboardService` does
-        /// over the deadline-safe cap: every file dropped, and the refusal
-        /// reported in the same step.
-        var refusesOverCopyBudget = false
+        /// Whether the guest's offer carries its text.
+        var guestOffersText = true
+        /// The declared size of a file the guest's offer carries beside its text, nil for none.
+        var guestFileBytes: UInt64?
+        /// The paste ceiling in force, read at each offer as the hub reads it.
+        @ObservationIgnored var maxPasteBytes: @MainActor () -> Int = { ClipboardPasteLimit.defaultBytes }
 
         /// Fires on each `offerHostCopy`, so a wait on the poll's off-actor read
         /// resolves on the event itself.
@@ -112,28 +110,28 @@ struct ClipboardPassthroughCoordinatorTests {
             grabRecorded.notify()
         }
 
-        func guestClipboardItems() -> [CopyToMacItem] {
-            guard refusesOverCopyBudget else {
-                var item = OfferedItem()
-                item.representations = [
+        func guestClipboardOffer() -> CopyToMacOffer? {
+            var items: [OfferedItem] = []
+            if guestOffersText {
+                var text = OfferedItem()
+                text.representations = [
                     ClipboardPassthroughCoordinatorTests.representation(
                         NSPasteboard.PasteboardType.string.rawValue, .inline)
                 ]
-                return [
-                    .offer(
-                        CopyToMacOffer(
-                            serving: .init(token: Data(repeating: 7, count: 16), connection: ClipboardConnectionID()),
-                            items: [item], concealed: false, servingFileURLs: true,
-                            puller: TextPuller(Data(guestText.utf8))))
-                ]
+                items.append(text)
             }
-            reporter?.finish(
-                ClipboardTransferFinish(
-                    gesture: .copy,
-                    outcome: .failed(
-                        .tooLarge(limitBytes: ClipboardPasteLimit.defaultBytes)),
-                    peerName: "Passthrough VM"))
-            return [.droppedFile(.overPasteBudget)]
+            if let guestFileBytes {
+                var file = OfferedItem()
+                var representation = ClipboardPassthroughCoordinatorTests.representation(
+                    "public.data", .file, name: "big.bin")
+                representation.sizeEstimate = guestFileBytes
+                file.representations = [representation]
+                items.append(file)
+            }
+            return CopyToMacOffer(
+                serving: .init(token: Data(repeating: 7, count: 16), connection: ClipboardConnectionID()),
+                items: items, concealed: false, limitBytes: maxPasteBytes(),
+                puller: TextPuller(Data(guestText.utf8)))
         }
 
         /// Simulates a new inbound guest offer of `text`, bumping the inbound
@@ -186,13 +184,13 @@ struct ClipboardPassthroughCoordinatorTests {
         pasteboard.clearContents()
         let publisher = HostClipboardPublisher(
             pasteboard: pasteboard, providerRegistry: LazyClipboardProviderRegistry())
+        let preferences = preferences ?? makeTestPreferences()
         let instance = VMInstanceFixture.make(
-            name: "Passthrough VM", guestOS: .macOS,
-            preferences: preferences ?? makeTestPreferences())
+            name: "Passthrough VM", guestOS: .macOS, preferences: preferences)
         let service = FakePassthroughService()
         service.connectionStartChangeCount = pasteboard.changeCount
+        service.maxPasteBytes = { preferences.clipboardMaxPasteBytes }
         let reports = ClipboardTransferReports()
-        service.reporter = reports.reporter
         instance.beginSessionContextForTesting()
         instance.clipboardServiceForTesting = service
         let coordinator = ClipboardPassthroughCoordinator(
@@ -368,17 +366,14 @@ struct ClipboardPassthroughCoordinatorTests {
     // MARK: - Replaying a refusal after the ceiling is raised
 
     /// Drives a passthrough session to the state the raise has to rescue: an
-    /// inbound offer refused over the ceiling, nothing on the Mac clipboard.
+    /// inbound offer whose 1 GiB file the ceiling withheld, written without it
+    /// beside its text or, offering nothing else, not written at all.
     private func makeBudgetRefusedHarness(
-        preferences: AppPreferences, hostContent: String = "previous host content"
+        preferences: AppPreferences, alongsideText: Bool
     ) async throws -> Harness {
         let h = makeHarness(preferences: preferences)
-        writeText(hostContent, to: h.pasteboard)
+        writeText("previous host content", to: h.pasteboard)
 
-        // Wait on the publish *completing*, not on the transfer report: the
-        // service reports the refusal inside `guestClipboardItems`, while the
-        // coordinator records it only once the publish returns. Keying on the
-        // report lets the raise land before there is a refusal to replay.
         var publishCompleted = false
         let published = AsyncGate()
         h.coordinator.onInboundPublishedForTesting = {
@@ -387,17 +382,19 @@ struct ClipboardPassthroughCoordinatorTests {
         }
         h.coordinator.start()
 
-        h.service.refusesOverCopyBudget = true
+        h.service.guestOffersText = alongsideText
+        h.service.guestFileBytes = 1 << 30
         h.service.simulateInboundOffer("over the cap")
         try await published.wait { publishCompleted }
+        #expect(!(h.pasteboard.types ?? []).contains(.fileURL))
         return h
     }
 
-    @Test("raising the ceiling republishes the offer the old one refused")
-    func raisingTheCeilingRepublishes() async throws {
+    @Test("raising the ceiling republishes the offer the old one cut, with its file", arguments: [false, true])
+    func raisingTheCeilingRepublishes(alongsideText: Bool) async throws {
         let preferences = makeTestPreferences()
         preferences.clipboardMaxPasteBytes = 512 * 1024 * 1024
-        let h = try await makeBudgetRefusedHarness(preferences: preferences)
+        let h = try await makeBudgetRefusedHarness(preferences: preferences, alongsideText: alongsideText)
         defer {
             h.coordinator.stop()
             h.pasteboard.releaseGlobally()
@@ -407,22 +404,16 @@ struct ClipboardPassthroughCoordinatorTests {
         // replay this offer's sequence is already consumed and re-copying the
         // same content in the guest is deduped, so it would never arrive.
         preferences.clipboardMaxPasteBytes = 16 * 1024 * 1024 * 1024
-        h.service.refusesOverCopyBudget = false
         h.coordinator.republishIfCeilingRaised()
 
-        // Read off the main thread, where the publisher's hold parks rather than
-        // running an event loop.
-        let textType = NSPasteboard.PasteboardType.string
-        nonisolated(unsafe) let consumer = h.pasteboard
-        let served = try await offCooperativePool { consumer.data(forType: textType) }
-        #expect(served == Data("over the cap".utf8))
+        #expect((h.pasteboard.types ?? []).contains(.fileURL))
     }
 
     @Test("a ceiling raised over content the user has since copied leaves their clipboard alone")
     func raisingTheCeilingSparesAUserCopy() async throws {
         let preferences = makeTestPreferences()
         preferences.clipboardMaxPasteBytes = 512 * 1024 * 1024
-        let h = try await makeBudgetRefusedHarness(preferences: preferences)
+        let h = try await makeBudgetRefusedHarness(preferences: preferences, alongsideText: true)
         defer {
             h.coordinator.stop()
             h.pasteboard.releaseGlobally()
@@ -434,7 +425,6 @@ struct ClipboardPassthroughCoordinatorTests {
         writeText("what the user copied", to: h.pasteboard)
         var republished = false
         h.coordinator.onInboundPublishedForTesting = { republished = true }
-        h.service.refusesOverCopyBudget = false
         preferences.clipboardMaxPasteBytes = 16 * 1024 * 1024 * 1024
         h.coordinator.republishIfCeilingRaised()
 
@@ -442,7 +432,7 @@ struct ClipboardPassthroughCoordinatorTests {
         #expect(h.pasteboard.string(forType: .string) == "what the user copied")
     }
 
-    /// A guest-offer service: `guestClipboardItems` returns the offer whole, and
+    /// A guest-offer service: `guestClipboardOffer` returns the offer, and
     /// its puller counts the pulls a paste starts, so a test can prove the
     /// publish itself moved no bytes.
     @MainActor
@@ -450,7 +440,7 @@ struct ClipboardPassthroughCoordinatorTests {
     final class PromisedPassthroughService: ClipboardServicing {
         var isConnected = true
         private(set) var inboundOfferSeq: UInt64 = 0
-        /// What the next `guestClipboardItems` offers.
+        /// What the next `guestClipboardOffer` offers.
         var items: [OfferedItem] = []
         @ObservationIgnored let puller = CountingPuller()
 
@@ -466,14 +456,10 @@ struct ClipboardPassthroughCoordinatorTests {
             .nothing
         }
         func offerHostCopy(_ copy: ClipboardOfferSource) {}
-        func guestClipboardItems() -> [CopyToMacItem] {
-            [
-                .offer(
-                    CopyToMacOffer(
-                        serving: .init(token: Data(repeating: 9, count: 16), connection: ClipboardConnectionID()),
-                        items: items, concealed: false, servingFileURLs: true,
-                        puller: puller))
-            ]
+        func guestClipboardOffer() -> CopyToMacOffer? {
+            CopyToMacOffer(
+                serving: .init(token: Data(repeating: 9, count: 16), connection: ClipboardConnectionID()),
+                items: items, concealed: false, limitBytes: ClipboardPasteLimit.defaultBytes, puller: puller)
         }
 
         func simulateInboundOffer(_ items: [OfferedItem]) {

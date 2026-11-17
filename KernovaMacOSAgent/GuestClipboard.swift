@@ -285,15 +285,14 @@ final class GuestClipboard {
         guard plan != .tooLarge else {
             logger.log(.notice, "The host's copy is files over the paste ceiling alone: not written")
             exchange.refuseCopy(copy, WireError(.tooLarge, limit: UInt64(ceiling)))
-            activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: ceiling)
-            onNotice()
+            pasteTooLarge(ceiling)
             return
         }
         let (written, holdsCopy) = publisher.publishCopy(
             copy.items, concealed: copy.concealed, servingFileURLs: plan.servesFileURLs,
             held: { copy.held(item: $0, representation: $1) }, puller: copy, serving: copy.serving,
             onReleased: { [weak self] in self?.exchange.releaseCopy(copy) })
-        if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
+        wrote()
         guard written else {
             guard leftOut == 0 else {
                 logger.log(.notice, "Nothing the host's copy named of this agent's clipboard remains: not written")
@@ -313,8 +312,7 @@ final class GuestClipboard {
         activity = .receivedFromHost
         if case .withoutFiles = plan {
             exchange.refuseCopy(copy, WireError(.clipboardFilesWithheld, limit: UInt64(ceiling)))
-            activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: ceiling)
-            onNotice()
+            pasteTooLarge(ceiling)
         } else if !holdsCopy {
             // A copy naming this agent's own offers by reference promises nothing: its references are all it
             // names of the agent's, so the host hears now what was left out.
@@ -326,31 +324,44 @@ final class GuestClipboard {
         }
     }
 
-    /// Publishes the host's offer on the guest pasteboard, promised: nothing is pulled until a paste asks. A file
-    /// set over the paste ceiling is published without its file URLs, and the refusal shown.
+    /// Publishes the host's offer on the guest pasteboard, promised: nothing is pulled until a paste asks. Files
+    /// over the paste ceiling are left out, and the refusal shown; with nothing else in the offer, nothing is
+    /// written. An offer the pasteboard does not hold is let go at once.
     private func publish(_ remote: ClipboardRemoteOffer) {
-        let ceiling = pasteCeilingBytes
-        let budget = ClipboardPromisePolicy.pasteBudget(remote.items, limit: ceiling)
-        let written = publisher.publish(
-            remote.items, concealed: remote.concealed, servingFileURLs: !budget.exceeds, puller: remote,
+        let outcome = publisher.publish(
+            remote.items, concealed: remote.concealed, pasteCeiling: pasteCeilingBytes, puller: remote,
             serving: remote.serving)
-        if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
-        guard written else {
-            logger.log(.error, "The host's clipboard offer could not be written to the pasteboard")
+        // Only a write moves the pasteboard: one left untouched keeps what it held, and `published` naming it.
+        switch outcome {
+        case .nothingToWrite:
             exchange.release(remote)
-            return writeRefused()
-        }
-        published = remote
-        if budget.exceeds {
-            logger.log(
-                .notice,
-                "The host's files total \(budget.total, privacy: .public) bytes, over the \(ceiling, privacy: .public)-byte paste ceiling: published without them"
-            )
-            activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: ceiling)
-            onNotice()
-        } else {
+        case .tooLarge(let limitBytes):
+            exchange.release(remote)
+            pasteTooLarge(limitBytes)
+        case .writeFailed:
+            wrote()
+            exchange.release(remote)
+            writeRefused()
+        case .written:
+            wrote()
+            published = remote
             activity = .offeredFromHost
+        case .writtenWithoutFiles(_, let limitBytes):
+            wrote()
+            published = remote
+            pasteTooLarge(limitBytes)
         }
+    }
+
+    /// Moves the poll past this agent's write, so it never reads it as a copy.
+    private func wrote() {
+        if let changeCount = publisher.lastWriteChangeCount { seenChangeCount = changeCount }
+    }
+
+    /// Shows a paste of the host's clipboard refused over the paste ceiling `limitBytes`.
+    private func pasteTooLarge(_ limitBytes: Int) {
+        activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: limitBytes)
+        onNotice()
     }
 
     /// The pasteboard refused a write of the host's clipboard, or a paste's bytes of it: shown as a paste that
@@ -367,8 +378,7 @@ final class GuestClipboard {
         let ceiling = pasteCeilingBytes
         logger.log(
             .notice, "A paste of the host's clipboard is over the \(ceiling, privacy: .public)-byte paste ceiling")
-        activity = .pasteRefused(.pasteTooLarge, pasteLimitBytes: ceiling)
-        onNotice()
+        pasteTooLarge(ceiling)
     }
 
     /// The host's offer stopped being this clipboard, as `ending` says. A promise still standing for it could serve

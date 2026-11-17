@@ -193,7 +193,7 @@ package struct VMBundleLayout: Sendable {
     /// rather than one the guest's own suspend wrote.
     ///
     /// A revert clones the snapshot's saved state through `copyItem`, which
-    /// carries the modification date across, and `replaceItemAt` lands the clone
+    /// carries the modification date across, and the rename into place lands the clone
     /// with that date intact; a suspend writes a fresh file and stamps it with
     /// the time it was written. Size and modification date together identify the
     /// clone, at the cost of two `stat` calls and no reading of either file.

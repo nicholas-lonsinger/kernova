@@ -12,7 +12,7 @@ import KernovaTestSupport
 
 /// In-memory mock for `VMStorageProviding` that tracks operations without touching disk —
 /// except `vmsDirectory`/`stagingRoot`, which import/clone tests need as real, writable
-/// directories since `VMCommandCore.importVM(from:)` does a raw `FileManager.copyItem` into the
+/// directories since `VMCommandCore.importVM(from:)` copies into the
 /// staging area rather than going through this protocol, and `cloneVMBundle`, which creates its
 /// destination directory for the same reason (see below), and `listVMBundles`, which lists a
 /// bundle such a copy published there. `baseDirectory` is a

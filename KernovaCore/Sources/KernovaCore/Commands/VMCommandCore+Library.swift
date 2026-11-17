@@ -150,7 +150,7 @@ extension VMCommandCore {
             staged: staged, source: nil, awaited: false,
             write: { staged in
                 // Off the bounded `copyQueue`, which exists to serialize the
-                // multi-gigabyte `copyItem` calls import makes: this write is
+                // multi-gigabyte copies import makes: this write is
                 // a `createDirectory` and one small atomic `config.json`, and
                 // queueing it behind two in-flight imports would hold the new
                 // VM at "Creating…" for their copies.
@@ -641,6 +641,9 @@ extension VMCommandCore {
     /// each other's arrivals, which one suspension point between them would
     /// break. The copies then run concurrently.
     private func registerImport(from sourceURL: URL, awaited: Bool) throws -> ImportStart {
+        // The bundle may be reached through a link, so every step reads and
+        // names the bundle the path resolves to.
+        let sourceURL = sourceURL.resolvingSymlinksInPath()
         do {
             let vmsDir = try storageService.vmsDirectory
             // A core file with a problem no repair makes refuses the import
@@ -687,7 +690,7 @@ extension VMCommandCore {
                     awaited: awaited,
                     write: { [logger] staged in
                         try await Self.runBoundedCopy {
-                            try FileManager.default.copyItem(at: sourceURL, to: staged.url)
+                            try VMBundleItems.copy(sourceURL, to: staged.url)
                             if let repaired = try staged.arriveHostStateAsCopy() {
                                 logger.log(
                                     .notice,

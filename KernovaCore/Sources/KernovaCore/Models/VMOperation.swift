@@ -651,12 +651,13 @@ package enum VMBringUpKind: Sendable, Equatable {
     /// `resumesAfter`.
     case reverting(snapshotID: UUID, resumesAfter: Bool)
 
-    /// Whether admission checks this bring-up against the identities other
-    /// live VMs hold.
+    /// Whether this bring-up ends with the guest running on the bundle's
+    /// files — the bring-ups admission checks against the identities other
+    /// live VMs hold and against a symbolic link in the bundle.
     ///
     /// A revert that resumes puts the snapshot's configuration in front of
     /// VZ, whose address need not be the one the VM held live.
-    var checksIdentity: Bool {
+    var runsGuest: Bool {
         switch self {
         case .guestStart, .settingUp: true
         case .reverting(_, let resumesAfter): resumesAfter
