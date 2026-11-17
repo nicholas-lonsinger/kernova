@@ -341,13 +341,5 @@ extension CoreUnits {
             }
             #expect(apps.count == 32)
         }
-
-        @Test("The hub's cancel in waiting → RESET CANCELLED, .indeterminate")
-        func cancelWaiting() {
-            let run = Self.host()
-            run.command(.cancelPower(Self.id))
-            #expect(Self.results(run) == [.indeterminate])
-            #expect(Self.resets(run.written) == [.cancelled])
-        }
     }
 }

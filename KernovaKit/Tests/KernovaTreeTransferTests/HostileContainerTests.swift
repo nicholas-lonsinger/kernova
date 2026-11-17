@@ -183,8 +183,7 @@ struct HostileContainerTests {
             failure
                 == TreeWriteFailure(
                     path: [bytes("r"), bytes("f")],
-                    reason: .container(
-                        .lz4(.sizeOutOfRange(declared: declared, ceiling: ContainerRecord.maxChunkPayload)))))
+                    reason: .container(.lz4SizeOutOfRange(declared: declared))))
         try landing.expectNothingOutside()
     }
 

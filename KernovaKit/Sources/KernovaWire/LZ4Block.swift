@@ -4,10 +4,8 @@ import FoundationEssentials
 import Foundation
 #endif
 
-/// Why `LZ4Block.decompress(_:decompressedSize:ceiling:)` refused a block.
+/// Why `LZ4Block.decompress(_:decompressedSize:)` refused a block.
 public enum LZ4BlockError: Error, Equatable, Sendable {
-    /// The declared size is negative or above the caller's ceiling; nothing was allocated.
-    case sizeOutOfRange(declared: Int, ceiling: Int)
     /// The block ends inside a token, a length, its literals or an offset.
     case truncated
     /// A match offset of 0, or one reaching before the start of the output.
@@ -47,15 +45,11 @@ public enum LZ4Block {
     ///
     /// - Parameters:
     ///   - block: One LZ4 block.
-    ///   - decompressedSize: The size the container records for the block.
-    ///   - ceiling: The largest `decompressedSize` the caller accepts; a larger one
-    ///     throws before anything is allocated.
+    ///   - decompressedSize: The size the container records for the block, which the caller bounds:
+    ///     that many bytes are allocated before decoding starts.
     /// - Returns: The decompressed bytes.
-    /// - Throws: `LZ4BlockError` when the size is out of range or the block is malformed.
-    public static func decompress(_ block: Data, decompressedSize: Int, ceiling: Int) throws(LZ4BlockError) -> Data {
-        guard decompressedSize >= 0, decompressedSize <= ceiling else {
-            throw .sizeOutOfRange(declared: decompressedSize, ceiling: ceiling)
-        }
+    /// - Throws: `LZ4BlockError` when the block is malformed.
+    public static func decompress(_ block: Data, decompressedSize: Int) throws(LZ4BlockError) -> Data {
         // Uninitialized: a block that decodes writes every byte, and one that does not is discarded.
         let storage = UnsafeMutableRawPointer.allocate(byteCount: max(decompressedSize, 1), alignment: 16)
         if let error = block.withUnsafeBytes({ decompress($0, into: storage, count: decompressedSize) }) {

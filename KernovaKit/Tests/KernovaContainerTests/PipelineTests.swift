@@ -119,9 +119,7 @@ struct PipelineTests {
                 headerRecord(lz4File(depth: 0, size: 1 << 22)) + valid
                     + lz4ChunkRecord(declaredSize: UInt32(ContainerRecord.maxChunkPayload + 1), block: block),
                 generous(.file),
-                .lz4(
-                    .sizeOutOfRange(
-                        declared: ContainerRecord.maxChunkPayload + 1, ceiling: ContainerRecord.maxChunkPayload))
+                .lz4SizeOutOfRange(declared: ContainerRecord.maxChunkPayload + 1)
             ),
             // An LZ4 chunk in an entry whose storage is plain.
             (

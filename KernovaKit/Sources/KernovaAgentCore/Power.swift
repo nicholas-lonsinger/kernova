@@ -422,16 +422,6 @@ public struct PowerRequester: FeatureMachine {
             Entry(id: id, stream: stream, phase: .waiting, deadline: connection.judgedDeadline(after: Self.hostWait)))
     }
 
-    /// The hub cancels a request; only a waiting one can be.
-    public mutating func cancel(_ id: PowerRequestID, connection: inout Connection) {
-        guard let index = entries.firstIndex(where: { $0.id == id }) else { return }
-        guard entries[index].phase == .waiting else {
-            diagnostics.append(.localFault("cancel of an accepted power request"))
-            return
-        }
-        conclude(index, .indeterminate, reset: .cancelled, connection: &connection)
-    }
-
     /// Handles a stream event for POWER_REQUEST.
     public mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
         switch event {

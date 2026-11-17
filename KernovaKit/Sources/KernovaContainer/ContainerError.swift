@@ -108,8 +108,9 @@ public enum ContainerError: Error, Equatable, Sendable {
     case chunkPastEntrySize(count: UInt64, remaining: UInt64)
     /// An LZ4 chunk in an entry whose storage is not LZ4.
     case lz4ChunkOutsideLZ4Storage
-    /// An LZ4 chunk's block is malformed or its declared size out of range; the range check comes before
-    /// anything is allocated.
+    /// An LZ4 chunk declares a decompressed size above `ContainerRecord.maxChunkPayload`.
+    case lz4SizeOutOfRange(declared: Int)
+    /// An LZ4 chunk's block does not decompress to exactly its declared size.
     case lz4(LZ4BlockError)
 
     // MARK: End

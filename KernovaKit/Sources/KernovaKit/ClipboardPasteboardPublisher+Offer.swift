@@ -107,8 +107,7 @@ extension ClipboardPasteboardPublisher {
     nonisolated static func copySpecs(
         for items: [OfferedItem], concealed: Bool, servingFileURLs: Bool,
         holding heldContent: (Int, Int) -> ClipboardWriteSource.Held?,
-        puller: any ClipboardItemPulling, holdLimit: TimeInterval = pasteRequesterDeadline,
-        eventLoopWait: @escaping @Sendable () -> NestedEventLoopWait?
+        puller: any ClipboardItemPulling, eventLoopWait: @escaping @Sendable () -> NestedEventLoopWait?
     ) -> [ItemSpec] {
         items.enumerated().compactMap { index, item -> ItemSpec? in
             var data: [(type: String, bytes: Data)] = []
@@ -130,7 +129,7 @@ extension ClipboardPasteboardPublisher {
             guard let file = files.first else { return ItemSpec(data: data, types: []) { _ in nil } }
             return ItemSpec(data: data, types: [ItemSpec.fileURLType]) { type in
                 guard type == ItemSpec.fileURLType else { return nil }
-                return held(eventLoopWait, for: holdLimit) {
+                return held(eventLoopWait) {
                     puller.pullFile(item: index, representation: file, completion: $0)
                 }
                 .map { Data($0.absoluteString.utf8) }
@@ -152,11 +151,9 @@ extension ClipboardPasteboardPublisher {
     }
 
     /// ``itemSpecs(for:concealed:servingFileURLs:puller:)``, each fire taking
-    /// its main-thread wait from `eventLoopWait` and holding for a pull no
-    /// longer than `holdLimit`.
+    /// its main-thread wait from `eventLoopWait`.
     nonisolated static func itemSpecs(
         for items: [OfferedItem], concealed: Bool, servingFileURLs: Bool = true, puller: any ClipboardItemPulling,
-        holdLimit: TimeInterval = pasteRequesterDeadline,
         eventLoopWait: @escaping @Sendable () -> NestedEventLoopWait?
     ) -> [ItemSpec] {
         // The marker is written as data, so it stays with whatever of the item a retraction keeps.
@@ -169,11 +166,11 @@ extension ClipboardPasteboardPublisher {
             return ItemSpec(data: markers, types: promised.map(\.pasteboardType)) { type in
                 guard let route = routes[type] else { return nil }
                 guard route.isFileURL else {
-                    return held(eventLoopWait, for: holdLimit) {
+                    return held(eventLoopWait) {
                         puller.pullBytes(item: index, representation: route.representation, completion: $0)
                     }
                 }
-                return held(eventLoopWait, for: holdLimit) {
+                return held(eventLoopWait) {
                     puller.pullFile(item: index, representation: route.representation, completion: $0)
                 }
                 .map { Data($0.absoluteString.utf8) }
@@ -182,13 +179,13 @@ extension ClipboardPasteboardPublisher {
     }
 
     /// Holds the provider's thread while the pull `start` begins runs to its
-    /// completion, as ``ThreadHold/Wait`` holds it, for no longer than `limit`.
+    /// completion, as ``ThreadHold/Wait`` holds it, for no longer than ``pasteRequesterDeadline``.
     ///
-    /// - Returns: what the pull completed with; nil once `limit` passed first,
+    /// - Returns: what the pull completed with; nil once the deadline passed first,
     ///   the pull running on, or without starting it on the main thread where
     ///   no event-loop wait is available.
     nonisolated private static func held<Value: Sendable>(
-        _ eventLoopWait: () -> NestedEventLoopWait?, for limit: TimeInterval,
+        _ eventLoopWait: () -> NestedEventLoopWait?,
         start: (_ completion: @escaping @Sendable (Value?) -> Void) -> Void
     ) -> Value? {
         guard let wait = ThreadHold.Wait(eventLoop: eventLoopWait()) else {
@@ -204,9 +201,11 @@ extension ClipboardPasteboardPublisher {
             }
             if isFirst { wait.wake() }
         }
-        let deadline = DispatchTime.now() + limit
+        let deadline = DispatchTime.now() + pasteRequesterDeadline
         guard let value = wait.hold(deadline: deadline, until: { completed.withLock { $0 } }) else {
-            pullLogger.log(.notice, "A paste gave up on its pull after \(limit, privacy: .public) s; the pull runs on")
+            pullLogger.log(
+                .notice,
+                "A paste gave up on its pull after \(pasteRequesterDeadline, privacy: .public) s; the pull runs on")
             return nil
         }
         return value
