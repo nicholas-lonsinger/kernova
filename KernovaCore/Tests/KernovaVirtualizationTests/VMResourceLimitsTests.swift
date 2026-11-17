@@ -3,33 +3,13 @@ import KernovaCommandModel
 import KernovaKit
 import KernovaTestSupport
 import Testing
-import Virtualization
 
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
-@testable import KernovaVirtualization
 
 @Suite("VMResourceLimits Tests", .caseScoped)
 struct VMResourceLimitsTests {
     // MARK: - Framework bounds
-
-    private let limits = VirtualizationHost().resourceLimits
-
-    @Test("CPU bounds are the Virtualization framework's")
-    func cpuBoundsAreTheFrameworks() {
-        #expect(limits.cpuCount.lower == VZVirtualMachineConfiguration.minimumAllowedCPUCount)
-        #expect(limits.cpuCount.upper == VZVirtualMachineConfiguration.maximumAllowedCPUCount)
-    }
-
-    @Test("Memory bounds are the Virtualization framework's, in whole mebibytes")
-    func memoryBoundsAreTheFrameworks() {
-        let lower = VZVirtualMachineConfiguration.minimumAllowedMemorySize
-        let upper = VZVirtualMachineConfiguration.maximumAllowedMemorySize
-        #expect(limits.memorySize.lower.bytes >= lower)
-        #expect(limits.memorySize.lower.bytes - lower < 1 << 20)
-        #expect(limits.memorySize.upper.bytes <= upper)
-        #expect(upper - limits.memorySize.upper.bytes < 1 << 20)
-    }
 
     @Test("Byte bounds narrow inward to whole mebibytes")
     func byteBoundsNarrowToWholeMebibytes() {

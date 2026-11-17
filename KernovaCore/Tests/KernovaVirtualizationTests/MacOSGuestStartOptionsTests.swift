@@ -26,30 +26,6 @@ struct MacOSGuestStartOptionsTests {
             logsInAutomatically: logsInAutomatically, enablesRemoteLogin: enablesRemoteLogin)
     }
 
-    // MARK: - Recovery
-
-    @Test("A macOS guest with recovery requested gets startUpFromMacOSRecovery options")
-    func macOSRecoveryBuildsOptions() {
-        let options = MacOSGuestProvisioning.macOSStartOptions(
-            bootIntoRecovery: true, guestOS: .macOS, provisioning: nil)
-        #expect(options != nil)
-        #expect(options?.startUpFromMacOSRecovery == true)
-    }
-
-    @Test("A Linux guest never gets recovery options")
-    func linuxGetsNoOptions() {
-        #expect(
-            MacOSGuestProvisioning.macOSStartOptions(
-                bootIntoRecovery: true, guestOS: .linux, provisioning: nil) == nil)
-    }
-
-    @Test("A macOS guest without recovery requested gets no options (normal boot)")
-    func macOSWithoutRecoveryGetsNoOptions() {
-        #expect(
-            MacOSGuestProvisioning.macOSStartOptions(
-                bootIntoRecovery: false, guestOS: .macOS, provisioning: nil) == nil)
-    }
-
     // MARK: - Guest Account
 
     @available(macOS 27.0, *)

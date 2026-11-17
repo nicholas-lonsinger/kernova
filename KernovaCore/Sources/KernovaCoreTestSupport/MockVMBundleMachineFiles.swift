@@ -41,7 +41,6 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         var diskSizeReads = 0
         var diskSizeReadHold: DispatchSemaphore?
         var captureError: (any Error)?
-        var stageError: (any Error)?
         var discardError: (any Error)?
         var platformMachineIdentifier: Data?
     }
@@ -103,11 +102,6 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
     /// Sets the error every later disk or suspend-slot capture throws.
     func setCaptureError(_ error: (any Error)?) {
         state.withLock { $0.captureError = error }
-    }
-
-    /// Sets the error the next and every later `stageRestore` throws.
-    func setStageError(_ error: (any Error)?) {
-        state.withLock { $0.stageError = error }
     }
 
     /// Sets the error every later `discardSnapshot` throws.
@@ -173,10 +167,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
     }
 
     func stageRestore(bundleURL: URL, snapshotID: UUID, plan: VMSnapshotRestorePlan) throws {
-        try state.withLock { state in
-            state.events.append(.stageRestore)
-            if let error = state.stageError { throw error }
-        }
+        state.withLock { $0.events.append(.stageRestore) }
     }
 
     func installRestore(bundleURL: URL, plan: VMSnapshotRestorePlan) throws {

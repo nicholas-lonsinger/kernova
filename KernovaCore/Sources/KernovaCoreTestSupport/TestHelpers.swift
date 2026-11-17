@@ -292,13 +292,6 @@ extension VMLibrary {
 }
 
 extension VMInstance {
-    /// Commits `change` to this VM's snapshot manifest as setup a test relies
-    /// on, as the write of an operation holding the VM — what lists a
-    /// snapshot or moves the current marker.
-    func editSnapshotManifest(_ change: (inout VMSnapshotManifest) -> Void) throws {
-        try withOperationNow(on: self) { try $0.permit.bundle.commitSnapshotManifest(change) }
-    }
-
     /// Puts `manifest` in this fixture VM's bundle as though the bundle already
     /// held it, snapshot MAC stubs included, and has the bundle read it back.
     ///

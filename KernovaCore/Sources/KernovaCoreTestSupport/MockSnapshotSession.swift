@@ -17,7 +17,6 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
     /// What the guest is doing, mutated by the calls the capture makes.
     private(set) var guestState: GuestState
     private(set) var calls: [String] = []
-    private(set) var savedStateURLs: [URL] = []
 
     var saveError: (any Error)?
 
@@ -89,7 +88,6 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
 
     func saveMachineState(to url: URL, _ grant: VMLiveStateCapture.SaveGrant) async throws {
         calls.append("saveMachineState")
-        savedStateURLs.append(url)
         if let saveError { throw saveError }
         if writesStateFile {
             try FileManager.default.createDirectory(
