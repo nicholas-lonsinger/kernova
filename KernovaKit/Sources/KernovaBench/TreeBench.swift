@@ -143,7 +143,7 @@ struct TreeBench {
         }
         defer { fileSystem.close(destination) }
         compare(itemName, in: parent, landed: transfer.landedName, in: destination, path: itemName, into: &comparison)
-        comparison.report(source: options.source, landed: landedPath)
+        comparison.report(landed: landedPath)
     }
 
     // MARK: - Moving
@@ -280,7 +280,7 @@ struct TreeBench {
             mismatches[field, default: []].append(path)
         }
 
-        func report(source: String, landed: String) {
+        func report(landed: String) {
             func kib(_ blocks: Int64) -> String { "\(blocks / 2) KiB" }
             func types(_ types: [UInt32: Int]) -> String {
                 types.isEmpty

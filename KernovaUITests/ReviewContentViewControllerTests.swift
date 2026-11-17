@@ -202,22 +202,6 @@ struct ReviewContentViewControllerTests {
         return vm
     }
 
-    /// Every string the view tree puts in front of a user: label text and
-    /// placeholders, button titles, and tooltips.
-    private func renderedStrings(in view: NSView) -> [String] {
-        var strings: [String] = []
-        if let tip = view.toolTip { strings.append(tip) }
-        if let field = view as? NSTextField {
-            strings.append(field.stringValue)
-            if let placeholder = field.placeholderString { strings.append(placeholder) }
-        }
-        if let button = view as? NSButton { strings.append(button.title) }
-        for subview in view.subviews {
-            strings.append(contentsOf: renderedStrings(in: subview))
-        }
-        return strings
-    }
-
     /// The bullet run the Account section shows in place of the password.
     private func redactedPasswordLabel(in view: NSView) -> NSTextField? {
         firstSubview(NSTextField.self, in: view) { field in

@@ -1,6 +1,5 @@
 import Cocoa
 import KernovaCore
-import KernovaKit
 import KernovaLogging
 
 /// The window seams a ``VMDisplayPlacementController`` needs but cannot own.

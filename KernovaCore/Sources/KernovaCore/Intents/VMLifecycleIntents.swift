@@ -1,6 +1,5 @@
 import AppIntents
 import Foundation
-import KernovaKit
 
 struct StartVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Start Virtual Machine"

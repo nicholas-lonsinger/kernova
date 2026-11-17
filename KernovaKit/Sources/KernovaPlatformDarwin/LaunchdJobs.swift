@@ -11,20 +11,20 @@ import KernovaAgentInstall
 /// meanwhile fails. Each property list is bootstrapped into its own domain: the user scope's into the user's
 /// `gui/<uid>`, the system scope's daemons into `system` and its LaunchAgent into the console user's
 /// `gui/<uid>` when there is one, every other user's at their next login.
-public struct LaunchdJobs: ServiceDefinitions {
+struct LaunchdJobs: ServiceDefinitions {
     /// The scope's files.
-    public let layout: MacInstallLayout
+    let layout: MacInstallLayout
     /// The agent executable whose `stop-service` stops a job and waits for launchd to let it go.
-    public let stopTool: String
+    let stopTool: String
 
     /// The jobs of `layout`, stopped through `stopTool`.
-    public init(_ layout: MacInstallLayout, stopTool: String) {
+    init(_ layout: MacInstallLayout, stopTool: String) {
         self.layout = layout
         self.stopTool = stopTool
     }
 
     /// The property lists, each directory first.
-    public var writes: [InstallPlan.Write] {
+    var writes: [InstallPlan.Write] {
         var writes: [InstallPlan.Write] = [.directory(path: layout.agentsDirectory, mode: 0o755)]
         writes.append(.file(path: layout.sessionPlist, mode: 0o644, text: LaunchdPlists.session(layout)))
         if let system = layout.systemPlist {
@@ -36,10 +36,10 @@ public struct LaunchdJobs: ServiceDefinitions {
     }
 
     /// Stops the rollback check first, so none judges the root while it is rewritten, then the peers.
-    public var beforeInstall: [InstallPlan.Command] { stops }
+    var beforeInstall: [InstallPlan.Command] { stops }
 
     /// Loads the rollback check, then the peers, which start at once (`RunAtLoad`).
-    public var afterInstall: [InstallPlan.Command] {
+    var afterInstall: [InstallPlan.Command] {
         var commands: [InstallPlan.Command] = []
         if let domain = layout.rollbackDomain { commands.append(bootstrap(domain, layout.rollbackPlist)) }
         if let system = layout.systemPlist { commands.append(bootstrap("system", system)) }
@@ -48,13 +48,13 @@ public struct LaunchdJobs: ServiceDefinitions {
     }
 
     /// Stops the rollback check, then the peers.
-    public var beforeUninstall: [InstallPlan.Command] { stops }
+    var beforeUninstall: [InstallPlan.Command] { stops }
 
     /// None: the jobs went with their stops.
-    public var afterUninstall: [InstallPlan.Command] { [] }
+    var afterUninstall: [InstallPlan.Command] { [] }
 
     /// None: launchd reads a loaded job's property list only when it loads it, at the next login or boot.
-    public var afterRefresh: [InstallPlan.Command] { [] }
+    var afterRefresh: [InstallPlan.Command] { [] }
 
     private var stops: [InstallPlan.Command] {
         var commands: [InstallPlan.Command] = []
@@ -122,9 +122,9 @@ extension InstallPlan {
 /// Team Identifier of the `Program` or `ProgramArguments` executable in the legacy property list" matches the
 /// app bundle's, and shows an unattributed job by its executable's name ([Updating helper executables from
 /// earlier versions of macOS](https://developer.apple.com/documentation/servicemanagement/updating-helper-executables-from-earlier-versions-of-macos)).
-public enum LaunchdPlists {
+enum LaunchdPlists {
     /// The session peer's LaunchAgent: one per GUI login session (`LimitLoadToSessionType` `Aqua`).
-    public static func session(_ layout: MacInstallLayout) -> String {
+    static func session(_ layout: MacInstallLayout) -> String {
         document([
             ("Label", .string(layout.sessionLabel)),
             ("AssociatedBundleIdentifiers", .strings([MacInstallLayout.bundleIdentifier])),
@@ -136,7 +136,7 @@ public enum LaunchdPlists {
     }
 
     /// The system peer's LaunchDaemon, run as root.
-    public static func system(_ layout: MacInstallLayout) -> String {
+    static func system(_ layout: MacInstallLayout) -> String {
         document([
             ("Label", .string(MacInstallLayout.systemLabel)),
             ("AssociatedBundleIdentifiers", .strings([MacInstallLayout.bundleIdentifier])),
@@ -149,7 +149,7 @@ public enum LaunchdPlists {
     /// The rollback check: a LaunchAgent in the user's GUI session for the user scope, a LaunchDaemon for the
     /// system scope. It runs the agent through `rollback`, which every install points at a slot
     /// (``InstallPlan/Write/freshSlot(root:payloadName:)``), and returns at once while no switch is pending.
-    public static func rollback(_ layout: MacInstallLayout) -> String {
+    static func rollback(_ layout: MacInstallLayout) -> String {
         let scope = layout.scope == .system ? "system" : "user"
         var entries: [(String, Value)] = [
             ("Label", .string(layout.rollbackLabel)),

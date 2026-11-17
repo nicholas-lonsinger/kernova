@@ -1,5 +1,4 @@
 import Foundation
-import Synchronization
 
 @testable import KernovaCore
 
@@ -10,17 +9,12 @@ import Synchronization
 /// unanswerable exactly when the subject asks.
 final class MockPeerAuthorizer: PeerAuthorizing {
     private let verdict: PeerAuthorization
-    private let asked = Mutex(0)
-
-    /// How many peers have been checked.
-    var checkCount: Int { asked.withLock { $0 } }
 
     init(_ verdict: PeerAuthorization = .authorized) {
         self.verdict = verdict
     }
 
     func authorization(ofPeer token: audit_token_t) -> PeerAuthorization {
-        asked.withLock { $0 += 1 }
-        return verdict
+        verdict
     }
 }

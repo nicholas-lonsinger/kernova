@@ -326,15 +326,5 @@ extension Result where Failure == TreeWriteFailure {
     }
 }
 
-/// The `errno` a `.system` or `.refused` failure carries.
-extension TreeWriteFailure {
-    var code: Int32? {
-        switch reason {
-        case .system(let error), .refused(let error): error.code
-        default: nil
-        }
-    }
-}
-
 let bothLayers = [false, true]
 #endif

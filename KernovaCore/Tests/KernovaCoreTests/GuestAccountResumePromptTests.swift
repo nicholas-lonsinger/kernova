@@ -71,14 +71,6 @@ struct GuestAccountResumePromptTests {
         return instance
     }
 
-    /// Lets the install pipeline the start armed unwind, so nothing outlives the
-    /// test that spawned it.
-    private func drainSetup(_ instance: VMInstance) async {
-        let task = instance.setupOperationTask
-        task?.cancel()
-        await task?.value
-    }
-
     // MARK: - When the question is raised
 
     // MARK: - What each answer carries back

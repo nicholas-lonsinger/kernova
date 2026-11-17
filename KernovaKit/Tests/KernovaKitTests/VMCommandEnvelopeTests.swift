@@ -20,26 +20,6 @@ struct VMCommandEnvelopeTests {
         VMSummary(id: vmID, name: "Alpha", status: "running", ipAddress: .unavailable, heldByAnotherCopy: false)
     }
 
-    private var info: VMInfo {
-        VMInfo(
-            id: vmID, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
-            memoryBytes: 8_589_934_592, networkMode: "nat", networkMembership: "common",
-            networkName: nil, macAddress: "aa:bb:cc:dd:ee:ff",
-            ipAddress: .observed("192.168.66.2"),
-            agentStatus: "current",
-            hasSavedState: true, savedStateKernovaVersion: "0.10.0 (412)", isEphemeral: false, snapshotCount: 2,
-            hasSnapshots: false, guestAgent: nil,
-            stateBucket: .stopped,
-            bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
-    }
-
-    private var snapshot: SnapshotSummary {
-        SnapshotSummary(
-            id: snapshotID, name: "Clean install", notes: "before anything",
-            kind: "warm", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            isCurrent: true, isEphemeralBaseline: false)
-    }
-
     private func roundTrip<T: Codable & Equatable>(_ value: T) throws -> T {
         try JSONDecoder().decode(T.self, from: JSONEncoder().encode(value))
     }

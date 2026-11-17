@@ -99,9 +99,9 @@ package final class HubDragOut {
                 content: { _, _, _ in
                     .failure(WireError(.itemRepresentationUnavailable, debugDetail: "the host offers no drag"))
                 }),
-            takes: { [weak self, deliveries] peer, event in
+            takes: { [weak self, deliveries] _, event in
                 deliveries.hear(event)
-                Self.onMain { self?.handle(event, from: peer) }
+                Self.onMain { self?.handle(event) }
             })
     }
 
@@ -175,7 +175,7 @@ package final class HubDragOut {
         }
     }
 
-    private func handle(_ event: DragTakeEvent, from peer: PeerHandle) {
+    private func handle(_ event: DragTakeEvent) {
         switch event {
         case .report(let id, let report): takeEvents[id]?.events(.report(report))
         case .ended(let id, let result): takeEnded(id, result)

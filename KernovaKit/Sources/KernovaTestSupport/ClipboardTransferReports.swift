@@ -39,47 +39,12 @@ public final class ClipboardTransferReports {
     /// The standing refusal, or `nil` when the report is not a failure.
     public var failure: ClipboardTransferFailure? { finish?.failure }
 
-    /// The readout a bar would show — live while running, the last one while a
-    /// completed or cancelled report stands.
-    public var snapshot: ClipboardProgressSnapshot? {
-        switch latest {
-        case .running(let snapshot, _): return snapshot
-        case .finished(let finish): return finish.finalSnapshot
-        case .idle: return nil
-        }
-    }
-
-    /// The newest recorded running readout for `gesture`, for a test acting on an
-    /// operation the ranking has put underneath another.
-    public func lastRunningSnapshot(gesture: ClipboardTransferGesture)
-        -> ClipboardProgressSnapshot?
-    {
-        reports.reversed().lazy.compactMap { report -> ClipboardProgressSnapshot? in
-            guard case .running(let snapshot, _) = report, snapshot.gesture == gesture else {
-                return nil
-            }
-            return snapshot
-        }.first
-    }
-
     /// Suspends until `predicate` holds, re-checked on each report.
     public func wait(
         timeout: TimeInterval = testWaitBackstop,
         until predicate: @MainActor () -> Bool
     ) async throws {
         try await changed.wait(timeout: timeout, until: predicate)
-    }
-
-    /// Every finished operation's last readout, in order.
-    ///
-    /// Read from the recorded history rather than the live report, so an
-    /// assertion about a completed operation's bar cannot race the dwell that
-    /// retires it.
-    public var finalSnapshots: [ClipboardProgressSnapshot] {
-        reports.compactMap { report in
-            guard case .finished(let finish) = report else { return nil }
-            return finish.finalSnapshot
-        }
     }
 
     /// Every distinct refusal that stood, in order.

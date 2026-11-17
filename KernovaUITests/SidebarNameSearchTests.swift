@@ -24,13 +24,6 @@ struct SidebarNameSearchTests {
         .vm(VMInstanceFixture.make(name: name, guestOS: guestOS))
     }
 
-    private func names(in section: SidebarLayout.Section) -> [String] {
-        switch section.content {
-        case .rows(let rows): rows.entries.map(\.name)
-        case .groups(let groups): groups.groups.flatMap { $0.rows.entries.map(\.name) }
-        }
-    }
-
     private func search(_ text: String) -> SidebarNameSearch { SidebarNameSearch(text: text) }
 
     // MARK: - Projection

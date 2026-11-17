@@ -7,7 +7,6 @@ import Foundation
 import Dispatch
 import KernovaContainer
 import KernovaContainerPipeline
-import KernovaPortableTestSupport
 import KernovaSynchronization
 import KernovaWire
 import Testing

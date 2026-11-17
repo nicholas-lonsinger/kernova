@@ -62,7 +62,7 @@ final class FakeLogind: Sendable {
         let unknown = DBusMessage.error(
             replyingTo: call, name: "org.freedesktop.DBus.Error.UnknownMethod", message: "")
         if header.path == Logind.managerPath, header.interface == Logind.managerInterface, let member = header.member {
-            return manager(call, member: member, body: body, recorder: recorder) ?? unknown
+            return manager(call, member: member, body: body) ?? unknown
         }
         if let path = header.path, recorder.vanishedSessions.withLock({ $0.contains(path) }) {
             return .error(
@@ -116,9 +116,7 @@ final class FakeLogind: Sendable {
         }
     }
 
-    private static func manager(
-        _ call: DBusReceivedMessage, member: String, body: [DBusValue], recorder: Recorder
-    ) -> DBusMessage? {
+    private static func manager(_ call: DBusReceivedMessage, member: String, body: [DBusValue]) -> DBusMessage? {
         switch (member, call.signature.description) {
         case ("GetUser", "u"):
             switch body[0] {

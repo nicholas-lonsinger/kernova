@@ -62,7 +62,7 @@ public enum DarwinSessionState {
 
 /// Follows the console's user in the dynamic store, handing the system peer's state to `onChange` on `queue`:
 /// once at start, then on every change of the console user key (`SCDynamicStoreKeyCreateConsoleUser`).
-public final class ConsoleUserWatcher: Sendable {
+final class ConsoleUserWatcher: Sendable {
     /// Set once; the dynamic store's calls are safe from any thread.
     private nonisolated(unsafe) let store: SCDynamicStore
     private let cancelled = Locked(false)
@@ -75,7 +75,7 @@ public final class ConsoleUserWatcher: Sendable {
     }
 
     /// A watcher calling `onChange` on `queue`; nil when the dynamic store cannot be watched.
-    public init?(queue: DispatchQueue, _ onChange: @escaping @Sendable (PeerSessionState) -> Void) {
+    init?(queue: DispatchQueue, _ onChange: @escaping @Sendable (PeerSessionState) -> Void) {
         let box = Box(onChange)
         var context = SCDynamicStoreContext(
             version: 0, info: Unmanaged.passUnretained(box).toOpaque(), retain: nil, release: nil,
@@ -97,7 +97,7 @@ public final class ConsoleUserWatcher: Sendable {
     }
 
     /// Stops watching.
-    public func cancel() {
+    func cancel() {
         guard
             !cancelled.withLock({ cancelled in
                 defer { cancelled = true }; return cancelled
@@ -114,9 +114,9 @@ public final class ConsoleUserWatcher: Sendable {
 /// Watches an install root for its `current` link to point away from the slot this process runs from, as an
 /// update's switch, a fresh install's or the rollback check's revert moves it, or to go, as an uninstall removes
 /// it, and calls `onChange` once, on `queue`.
-public final class SlotLinkWatcher: Sendable {
+final class SlotLinkWatcher: Sendable {
     /// What happened to the link.
-    public enum Change: Sendable, Equatable {
+    enum Change: Sendable, Equatable {
         /// It points at another slot.
         case moved
         /// It is gone, or names no slot.
@@ -126,7 +126,7 @@ public final class SlotLinkWatcher: Sendable {
     private let source: any DispatchSourceFileSystemObject
 
     /// A watcher of `root`, whose process runs from `runningSlot`; nil when the root cannot be opened.
-    public init?(
+    init?(
         root: String, runningSlot: String, queue: DispatchQueue, onChange: @escaping @Sendable (Change) -> Void
     ) {
         let directory = open(root, O_EVTONLY | O_DIRECTORY | O_CLOEXEC)
@@ -154,7 +154,7 @@ public final class SlotLinkWatcher: Sendable {
     }
 
     /// Stops watching.
-    public func cancel() {
+    func cancel() {
         source.cancel()
     }
 }

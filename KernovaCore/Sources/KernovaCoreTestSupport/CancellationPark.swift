@@ -22,9 +22,6 @@ final class CancellationPark: Sendable {
 
     private let state = Mutex(State())
 
-    /// Whether the task that parked here has been cancelled.
-    var wasCancelled: Bool { state.withLock { $0.cancelled } }
-
     /// Suspends until the calling task is cancelled.
     func park() async {
         await withTaskCancellationHandler {

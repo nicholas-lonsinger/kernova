@@ -23,10 +23,6 @@ private func yieldProcessor() {
 
 @Suite("Locked")
 struct LockedTests {
-    private struct Refusal: Error, Equatable {
-        let code: Int
-    }
-
     @Test("Concurrent read-modify-writes each see the previous one's result")
     func concurrentMutationIsExclusive() {
         let counter = Locked(0)

@@ -695,17 +695,3 @@ extension VMActivity {
 private final class Landed<T> {
     var value: T?
 }
-
-/// Runs `body` with the ``VMGuestExecution`` of a running fixture VM's live
-/// session, inside an operation that holds it — for a test that drives a
-/// session's resume directly.
-@MainActor
-func withLiveGuestExecution(
-    _ body: @MainActor (borrowing VMGuestExecution) async throws -> Void
-) async throws {
-    let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
-    try await instance.activity.perform(.pausing) { context in
-        try await body(context.liveExecution())
-        return .rest(.asStarted, ())
-    }
-}

@@ -1,4 +1,3 @@
-import KernovaAgentSimulation
 import Testing
 
 @Suite("Simulation scenarios")

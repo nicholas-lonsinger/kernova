@@ -26,17 +26,14 @@ import KernovaTestSupport
 /// bundle that vanished from disk and evict it.
 final class MockVMStorageService: VMStorageProviding {
     private struct State {
-        var listVMBundlesCallCount = 0
         var deleteVMBundleCallCount = 0
         var permanentlyDeleteVMBundleCallCount = 0
-        var createVMBundleCallCount = 0
         var cloneVMBundleCallCount = 0
         var publishBundleCallCount = 0
         var reclaimStagedBundlesCallCount = 0
         var discardedStagedURLs: [URL] = []
         var stagedBundleURLs: [URL] = []
         var lastCloneRelativePaths: [String]?
-        var createVMBundleError: (any Error)?
         var cloneVMBundleError: (any Error)?
         var publishBundleError: (any Error)?
         var discardStagedBundleError: (any Error)?
@@ -102,14 +99,12 @@ final class MockVMStorageService: VMStorageProviding {
 
     // MARK: - Call Tracking
 
-    var listVMBundlesCallCount: Int { state.withLock { $0.listVMBundlesCallCount } }
     /// Replaces of `config.json` that landed, in any bundle.
     var saveConfigurationCallCount: Int { files.replaceCount(of: VMBundleLayout.configRelativePath) }
     /// Replaces of `host-state.json` that landed, in any bundle.
     var saveHostStateCallCount: Int { files.replaceCount(of: VMBundleLayout.hostStateRelativePath) }
     var deleteVMBundleCallCount: Int { state.withLock { $0.deleteVMBundleCallCount } }
     var permanentlyDeleteVMBundleCallCount: Int { state.withLock { $0.permanentlyDeleteVMBundleCallCount } }
-    var createVMBundleCallCount: Int { state.withLock { $0.createVMBundleCallCount } }
     var cloneVMBundleCallCount: Int { state.withLock { $0.cloneVMBundleCallCount } }
     var publishBundleCallCount: Int { state.withLock { $0.publishBundleCallCount } }
     var reclaimStagedBundlesCallCount: Int { state.withLock { $0.reclaimStagedBundlesCallCount } }
@@ -129,10 +124,6 @@ final class MockVMStorageService: VMStorageProviding {
 
     /// Each sets the error every later call of its operation throws; `nil`
     /// clears it.
-    func setCreateVMBundleError(_ error: (any Error)?) {
-        state.withLock { $0.createVMBundleError = error }
-    }
-
     func setCloneVMBundleError(_ error: (any Error)?) {
         state.withLock { $0.cloneVMBundleError = error }
     }
@@ -242,10 +233,7 @@ final class MockVMStorageService: VMStorageProviding {
     }
 
     func listVMBundles() throws -> [URL] {
-        try state.withLock { state in
-            state.listVMBundlesCallCount += 1
-            if let error = state.listVMBundlesError { throw error }
-        }
+        if let error = state.withLock({ $0.listVMBundlesError }) { throw error }
         // Mirrors the real service's hidden-skipping enumeration, which never
         // admits a bundle still being written under `.Staging`.
         let staging = stagingRoot.url.standardizedFileURL
@@ -269,10 +257,6 @@ final class MockVMStorageService: VMStorageProviding {
     /// Records the directory as held, so the configuration the create writes
     /// next lands in ``files`` rather than on disk.
     func createVMBundle(at bundleURL: URL) throws {
-        try state.withLock { state in
-            state.createVMBundleCallCount += 1
-            if let error = state.createVMBundleError { throw error }
-        }
         files.setData(nil, atRelativePath: VMBundleLayout.configRelativePath, in: bundleURL)
     }
 

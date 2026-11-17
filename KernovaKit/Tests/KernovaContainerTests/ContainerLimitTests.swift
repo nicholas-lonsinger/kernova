@@ -5,7 +5,6 @@ import Foundation
 #endif
 
 import KernovaContainer
-import KernovaPortableTestSupport
 import KernovaWire
 import Testing
 

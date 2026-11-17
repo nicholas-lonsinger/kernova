@@ -67,7 +67,7 @@ final class LinkObserver {
 
     /// Takes the bytes one read delivers to `side`; returns how many frames on
     /// streams other than 0 the read completed.
-    func delivered(_ bytes: Data, to side: SimSide, world: SimWorld) -> Int {
+    func delivered(_ bytes: Data, to side: SimSide) -> Int {
         delivered[side]?.append(bytes)
         var streamFrames = 0
         while let frame = try? delivered[side]?.nextFrame() {
@@ -351,7 +351,7 @@ package final class PropertyChecker {
     /// Hello, a liveness change, `.closed`), and at most two events for each
     /// stream frame read and each stream the turn may close.
     func pendingEvents(
-        _ link: SimLink, _ side: SimSide, before: Int, streamFrames: Int, streams: Int, world: SimWorld
+        _ link: SimLink, _ side: SimSide, before: Int, streamFrames: Int, streams: Int
     ) {
         guard !options.hostile else { return }
         let pending = link.pendingEventCount(side)
@@ -538,7 +538,7 @@ package final class PropertyChecker {
                     fail("property 3: link \(link.id) \(side) ended without .closed")
                 }
             }
-            checkConservation(link, world)
+            checkConservation(link)
         }
         for violation in Self.routingViolations(world.hub.routingLog) { fail(violation) }
         for ask in world.hub.asks where ask.expectedFirst != ask.peer {
@@ -554,7 +554,7 @@ package final class PropertyChecker {
     /// Property 4 at quiescence, each direction: the sender's credit, what it has
     /// queued, what the receiver holds and the credit it has not yet returned sum
     /// to the 16 MiB connection window.
-    private func checkConservation(_ link: SimLink, _ world: SimWorld) {
+    private func checkConservation(_ link: SimLink) {
         guard link.toHost.isEmpty, link.toPeer.isEmpty, !link.toHost.writePending, !link.toPeer.writePending,
             link.state(.host) == .established, link.state(.peer) == .established,
             let host = link.footprint(.host), let peer = link.footprint(.peer)

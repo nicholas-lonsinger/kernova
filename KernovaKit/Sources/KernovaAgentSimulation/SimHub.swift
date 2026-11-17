@@ -186,7 +186,7 @@ package final class SimHub {
             case .dropped(let count): logDropped += count
             }
         case .update(let serve):
-            handleUpdate(serve, link: link, world: world)
+            handleUpdate(serve, world: world)
         case .items(let event):
             world.itemOutput(.event(event), link: link, side: .host)
         case .dragTake(let event):
@@ -243,7 +243,7 @@ package final class SimHub {
 
     // MARK: The payload source
 
-    private func handleUpdate(_ event: UpdateServeEvent, link: SimLink, world: SimWorld) {
+    private func handleUpdate(_ event: UpdateServeEvent, world: SimWorld) {
         switch event {
         case .pullRequested:
             break

@@ -531,11 +531,11 @@ struct ClipboardCopyTests {
         #expect(later.count == 4)
     }
 
-    /// A passthrough write of one text item, concealed unless `concealed` is false, through a puller only it
-    /// holds, on `pasteboard`.
-    private func writeWatched(
-        on pasteboard: FakePasteboard, _ publisher: ClipboardPasteboardPublisher, concealed: Bool = true
-    ) -> () -> CountingPuller? {
+    /// A passthrough write of one text item through `publisher`, concealed unless `concealed` is false, through a
+    /// puller only it holds.
+    private func writeWatched(_ publisher: ClipboardPasteboardPublisher, concealed: Bool = true)
+        -> () -> CountingPuller?
+    {
         var item = OfferedItem()
         item.representations = [Self.representation(ClipboardContent.utf8TextUTI, .inline)]
         weak var watched: CountingPuller?
@@ -559,7 +559,7 @@ struct ClipboardCopyTests {
         defer { registry.releaseAllForTesting() }
         let publisher = ClipboardPasteboardPublisher(
             pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
-        let watched = writeWatched(on: pasteboard, publisher, concealed: false)
+        let watched = writeWatched(publisher, concealed: false)
         let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
         #expect(pasteboard.promisedTypesByItem == [[text]])
         let paste = Task.detached { pasteboard.invokeProvider(forType: text) }
@@ -581,7 +581,7 @@ struct ClipboardCopyTests {
         defer { registry.releaseAllForTesting() }
         let publisher = ClipboardPasteboardPublisher(
             pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
-        let watched = writeWatched(on: pasteboard, publisher)
+        let watched = writeWatched(publisher)
         let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
         let paste = Task.detached { pasteboard.invokeProvider(forType: text) }
         #expect(await paste.value == Data("a password".utf8))

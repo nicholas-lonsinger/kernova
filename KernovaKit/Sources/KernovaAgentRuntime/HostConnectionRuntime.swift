@@ -8,7 +8,6 @@ import Dispatch
 import KernovaAgentCore
 import KernovaLogging
 import KernovaSynchronization
-import KernovaWire
 
 /// The host's side of the agent protocol: one `ConnectionDriver` with a new `HostEndpoint` per accepted
 /// stream, each endpoint's payload reads answered by the update payload source and its item effects by

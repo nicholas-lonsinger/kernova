@@ -1,7 +1,6 @@
 import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
-import KernovaAgentRuntime
 import KernovaCommandModel
 import KernovaTestSupport
 import KernovaWire
@@ -123,10 +122,6 @@ struct GuestAgentPresentationTests {
     }
 
     // MARK: Away peers
-
-    private static func away(_ peer: PeerSummary, relaunching: Bool = false, order: UInt64 = 1) -> AwayPeer {
-        AwayPeer(summary: peer, relaunching: relaunching, order: order, since: SystemScheduler().now)
-    }
 
     /// `scope` as the session reads it, its agent last seen at `version`: by default connected earlier this
     /// session and gone now.

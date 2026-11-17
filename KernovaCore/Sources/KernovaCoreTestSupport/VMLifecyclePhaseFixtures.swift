@@ -2,41 +2,6 @@ import Foundation
 
 @testable import KernovaCore
 
-/// The case a ``VMLifecyclePhase`` belongs to, with no associated value —
-/// `VMLifecyclePhase` cannot be `CaseIterable` itself because of those, so
-/// this is what lets ``VMLifecyclePhaseFixtures/all`` be checked against
-/// `allCases` rather than trusted by inspection.
-enum VMLifecyclePhaseKind: CaseIterable, Hashable {
-    case stopped
-    case initialBoot
-    case failed
-    case suspended
-    case running
-    case livePaused
-    case operating
-    case removed
-}
-
-extension VMLifecyclePhase {
-    /// This phase's ``VMLifecyclePhaseKind``.
-    ///
-    /// Exhaustive rather than `default`, so a case added to `VMLifecyclePhase`
-    /// fails this switch's compile instead of silently under-covering
-    /// ``VMLifecyclePhaseFixtures/all``.
-    var kind: VMLifecyclePhaseKind {
-        switch self {
-        case .stopped: .stopped
-        case .initialBoot: .initialBoot
-        case .failed: .failed
-        case .suspended: .suspended
-        case .running: .running
-        case .livePaused: .livePaused
-        case .operating: .operating
-        case .removed: .removed
-        }
-    }
-}
-
 /// Every settled `VMLifecyclePhase` case, and an operation of each
 /// declaration shape, shared by the suites that sweep all of them.
 @MainActor

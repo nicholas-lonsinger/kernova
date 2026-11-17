@@ -34,11 +34,11 @@ public enum DBusTransportError: Error, Hashable, Sendable {
 }
 
 /// A connected AF_UNIX stream socket.
-public final class UnixSocketTransport: DBusTransport {
+final class UnixSocketTransport: DBusTransport {
     private let descriptor: Int32
 
     /// Connects to `socket`.
-    public init(connectingTo target: DBusAddress.UnixSocket) throws(DBusTransportError) {
+    init(connectingTo target: DBusAddress.UnixSocket) throws(DBusTransportError) {
         var address = sockaddr_un()
         address.sun_family = sa_family_t(AF_UNIX)
         let name: [UInt8]
@@ -79,7 +79,7 @@ public final class UnixSocketTransport: DBusTransport {
     }
 
     /// Blocks until bytes arrive; 0 means the peer closed.
-    public func read(into buffer: UnsafeMutableRawBufferPointer) throws(DBusTransportError) -> Int {
+    func read(into buffer: UnsafeMutableRawBufferPointer) throws(DBusTransportError) -> Int {
         while true {
             let count = recv(descriptor, buffer.baseAddress, buffer.count, 0)
             if count >= 0 { return count }
@@ -89,7 +89,7 @@ public final class UnixSocketTransport: DBusTransport {
 
     /// Blocks until every byte is written. MSG_NOSIGNAL turns a closed peer
     /// into EPIPE here rather than a SIGPIPE that ends the process.
-    public func write(_ bytes: [UInt8]) throws(DBusTransportError) {
+    func write(_ bytes: [UInt8]) throws(DBusTransportError) {
         var offset = 0
         while offset < bytes.count {
             let count = bytes.withUnsafeBytes { raw in
@@ -104,7 +104,7 @@ public final class UnixSocketTransport: DBusTransport {
     }
 
     /// Shuts the socket down both ways; the descriptor closes on deinit.
-    public func shutdown() {
+    func shutdown() {
         shutdownBothWays(descriptor)
     }
 }

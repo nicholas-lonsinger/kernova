@@ -24,7 +24,7 @@ extension POSIXTreeFileSystem {
     /// `EOPNOTSUPP`.
     static let unheldAttributeCodes: Set<Int32> = [EINVAL, EOPNOTSUPP, EPERM]
 
-    static func bypassCache(_ descriptor: Int32) {}
+    static func bypassCache(_: Int32) {}
 
     static func closeReporting(_ descriptor: Int32) -> Int32 {
         #if canImport(Glibc)
@@ -74,7 +74,7 @@ extension POSIXTreeFileSystem {
         return descriptor
     }
 
-    static func closeAttributes(_ descriptor: Int32, of target: TreeEntryTarget) {}
+    static func closeAttributes(_: Int32, of _: TreeEntryTarget) {}
 
     static func listAttributes(_ descriptor: Int32, _ names: UnsafeMutableRawPointer?, _ size: Int) -> Int {
         kernova_list_xattr(descriptor, names?.assumingMemoryBound(to: CChar.self), size)
@@ -95,7 +95,7 @@ extension POSIXTreeFileSystem {
     static let unreportedHoleCodes: Set<Int32> = [EINVAL, ENOTTY, EOPNOTSUPP]
 
     /// Linux's file systems take any name of bytes but `/` and NUL.
-    static func nameRefusal(_ name: [UInt8]) -> TreeFileSystemError? { nil }
+    static func nameRefusal(_: [UInt8]) -> TreeFileSystemError? { nil }
 
     static func renameExclusive(
         _ directory: Int32, _ name: UnsafePointer<CChar>, _ newDirectory: Int32, _ newName: UnsafePointer<CChar>

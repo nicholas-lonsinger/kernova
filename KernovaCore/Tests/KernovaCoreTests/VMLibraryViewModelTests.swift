@@ -1,10 +1,8 @@
 import CryptoKit
 import Foundation
-import KernovaAgentCore
 import KernovaAgentHost
 import KernovaCommandModel
 import KernovaTestSupport
-import KernovaWire
 import Testing
 
 @testable import KernovaCore
@@ -2213,28 +2211,6 @@ struct VMLibraryViewModelTests {
         #expect(presenter.showError == true)
         let staged = try #require(storage.stagedBundleURLs.last)
         #expect(storage.discardedStagedURLs == [staged])
-    }
-
-    /// Clones a VM while an arrival of `kind` for another VM is still writing.
-    private func cloneProceeds(beside kind: VMArrival.Kind) async throws {
-        let (viewModel, storage, _, _, _) = makeViewModel()
-        let gate = GatedStep()
-        let existing = viewModel.library.beginGatedArrival(kind, named: "In Flight", gate: gate)
-        let instance = viewModel.library.admitFixture(name: "Source")
-        instance.activity.placeForTesting(.stopped)
-        storage.setConfiguration(instance.configuration, at: instance.bundleURL)
-
-        viewModel.cloneVM(instance)
-
-        let clone = try #require(viewModel.arrivals.first { $0.id != existing.id })
-        await clone.settle()
-
-        #expect(viewModel.entries.count == 3)
-        #expect(viewModel.instances.map(\.id).contains(clone.id))
-        #expect(presenter.showError == false)
-
-        gate.release()
-        await existing.settle()
     }
 
     // MARK: - Clone Machine Identity
