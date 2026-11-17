@@ -649,6 +649,47 @@ struct HubClipboardServiceTests {
         #expect(pasteboard.promisedTypes.isEmpty)
     }
 
+    /// A guest file over the default paste ceiling.
+    private static var oversizeFile: Representation {
+        var file = representation("public.data", .file, name: "big.bin")
+        file.sizeEstimate = 3 << 30
+        return file
+    }
+
+    @Test(
+        "Passthrough of the guest's text and a file over the paste ceiling writes the text and says the file was left out"
+    )
+    func passthroughLeavesOutAnOversizeFile() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let coordinator = try startPassthrough(instance)
+        defer { coordinator.stop() }
+        try await receive(
+            Self.item(Self.representation(NSPasteboard.PasteboardType.string.rawValue, .inline), Self.oversizeFile),
+            on: probe, into: instance)
+
+        #expect(
+            try await reported(instance, .copy)
+                == .filesLeftOut(count: 1, limitBytes: instance.effectiveClipboardMaxPasteBytes))
+        #expect(try hostPasteboard(instance).promisedTypes == [.string])
+    }
+
+    @Test("Passthrough of a guest file over the paste ceiling, and nothing else, leaves the Mac's clipboard as it was")
+    func passthroughRefusesAnOversizeFileAlone() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await connected(probe)
+        let pasteboard = try hostPasteboard(instance)
+        #expect(pasteboard.setString("the Mac's", forType: .string))
+        let coordinator = try startPassthrough(instance)
+        defer { coordinator.stop() }
+        try await receive(Self.item(Self.oversizeFile), on: probe, into: instance)
+
+        #expect(
+            try await reported(instance, .copy) == .tooLarge(limitBytes: instance.effectiveClipboardMaxPasteBytes))
+        #expect(pasteboard.items.first?.data(forType: .string) == Data("the Mac's".utf8))
+        #expect(pasteboard.promisedTypes.isEmpty)
+    }
+
     @Test("A guest that wrote Copy to Guest without its files has that said, with the limit")
     func copyToGuestFilesWithheldIsReported() async throws {
         let probe = AgentHubProbe()

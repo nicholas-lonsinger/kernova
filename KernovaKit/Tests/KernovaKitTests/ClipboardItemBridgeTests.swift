@@ -134,16 +134,19 @@ struct ClipboardItemBridgeTests {
         return source
     }
 
-    private func publish(_ source: ClipboardOfferSource, servingFileURLs: Bool = true) throws -> Published {
+    private func publish(
+        _ source: ClipboardOfferSource, pasteCeiling: Int = .max,
+        expecting outcome: ClipboardOfferPublishOutcome = .written
+    ) throws -> Published {
         let landing = try directory("landing-\(UUID().uuidString)")
         let destination = FakePasteboard()
         let registry = LazyClipboardProviderRegistry()
         let publisher = ClipboardPasteboardPublisher(pasteboard: destination, providerRegistry: registry)
         #expect(
             publisher.publish(
-                source.items, concealed: source.concealed, servingFileURLs: servingFileURLs,
+                source.items, concealed: source.concealed, pasteCeiling: pasteCeiling,
                 puller: OfferPuller(source: source, landing: landing),
-                serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection)))
+                serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection)) == outcome)
         return Published(destination: destination, registry: registry, landing: landing)
     }
 
@@ -240,7 +243,7 @@ struct ClipboardItemBridgeTests {
         #expect(try Data(contentsOf: landed) == Data("file body".utf8))
     }
 
-    @Test("an image file also offers its bytes inline, which withholding file URLs keeps")
+    @Test("an image file also offers its bytes inline, which a paste ceiling its file is over keeps")
     func imageFileOffersItsBytesInline() async throws {
         let file = try directory("copied").appendingPathComponent("photo.png")
         try pngBytes.write(to: file)
@@ -255,7 +258,7 @@ struct ClipboardItemBridgeTests {
         #expect(published.destination.promisedTypesByItem == [[.fileURL, .png]])
         #expect(await published.paste(.png) == pngBytes)
 
-        let withheld = try publish(source, servingFileURLs: false)
+        let withheld = try publish(source, pasteCeiling: 0, expecting: .writtenWithoutFiles(count: 1, limitBytes: 0))
         defer { withheld.registry.releaseAllForTesting() }
         #expect(withheld.destination.promisedTypesByItem == [[.png]])
     }
@@ -524,9 +527,9 @@ struct ClipboardItemBridgeTests {
         let destination = FakePasteboard()
         let registry = LazyClipboardProviderRegistry()
         defer { registry.releaseAllForTesting() }
-        ClipboardPasteboardPublisher(pasteboard: destination, providerRegistry: registry)
+        _ = ClipboardPasteboardPublisher(pasteboard: destination, providerRegistry: registry)
             .publish(
-                [item], concealed: false, puller: FixedPuller(bytes: bytes),
+                [item], concealed: false, pasteCeiling: .max, puller: FixedPuller(bytes: bytes),
                 serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection)
             )
         return await offCooperativePool { destination.invokeProvider(forType: .init(uti)) }

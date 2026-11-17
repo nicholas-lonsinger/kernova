@@ -55,11 +55,9 @@ package protocol ClipboardServicing: AnyObject {
     /// when none can be staged.
     func reservePromiseDestination() -> URL?
 
-    /// The guest's clipboard as passthrough places it on the host pasteboard — metadata only, synchronously.
-    ///
-    /// A live guest offer becomes one `.offer` whose bytes are pulled when a paste consumes them; files that can never be served
-    /// are reported as `.droppedFile`.
-    func guestClipboardItems() -> [CopyToMacItem]
+    /// The guest's live offer as passthrough places it on the host pasteboard — metadata only, synchronously — or
+    /// nil when there is none.
+    func guestClipboardOffer() -> CopyToMacOffer?
 }
 
 /// What became of a copy command's copy of the guest's clipboard.
@@ -96,34 +94,13 @@ package struct GuestCopyContents {
     let release: @MainActor () -> Void
 }
 
-/// A guest's live offer as passthrough places it on the host pasteboard: every item promised, its bytes pulled
-/// through `puller` only when a paste asks for them.
+/// A guest's live offer as passthrough places it on the host pasteboard: written within the paste ceiling
+/// `limitBytes`, its bytes pulled through `puller` only when a paste asks for them.
 package struct CopyToMacOffer: Sendable {
     /// The offer, which a retraction of its write names by its token.
     let serving: ClipboardWriteSource.Serving
     let items: [OfferedItem]
     let concealed: Bool
-    /// `false` leaves `public.file-url` off every item — the over-cap refusal,
-    /// whose inline flavors keep serving.
-    let servingFileURLs: Bool
+    let limitBytes: Int
     let puller: any ClipboardItemPulling
-}
-
-/// One item passthrough places on the host pasteboard.
-package enum CopyToMacItem: Sendable {
-    /// A guest offer, promised whole; its bytes cross the wire only when a
-    /// paste consumes them.
-    case offer(CopyToMacOffer)
-    /// A file payload that can't be served — the `reason` drives the
-    /// user-facing message.
-    case droppedFile(CopyToMacDropReason)
-}
-
-/// Why a file payload couldn't be placed on the host pasteboard.
-package enum CopyToMacDropReason: Sendable, Equatable {
-    /// The offer's `public.file-url`-serving reps total over the user's paste
-    /// ceiling (`ClipboardPasteLimit`), so no paste could pull them inside the OS
-    /// pasteboard-promise deadline. All-or-nothing: the whole set is refused
-    /// together rather than landing piecemeal.
-    case overPasteBudget
 }

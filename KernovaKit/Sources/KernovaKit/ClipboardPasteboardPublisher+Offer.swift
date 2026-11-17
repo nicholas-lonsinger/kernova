@@ -29,8 +29,23 @@ public protocol ClipboardItemPulling: Sendable {
     func whenEnded(_ handler: @escaping @Sendable () -> Void)
 }
 
+/// What publishing a peer's offer (``ClipboardPasteboardPublisher/publish(_:concealed:pasteCeiling:puller:serving:)``)
+/// did to the pasteboard.
+public enum ClipboardOfferPublishOutcome: Equatable, Sendable {
+    /// The offer promises nothing the pasteboard carries: the pasteboard is untouched.
+    case nothingToWrite
+    /// The offer is files alone, over the paste ceiling `limitBytes`: refused whole, the pasteboard untouched.
+    case tooLarge(limitBytes: Int)
+    /// The pasteboard holds the offer whole.
+    case written
+    /// The pasteboard holds the offer without its `count` files, which are over the paste ceiling `limitBytes`.
+    case writtenWithoutFiles(count: Int, limitBytes: Int)
+    /// The pasteboard refused the write: nothing of the offer was placed, and what it held is gone.
+    case writeFailed
+}
+
 extension ClipboardPasteboardPublisher {
-    nonisolated private static let pullLogger = KernovaLogger(
+    nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardPasteboardPublisher")
 
     /// The longest a paste's provider holds its thread for a pull: 120 s, when
@@ -40,23 +55,48 @@ extension ClipboardPasteboardPublisher {
     /// that is left to do.
     nonisolated static let pasteRequesterDeadline: TimeInterval = 120
 
-    /// Publishes a peer's offer: one pasteboard item per offered item, every
-    /// type promised and pulled through `puller` only when a paste asks for it.
+    /// Publishes a peer's offer as its ``ClipboardPromisePolicy/copyPlan(_:room:)`` within `limitBytes` decides:
+    /// one pasteboard item per offered item, every type promised and pulled through `puller` only when a paste
+    /// asks for it. Files over the ceiling are left out, and an offer that is nothing else is not written.
     ///
-    /// `servingFileURLs` false withholds `public.file-url`, as a paste over
-    /// the cap requires. A concealed offer marks each item with
-    /// `org.nspasteboard.ConcealedType`. The write serves `offer`, so
+    /// A concealed offer marks each item with `org.nspasteboard.ConcealedType`. The write serves `offer`, so
     /// ``retractWrite(servingOffer:withdrawing:)`` withdraws it once that offer ends.
-    @discardableResult
     public func publish(
-        _ items: [OfferedItem], concealed: Bool, servingFileURLs: Bool = true, puller: any ClipboardItemPulling,
+        _ items: [OfferedItem], concealed: Bool, pasteCeiling limitBytes: Int, puller: any ClipboardItemPulling,
         serving offer: ClipboardWriteSource.Serving
-    ) -> Bool {
-        write(
-            Self.itemSpecs(for: items, concealed: concealed, servingFileURLs: servingFileURLs, puller: puller),
-            source: ClipboardWriteSource(
-                serving: offer,
-                parts: [.init(items: items, concealed: concealed, servingFileURLs: servingFileURLs, puller: puller)]))
+    ) -> ClipboardOfferPublishOutcome {
+        let plan = ClipboardPromisePolicy.copyPlan(items, room: UInt64(clamping: limitBytes))
+        let filesLeftOut: Int
+        switch plan {
+        case .tooLarge:
+            Self.logger.log(
+                .notice, "An offer's files are over the \(limitBytes, privacy: .public)-byte paste ceiling: not written"
+            )
+            return .tooLarge(limitBytes: limitBytes)
+        case .whole: filesLeftOut = 0
+        case .withoutFiles(let count): filesLeftOut = count
+        }
+        let specs = Self.itemSpecs(
+            for: items, concealed: concealed, servingFileURLs: plan.servesFileURLs, puller: puller)
+        guard !specs.isEmpty else {
+            Self.logger.log(.notice, "An offer promises nothing a pasteboard carries: not written")
+            return .nothingToWrite
+        }
+        let source = ClipboardWriteSource(
+            serving: offer,
+            parts: [.init(items: items, concealed: concealed, servingFileURLs: plan.servesFileURLs, puller: puller)])
+        guard write(specs, source: source) else {
+            Self.logger.log(.error, "The pasteboard refused an offer's write")
+            return .writeFailed
+        }
+        guard filesLeftOut == 0 else {
+            Self.logger.log(
+                .notice,
+                "An offer's \(filesLeftOut, privacy: .public) file(s) are over the \(limitBytes, privacy: .public)-byte paste ceiling: written without them"
+            )
+            return .writtenWithoutFiles(count: filesLeftOut, limitBytes: limitBytes)
+        }
+        return .written
     }
 
     /// Writes a peer's copy: each kept INLINE representation as the data
@@ -137,7 +177,7 @@ extension ClipboardPasteboardPublisher {
         }
     }
 
-    /// The item specs promising `items`, as ``publish(_:concealed:servingFileURLs:puller:)``
+    /// The item specs promising `items`, as ``publish(_:concealed:pasteCeiling:puller:serving:)``
     /// writes them.
     ///
     /// An item none of whose representations is kept is left out, so a paste
@@ -189,7 +229,7 @@ extension ClipboardPasteboardPublisher {
         start: (_ completion: @escaping @Sendable (Value?) -> Void) -> Void
     ) -> Value? {
         guard let wait = ThreadHold.Wait(eventLoop: eventLoopWait()) else {
-            pullLogger.log(.notice, "A paste fired on the main thread outside its run loop's base; nothing pulled")
+            logger.log(.notice, "A paste fired on the main thread outside its run loop's base; nothing pulled")
             return nil
         }
         let completed = Locked<Value??>(nil)
@@ -203,7 +243,7 @@ extension ClipboardPasteboardPublisher {
         }
         let deadline = DispatchTime.now() + pasteRequesterDeadline
         guard let value = wait.hold(deadline: deadline, until: { completed.withLock { $0 } }) else {
-            pullLogger.log(
+            logger.log(
                 .notice,
                 "A paste gave up on its pull after \(pasteRequesterDeadline, privacy: .public) s; the pull runs on")
             return nil
