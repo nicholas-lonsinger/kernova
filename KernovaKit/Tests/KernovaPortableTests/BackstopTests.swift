@@ -7,6 +7,11 @@ import Testing
 /// A failure an operation throws, told apart from the backstop's own.
 private struct Refusal: Error, Equatable {}
 
+/// A park's `resume`, kept to call once the wait has ended.
+private struct LateResume {
+    var resume: (@Sendable (Int) -> Void)?
+}
+
 /// Blocks the calling thread until `release` is signalled, whatever cancels the task it runs in.
 private func block(until release: DispatchSemaphore) {
     _ = release.wait(timeout: .now() + testWaitBackstop)
@@ -53,13 +58,13 @@ struct BackstopTests {
             try await Backstop("a callback made twice").park { resume in
                 resume(1); resume(2)
             } == 1)
-        let late = Locked<(@Sendable (Int) -> Void)?>(nil)
+        let late = Locked(LateResume())
         // deadline-under-test - the deadline firing is the asserted outcome
         let backstop = Backstop("a callback made after the deadline", timeout: 0.1)
         await #expect(throws: TestFailure.self) {
-            let _: Int = try await backstop.park { resume in late.withLock { $0 = resume } }
+            let _: Int = try await backstop.park { resume in late.withLock { $0.resume = resume } }
         }
-        late.withLock { $0 }?(3)
+        late.withLock(\.resume)?(3)
     }
 
     #if canImport(Darwin)
