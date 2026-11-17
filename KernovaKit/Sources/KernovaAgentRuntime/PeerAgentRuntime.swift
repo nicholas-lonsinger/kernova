@@ -106,11 +106,10 @@ public final class PeerAgentRuntime: Sendable {
         queue.async { [self] in
             registry.power?.start(reporter: PowerReporter { [self] input in report(.power(input)) })
             registry.update?.start(reporter: UpdateReporter { [self] input in report(.update(input)) })
-            registry.logs?.recordsAvailable.withLock { hook in
-                hook = { [self] in
-                    queue.async { [self] in state.withLock { $0.driver }?.handle(.logs(.recordsAvailable)) }
-                }
+            let wake = LogForwarding.Wake { [self] in
+                queue.async { [self] in state.withLock { $0.driver }?.handle(.logs(.recordsAvailable)) }
             }
+            registry.logs?.recordsAvailable.withLock { $0 = wake }
             step { _, _ in }
         }
     }

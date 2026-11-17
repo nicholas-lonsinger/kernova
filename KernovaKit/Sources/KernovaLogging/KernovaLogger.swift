@@ -43,15 +43,35 @@ public struct KernovaLogger: Sendable {
 
     // MARK: - Forwarding sink
 
-    /// Receives every emission for forwarding to a remote destination:
-    /// `(level, subsystem, category, message segments)`.
-    public typealias ForwardingSink =
-        @Sendable (
-            _ level: KernovaLogLevel,
-            _ subsystem: String,
-            _ category: String,
-            _ segments: [LogSegment]
-        ) -> Void
+    /// Receives every emission for forwarding to a remote destination.
+    ///
+    /// A struct around the function, so a lock box storing a sink stores a
+    /// struct: a function stored there directly gains a reabstraction thunk
+    /// on every lock hold (`Tools/check-lock-values.sh`).
+    public struct ForwardingSink: Sendable {
+        private let forward: Forward
+
+        /// What a sink does with one emission.
+        public typealias Forward =
+            @Sendable (
+                _ level: KernovaLogLevel,
+                _ subsystem: String,
+                _ category: String,
+                _ segments: [LogSegment]
+            ) -> Void
+
+        /// A sink handing each emission to `forward`.
+        public init(_ forward: @escaping Forward) {
+            self.forward = forward
+        }
+
+        /// Forwards one emission.
+        public func callAsFunction(
+            _ level: KernovaLogLevel, _ subsystem: String, _ category: String, _ segments: [LogSegment]
+        ) {
+            forward(level, subsystem, category, segments)
+        }
+    }
 
     /// Where `log(_:_:)` forwards this logger's records: its own `sink`, or
     /// else the `processSink`; `nil` when there is neither.
@@ -73,7 +93,7 @@ public struct KernovaLogger: Sendable {
     /// Traps when called a second time. A test never calls it: it captures
     /// through a logger built with its own `sink`, injected into the component
     /// under test.
-    public static func bootstrapProcessSink(_ sink: @escaping ForwardingSink) {
+    public static func bootstrapProcessSink(_ sink: ForwardingSink) {
         processSinkStorage.withLock { installed in
             precondition(installed == nil, "KernovaLogger.bootstrapProcessSink called more than once")
             installed = sink

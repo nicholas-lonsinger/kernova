@@ -214,7 +214,12 @@ public final class LogForwarding: Sendable {
     /// The records between the logger and the wire.
     let ring = Locked(LogRing())
     /// Posts `.logs(.recordsAvailable)` to the current connection; never calls a driver synchronously.
-    let recordsAvailable = Locked<(@Sendable () -> Void)?>(nil)
+    let recordsAvailable = Locked<Wake?>(nil)
+
+    /// What an append into an empty ring calls.
+    struct Wake: Sendable {
+        let post: @Sendable () -> Void
+    }
 
     /// An empty ring, buffering.
     public init() {}
@@ -227,7 +232,7 @@ public final class LogForwarding: Sendable {
 
     /// The sink to install with `KernovaLogger.bootstrapProcessSink(_:)`.
     public var sink: KernovaLogger.ForwardingSink {
-        { [self] level, subsystem, category, segments in
+        KernovaLogger.ForwardingSink { [self] level, subsystem, category, segments in
             append(
                 LogRecordValue(
                     timestampMilliseconds: Int64(Date().timeIntervalSince1970 * 1000), level: LogLevelValue(level),
@@ -239,7 +244,7 @@ public final class LogForwarding: Sendable {
     /// Appends `record`, waking the forwarder when the ring was empty.
     public func append(_ record: LogRecordValue) {
         guard ring.withLock({ $0.append(record) }) else { return }
-        recordsAvailable.withLock { $0 }?()
+        recordsAvailable.withLock { $0 }?.post()
     }
 }
 

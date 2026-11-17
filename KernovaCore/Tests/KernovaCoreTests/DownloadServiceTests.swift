@@ -1132,7 +1132,11 @@ final class StubURLProtocol: URLProtocol {
         }
     }
 
-    private static let handler = Mutex<(@Sendable (URLRequest) -> StubResponse)?>(nil)
+    private static let handler = Mutex<Handler?>(nil)
+
+    private struct Handler: Sendable {
+        let respond: @Sendable (URLRequest) -> StubResponse
+    }
 
     /// Sets the response shape for the case in flight, before a download starts.
     ///
@@ -1141,7 +1145,8 @@ final class StubURLProtocol: URLProtocol {
     /// cases — a second suite driving this class would clobber it, which is why the
     /// other URL-stubbing suites each declare their own `URLProtocol`.
     static func setHandler(_ handler: (@Sendable (URLRequest) -> StubResponse)?) {
-        self.handler.withLock { $0 = handler }
+        let installed = handler.map(Handler.init)
+        self.handler.withLock { $0 = installed }
     }
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -1158,7 +1163,7 @@ final class StubURLProtocol: URLProtocol {
             )
             return
         }
-        let stub = handler(request)
+        let stub = handler.respond(request)
         client?.urlProtocol(self, didReceive: stub.response, cacheStoragePolicy: .notAllowed)
         if !stub.body.isEmpty {
             client?.urlProtocol(self, didLoad: stub.body)
