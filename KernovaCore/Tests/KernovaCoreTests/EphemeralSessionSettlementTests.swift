@@ -319,6 +319,30 @@ struct EphemeralSessionSettlementTests {
         #expect(!instance.hostState.hasUnsettledSession)
     }
 
+    @Test("A Restart whose boot fails before the guest executes leaves the session to revert as a Stop's does")
+    func failedRestartBootReverts() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let session = UUID()
+        let (instance, baseline, _) = try makeVM(in: harness, phase: .running(sessionID: session))
+
+        let restart = Task { @MainActor in
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
+        }
+        try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
+        virtualization.startError = Probe()
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+
+        await #expect(throws: (any Error).self) { try await restart.value }
+        await harness.library.waitForRevertsToSettle()
+
+        #expect(virtualization.startCallCount == 1)
+        #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
+        #expect(!instance.hasLiveVirtualMachine)
+        #expect(!instance.hostState.hasUnsettledSession)
+    }
+
     // MARK: - A fresh lock take
 
     @Test("A start finding an Ephemeral VM's session unsettled reverts it first, then starts on the baseline")

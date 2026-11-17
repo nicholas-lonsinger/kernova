@@ -2288,6 +2288,19 @@ struct VMLibraryViewModelTests {
         #expect(clonedID == Self.sourceMachineID)
     }
 
+    @Test("An Exact Copy of a macOS VM with no identity at all mints one")
+    func cloneVMKeepModeMintsMissingMachineID() async {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let source = appendCloneSource(
+            to: viewModel, storage: storage, guestOS: .macOS, machineID: nil)
+
+        viewModel.cloneVM(source, as: .exactCopy)
+        let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
+
+        #expect(source.effectiveMachineIdentifierData == nil)
+        #expect(clonedID != nil)
+    }
+
     // MARK: - Cancel Preparing
 
     @Test("requestCancelPreparing sets state for alert")
