@@ -67,11 +67,6 @@ package struct ItemOfferRegistry: Sendable {
         local.first { $0.offer.token == token }?.feature
     }
 
-    /// The feature of the far side's open offer of `token`; nil when none is open.
-    package func remoteFeature(_ token: Data) -> FeatureID? {
-        remote.first { $0.header.token == token }?.header.feature
-    }
-
     /// The far side's open offer of `token`, held whole: its feature and its items, decoded now; nil while none
     /// is open or it has not arrived whole.
     func remoteOffer(_ token: Data) -> (feature: FeatureID, items: [OfferedItem])? {

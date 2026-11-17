@@ -113,10 +113,7 @@ public struct PowerLedger: Sendable, Equatable {
 }
 
 /// The peer's power machine: one request at a time on this peer.
-struct PowerResponder: FeatureMachine {
-    /// POWER.
-    public static let feature = FeatureID.power
-
+struct PowerResponder: Sendable {
     private enum Phase: Sendable, Equatable {
         case asked, cancelling, accepted
     }
@@ -167,7 +164,7 @@ struct PowerResponder: FeatureMachine {
     }
 
     /// Handles a stream event for POWER_REQUEST.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .opened(let stream, let body):
             opened(stream, body: body, connection: &connection)
@@ -350,9 +347,7 @@ extension PowerInput {
 // MARK: - Host
 
 /// The host's power machine: one entry per open request stream.
-struct PowerRequester: FeatureMachine {
-    /// POWER.
-    public static let feature = FeatureID.power
+struct PowerRequester: Sendable {
     /// The acceptance deadline the host sends.
     static let peerDeadline: UInt32 = 10_000
     /// How long the host waits for ACCEPTED or END.
@@ -423,7 +418,7 @@ struct PowerRequester: FeatureMachine {
     }
 
     /// Handles a stream event for POWER_REQUEST.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .message(let stream, let payload):
             guard let index = entries.firstIndex(where: { $0.stream == stream }) else { return }

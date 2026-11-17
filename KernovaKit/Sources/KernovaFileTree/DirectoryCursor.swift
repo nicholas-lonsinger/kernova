@@ -37,10 +37,6 @@ public struct DirectoryCursor<FileSystem: TreeFileSystem, Frame>: ~Copyable {
         set { level.frame = newValue }
     }
 
-    /// The frame of the directory above the current one, or `nil` at the
-    /// top.
-    public var parentFrame: Frame? { ancestors.last?.frame }
-
     /// Whether the cursor is at the directory it started from.
     public var isAtTop: Bool { ancestors.isEmpty }
 

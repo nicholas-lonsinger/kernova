@@ -104,7 +104,7 @@ struct VMLifecycleCoordinatorTests {
             instance.activity.placeForTesting(.operating(.reconcilingMedia, from: live))
 
             if forced {
-                try await coordinator.forceStop(instance)
+                try await coordinator.forceStop(instance).resolved()
             } else {
                 try await coordinator.requestStop(instance)
             }

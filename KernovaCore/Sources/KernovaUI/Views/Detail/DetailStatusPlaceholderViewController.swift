@@ -1,12 +1,15 @@
 import AppKit
+import KernovaCommandModel
 
 /// Centered spinner + status label shown in the detail pane during transient
 /// states (starting, suspending, restoring, …) and for a selected arrival — a
-/// create, clone or import still writing its bundle.
+/// create, clone or import still writing its bundle — with how to end the VM's
+/// process beneath while a Force Stop waits on it.
 @MainActor
 final class DetailStatusPlaceholderViewController: NSViewController {
     private let spinner = NSProgressIndicator()
     private let label = NSTextField(labelWithString: "")
+    private let processEnd = VMProcessEndInstructionView(textColor: .secondaryLabelColor)
 
     override func loadView() {
         spinner.style = .spinning
@@ -19,7 +22,7 @@ final class DetailStatusPlaceholderViewController: NSViewController {
         label.alignment = .center
         label.isSelectable = false
 
-        let stack = NSStackView(views: [spinner, label])
+        let stack = NSStackView(views: [spinner, label, processEnd])
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = Spacing.medium
@@ -44,8 +47,10 @@ final class DetailStatusPlaceholderViewController: NSViewController {
         spinner.stopAnimation(nil)
     }
 
-    /// Sets the status text shown beneath the spinner.
-    func configure(label text: String) {
+    /// Sets the status text shown beneath the spinner, and the process-end
+    /// instruction beneath that — none when `processEnd` is `nil`.
+    func configure(label text: String, processEnd instruction: VMProcessEndInstruction? = nil) {
         label.stringValue = text
+        processEnd.instruction = instruction
     }
 }

@@ -60,7 +60,7 @@ public struct ISO9660Date: Sendable, Equatable {
 }
 
 /// Why ``ISO9660Writer`` refused to write an image.
-public enum ISO9660Error: Error, Sendable, Equatable {
+enum ISO9660Error: Error, Sendable, Equatable {
     /// The volume identifier is empty, longer than 32 characters, or holds a character other than `A`–`Z`,
     /// `0`–`9` and `_`.
     case invalidVolumeIdentifier(String)

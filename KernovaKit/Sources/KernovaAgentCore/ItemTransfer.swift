@@ -308,10 +308,7 @@ public enum ItemTransferInput: Sendable, Equatable {
 /// after every change to the registry the server resets the pulls of offers it
 /// no longer holds that it has not sent whole, and the client those it has not
 /// committed, before any later input can commit one. Nothing withdraws a commit.
-struct ItemTransfer: FeatureMachine {
-    /// ITEM_TRANSFER.
-    public static let feature = FeatureID.itemTransfer
-
+struct ItemTransfer: Sendable {
     private let availability: Availability<NoParams>
     private let generation: ConnectionGeneration
     package private(set) var offers = ItemOfferRegistry()
@@ -331,9 +328,6 @@ struct ItemTransfer: FeatureMachine {
         LocalAdvert(version: 1, availability: Availability(availability) { _ in Data() })
     }
 
-    /// The machine sets no deadlines.
-    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
-
     mutating func takeOutputs() -> (outputs: [ItemTransferOutput], diagnostics: [Diagnostic]) {
         defer {
             outbox.removeAll()
@@ -343,7 +337,7 @@ struct ItemTransfer: FeatureMachine {
     }
 
     /// Handles an event on a pull stream.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .opened(let stream, let body):
             server.opened(

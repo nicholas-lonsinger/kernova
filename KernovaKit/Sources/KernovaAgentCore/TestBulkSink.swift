@@ -23,8 +23,6 @@ package struct TestBulkSink: Sendable {
     package private(set) var flows: [Flow] = []
     /// Bytes an accepted stream sends before its END; negative sends nothing and never ends.
     package var bytesPerStream = 0
-    /// Whether newly opened receiving flows consume what they get.
-    package var consumesByDefault = true
 
     package init() {}
 
@@ -53,7 +51,7 @@ package struct TestBulkSink: Sendable {
         }
     }
 
-    package mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .opened(let stream, _):
             let kind: StreamKind = stream.rawValue % 2 == 1 ? .testBulkByPeer : .testBulkByHost

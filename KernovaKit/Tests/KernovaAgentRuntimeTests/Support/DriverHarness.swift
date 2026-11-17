@@ -227,14 +227,17 @@ enum Fixture {
         HostConfiguration(claim: hostClaim, sessionToken: Data(0..<16), policy: policy, bundles: bundles)
     }
 
-    static let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "AgentRuntime") { _, _, _, _ in }
+    static let logger = KernovaLogger(
+        subsystem: "app.kernova.tests", category: "AgentRuntime", sink: .init { _, _, _, _ in })
 
     /// A logger whose every emission is recorded as its level and text.
     static func recordingLogger() -> (KernovaLogger, Recorder<(KernovaLogLevel, String)>) {
         let records = Recorder<(KernovaLogLevel, String)>()
-        let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "AgentRuntime") { level, _, _, segments in
-            records.record((level, segments.map(\.text).joined()))
-        }
+        let logger = KernovaLogger(
+            subsystem: "app.kernova.tests", category: "AgentRuntime",
+            sink: .init { level, _, _, segments in
+                records.record((level, segments.map(\.text).joined()))
+            })
         return (logger, records)
     }
 

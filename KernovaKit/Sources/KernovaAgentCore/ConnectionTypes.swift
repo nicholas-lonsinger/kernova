@@ -8,32 +8,32 @@ import KernovaWire
 
 /// What a connection is configured with: its role, its Hello, its receiver
 /// policy and its kind table. Frozen constants are not configurable.
-public struct ConnectionConfiguration: Sendable {
+package struct ConnectionConfiguration: Sendable {
     /// This side's claim; its role decides id parity and which Hello it accepts.
-    public var claim: PeerClaim
+    package var claim: PeerClaim
     /// Peers only: the initial state the Hello carries.
-    public var initialState: PeerSessionState?
+    package var initialState: PeerSessionState?
     /// This side's adverts, one per feature.
-    public var adverts: [(FeatureID, LocalAdvert)]
+    package var adverts: [(FeatureID, LocalAdvert)]
     /// Host only: the 16 random bytes the runtime drew for this connection.
-    public var sessionToken: Data
+    package var sessionToken: Data
     /// Host only: the VM's policy at accept; it seeds `Connection.currentPolicy`,
     /// which `setPolicy` replaces and the Hello-time `PolicyUpdate` carries.
-    public var hostPolicy: PolicySnapshot
+    package var hostPolicy: PolicySnapshot
     /// Host only: the bundles at accept; they seed the connection's bundles,
     /// which `setBundles` replaces and the Hello-time offer comes from.
-    public var hostBundles: [BundledPayload]
+    package var hostBundles: [BundledPayload]
     /// The receiver policy the far side is judged by.
-    public var policy: ReceiverPolicy
+    package var policy: ReceiverPolicy
     /// The kinds this connection serves.
-    public var kinds: [StreamKindDescriptor]
+    package var kinds: [StreamKindDescriptor]
     package var protocolVersion: UInt32 = Limits.protocolVersion
     package var assertsOnMisuse = true
     package var recordsTrace = false
     package var firstLocalStreamID: UInt64?
 
     /// Creates a configuration over the production kinds.
-    public init(
+    package init(
         claim: PeerClaim, initialState: PeerSessionState? = nil, adverts: [(FeatureID, LocalAdvert)],
         sessionToken: Data = Data(), hostPolicy: PolicySnapshot = PolicySnapshot(), hostBundles: [BundledPayload] = [],
         policy: ReceiverPolicy = .production
@@ -55,35 +55,35 @@ public struct ConnectionConfiguration: Sendable {
 }
 
 /// The far side's Hello, normalized.
-public struct RemoteHello: Sendable, Equatable {
+package struct RemoteHello: Sendable, Equatable {
     /// Its session layer's version.
-    public var protocolVersion: UInt32
+    package var protocolVersion: UInt32
     /// Who it claims to be.
-    public var claim: PeerClaim
+    package var claim: PeerClaim
     /// Peers only: its initial state.
-    public var state: PeerSessionState?
+    package var state: PeerSessionState?
     /// Its adverts in feature order, unknown features dropped.
-    public var adverts: [FeatureAdvertValue]
+    package var adverts: [FeatureAdvertValue]
     /// Host only: the session token, kept and unused.
-    public var sessionToken: Data
+    package var sessionToken: Data
 }
 
 /// One feature as a side advertised it.
-public struct FeatureAdvertValue: Sendable, Equatable {
+package struct FeatureAdvertValue: Sendable, Equatable {
     /// The feature.
-    public var feature: FeatureID
+    package var feature: FeatureID
     /// Its version and availability.
-    public var advert: LocalAdvert
+    package var advert: LocalAdvert
 
     /// Creates an advert row.
-    public init(feature: FeatureID, advert: LocalAdvert) {
+    package init(feature: FeatureID, advert: LocalAdvert) {
         self.feature = feature
         self.advert = advert
     }
 }
 
 /// One output of a connection, for the endpoint (or a test) to act on.
-public enum ConnectionEvent: Sendable, Equatable {
+package enum ConnectionEvent: Sendable, Equatable {
     /// The far side's Hello was read; the connection is established.
     case helloReceived(RemoteHello)
     /// The far side's adverts changed.
@@ -156,7 +156,7 @@ public struct MemoryFootprint: Sendable, Equatable {
 }
 
 /// The phases of one stream, from this side.
-public enum StreamPhase: Sendable, Equatable {
+package enum StreamPhase: Sendable, Equatable {
     /// Both halves open.
     case open
     /// This side sent END.

@@ -409,11 +409,11 @@ struct VMCommandCoreTests {
         }
 
         switch (expected, error) {
-        case (.busy(let status, let operation), .busy(let vm, let actualOperation)):
+        case (.busy(let status, let operation), .busy(let vm, let actualOperation, _)):
             #expect(vm.id == instance.id)
             #expect(vm.status == status.rawValue)
             #expect(actualOperation == operation)
-        case (.invalidState(let current), .invalidState(let vm, let actualCurrent, _, _)):
+        case (.invalidState(let current), .invalidState(let vm, let actualCurrent, _, _, _)):
             #expect(vm.id == instance.id)
             #expect(actualCurrent == current)
         default:
@@ -493,7 +493,7 @@ struct VMCommandCoreTests {
             .cloning, named: "Copying", gate: gate)
 
         let error = try await #require(throws: CommandError.self) { try await harness.core.pause(.id(arrival.id)) }
-        guard case .busy(let vm, let operation) = error else {
+        guard case .busy(let vm, let operation, _) = error else {
             Issue.record("expected a busy refusal, got \(error)")
             return
         }
@@ -1292,7 +1292,7 @@ struct VMCommandCoreTests {
             try await harness.core.delete(
                 .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
         }
-        guard case .busy(let vm, let operation) = deleteError else {
+        guard case .busy(let vm, let operation, _) = deleteError else {
             Issue.record("expected a busy refusal, got \(deleteError)")
             return
         }
@@ -2071,7 +2071,7 @@ struct VMCommandCoreTests {
             try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 30, consent: .none)
         }
 
-        guard case .timedOut(_, let verb, let seconds) = error else {
+        guard case .timedOut(_, let verb, let seconds, _) = error else {
             Issue.record("Expected a timeout refusal, got \(error)")
             return
         }
@@ -2143,12 +2143,61 @@ struct VMCommandCoreTests {
         // pause settled it, the stop would already have returned successfully.
         clock.release(try #require(clock.parked.first))
         let error = try await #require(throws: CommandError.self) { try await stop.joined() }
-        guard case .timedOut(_, let verb, _) = error else {
+        guard case .timedOut(_, let verb, _, _) = error else {
             Issue.record("Expected a timeout refusal, got \(error)")
             return
         }
         #expect(verb == .stop)
         #expect(virtualization.forceStopCallCount == 0)
+    }
+
+    @Test("A Force Stop's deadline expires on a process that hasn't ended; every refusal meanwhile says how to end it")
+    func forceStopDeadlineCarriesTheProcessEnd() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.forceStopCompletes = false
+        let harness = makeHarness(virtualization: virtualization, clock: TestEngineClock())
+        let session = UUID()
+        let instance = makeInstance(in: harness, name: "Frozen", phase: .running(sessionID: session))
+        let bundlePath = instance.bundleURL.path(percentEncoded: false)
+
+        let error = try await #require(throws: CommandError.self) {
+            try await harness.core.stop(
+                .id(instance.id), disposition: .force, consent: Consent([.forceStop]), timeout: 10)
+        }
+        guard case .timedOut(_, let verb, let seconds, let processEnd) = error else {
+            Issue.record("Expected a timeout refusal, got \(error)")
+            return
+        }
+        #expect(verb == .stop)
+        #expect(seconds == 10)
+        #expect(processEnd?.command.hasSuffix(" '\(bundlePath)')") == true)
+        // The expiry stops the wait, not the Force Stop.
+        #expect(instance.status == .forceStopping)
+
+        // What the VM takes once stopped is busy; the rest it refuses by
+        // state. Both name the way out.
+        let busy = try await #require(throws: CommandError.self) {
+            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        }
+        guard case .busy(_, _, let busyProcessEnd) = busy else {
+            Issue.record("Expected a busy refusal, got \(busy)")
+            return
+        }
+        #expect(busyProcessEnd == processEnd)
+        let refused = try await #require(throws: CommandError.self) {
+            try await harness.core.suspend(.id(instance.id))
+        }
+        guard case .invalidState(_, let current, _, _, let refusedProcessEnd) = refused else {
+            Issue.record("Expected a state refusal, got \(refused)")
+            return
+        }
+        #expect(current == .forceStopping)
+        #expect(refusedProcessEnd == processEnd)
+
+        // The process ended from outside: the end the Force Stop asked for.
+        instance.activity.deliverSessionEvent(.didStopWithError(VirtualizationError.noVirtualMachine), from: session)
+        #expect(instance.status == .stopped)
+        #expect(virtualization.forceStopCallCount == 1)
     }
 }
 

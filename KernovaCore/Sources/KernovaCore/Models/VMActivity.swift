@@ -6,10 +6,10 @@ import KernovaLogging
 /// place any request on it is admitted and committed.
 ///
 /// The only writer of ``phase`` and ``sessionContext``. The phase moves only at
-/// an operation's admission commit, at its ending, at a Force Stop's admission
-/// and its completion, and on a session event; each of those is one
-/// synchronous step, so no decision can read a phase another request is about
-/// to replace.
+/// an operation's admission commit, at its ending, at a Force Stop's admission,
+/// and on a session event — a stop's completion among them; each of those is
+/// one synchronous step, so no decision can read a phase another request is
+/// about to replace.
 ///
 /// Also the only holder of the VM's bundle run lock, which it holds exactly
 /// while the VM is neither at rest nor removed: ``admit(_:origin:identity:outcome:)``
@@ -1257,19 +1257,22 @@ package final class VMActivity {
     /// Force Stop: marks the live session *stopping* at admission — on a
     /// settled live VM by committing ``VMOperationKind/forceStopping``, during
     /// an operation that tolerates it on that operation's session — then
-    /// delivers `terminate`'s completion as the session's end, to whichever
-    /// phase holds the session by then. A second Force Stop joins the first.
+    /// sends the stop through `send`, answering the outcome every caller of
+    /// it awaits. A second Force Stop joins the first: it answers that
+    /// outcome and sends nothing.
+    ///
+    /// The outcome resolves when the session ends — the stop's completion, or
+    /// Virtualization ending the session some other way first — or with the
+    /// stop's error, which leaves the session live. No task waits on the
+    /// stop's completion itself, so none outlives the session. An operation
+    /// that tolerated the stop keeps holding the VM until its body ends.
     ///
     /// The admission — or the join of a Force Stop already under way —
     /// withdraws the continuations owed to the session
     /// (``follow(_:continuing:)``), so the session's end settles as an end no
     /// Restart is owed does.
-    ///
-    /// `terminate` is what stops the `VZVirtualMachine`. Returns once the
-    /// session has ended; an operation that tolerated the stop keeps holding
-    /// the VM until its body ends.
-    func forceStop(_ terminate: () async throws -> Void) async throws {
-        try await forceStop(continuingWith: nil, terminate)
+    func forceStop(_ send: () throws -> Void) throws -> VMOutcome {
+        try forceStop(continuingWith: nil, send)
     }
 
     /// Force Restart's own Force Stop: admitted as ``forceStop(_:)`` is, but
@@ -1278,15 +1281,11 @@ package final class VMActivity {
     /// so a Restart already waiting on that session restarts with it, as a
     /// second Restart's graceful stop joins the first's
     /// (``requestStop(continuingWith:_:)``).
-    func forceStop(
-        continuingWith boot: VMFollowUp, _ terminate: () async throws -> Void
-    ) async throws {
-        try await forceStop(continuingWith: Optional(boot), terminate)
+    func forceStop(continuingWith boot: VMFollowUp, _ send: () throws -> Void) throws -> VMOutcome {
+        try forceStop(continuingWith: Optional(boot), send)
     }
 
-    private func forceStop(
-        continuingWith boot: VMFollowUp?, _ terminate: () async throws -> Void
-    ) async throws {
+    private func forceStop(continuingWith boot: VMFollowUp?, _ send: () throws -> Void) throws -> VMOutcome {
         let stop = VMOutcome()
         let sessionID: UUID
         switch decide(.sessionAction(.forceStop), posture: .commit) {
@@ -1299,7 +1298,7 @@ package final class VMActivity {
             } else if let boot {
                 boot.outcome.resolve(.failure(followUpRefusal(.invalidState, for: boot)))
             }
-            return try await outcome.value()
+            return outcome
         case .refuse(let reason):
             throw VMAdmissionRefusal(refusal: reason)
         case .wait:
@@ -1317,7 +1316,7 @@ package final class VMActivity {
                     throw VMAdmissionRefusal(refusal: .invalidState)
                 }
                 sessionID = session.id
-                session.stopping = stop
+                session.stop = .forceStop(stop)
                 operation.sessionState = .live(session)
                 setPhase(.operating(operation))
             case .stopped, .initialBoot, .failed, .suspended, .removed:
@@ -1330,28 +1329,40 @@ package final class VMActivity {
             }
         }
         do {
-            try await terminate()
+            try send()
         } catch {
             forceStopFailed(on: sessionID, error)
-            stop.resolve(.failure(error))
-            return try await stop.value()
         }
-        sessionEnded(.poweredOff, from: sessionID)
-        stop.resolve(.success(()))
-        try await stop.value()
+        return stop
     }
 
-    /// `terminate` threw: the session `sessionID` is live and no longer
-    /// stopping. A ``VMOperationKind/forceStopping`` holding it ends back
-    /// where it started, with the error.
+    /// The outcome of the Force Stop terminating the live session, while one
+    /// is in flight.
+    var pendingForceStop: VMOutcome? { phase.operation?.session?.stopping }
+
+    /// Whether a stop has been sent to the live session — a Force Stop, or the
+    /// operation's own — and the session has not ended.
+    var liveSessionIsStopping: Bool { phase.operation?.session?.stop != nil }
+
+    /// The Force Stop terminating session `sessionID` failed with `error`: the
+    /// session is live and no longer stopping, and every caller of the stop is
+    /// handed the error. A ``VMOperationKind/forceStopping`` holding the
+    /// session ends back where it started.
     private func forceStopFailed(on sessionID: UUID, _ error: any Error) {
         guard case .operating(var operation) = phase, var session = operation.session,
-            session.id == sessionID, session.stopping != nil
+            session.id == sessionID, let stop = session.stopping
         else { return }
-        session.stopping = nil
+        logger.log(
+            .error,
+            "Failed to force-stop VM '\(self.name, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+        )
+        session.stop = nil
         operation.sessionState = .live(session)
         setPhase(.operating(operation))
-        guard operation.kind == .forceStopping else { return }
+        guard operation.kind == .forceStopping else {
+            stop.resolve(.failure(error))
+            return
+        }
         _ = finish(VMOperationEnding<Void>.failed(.asStarted, error), outcome: operation.outcome)
     }
 
@@ -1428,14 +1439,17 @@ package final class VMActivity {
     #endif
 
     /// The one write of ``phase`` after construction, so the edge onto an
-    /// attachable session is noticed wherever the transition came from, and
-    /// the follow-ups it owes queued for the step's drain.
+    /// attachable session and a change of status are noticed wherever the
+    /// transition came from, and the follow-ups it owes queued for the step's
+    /// drain.
     private func setPhase(_ new: VMLifecyclePhase) {
         let wasAttachable = attachableSessionID != nil
         let wasLivePaused = isLivePaused
+        let previousStatus = status
         phase = new
         phaseCommits &+= 1
         if wasLivePaused != isLivePaused { owner?.livePauseDidChange(isLivePaused) }
+        if previousStatus != status { owner?.statusDidChange() }
         guard !wasAttachable, attachableSessionID != nil else { return }
         enqueue(onSessionBecameAttachable?() ?? [])
     }
@@ -1467,13 +1481,26 @@ package final class VMActivity {
             if let sessionID = liveSessionID { sessionEnded(.poweredOff, from: sessionID) }
             logger.log(.notice, "Guest stopped for VM '\(self.name, privacy: .public)'")
         case .didStopWithError(let error):
+            // An end a stop was pending on is the end that stop asked for
+            // (``sessionEnded(_:from:)``), so its error is no failure.
+            logger.log(
+                liveSessionIsStopping ? .notice : .error,
+                "VM '\(self.name, privacy: .public)' stopped with error: \(error.localizedDescription, privacy: .public)"
+            )
             if let sessionID = liveSessionID {
                 sessionEnded(.stoppedWithError(message: error.localizedDescription), from: sessionID)
             }
-            logger.log(
-                .error,
-                "VM '\(self.name, privacy: .public)' stopped with error: \(error.localizedDescription, privacy: .public)"
-            )
+        case .stopDidComplete:
+            // A completed stop leaves nothing live: the session ends here,
+            // the way its stop asked (``sessionEnded(_:from:)``).
+            if let sessionID = liveSessionID { sessionEnded(.poweredOff, from: sessionID) }
+        case .stopDidFail(let error):
+            guard let sessionID = liveSessionID else { break }
+            if let stop = takeOperationStop(of: sessionID) {
+                stop.resolve(.failure(error))
+            } else {
+                forceStopFailed(on: sessionID, error)
+            }
         case .networkAttachmentDisconnected(let error):
             sessionContext?.networkAttachmentCoordinator?.attachmentWasDisconnected(error: error)
         case .usbPassthroughDeviceDidDisconnect(let deviceID):
@@ -1493,7 +1520,20 @@ package final class VMActivity {
     /// ``VMOperationKind/forceStopping`` ends with it; any other operation
     /// keeps holding the VM and learns its session is gone. Dropped when no
     /// phase holds the session any longer.
-    private func sessionEnded(_ end: VMSessionEnd, from sessionID: UUID) {
+    ///
+    /// A session a stop is pending on ended the way that stop asked,
+    /// whichever callback reported its end — the stop's completion, or
+    /// `didStopWithError` from ending its process outside Kernova, as the
+    /// pending stop's instruction tells the user to: powered off for a Force
+    /// Stop, and ended by the operation for the operation's own stop.
+    private func sessionEnded(_ reported: VMSessionEnd, from sessionID: UUID) {
+        let pending = liveSessionID == sessionID ? phase.operation?.session?.stop : nil
+        let end: VMSessionEnd =
+            switch pending {
+            case .forceStop: .poweredOff
+            case .byOperation: .endedByOperation
+            case nil: reported
+            }
         switch phase {
         case .running(let id), .livePaused(let id):
             guard id == sessionID else { return }
@@ -1502,6 +1542,9 @@ package final class VMActivity {
             settled(poweredOff: end == .poweredOff, sessionEnded: true)
         case .operating(let operation):
             guard let ended = endOperationSession(sessionID, end) else { return }
+            if ended.stopping != nil {
+                logger.log(.notice, "Force-stopped VM '\(self.name, privacy: .public)'")
+            }
             if operation.kind == .forceStopping {
                 _ = finish(VMOperationEnding<Void>.rest(.afterSessionEnd, ()), outcome: operation.outcome)
             } else {
@@ -1517,7 +1560,9 @@ package final class VMActivity {
 
     /// Marks the operation's session `sessionID` ended, keeping the operation,
     /// and answers the session as it stood — `nil` when the operation holds no
-    /// such session.
+    /// such session. A stop the operation sent that session
+    /// (``stopOperationSession()``) is answered: the session it was meant to
+    /// end has ended.
     private func endOperationSession(
         _ sessionID: UUID, _ end: VMSessionEnd
     ) -> VMOperationSession? {
@@ -1527,6 +1572,7 @@ package final class VMActivity {
         operation.sessionState = .ended(end)
         releaseSession()
         setPhase(.operating(operation))
+        if case .byOperation(let stop) = session.stop { stop.resolve(.success(())) }
         return session
     }
 
@@ -1660,6 +1706,38 @@ package final class VMActivity {
 
     fileprivate var operationSessionEnd: VMSessionEnd? { phase.operation?.sessionEnd }
 
+    /// Sends the operation's live session a stop, marked on the session
+    /// (``VMSessionStop/byOperation(_:)``), and waits for it to answer:
+    /// returns once the session has ended — the stop completed, or the
+    /// session ended some other way first — and throws the stop's error,
+    /// the session still live. Returns at once when the operation holds no
+    /// live session.
+    fileprivate func stopOperationSession() async throws {
+        guard case .operating(var operation) = phase, var live = operation.session, let session
+        else { return }
+        // An operation that stops its own session tolerates no Force Stop, so
+        // no other stop can be pending on it.
+        assert(live.stop == nil, "A stop was already pending on the session")
+        let stop = VMOutcome()
+        live.stop = .byOperation(stop)
+        operation.sessionState = .live(live)
+        setPhase(.operating(operation))
+        session.stop()
+        try await stop.value()
+    }
+
+    /// Clears the operation's own stop of session `sessionID`, answering the
+    /// outcome its body awaits — `nil` when none is pending.
+    private func takeOperationStop(of sessionID: UUID) -> VMOutcome? {
+        guard case .operating(var operation) = phase, var live = operation.session, live.id == sessionID,
+            case .byOperation(let stop) = live.stop
+        else { return nil }
+        live.stop = nil
+        operation.sessionState = .live(live)
+        setPhase(.operating(operation))
+        return stop
+    }
+
     /// Ends the operation's session, or — before a bring-up bound one —
     /// releases the context it opened.
     fileprivate func endOperationSessionItself() {
@@ -1757,6 +1835,16 @@ package struct VMOperationContext: ~Copyable, Sendable {
     /// releases the context it opened.
     @MainActor package func endSession() {
         activity.endOperationSessionItself()
+    }
+
+    /// Stops the operation's live session — a revert's teardown, the
+    /// installer's VM — returning once the session has ended, by the stop's
+    /// completion or Virtualization ending it some other way first, and
+    /// throwing the stop's error with the session still live, which
+    /// ``endSession()`` then ends. With no live session there is nothing to
+    /// stop.
+    @MainActor package func stopSession() async throws {
+        try await activity.stopOperationSession()
     }
 
     /// Runs `execute` — the call that first has the guest execute: a boot's

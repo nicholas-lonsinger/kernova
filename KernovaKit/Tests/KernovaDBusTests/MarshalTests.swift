@@ -1,5 +1,6 @@
-import KernovaDBus
 import Testing
+
+@testable import KernovaDBus
 
 @Suite("DBusMarshal round trips, alignment and byte order")
 struct MarshalTests {

@@ -324,8 +324,9 @@ struct VMCapabilityCatalogTests {
             library, library, window, library, window,
             // pausing, resuming, saving, capturing live, capturing disks
             window, window, window, window, window,
-            // snapshot delete, USB attach, media reconcile, Force Stop, deleting
-            window, window, window, window, library,
+            // snapshot delete, USB attach, media reconcile, Force Stop — whose
+            // display is gone — deleting
+            window, window, window, library, library,
             // storage disk on a stopped VM, removable disk on a running one,
             // snapshot delete on a stopped one
             library, window, library,

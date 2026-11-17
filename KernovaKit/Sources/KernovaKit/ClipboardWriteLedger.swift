@@ -8,6 +8,7 @@ import KernovaWire
 /// write serving the far side's offer arrived on, so a snapshot names by reference only what the destination of
 /// its copy can fill.
 public struct ClipboardConnectionID: Hashable, Sendable {
+    // periphery:ignore - the identity the synthesized Equatable and Hashable compare
     private let raw = UUID()
 
     /// A connection no other names.

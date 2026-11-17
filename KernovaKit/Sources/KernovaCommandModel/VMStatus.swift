@@ -25,6 +25,8 @@ public enum VMStatus: String, Sendable {
     case cloning
     case restoring
     case installing
+    /// A Force Stop was sent and the VM's process has not yet ended.
+    case forceStopping
     /// VM exists in the library but has never completed its initial boot.
     /// Clicking Start kicks off the macOS install, then auto-boots.
     case initialBoot
@@ -108,6 +110,7 @@ public enum VMStatus: String, Sendable {
         case .cloning: Words(name: "Cloning", phrase: "being cloned")
         case .restoring: Words(name: "Restoring", phrase: "restoring")
         case .installing: Words(name: "Installing", phrase: "installing")
+        case .forceStopping: Words(name: "Force Stopping", phrase: "force stopping")
         case .initialBoot: Words(name: "Initial Boot", phrase: "not yet booted")
         case .error: Words(name: "Error", phrase: "in an error state")
         }

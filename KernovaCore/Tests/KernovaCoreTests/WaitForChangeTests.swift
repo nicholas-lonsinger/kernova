@@ -1,9 +1,9 @@
 import Foundation
-import KernovaKit
 import KernovaTestSupport
 import Testing
 
 @testable import KernovaCoreTestSupport
+@testable import KernovaKit
 
 @Suite("waitForChange Tests", .caseScoped)
 @MainActor

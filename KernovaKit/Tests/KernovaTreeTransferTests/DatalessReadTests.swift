@@ -146,10 +146,6 @@ private final class DatalessFileSystem: TreeFileSystem {
     func linkTarget(of name: [UInt8], in directory: Int32) throws(TreeFileSystemError) -> [UInt8] {
         try base.linkTarget(of: name, in: directory)
     }
-    func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer) throws(TreeFileSystemError) -> Int {
-        try access(descriptor)
-        return try base.read(descriptor, into: buffer)
-    }
     func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: Int64)
         throws(TreeFileSystemError) -> Int
     {

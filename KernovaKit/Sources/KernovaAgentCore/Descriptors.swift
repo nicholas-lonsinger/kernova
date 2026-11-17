@@ -7,7 +7,7 @@ import Foundation
 import KernovaWire
 
 /// Which role opens a stream kind.
-public enum OpenerRole: Sendable, Equatable {
+package enum OpenerRole: Sendable, Equatable {
     /// Only the host opens it.
     case host
     /// Only a peer opens it.
@@ -15,7 +15,7 @@ public enum OpenerRole: Sendable, Equatable {
 }
 
 /// What one direction of a stream kind carries.
-public enum StreamDirection: Sendable, Equatable {
+package enum StreamDirection: Sendable, Equatable {
     /// Nothing but END and RESET.
     case nothing
     /// MESSAGE DATA only.
@@ -32,28 +32,28 @@ package enum KindOwner: Sendable, Equatable {
 }
 
 /// One row of the static kind table.
-public struct StreamKindDescriptor: Sendable {
+package struct StreamKindDescriptor: Sendable {
     /// The kind the row describes.
-    public var kind: StreamKind
+    package var kind: StreamKind
     /// The feature whose usability gates new streams of the kind; nil for a
     /// test kind, which is always usable.
-    public var feature: FeatureID?
+    package var feature: FeatureID?
     /// The role that opens it.
-    public var openerRole: OpenerRole
+    package var openerRole: OpenerRole
     /// What the opener sends.
-    public var openerToAcceptor: StreamDirection
+    package var openerToAcceptor: StreamDirection
     /// What the acceptor sends.
-    public var acceptorToOpener: StreamDirection
+    package var acceptorToOpener: StreamDirection
     /// At most this many open at once per connection; nil for any number.
-    public var maxPerConnection: Int?
+    package var maxPerConnection: Int?
     /// The RESET code for an OPEN past `maxPerConnection`.
-    public var duplicateCode: ErrorCode
+    package var duplicateCode: ErrorCode
     /// The opener's END answers the acceptor's: one the acceptor receives before its own END was handed out
     /// is a violation, which the connection resets `STREAM_PROTOCOL_ERROR`.
-    public var acceptorEndsFirst: Bool
+    package var acceptorEndsFirst: Bool
     /// An OPEN of the kind takes a token from the acceptor's OPEN bucket. An item pull's does not: its opener
     /// cannot see when that bucket refills, and the 64-stream limit and credit already bound what a pull asks.
-    public var spendsOpenBucket: Bool
+    package var spendsOpenBucket: Bool
     /// The machine serving accepted streams of the kind; nil only for the
     /// placeholder row a refused OPEN of an unknown kind carries.
     package var owner: KindOwner?
@@ -79,7 +79,7 @@ public struct StreamKindDescriptor: Sendable {
     }
 
     /// The kinds every production endpoint serves.
-    public static let production: [StreamKindDescriptor] = [
+    package static let production: [StreamKindDescriptor] = [
         StreamKindDescriptor(
             kind: .powerRequest, feature: .power, owner: .power, openerRole: .host, openerToAcceptor: .nothing,
             acceptorToOpener: .messages, maxPerConnection: nil,

@@ -218,7 +218,7 @@ struct VMIntentGatewayTests {
         release.continuation.yield(())
         release.continuation.finish()
 
-        #expect(await read.value.map(\.id) == [late.id])
+        #expect(try await read.joined().map(\.id) == [late.id])
         try await index.awaitOperations(Self.syncedOperations)
         #expect(index.operations == [.index([late.id])])
     }

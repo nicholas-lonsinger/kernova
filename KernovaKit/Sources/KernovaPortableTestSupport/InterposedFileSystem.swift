@@ -71,12 +71,6 @@ public struct InterposedFileSystem: MutableTreeFileSystem {
         try base.linkTarget(of: name, in: directory)
     }
     /// As the volume does.
-    public func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer) throws(TreeFileSystemError)
-        -> Int
-    {
-        try base.read(descriptor, into: buffer)
-    }
-    /// As the volume does.
     public func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: Int64)
         throws(TreeFileSystemError) -> Int
     {

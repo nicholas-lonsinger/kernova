@@ -62,6 +62,7 @@ struct VMStatusTests {
         #expect(VMStatus.snapshotting.rawValue == "snapshotting")
         #expect(VMStatus.restoring.rawValue == "restoring")
         #expect(VMStatus.installing.rawValue == "installing")
+        #expect(VMStatus.forceStopping.rawValue == "forceStopping")
         #expect(VMStatus.initialBoot.rawValue == "initialBoot")
         #expect(VMStatus.error.rawValue == "error")
     }

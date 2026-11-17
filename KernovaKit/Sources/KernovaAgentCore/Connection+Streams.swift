@@ -11,7 +11,7 @@ extension Connection {
 
     /// Opens a stream of `kind` with its encoded OPEN body; check `canOpen` first.
     @discardableResult
-    public mutating func open(_ kind: StreamKind, body: Data) -> StreamID {
+    package mutating func open(_ kind: StreamKind, body: Data) -> StreamID {
         guard canOpen(kind), let descriptor = descriptor(for: kind) else {
             misuse("open \(kind) that canOpen refuses")
             return .session
@@ -33,7 +33,7 @@ extension Connection {
     }
 
     /// Queues one message on `id`; check `canSendMessage` first.
-    public mutating func send(message: Data, on id: StreamID) {
+    package mutating func send(message: Data, on id: StreamID) {
         guard canSendMessage(message.count, on: id), let index = index(of: id) else {
             return misuse("send a message that is not sendable on stream \(id.rawValue)")
         }
@@ -45,7 +45,7 @@ extension Connection {
     }
 
     /// Queues raw DATA on `id`: 1 byte up to `min(writableData, 1 MiB)`.
-    public mutating func send(data: Data, on id: StreamID) {
+    package mutating func send(data: Data, on id: StreamID) {
         guard let index = index(of: id), !data.isEmpty, data.count <= WireConstants.maxRawDataPayload,
             data.count <= writableData(at: index)
         else { return misuse("send \(data.count) raw bytes past writableData on stream \(id.rawValue)") }
@@ -59,7 +59,7 @@ extension Connection {
 
     /// Reserves up to `maxBytes` of what `id` may send now, for one later `send(reserved:on:)`: no other
     /// send spends them, so an answer within the reservation always fits. Returns the bytes reserved.
-    public mutating func reserveRawData(_ maxBytes: Int, on id: StreamID) -> Int {
+    package mutating func reserveRawData(_ maxBytes: Int, on id: StreamID) -> Int {
         guard let index = index(of: id), streams[index].reservedRaw == 0 else {
             misuse("reserve on stream \(id.rawValue), which holds a reservation or is gone")
             return 0
@@ -72,7 +72,7 @@ extension Connection {
     }
 
     /// Queues `data` from `id`'s reservation, 1 byte up to all of it, and returns the rest.
-    public mutating func send(reserved data: Data, on id: StreamID) {
+    package mutating func send(reserved data: Data, on id: StreamID) {
         guard let index = index(of: id), !data.isEmpty, data.count <= streams[index].reservedRaw else {
             return misuse("send \(data.count) raw bytes past the reservation on stream \(id.rawValue)")
         }
@@ -81,7 +81,7 @@ extension Connection {
     }
 
     /// Returns `id`'s unspent reservation.
-    public mutating func releaseReservation(on id: StreamID) {
+    package mutating func releaseReservation(on id: StreamID) {
         guard let index = index(of: id) else { return }
         releaseReservation(at: index)
     }
@@ -93,7 +93,7 @@ extension Connection {
     }
 
     /// Queues this side's END on `id` with the kind's END body.
-    public mutating func end(_ id: StreamID, body: Data) {
+    package mutating func end(_ id: StreamID, body: Data) {
         guard isAcceptingInput, let index = index(of: id), streams[index].canSend,
             body.count <= WireConstants.maxControlPayload
         else { return misuse("END on stream \(id.rawValue), which cannot send") }
@@ -106,7 +106,7 @@ extension Connection {
     }
 
     /// Resets `id`, which must not be completed or closed.
-    public mutating func reset(_ id: StreamID, _ error: WireError) {
+    package mutating func reset(_ id: StreamID, _ error: WireError) {
         guard isAcceptingInput, let index = index(of: id), streams[index].phase != .closed else {
             return misuse("RESET of stream \(id.rawValue), which is closed")
         }
@@ -115,7 +115,7 @@ extension Connection {
 
     /// The owning machine finished with `byteCount` raw bytes of `id`.
     /// Ignored once the stream has closed.
-    public mutating func consumed(_ byteCount: Int, on id: StreamID) {
+    package mutating func consumed(_ byteCount: Int, on id: StreamID) {
         guard isAcceptingInput, let index = index(of: id), streams[index].phase != .closed else { return }
         guard byteCount >= 0, byteCount <= streams[index].heldRaw else {
             return misuse("consumed \(byteCount) bytes of \(streams[index].heldRaw) held on stream \(id.rawValue)")
@@ -130,7 +130,7 @@ extension Connection {
 
     /// Caps how fast `id`'s stream credit returns: a token bucket of `burst`
     /// bytes refilled at `bytesPerSecond`.
-    public mutating func setCreditReturnRate(_ bytesPerSecond: Int, burst: Int, on id: StreamID) {
+    package mutating func setCreditReturnRate(_ bytesPerSecond: Int, burst: Int, on id: StreamID) {
         guard let index = index(of: id), bytesPerSecond > 0, burst > 0 else { return }
         streams[index].returnBucket = TokenBucket(capacity: burst, perSecond: bytesPerSecond, now: clock.raw)
     }

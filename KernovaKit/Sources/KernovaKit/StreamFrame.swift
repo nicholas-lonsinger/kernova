@@ -105,9 +105,6 @@ public struct StreamFrameDecoder: Sendable {
         return payload
     }
 
-    /// Number of buffered bytes not yet consumed.
-    public var bufferedByteCount: Int { buffer.count - readOffset }
-
     private func readLengthPrefix() -> UInt32 {
         let start = buffer.startIndex + readOffset
         let end = start + StreamFrame.lengthPrefixSize

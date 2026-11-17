@@ -7,6 +7,11 @@ import KernovaAgentHost
 package enum VMSessionEvent: Sendable {
     case guestDidStop
     case didStopWithError(any Error)
+    /// The session's own stop (``VMSessionOperating/stop()``) completed: the
+    /// VM has stopped.
+    case stopDidComplete
+    /// The session's own stop failed with the error Virtualization reported.
+    case stopDidFail(any Error)
     case networkAttachmentDisconnected(any Error)
     /// A passthrough accessory's host device went away. VZ has already detached
     /// it, so the receiver only drops its own record of the attachment.
@@ -48,8 +53,10 @@ package protocol VMSessionOperating: AnyObject, VMSnapshotSessionOperating {
     var hasVirtioSocketDevice: Bool { get }
     var hasUSBController: Bool { get }
 
-    /// Forcefully terminates the VM.
-    func stop() async throws
+    /// Sends the VM a stop and returns at once, its completion arriving as
+    /// ``VMSessionEvent/stopDidComplete`` or ``VMSessionEvent/stopDidFail(_:)``
+    /// — so nothing waits on a completion that may never come.
+    func stop()
 
     /// Requests a graceful ACPI shutdown.
     func requestStop() async throws

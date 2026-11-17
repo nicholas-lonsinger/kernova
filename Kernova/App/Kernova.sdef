@@ -18,6 +18,7 @@
 			<enumerator name="cloning" code="KsCl" description="Copying a running or paused guest into a new virtual machine."/>
 			<enumerator name="restoring" code="KsRs" description="Reading a saved session or a restore point back."/>
 			<enumerator name="installing" code="KsIn" description="Running the guest install."/>
+			<enumerator name="force stopping" code="KsFs" description="A force stop was sent and the virtual machine’s process has not ended yet."/>
 			<enumerator name="initial boot" code="KsIb" description="In the library, but never booted."/>
 			<enumerator name="failed" code="KsEr" description="The last operation left the VM in an error state."/>
 			<enumerator name="preparing" code="KsPr" description="A create, clone or import is still writing the bundle."/>

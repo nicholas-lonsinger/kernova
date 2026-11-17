@@ -453,7 +453,7 @@ package final class VMLibrary: VMAdmissionPeers {
     /// Whether anything is doing work that terminating would destroy rather
     /// than suspend — a bundle still being created, cloned or imported, or a
     /// VM held by an operation that shows a status of its own: a start,
-    /// restore, install, save, capture or revert.
+    /// restore, install, save, capture, revert or Force Stop.
     ///
     /// Excludes settled `.running` and `.paused` VMs, which termination
     /// save-suspends, and operations that present the phase they started from.

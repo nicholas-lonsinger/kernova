@@ -141,15 +141,11 @@ public struct PeerEndpoint: Sendable {
     public var hasLandingsInFlight: Bool { items.hasLandingsInFlight }
 
     /// When the driver must next call `handleTimeout`: the soonest of the
-    /// connection's deadline and every machine's, each computed from the clock now.
+    /// connection's deadline and the power machine's, each computed from the clock now.
     public var nextDeadline: CoreInstant? {
         guard connection.state != .finished else { return nil }
         let clock = connection.clock
-        let machines = [
-            power.nextDeadline(on: clock), logs.nextDeadline(on: clock), update.nextDeadline(on: clock),
-            items.nextDeadline(on: clock),
-        ]
-        return [connection.nextDeadline, clock.external(machines.compactMap { $0 }.min())].compactMap { $0 }.min()
+        return [connection.nextDeadline, clock.external(power.nextDeadline(on: clock))].compactMap { $0 }.min()
     }
 
     // MARK: Inputs
@@ -157,38 +153,38 @@ public struct PeerEndpoint: Sendable {
     /// Bytes from the transport.
     public mutating func receive(_ bytes: Data, now: CoreInstant) {
         connection.ingest(bytes, now: now)
-        route(now)
+        route()
         while connection.processNextFrame() {
-            route(now)
+            route()
         }
         connection.finishReceive()
-        route(now)
+        route()
     }
 
     /// The transmit marked `isFinal` was written in full.
     public mutating func finalTransmitWritten(now: CoreInstant) {
         connection.finalTransmitWritten(now: now)
-        route(now)
+        route()
     }
 
     /// The transport ended.
     public mutating func transportEnded(now: CoreInstant) {
         connection.transportEnded(now: now)
-        route(now)
+        route()
     }
 
     /// The timer fired.
     public mutating func handleTimeout(now: CoreInstant) {
         connection.handleTimeout(now: now)
-        route(now)
-        notifyAll(.deadline, now)
-        route(now)
+        route()
+        notifyAll(.deadline)
+        route()
     }
 
     /// An adapter's or the runtime's input.
     public mutating func handle(_ input: PeerInput, now: CoreInstant) {
         connection.tick(now)
-        route(now)
+        route()
         switch input {
         case .peerState(let state):
             if connection.isAcceptingInput { connection.setPeerState(state) }
@@ -208,34 +204,34 @@ public struct PeerEndpoint: Sendable {
                 events.append(.itemReply(id, reply))
             }
         }
-        route(now)
+        route()
     }
 
     /// Closes the connection, the agent exiting (`SHUTTING_DOWN`).
     public mutating func close(_ code: ErrorCode, now: CoreInstant) {
         connection.close(code, retryAfter: nil, now: now)
-        route(now)
+        route()
     }
 
     /// Opens a bulk test stream.
     package mutating func openTestBulk(_ kind: StreamKind, consumes: Bool, now: CoreInstant) -> StreamID? {
         connection.tick(now)
-        route(now)
+        route()
         let stream = testSink.open(kind, consumes: consumes, connection: &connection)
-        route(now)
+        route()
         return stream
     }
 
     package mutating func resetTestStream(_ stream: StreamID, now: CoreInstant) {
         connection.tick(now)
         testSink.reset(stream, connection: &connection)
-        route(now)
+        route()
     }
 
     package mutating func setTestConsumes(_ consumes: Bool, on stream: StreamID, now: CoreInstant) {
         connection.tick(now)
         testSink.setConsumes(consumes, on: stream, connection: &connection)
-        route(now)
+        route()
     }
 
     // MARK: Items
@@ -247,7 +243,7 @@ public struct PeerEndpoint: Sendable {
     /// The next frames to write.
     public mutating func pollTransmit(maxBytes: Int) -> Transmit? {
         let transmit = connection.pollTransmit(maxBytes: maxBytes)
-        route(connection.clock.raw)
+        route()
         return transmit
     }
 
@@ -270,13 +266,13 @@ public struct PeerEndpoint: Sendable {
 
     // MARK: Routing
 
-    private mutating func route(_ now: CoreInstant) {
+    private mutating func route() {
         while true {
             collect()
             if let routed = connection.pollRoutedEvent() {
-                dispatch(routed, now)
+                dispatch(routed)
             } else if publishAdverts() {
-                notifyAll(.usabilityChanged, now)
+                notifyAll(.usabilityChanged)
                 refreshItemUsability()
             } else {
                 break
@@ -292,29 +288,29 @@ public struct PeerEndpoint: Sendable {
         return connection.localAdverts != before && connection.state == .established
     }
 
-    private mutating func notifyAll(_ event: FeatureEvent, _ now: CoreInstant) {
-        power.handle(event, connection: &connection, now: now)
-        logs.handle(event, connection: &connection, now: now)
-        update.handle(event, connection: &connection, now: now)
-        items.notify(event, connection: &connection, now: now)
+    private mutating func notifyAll(_ event: FeatureEvent) {
+        power.handle(event, connection: &connection)
+        logs.handle(event, connection: &connection)
+        update.handle(event, connection: &connection)
+        items.notify(event, connection: &connection)
     }
 
-    private mutating func dispatch(_ routed: RoutedEvent, _ now: CoreInstant) {
+    private mutating func dispatch(_ routed: RoutedEvent) {
         let event = routed.event
         switch event {
         case .helloReceived(let hello):
             events.append(.established(host: hello.claim))
-            notifyAll(.sessionEstablished, now)
+            notifyAll(.sessionEstablished)
             refreshItemUsability()
         case .remoteAdvertsChanged:
-            notifyAll(.usabilityChanged, now)
+            notifyAll(.usabilityChanged)
             refreshItemUsability()
         case .peerStateChanged:
             break
         case .policyChanged(let policy):
             events.append(.policyReceived(policy), coalescing: .policy)
-            notifyAll(.policyChanged, now)
-            notifyAll(.usabilityChanged, now)
+            notifyAll(.policyChanged)
+            notifyAll(.usabilityChanged)
             refreshItemUsability()
         case .updateAvailable(let manifest):
             events.append(.updateAvailable(manifest), coalescing: .updateAvailable)
@@ -327,20 +323,20 @@ public struct PeerEndpoint: Sendable {
             refreshItemUsability(closed: true)
             events.append(.closed(closure))
         case .opened(let id, _, let body):
-            deliver(.opened(id, body: body), to: routed.owner, now)
+            deliver(.opened(id, body: body), to: routed.owner)
         case .message(let id, let payload):
-            deliver(.message(id, payload), to: routed.owner, now)
+            deliver(.message(id, payload), to: routed.owner)
         case .data(let id, let payload):
-            deliver(.data(id, payload), to: routed.owner, now)
+            deliver(.data(id, payload), to: routed.owner)
         case .remoteEnded(let id, let body):
-            deliver(.remoteEnded(id, body: body), to: routed.owner, now)
+            deliver(.remoteEnded(id, body: body), to: routed.owner)
         case .writable(let id):
-            deliver(.writable(id), to: routed.owner, now)
+            deliver(.writable(id), to: routed.owner)
         case .streamClosed(let id, let closure):
-            deliver(.streamClosed(id, closure), to: routed.owner, now)
+            deliver(.streamClosed(id, closure), to: routed.owner)
         case .slotFreed:
             // The slots are shared across kinds, so every opener re-checks.
-            notifyAll(.slotFreed, now)
+            notifyAll(.slotFreed)
         }
     }
 
@@ -355,13 +351,13 @@ public struct PeerEndpoint: Sendable {
         }
     }
 
-    private mutating func deliver(_ event: FeatureEvent, to owner: KindOwner?, _ now: CoreInstant) {
+    private mutating func deliver(_ event: FeatureEvent, to owner: KindOwner?) {
         guard let owner else { return }
         switch owner {
-        case .power: power.handle(event, connection: &connection, now: now)
-        case .update: update.handle(event, connection: &connection, now: now)
-        case .logs: logs.handle(event, connection: &connection, now: now)
-        case .itemTransfer, .itemOffer, .dragTake: items.deliver(event, to: owner, connection: &connection, now: now)
+        case .power: power.handle(event, connection: &connection)
+        case .update: update.handle(event, connection: &connection)
+        case .logs: logs.handle(event, connection: &connection)
+        case .itemTransfer, .itemOffer, .dragTake: items.deliver(event, to: owner, connection: &connection)
         case .testBulk: testSink.handle(event, connection: &connection)
         }
     }

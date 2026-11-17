@@ -65,9 +65,11 @@ struct ItemFeatureRouterTests {
         let heard = Recorder<Heard>()
         // Each record notes how many ends the owners had heard when it was made.
         let records = Recorder<(level: KernovaLogLevel, text: String, heard: Int)>()
-        let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "ItemSource") { level, _, _, segments in
-            records.record((level, segments.map(\.text).joined(), heard.elements.count))
-        }
+        let logger = KernovaLogger(
+            subsystem: "app.kernova.tests", category: "ItemSource",
+            sink: .init { level, _, _, segments in
+                records.record((level, segments.map(\.text).joined(), heard.elements.count))
+            })
         let router: ItemFeatureRouter<PeerHandle> = router(heard: heard, logger: logger)
         let unread = WireError(.readFailed, posixErrno: 5, debugDetail: "the file is not local")
         let ends: [(FeatureID, ItemServeResult)] = [

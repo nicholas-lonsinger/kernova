@@ -21,17 +21,7 @@ public final class LazyClipboardProviderRegistry: Sendable {
     private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "ClipboardProvider")
 
-    private struct State: Sendable {
-        var live: Set<LazyClipboardDataProvider> = []
-        #if DEBUG
-        var onChange: (@Sendable () -> Void)?
-        var changeHook: (@Sendable () -> Void)? { onChange }
-        #else
-        var changeHook: (@Sendable () -> Void)? { nil }
-        #endif
-    }
-
-    private let state = Locked(State())
+    private let live = Locked<Set<LazyClipboardDataProvider>>([])
 
     /// Creates an empty registry.
     public init() {}
@@ -39,45 +29,35 @@ public final class LazyClipboardProviderRegistry: Sendable {
     /// Retains `providers` for the lifetime of their pasteboard promise — until
     /// each is individually released when the pasteboard finishes with it.
     public func retain(_ providers: [LazyClipboardDataProvider]) {
-        let (count, onChange) = state.withLock { state in
-            state.live.formUnion(providers)
-            return (state.live.count, state.changeHook)
+        let count = live.withLock { live in
+            live.formUnion(providers)
+            return live.count
         }
         Self.logger.log(
             .debug,
             "Retained \(providers.count, privacy: .public) clipboard provider(s) (live: \(count, privacy: .public))"
         )
-        onChange?()
     }
 
     /// Drops the strong reference to a single provider the pasteboard is done
     /// with.
     public func release(_ provider: LazyClipboardDataProvider) {
-        let (count, onChange) = state.withLock { state in
-            state.live.remove(provider)
-            return (state.live.count, state.changeHook)
+        let count = live.withLock { live in
+            live.remove(provider)
+            return live.count
         }
         Self.logger.log(
             .debug,
             "Released a finished clipboard provider (live: \(count, privacy: .public))")
-        onChange?()
     }
 
     #if DEBUG
     /// Count of providers currently retained for an outstanding pasteboard
     /// promise.
-    var countForTesting: Int { state.withLock { $0.live.count } }
-
-    /// Installs `hook`, fired after every `retain`/`release` so a test can await
-    /// the registration or finish signal instead of polling.
-    ///
-    /// `releaseAllForTesting` is teardown-only and doesn't fire it.
-    func setOnChangeForTesting(_ hook: @escaping @Sendable () -> Void) {
-        state.withLock { $0.onChange = hook }
-    }
+    var countForTesting: Int { live.withLock { $0.count } }
 
     /// Releases every retained provider, breaking the registry↔provider retain
     /// cycle that production breaks via `pasteboardFinishedWithDataProvider`.
-    func releaseAllForTesting() { state.withLock { $0.live.removeAll() } }
+    func releaseAllForTesting() { live.withLock { $0.removeAll() } }
     #endif
 }

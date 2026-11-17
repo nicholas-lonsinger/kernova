@@ -96,11 +96,6 @@ private final class PolicyRecordingFileSystem: TreeFileSystem, Sendable {
         try posix.linkTarget(of: name, in: directory)
     }
 
-    func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer) throws(TreeFileSystemError) -> Int {
-        record(read: true)
-        return try posix.read(descriptor, into: buffer)
-    }
-
     func read(_ descriptor: Int32, into buffer: UnsafeMutableRawBufferPointer, at offset: Int64)
         throws(TreeFileSystemError) -> Int
     {

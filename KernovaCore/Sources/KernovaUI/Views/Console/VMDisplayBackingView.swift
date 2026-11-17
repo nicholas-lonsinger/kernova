@@ -1,4 +1,5 @@
 import Cocoa
+import KernovaCommandModel
 import KernovaCore
 import KernovaKit
 import KernovaLogging
@@ -100,6 +101,7 @@ final class VMDisplayBackingView: NSView {
     private let pauseButton: NSButton
     private let transitionOverlay: NSVisualEffectView
     private let transitionLabel: NSTextField
+    private let transitionProcessEnd: VMProcessEndInstructionView
     private var pauseVisible = false
     private var transitionVisible = false
 
@@ -109,9 +111,10 @@ final class VMDisplayBackingView: NSView {
         let (pause, button) = Self.makePauseOverlay()
         pauseOverlay = pause
         pauseButton = button
-        let (transition, label) = Self.makeTransitionOverlay()
+        let (transition, label, processEnd) = Self.makeTransitionOverlay()
         transitionOverlay = transition
         transitionLabel = label
+        transitionProcessEnd = processEnd
 
         super.init(frame: frameRect)
 
@@ -145,15 +148,17 @@ final class VMDisplayBackingView: NSView {
     ///   - display: The session's display handle, or `nil` to clear.
     ///   - isPaused: Whether the pause overlay should be visible.
     ///   - transitionText: If non-nil, shows the transition overlay with this label (e.g. "Suspending…").
+    ///   - processEnd: How to end the VM's process, shown on the transition
+    ///     overlay beneath its label.
     ///   - settings: The framework properties this VM's display should carry now.
     func update(
         display: VMDisplayHandle?, isPaused: Bool, transitionText: String?,
-        settings: VMDisplayViewSettings
+        processEnd: VMProcessEndInstruction?, settings: VMDisplayViewSettings
     ) {
         // Before the attach: VZ reconfigures the guest display as the VM is
         // assigned, so a stale flag reconfigures a VM the user opted out of.
         apply(settings)
-        show(display: display, isPaused: isPaused, transitionText: transitionText)
+        show(display: display, isPaused: isPaused, transitionText: transitionText, processEnd: processEnd)
     }
 
     /// Clears the displayed VM and its overlays on a view about to be discarded.
@@ -161,11 +166,12 @@ final class VMDisplayBackingView: NSView {
     /// Leaves the applied settings where they are: with no VM attached there is
     /// nothing left for them to act on.
     func detach() {
-        show(display: nil, isPaused: false, transitionText: nil)
+        show(display: nil, isPaused: false, transitionText: nil, processEnd: nil)
     }
 
     private func show(
-        display: VMDisplayHandle?, isPaused: Bool, transitionText: String?
+        display: VMDisplayHandle?, isPaused: Bool, transitionText: String?,
+        processEnd: VMProcessEndInstruction?
     ) {
         if let display {
             display.attach(to: machineView)
@@ -176,6 +182,7 @@ final class VMDisplayBackingView: NSView {
         setOverlay(transitionOverlay, visible: transitionText != nil, flag: &transitionVisible)
         if let transitionText {
             transitionLabel.stringValue = transitionText
+            transitionProcessEnd.instruction = processEnd
         }
     }
 
@@ -385,7 +392,9 @@ final class VMDisplayBackingView: NSView {
         return (effect, button)
     }
 
-    private static func makeTransitionOverlay() -> (NSVisualEffectView, NSTextField) {
+    private static func makeTransitionOverlay() -> (
+        NSVisualEffectView, NSTextField, VMProcessEndInstructionView
+    ) {
         let effect = makeOverlayEffect()
 
         let spinner = NSProgressIndicator()
@@ -394,12 +403,13 @@ final class VMDisplayBackingView: NSView {
         spinner.startAnimation(nil)
 
         let label = makeLabel("Restoring…")
+        let processEnd = VMProcessEndInstructionView(textColor: .white)
 
-        let stack = makeOverlayStack(arrangedSubviews: [spinner, label])
+        let stack = makeOverlayStack(arrangedSubviews: [spinner, label, processEnd])
         effect.addSubview(stack)
         centerStack(stack, in: effect)
 
-        return (effect, label)
+        return (effect, label, processEnd)
     }
 
     private static func makeOverlayEffect() -> NSVisualEffectView {

@@ -171,9 +171,6 @@ public final class ClipboardItemExchange {
         self.logger = logger
     }
 
-    /// Whether a connection can carry the clipboard now.
-    public var isLinked: Bool { link != nil }
-
     /// The connection this exchange runs over now, renewed each time its link is set: what the far side's offers
     /// arriving now arrived on, and what a snapshot sent as a copy now goes over.
     public private(set) var connection = ClipboardConnectionID()

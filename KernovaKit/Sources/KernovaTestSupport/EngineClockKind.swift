@@ -1,5 +1,6 @@
 import Foundation
-import KernovaKit
+
+@testable import KernovaKit
 
 /// The two production `EngineClock` conformances, as a parameterization axis
 /// for suites that must exercise both on every CI run.

@@ -94,22 +94,37 @@ package final class MacOSInstallService {
         // after the install succeeds or fails — not that the installer's VM
         // has stopped. `VZVirtualMachine.stop`'s completion is documented as
         // called once the VM has stopped or on error, so the session ends on
-        // that rather than on a delegate event.
+        // that, or on the session ending first, rather than on a delegate
+        // event alone.
         Self.logger.log(.notice, "Stopping the installer's VM for '\(instance.name, privacy: .public)'")
-        do {
-            let outcome =
-                try await session.stopIfStoppable() ? "stopped" : "was not stoppable; treated as stopped"
+        var stopped = false
+        if await session.canStop {
+            do {
+                try await context.operation.stopSession()
+                stopped = true
+            } catch let error as NSError
+                where error.domain == VZError.errorDomain
+                && VZError.Code(rawValue: error.code) == .invalidVirtualMachineStateTransition
+            {
+                // The VM left a stoppable state between the check and the stop.
+            } catch {
+                Self.logger.log(
+                    .error,
+                    "Stopping the installer's VM for '\(instance.name, privacy: .public)' failed: \(error.localizedDescription, privacy: .public)"
+                )
+                throw error
+            }
+        }
+        if stopped {
+            Self.logger.log(.notice, "Installer's VM for '\(instance.name, privacy: .public)' stopped")
+        } else {
             Self.logger.log(
                 .notice,
-                "Installer's VM for '\(instance.name, privacy: .public)' \(outcome, privacy: .public)")
-        } catch {
-            Self.logger.log(
-                .error,
-                "Stopping the installer's VM for '\(instance.name, privacy: .public)' failed: \(error.localizedDescription, privacy: .public)"
-            )
-            throw error
+                "Installer's VM for '\(instance.name, privacy: .public)' was not stoppable; treated as stopped")
+            // The stop that completed ended the session; one not taken leaves
+            // it to end here.
+            context.operation.endSession()
         }
-        context.operation.endSession()
 
         // A cancel landing after the stop has to be raised here, or the install
         // returns success and the setup chains a boot.

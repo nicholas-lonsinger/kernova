@@ -142,6 +142,7 @@ struct VMCommandEnvelopeTests {
 
     // MARK: - Responses
 
+    // periphery:ignore - never called: an exhaustive switch, so a wire case added stops compiling here
     /// Every storage-disk edit the wire offers, named exhaustively.
     ///
     /// An attach added to the payload stops compiling here: a pick carries a
@@ -159,6 +160,7 @@ struct VMCommandEnvelopeTests {
         }
     }
 
+    // periphery:ignore - never called: an exhaustive switch, so a wire case added stops compiling here
     /// Every removable-media edit the wire offers, named exhaustively for the
     /// reason ``name(of:)`` states — and with no create either, because the
     /// user picks that disk's destination.
@@ -172,6 +174,7 @@ struct VMCommandEnvelopeTests {
         }
     }
 
+    // periphery:ignore - never called: an exhaustive switch, so a wire case added stops compiling here
     /// Every shared-directory edit the wire offers, named exhaustively for the
     /// reason ``name(of:)`` states — the add is here because the app obtains
     /// the grant for the path itself.
@@ -216,6 +219,9 @@ struct VMCommandEnvelopeTests {
             .ambiguous(selector: selector, candidates: [summary, summary]),
             .invalidState(vm: summary, current: "running", allowed: [.stop, .pause, .suspend]),
             .busy(vm: summary, operation: "taking snapshot"),
+            .busy(
+                vm: summary, operation: "force stopping",
+                processEnd: VMProcessEndInstruction(appName: "Kernova", bundlePath: "/VMs/Alpha.kernova")),
             .heldByAnotherCopy(vm: summary),
             .confirmationRequired(prompt: prompt),
             .stepRequired(
@@ -255,6 +261,9 @@ struct VMCommandEnvelopeTests {
             .invalidArgument(message: "There is no setting called \u{201C}cpu\u{201D}."),
             .timedOut(vm: summary, verb: .stop, seconds: 60),
             .timedOut(vm: summary, verb: .restart, seconds: 12.5),
+            .timedOut(
+                vm: summary, verb: .stop, seconds: 5,
+                processEnd: VMProcessEndInstruction(appName: "Kernova", bundlePath: "/VMs/Alpha.kernova")),
             .operationFailed(
                 verb: .start, title: nil, message: "could not open the disk", recovery: nil),
             .operationFailed(

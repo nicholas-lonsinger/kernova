@@ -10,7 +10,7 @@ import KernovaWire
 /// I/O: bytes go in through `receive`, frames come out through `pollTransmit`,
 /// everything else through `pollEvent`. Kind-aware only through its
 /// configuration's kind table.
-public struct Connection: Sendable {
+package struct Connection: Sendable {
     // MARK: Configuration
 
     let configuration: ConnectionConfiguration
@@ -20,9 +20,9 @@ public struct Connection: Sendable {
     // MARK: Phase and time
 
     /// The connection's phase.
-    public internal(set) var state = ConnectionState.handshaking
+    package internal(set) var state = ConnectionState.handshaking
     /// The connection's raw and judged time.
-    public internal(set) var clock: JudgedClock
+    package internal(set) var clock: JudgedClock
     var closingDeadline: CoreInstant?
     /// How the connection ended, from its one `.closed` event on.
     var closure: ConnectionClosure?
@@ -78,12 +78,12 @@ public struct Connection: Sendable {
 
     var localAdverts: [FeatureAdvertValue]
     /// The far side's Hello, once read.
-    public internal(set) var remoteHello: RemoteHello?
+    package internal(set) var remoteHello: RemoteHello?
     var remoteAdverts: [ReceivedAdvert] = []
     var remoteState: PeerSessionState?
     /// Host: its own policy, the one source of every `PolicyUpdate` it sends.
     /// Peer: the last `PolicyUpdate` read, nil before the first.
-    public internal(set) var currentPolicy: PolicySnapshot?
+    package internal(set) var currentPolicy: PolicySnapshot?
     /// Host: the bundles it holds now, the one source of every offer it sends.
     var hostBundles: [BundledPayload] = []
     var lastPeerState: PeerSessionState?
@@ -95,7 +95,7 @@ public struct Connection: Sendable {
     var livenessCloseDeadline: JudgedDeadline?
     var lastHeard: CoreInstant
     /// Whether the far side is currently judged unresponsive.
-    public internal(set) var isUnresponsive = false
+    package internal(set) var isUnresponsive = false
 
     // MARK: Outputs
 
@@ -107,7 +107,7 @@ public struct Connection: Sendable {
     package var trace: [ConnectionTrace] = []
 
     /// Creates a connection that has just connected, its preamble and Hello queued.
-    public init(_ configuration: ConnectionConfiguration, now: CoreInstant) {
+    package init(_ configuration: ConnectionConfiguration, now: CoreInstant) {
         self.configuration = configuration
         role = configuration.claim.role
         clock = JudgedClock(now: now, suspendedStep: configuration.policy.suspendedStep)
@@ -131,7 +131,7 @@ public struct Connection: Sendable {
     // MARK: - Inputs
 
     /// Bytes as the transport delivered them, at any split.
-    public mutating func receive(_ bytes: Data, now: CoreInstant) {
+    package mutating func receive(_ bytes: Data, now: CoreInstant) {
         ingest(bytes, now: now)
         while processNextFrame() {}
         finishReceive()
@@ -146,7 +146,7 @@ public struct Connection: Sendable {
     }
 
     /// The transport ended, in either direction.
-    public mutating func transportEnded(now: CoreInstant) {
+    package mutating func transportEnded(now: CoreInstant) {
         tick(now)
         switch state {
         case .finished:
@@ -164,19 +164,19 @@ public struct Connection: Sendable {
     /// The transmit marked `isFinal` has been written in full: the connection
     /// finishes. A closing connection otherwise finishes when the transport ends
     /// or its closing deadline passes, whether or not the write completed.
-    public mutating func finalTransmitWritten(now: CoreInstant) {
+    package mutating func finalTransmitWritten(now: CoreInstant) {
         tick(now)
         guard state == .closing, finalHandedOut else { return }
         finish()
     }
 
     /// The timer `nextDeadline` named fired (or any time: it only evaluates).
-    public mutating func handleTimeout(now: CoreInstant) {
+    package mutating func handleTimeout(now: CoreInstant) {
         tick(now)
     }
 
     /// Host only: the VM was live-paused (`true`) or resumed (`false`).
-    public mutating func setPeerFrozen(_ frozen: Bool, now: CoreInstant) {
+    package mutating func setPeerFrozen(_ frozen: Bool, now: CoreInstant) {
         tick(now)
         guard role == .host else { return misuse("setPeerFrozen on a peer") }
         guard frozen != clock.isFrozen else { return }
@@ -192,7 +192,7 @@ public struct Connection: Sendable {
     /// first, then what a stream that already completed still has queued — its
     /// END among it — then RESET(0) carrying `code`; every other stream closes
     /// at once.
-    public mutating func close(_ code: ErrorCode, retryAfter: CoreDuration?, now: CoreInstant) {
+    package mutating func close(_ code: ErrorCode, retryAfter: CoreDuration?, now: CoreInstant) {
         tick(now)
         guard isAcceptingInput else { return }
         let error = WireError(code, retryAfter: retryAfter)
@@ -203,13 +203,13 @@ public struct Connection: Sendable {
     // MARK: - Queries
 
     /// The raw DATA a machine may send on `id` now, 0 when none.
-    public func writableData(_ id: StreamID) -> Int {
+    package func writableData(_ id: StreamID) -> Int {
         guard let index = index(of: id) else { return 0 }
         return writableData(at: index)
     }
 
     /// Whether a message of `byteCount` bytes is sendable on `id` now.
-    public func canSendMessage(_ byteCount: Int, on id: StreamID) -> Bool {
+    package func canSendMessage(_ byteCount: Int, on id: StreamID) -> Bool {
         guard let index = index(of: id) else { return false }
         let record = streams[index]
         return record.canSend && record.sending == .messages && byteCount <= WireConstants.maxControlPayload
@@ -218,7 +218,7 @@ public struct Connection: Sendable {
 
     /// Whether this side may open a stream of `kind` now: its role opens it, its
     /// feature is usable, and the concurrency and per-connection limits allow.
-    public func canOpen(_ kind: StreamKind) -> Bool {
+    package func canOpen(_ kind: StreamKind) -> Bool {
         openRefusal(kind) == nil
     }
 
@@ -227,7 +227,7 @@ public struct Connection: Sendable {
     /// `FEATURE_UNAVAILABLE`; once closing, the close's own error), the feature's
     /// usability, the 64-stream limit (`TOO_MANY_STREAMS`) and the kind's
     /// per-connection limit (its `duplicateCode`).
-    public func openRefusal(_ kind: StreamKind) -> WireError? {
+    package func openRefusal(_ kind: StreamKind) -> WireError? {
         guard let descriptor = descriptor(for: kind), opensAsThisRole(descriptor) else {
             return WireError(.unsupportedKind)
         }
@@ -251,13 +251,13 @@ public struct Connection: Sendable {
     }
 
     /// The phase of `id`, nil once the stream is gone or for an unknown id.
-    public func phase(of id: StreamID) -> StreamPhase? {
+    package func phase(of id: StreamID) -> StreamPhase? {
         index(of: id).map { streams[$0].phase }
     }
 
     /// Whether `feature` is usable on this connection, with the far
     /// side's params when it is, or the first failing condition's reason.
-    public func usability(_ feature: FeatureID) -> Availability<Data> {
+    package func usability(_ feature: FeatureID) -> Availability<Data> {
         guard let remoteHello else { return .absent(.unspecified, debugDetail: "no Hello read yet") }
         guard let descriptor = FeatureDescriptor.lookup(feature) else {
             return .absent(.notImplemented, debugDetail: "")
@@ -287,18 +287,18 @@ public struct Connection: Sendable {
 
     /// Host: what it offers this peer now, from its bundles and the peer's claim;
     /// nil before the peer's Hello and when no bundle fits.
-    public var offeredUpdate: UpdateManifestValue? {
+    package var offeredUpdate: UpdateManifestValue? {
         guard role == .host, let claim = remoteHello?.claim else { return nil }
         return BundledPayload.offer(from: hostBundles, for: claim)
     }
 
     /// Every implemented feature's usability, in feature order.
-    public var featureStatus: FeatureStatusTable {
+    package var featureStatus: FeatureStatusTable {
         FeatureStatusTable(FeatureDescriptor.all.map { (feature: $0.feature, status: usability($0.feature)) })
     }
 
     /// When the driver must next call `handleTimeout`; nil once finished.
-    public var nextDeadline: CoreInstant? {
+    package var nextDeadline: CoreInstant? {
         switch state {
         case .finished:
             return nil
@@ -322,7 +322,7 @@ public struct Connection: Sendable {
     }
 
     /// The connection's memory and credit now.
-    public var footprint: MemoryFootprint {
+    package var footprint: MemoryFootprint {
         var control = sessionQueue.count + (pendingConnectionWindow > 0 ? 1 : 0) + (pingPending ? 1 : 0)
         var maxMessages = 0
         for record in streams {
@@ -340,7 +340,7 @@ public struct Connection: Sendable {
     // MARK: - Outputs
 
     /// The next event, in the order they happened.
-    public mutating func pollEvent() -> ConnectionEvent? {
+    package mutating func pollEvent() -> ConnectionEvent? {
         pollRoutedEvent()?.event
     }
 
@@ -364,8 +364,6 @@ public struct Connection: Sendable {
     // MARK: - Internals shared by the extensions
 
     var isAcceptingInput: Bool { state == .handshaking || state == .established }
-
-    var remoteRole: PeerRole? { remoteHello?.claim.role }
 
     func descriptor(for kind: StreamKind) -> StreamKindDescriptor? {
         configuration.kinds.first { $0.kind == kind }

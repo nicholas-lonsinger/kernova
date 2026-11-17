@@ -52,8 +52,8 @@ public struct ClipboardProgressSnapshot: Equatable, Sendable {
     /// Which operation this readout measures, so a Cancel on it stops that one
     /// and not whichever transfer happens to be newest when the click lands.
     public let operationID: ClipboardTransferOperationID
-    /// How many further operations for this peer are live behind this readout —
-    /// waiting their turn, or running where only one can be shown.
+    /// How many further operations for this peer are running behind this
+    /// readout, where only one can be shown.
     ///
     /// Filled in by the reporter, which is the only thing that sees them all.
     public let pendingBehind: Int

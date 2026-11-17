@@ -83,14 +83,14 @@ public struct NoParams: Sendable, Equatable {
 
 /// One feature as this side advertises it: its version and availability, with
 /// the capability message encoded.
-public struct LocalAdvert: Sendable, Equatable {
+package struct LocalAdvert: Sendable, Equatable {
     /// The feature's exact-match version.
-    public var version: UInt32
+    package var version: UInt32
     /// Offered with the encoded capability message, or absent.
-    public var availability: Availability<Data>
+    package var availability: Availability<Data>
 
     /// Creates an advert.
-    public init(version: UInt32, availability: Availability<Data>) {
+    package init(version: UInt32, availability: Availability<Data>) {
         self.version = version
         self.availability = availability
     }

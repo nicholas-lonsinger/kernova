@@ -2,7 +2,7 @@ import Foundation
 import KernovaLogging
 
 /// What this copy of Kernova's app bundle ships: where the copy lives, its
-/// version and build number, the guest agents it bundles, its blank-disk
+/// name, version and build number, the guest agents it bundles, its blank-disk
 /// templates, the `kernova` tool, and the relaunch helper.
 ///
 /// `KernovaApp` reads the app's once, through ``init(bundle:)``, and hands that
@@ -10,6 +10,10 @@ import KernovaLogging
 package struct AppBundleProducts: Sendable {
     /// The `.app` this process runs from.
     package let bundleURL: URL
+
+    /// The app's name as its bundle states it, which copy that names the app
+    /// to the user composes in.
+    package let displayName: String
 
     /// The host version a control Hello advertises to the guest agent.
     package let hostVersion: String
@@ -32,6 +36,7 @@ package struct AppBundleProducts: Sendable {
     /// Reads `bundle`'s products.
     package init(bundle: Bundle) {
         self.bundleURL = bundle.bundleURL
+        self.displayName = Self.displayName(of: bundle, at: bundle.bundleURL)
         self.hostVersion = bundle.infoDictionary?["CFBundleShortVersionString"] as? String ?? "host"
         self.buildNumber = bundle.infoDictionary?["CFBundleVersion"] as? String
         if buildNumber == nil {
@@ -53,10 +58,20 @@ package struct AppBundleProducts: Sendable {
         self.buildNumber = buildNumber
         self.versionLabel = Self.versionLabel(hostVersion, buildNumber)
         self.guestAgents = guestAgents
-        self.resources = Bundle(url: bundleURL)
+        let resources = Bundle(url: bundleURL)
+        self.resources = resources
+        self.displayName = Self.displayName(of: resources, at: bundleURL)
     }
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppBundleProducts")
+
+    /// `bundle`'s display name, else its name, else the bundle's file name
+    /// without its extension.
+    private static func displayName(of bundle: Bundle?, at url: URL) -> String {
+        let info = bundle?.infoDictionary
+        return info?["CFBundleDisplayName"] as? String ?? info?["CFBundleName"] as? String
+            ?? url.deletingPathExtension().lastPathComponent
+    }
 
     private static func versionLabel(_ version: String, _ build: String?) -> String {
         build.map { "\(version) (\($0))" } ?? version

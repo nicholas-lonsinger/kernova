@@ -177,7 +177,7 @@ public enum DragItems {
 /// This side keeps at most one open: a new offer withdraws the previous one first, `ITEM_OFFER_REPLACED`, so
 /// the far side knows a newer one follows and a pull of the old one ends `ITEM_OFFER_STALE`. A copy
 /// (``ItemOffer/copy``) is not one of them: it withdraws nothing, and nothing but its own end withdraws it.
-struct ClipboardOffers: FeatureMachine {
+struct ClipboardOffers: Sendable {
     /// CLIPBOARD.
     static let feature = FeatureID.clipboard
 
@@ -193,11 +193,8 @@ struct ClipboardOffers: FeatureMachine {
         LocalAdvert(version: 1, availability: Availability(availability) { _ in Data() })
     }
 
-    /// The machine sets no deadlines.
-    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
-
     /// Resets every clipboard offer once CLIPBOARD is not usable.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .usabilityChanged, .policyChanged: connection.resetStreams(ofUnusable: Self.feature)
         default: break
@@ -219,7 +216,7 @@ struct ClipboardOffers: FeatureMachine {
 
 /// DROP on one connection: the host's offers of what was dropped onto the VM, any number at once. Only the
 /// host opens a drop offer; a peer's open is refused `UNSUPPORTED_KIND`.
-struct DropOffers: FeatureMachine {
+struct DropOffers: Sendable {
     /// DROP.
     static let feature = FeatureID.drop
 
@@ -235,11 +232,8 @@ struct DropOffers: FeatureMachine {
         LocalAdvert(version: 1, availability: Availability(availability) { _ in Data() })
     }
 
-    /// The machine sets no deadlines.
-    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
-
     /// Resets every drop offer once DROP is not usable.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .usabilityChanged, .policyChanged: connection.resetStreams(ofUnusable: Self.feature)
         default: break
@@ -282,7 +276,7 @@ public struct DropLanded: Sendable, Equatable {
 /// calls it off. A take is valid only while the drag offer it names is open, and each offer is taken at most once:
 /// the peer refuses any other take `DRAG_NOT_CURRENT` itself, asks its owner about the rest, and refuses a take
 /// whose offer ends before the owner ended it.
-struct DragOffers: FeatureMachine {
+struct DragOffers: Sendable {
     /// DRAG.
     static let feature = FeatureID.drag
 
@@ -321,9 +315,6 @@ struct DragOffers: FeatureMachine {
     var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: Availability(availability) { _ in Data() })
     }
-
-    /// The machine sets no deadlines.
-    func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     mutating func takeOutputs() -> (events: [DragTakeEvent], diagnostics: [Diagnostic]) {
         defer {
@@ -427,7 +418,7 @@ struct DragOffers: FeatureMachine {
     }
 
     /// Resets every drag stream once DRAG is not usable.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection, now: CoreInstant) {
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .usabilityChanged, .policyChanged:
             connection.resetStreams(ofUnusable: Self.feature)

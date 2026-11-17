@@ -9,10 +9,10 @@ public enum DBusByteOrder: UInt8, Sendable, Hashable {
 /// The D-Bus marshalling format for a block of values, aligned as though the
 /// block starts a message — as a message body does, since a header's length is
 /// a multiple of 8.
-public enum DBusMarshal {
+enum DBusMarshal {
     /// Encodes `values` in `byteOrder`, validating each against the
     /// specification's rules.
-    public static func encode(_ values: [DBusValue], byteOrder: DBusByteOrder) throws(DBusProtocolError) -> [UInt8] {
+    static func encode(_ values: [DBusValue], byteOrder: DBusByteOrder) throws(DBusProtocolError) -> [UInt8] {
         _ = try DBusSignature(values.map(\.type))
         var writer = DBusWriter(byteOrder: byteOrder)
         for value in values {
@@ -23,7 +23,7 @@ public enum DBusMarshal {
 
     /// Decodes `bytes` as values of `signature`'s types in `byteOrder`; every
     /// byte must belong to a value.
-    public static func decode(
+    static func decode(
         _ bytes: [UInt8], signature: DBusSignature, byteOrder: DBusByteOrder
     ) throws(DBusProtocolError) -> [DBusValue] {
         var reader = DBusReader(bytes: bytes, base: 0, end: bytes.count, byteOrder: byteOrder)

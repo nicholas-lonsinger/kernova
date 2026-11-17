@@ -188,9 +188,11 @@ final class HubHarness: Sendable {
         let (snapshots, hostLogs, itemLog) = (snapshots, hostLogs, itemLog)
         hub = AgentHub(
             connector: connector, policy: policy, payloads: FixedPayloads(bundles: bundles),
-            logger: KernovaLogger(subsystem: "app.kernova", category: "AgentHub") { _, _, _, segments in
-                hostLogs.record(segments.map(\.text).joined())
-            },
+            logger: KernovaLogger(
+                subsystem: "app.kernova", category: "AgentHub",
+                sink: .init { _, _, _, segments in
+                    hostLogs.record(segments.map(\.text).joined())
+                }),
             itemEvents: { event in
                 itemLog.record(.event(event))
                 itemEvents(event)
@@ -209,9 +211,11 @@ final class HubHarness: Sendable {
     var republisher: GuestLogRepublisher {
         let guestLogs = guestLogs
         return GuestLogRepublisher(
-            logger: KernovaLogger(subsystem: "app.kernova.guest", category: "VM") { level, _, _, segments in
-                guestLogs.record((level, segments))
-            })
+            logger: KernovaLogger(
+                subsystem: "app.kernova.guest", category: "VM",
+                sink: .init { level, _, _, segments in
+                    guestLogs.record((level, segments))
+                }))
     }
 
     /// Waits until every event the hub has received is reflected in `snapshots`.

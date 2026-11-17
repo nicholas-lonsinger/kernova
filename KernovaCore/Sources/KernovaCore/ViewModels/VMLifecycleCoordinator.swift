@@ -172,18 +172,19 @@ final class VMLifecycleCoordinator {
         throw GuestShutdownNotCarriedOut(vmName: instance.name, session: session, reason: failure)
     }
 
-    /// Immediately terminates the VM — see ``VMActivity/forceStop(_:)``.
-    func forceStop(_ instance: VMInstance) async throws {
-        try await instance.activity.forceStop {
-            try await virtualizationService.forceStop(instance)
+    /// Terminates the VM, answering the outcome every caller of the Force
+    /// Stop awaits — see ``VMActivity/forceStop(_:)``.
+    func forceStop(_ instance: VMInstance) throws -> VMOutcome {
+        try instance.activity.forceStop {
+            try virtualizationService.forceStop(instance)
         }
     }
 
     /// Force Restart's termination, owing `boot` to the end of the session it
     /// ends — see ``VMActivity/forceStop(continuingWith:_:)``.
-    func forceStop(_ instance: VMInstance, continuingWith boot: VMFollowUp) async throws {
-        try await instance.activity.forceStop(continuingWith: boot) {
-            try await virtualizationService.forceStop(instance)
+    func forceStop(_ instance: VMInstance, continuingWith boot: VMFollowUp) throws -> VMOutcome {
+        try instance.activity.forceStop(continuingWith: boot) {
+            try virtualizationService.forceStop(instance)
         }
     }
 

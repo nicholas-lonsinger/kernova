@@ -48,8 +48,18 @@ struct WriterEventTests {
     enum Swap: CaseIterable, Sendable {
         case renamedThenSmallFile, renamedThenLargeFile, linkedThenSmallFile, linkedThenLargeFile
 
-        var link: Bool { self == .linkedThenSmallFile || self == .linkedThenLargeFile }
-        var size: UInt64 { self == .renamedThenSmallFile || self == .linkedThenSmallFile ? 3 : largeFileSize }
+        var link: Bool {
+            switch self {
+            case .renamedThenSmallFile, .renamedThenLargeFile: false
+            case .linkedThenSmallFile, .linkedThenLargeFile: true
+            }
+        }
+        var size: UInt64 {
+            switch self {
+            case .renamedThenSmallFile, .linkedThenSmallFile: 3
+            case .renamedThenLargeFile, .linkedThenLargeFile: largeFileSize
+            }
+        }
     }
 
     @Test(

@@ -126,7 +126,7 @@ struct InstallerRun {
         let (switched, confirmed) = (switched, confirmed)
         installer = SlotUpdateInstaller(
             root: try fixture.slotRoot(), runningSlot: slot, lander: lander,
-            logger: KernovaLogger(subsystem: "app.kernova.tests", category: "Update") { _, _, _, _ in },
+            logger: KernovaLogger(subsystem: "app.kernova.tests", category: "Update", sink: .init { _, _, _, _ in }),
             onSwitched: { switched.put(()) }, onConfirmed: { confirmed.put(()) })
         let reports = reports
         installer.start(reporter: UpdateReporter { reports.put($0) })

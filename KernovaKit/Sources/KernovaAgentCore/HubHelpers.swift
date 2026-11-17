@@ -136,8 +136,6 @@ public enum FeatureStatus {
 
 /// The hub's view of one connected peer, for deciding whose session owns the console.
 public protocol ConsolePeer {
-    /// The hub's handle.
-    var handle: PeerHandle { get }
     /// Its role.
     var role: PeerRole { get }
     /// Its latest state.
