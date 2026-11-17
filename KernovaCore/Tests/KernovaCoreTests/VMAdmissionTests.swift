@@ -81,7 +81,8 @@ struct VMAdmissionTests {
     /// identity conflict, `H` an accessory another attach holds, `T` refused
     /// by the app's termination, `O` refused as held by another copy, `S`
     /// taken only by a stopped VM, `E` an Ephemeral baseline that can't be read,
-    /// `W` waiting out a return to the Ephemeral baseline.
+    /// `L` a symbolic link in the bundle, `W` waiting out a return to the
+    /// Ephemeral baseline.
     private static func code(_ decision: VMAdmission.Decision, held: VMOperationKind?) -> Character {
         switch decision {
         case .admit: "A"
@@ -98,6 +99,7 @@ struct VMAdmissionTests {
         case .refuse(.heldByAnotherCopy): "O"
         case .refuse(.takesStoppedVM): "S"
         case .refuse(.ephemeralBaselineUnreadable): "E"
+        case .refuse(.symbolicLinkInBundle): "L"
         case .refuse(.stopRequestInFlight): "G"
         // Raised by the catalog alone, never by admission.
         case .refuse(.guestPaused): "?"
@@ -726,6 +728,44 @@ struct VMAdmissionTests {
         #expect(
             VMAdmission.decide(.start(recovery: false), posture: .commit, phase: Self.live, facts: facts)
                 == .refuse(.invalidState))
+    }
+
+    @Test("A bring-up that runs the guest is refused while the bundle holds a symbolic link; a revert to rest is not")
+    func symbolicLinkInBundleRefusesBringUps() {
+        let link = VMBundleItems.SymbolicLinkError(url: URL(filePath: "/VM.kernova/Disk.asif"))
+        func facts(slot: Bool = false, pendingSetup: Bool = false) -> VMAdmission.Facts {
+            var facts = Self.facts(slot: slot, pendingSetup: pendingSetup)
+            facts.bundleSymbolicLink = link
+            return facts
+        }
+        let refused = VMAdmission.Decision.refuse(.symbolicLinkInBundle(link))
+        #expect(
+            VMAdmission.decide(.start(recovery: false), posture: .commit, phase: .stopped, facts: facts())
+                == refused)
+        #expect(
+            VMAdmission.decide(.start(recovery: true), posture: .commit, phase: .stopped, facts: facts())
+                == refused)
+        #expect(
+            VMAdmission.decide(.resume, posture: .commit, phase: .suspended, facts: facts(slot: true))
+                == refused)
+        #expect(
+            VMAdmission.decide(
+                .start(recovery: false), posture: .commit, phase: .initialBoot,
+                facts: facts(pendingSetup: true)) == refused)
+        #expect(
+            VMAdmission.decide(
+                .operation(.bringUp(.reverting(snapshotID: Self.session, resumesAfter: true))),
+                posture: .commit, phase: Self.live, facts: facts()) == refused)
+        // The revert to rest replaces what the snapshot holds, and a hot
+        // resume opens nothing.
+        #expect(
+            VMAdmission.decide(
+                .operation(.bringUp(.reverting(snapshotID: Self.session, resumesAfter: false))),
+                posture: .commit, phase: .stopped, facts: facts()) == .admit)
+        #expect(
+            VMAdmission.decide(
+                .resume, posture: .commit, phase: .livePaused(sessionID: Self.session), facts: facts())
+                == .admit)
     }
 
     @Test("A capture is offered in the mode of where an operation's ended session rests the VM")

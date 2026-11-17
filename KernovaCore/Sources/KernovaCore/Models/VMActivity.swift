@@ -409,8 +409,9 @@ package final class VMActivity {
         if posture == .commit,
             let kind = VMAdmission.bringUpKind(for: request, phase: phase, facts: facts)
         {
-            if kind.checksIdentity {
+            if kind.runsGuest {
                 facts.identityConflict = owner.identityConflict(for: kind, override: identity)
+                facts.bundleSymbolicLink = owner.bundleSymbolicLink
             }
             // Read only by the decision ``admit(_:origin:identity:outcome:)``
             // makes right after re-reading the bundle, so a file repaired

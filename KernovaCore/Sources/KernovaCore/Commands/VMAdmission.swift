@@ -69,6 +69,9 @@ package enum VMAdmission {
         /// bundle could not read that baseline's settings — so the revert
         /// would fail, leaving the session's changes on the disks.
         case ephemeralBaselineUnreadable
+        /// The bring-up would run the guest on a bundle holding a symbolic
+        /// link, which the error names.
+        case symbolicLinkInBundle(VMBundleItems.SymbolicLinkError)
         /// The live session's graceful stop request is still being sent —
         /// asked of its guest's agents, or pressed as the ACPI button — and a
         /// second would race it.
@@ -97,6 +100,8 @@ package enum VMAdmission {
             case (.accessoryHeld(let l), .accessoryHeld(let r)):
                 l === r
             case (.usbPassthroughUnavailable(let l), .usbPassthroughUnavailable(let r)):
+                l == r
+            case (.symbolicLinkInBundle(let l), .symbolicLinkInBundle(let r)):
                 l == r
             default: false
             }
@@ -147,6 +152,11 @@ package enum VMAdmission {
         /// the commit of a bring-up that has just re-read the bundle, so an
         /// offer of Start stands and the click is what explains the refusal.
         var ephemeralBaselineUnreadable = false
+        /// The first symbolic link in the VM's bundle
+        /// (``VMInstance/bundleSymbolicLink``) — supplied only to the commit
+        /// of a bring-up that runs the guest, so walking the bundle costs
+        /// nothing an offer reads.
+        var bundleSymbolicLink: VMBundleItems.SymbolicLinkError?
         /// The VM holding the accessory an attach names — supplied only when
         /// deciding an attach (``VMAccessoryHolders/holder(of:)``).
         var accessoryHolder: VMInstance?
@@ -472,12 +482,15 @@ package enum VMAdmission {
         if let change = outsideBundleRule(kind, facts: facts) {
             return .refuse(.takesStoppedVM(change))
         }
+        if case .bringUp(let bringUp) = kind, bringUp.runsGuest, let link = facts.bundleSymbolicLink {
+            return .refuse(.symbolicLinkInBundle(link))
+        }
         if case .bringUp(let bringUp) = kind, bringUp.beginsSessionFromRest,
             facts.ephemeralBaselineUnreadable
         {
             return .refuse(.ephemeralBaselineUnreadable)
         }
-        if case .bringUp(let bringUp) = kind, bringUp.checksIdentity {
+        if case .bringUp(let bringUp) = kind, bringUp.runsGuest {
             return identityChecked(facts)
         }
         if case .attachingUSB = kind, let holder = facts.accessoryHolder {
@@ -558,6 +571,7 @@ package enum VMAdmission {
         var settledFacts = facts
         settledFacts.identityConflict = nil
         settledFacts.ephemeralBaselineUnreadable = false
+        settledFacts.bundleSymbolicLink = nil
         switch decideSettled(request, posture: posture, phase: basis, facts: settledFacts) {
         case .admit, .join, .wait:
             return .refuse(.busy(holder))

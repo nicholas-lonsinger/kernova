@@ -853,6 +853,14 @@ package final class VMInstance {
             for: self, bringingUp: configuration(broughtUpBy: kind), override: override)
     }
 
+    /// The first symbolic link anywhere in this VM's bundle, read from disk
+    /// now (``VMBundleItems/symbolicLink(below:)``), or `nil` when it holds
+    /// none. VZ would open a linked disk through the link, writing the guest
+    /// into whatever file it points at.
+    var bundleSymbolicLink: VMBundleItems.SymbolicLinkError? {
+        VMBundleItems.symbolicLink(below: bundleURL)
+    }
+
     /// Whether this VM and `other` claim the same ``machineIdentity``. A VM
     /// with no identifier shares it with no one.
     func sharesMachineIdentity(with other: VMInstance) -> Bool {

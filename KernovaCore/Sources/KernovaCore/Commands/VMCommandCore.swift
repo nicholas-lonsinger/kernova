@@ -411,10 +411,19 @@ package final class VMCommandCore {
             .stepRequired(pausedStopRefusal(instance))
         case .ephemeralBaselineUnreadable:
             .operationFailed(
-                verb: verb ?? .start,
-                title: "Couldn\u{2019}t \(Self.bringUpTitle(verb)) \u{201C}\(instance.name)\u{201D}",
+                verb: verb ?? .start, title: Self.bringUpFailureTitle(verb, on: instance),
                 message: Self.ephemeralBaselineUnreadableMessage)
+        case .symbolicLinkInBundle(let link):
+            .operationFailed(
+                verb: verb ?? .start, title: Self.bringUpFailureTitle(verb, on: instance),
+                message: link.statement(below: instance.bundleURL))
         }
+    }
+
+    /// The heading a bring-up `verb` of `instance` that admission refused is
+    /// reported under.
+    private static func bringUpFailureTitle(_ verb: VMVerb?, on instance: VMInstance) -> String {
+        "Couldn\u{2019}t \(bringUpTitle(verb)) \u{201C}\(instance.name)\u{201D}"
     }
 
     /// Why a bring-up of an Ephemeral Mode VM whose baseline's settings can't

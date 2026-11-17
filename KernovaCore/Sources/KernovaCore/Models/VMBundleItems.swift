@@ -1,7 +1,8 @@
 import Foundation
 
-/// The bundle-relative items a snapshot or a clone takes, and the copy that
-/// moves them between bundles.
+/// The bundle-relative items a snapshot or a clone takes, the copy that
+/// moves them between bundles, and the walk that finds a symbolic link in
+/// one — a bundle holds real files and directories only.
 package enum VMBundleItems {
     // MARK: - Captured payload
 
@@ -90,14 +91,17 @@ package enum VMBundleItems {
     /// with the source.
     package static func copy(_ source: URL, to destination: URL) throws {
         let manager = FileManager.default
-        let values = try source.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
-        guard values.isSymbolicLink != true else { throw SymbolicLinkError(url: source) }
-        guard values.isDirectory == true else {
+        switch try item(at: source) {
+        case .link:
+            throw SymbolicLinkError(url: source)
+        case .file:
             // On one APFS volume this clones the file rather than duplicating
             // its blocks — the copy shares them with the original until either
             // side writes.
             try manager.copyItem(at: source, to: destination)
             return
+        case .directory:
+            break
         }
         try manager.createDirectory(at: destination, withIntermediateDirectories: false)
         let sourcePath = source.path(percentEncoded: false)
@@ -111,13 +115,54 @@ package enum VMBundleItems {
         guard copied == 0 else { throw fileError(errno, at: destination) }
     }
 
+    // MARK: - Symbolic links
+
+    /// The first symbolic link anywhere below `root`, as the error that
+    /// refuses it, or `nil` when the tree holds none. `root` itself, and
+    /// every directory above it, may be a link: the walk starts from what
+    /// `root` resolves to, and follows nothing below it.
+    ///
+    /// A directory or item that can't be read is passed over: the walk names
+    /// only a link it can see.
+    package static func symbolicLink(below root: URL) -> SymbolicLinkError? {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: root.path(percentEncoded: false))) ?? []
+        for name in names.sorted() {
+            let url = root.appendingPathComponent(name)
+            switch try? item(at: url) {
+            case .link: return SymbolicLinkError(url: url)
+            case .directory: if let link = symbolicLink(below: url) { return link }
+            case .file, nil: continue
+            }
+        }
+        return nil
+    }
+
+    /// What a walk of a bundle tree meets at a path.
+    private enum Item {
+        case file, directory, link
+    }
+
+    /// What `url` is, read from the item itself: a link is a link, whatever
+    /// it points at — the one test ``copy(_:to:)`` and
+    /// ``symbolicLink(below:)`` share, so what one refuses the other finds.
+    private static func item(at url: URL) throws -> Item {
+        let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+        if values.isSymbolicLink == true { return .link }
+        return values.isDirectory == true ? .directory : .file
+    }
+
     /// A symbolic link where a bundle's own file or directory belongs.
     package struct SymbolicLinkError: LocalizedError, CustomNSError, Equatable {
         package let url: URL
 
-        /// Why the link stops a copy, worded to follow the name of the file.
+        /// Why the link is refused, worded to follow the name of the item it
+        /// is said of ("“Disk.asif” is a symbolic link, and …").
         package static let reason =
-            "It is a symbolic link, and Kernova supports only real files and folders inside a virtual machine"
+            "is a symbolic link, and Kernova supports only real files and folders inside a virtual machine"
+
+        /// ``reason`` as the cause of a failure a sentence has just named the
+        /// item in ("… could not be copied: It is a symbolic link, and …").
+        package static let cause = "It \(reason)"
 
         package static let errorDomain = "app.kernova.VMBundleItems.SymbolicLink"
 
@@ -126,7 +171,14 @@ package enum VMBundleItems {
         }
 
         package var errorDescription: String? {
-            "\u{201C}\(url.lastPathComponent)\u{201D} could not be copied: \(Self.reason)."
+            "\u{201C}\(url.lastPathComponent)\u{201D} could not be copied: \(Self.cause)."
+        }
+
+        /// The sentence stating the link, named by its path below `root` — the
+        /// directory ``VMBundleItems/symbolicLink(below:)`` walked.
+        package func statement(below root: URL) -> String {
+            let name = url.pathComponents.dropFirst(root.pathComponents.count).joined(separator: "/")
+            return "\u{201C}\(name)\u{201D} \(Self.reason)."
         }
     }
 

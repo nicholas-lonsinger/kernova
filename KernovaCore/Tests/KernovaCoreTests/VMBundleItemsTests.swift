@@ -61,7 +61,9 @@ struct VMBundleItemsTests {
         case ancestor = "Directory/Deeper/Up"
     }
 
-    @Test("A symbolic link anywhere in the tree fails the copy, naming the link", arguments: LinkCase.allCases)
+    @Test(
+        "A symbolic link anywhere in the tree fails the copy, and the walk finds it, naming the link by its path",
+        arguments: LinkCase.allCases)
     func linkFailsTheCopy(_ linkCase: LinkCase) throws {
         _ = try write("plain", to: "Source/Directory/Deeper/Plain")
         let target: URL =
@@ -73,10 +75,29 @@ struct VMBundleItemsTests {
             }
         try link("Source/\(linkCase.rawValue)", to: target)
         let source = scratch.url.appendingPathComponent("Source")
+        let refusal = VMBundleItems.SymbolicLinkError(url: source.appendingPathComponent(linkCase.rawValue))
 
-        #expect(throws: VMBundleItems.SymbolicLinkError(url: source.appendingPathComponent(linkCase.rawValue))) {
+        #expect(throws: refusal) {
             try VMBundleItems.copy(source, to: scratch.url.appendingPathComponent("Copy"))
         }
+        let found = try #require(VMBundleItems.symbolicLink(below: source))
+        #expect(found == refusal)
+        #expect(
+            found.statement(below: source)
+                == "\u{201C}\(linkCase.rawValue)\u{201D} is a symbolic link, and Kernova supports only real files and folders inside a virtual machine."
+        )
+    }
+
+    @Test("A tree with no symbolic link below it has none to find, even reached through a link to it")
+    func walkThroughALinkedRootFindsNone() throws {
+        _ = try write("plain", to: "Real/Plain")
+        _ = try write("hidden", to: "Real/.Hidden")
+        _ = try write("nested", to: "Real/Directory/Deeper/Nested")
+        let real = scratch.url.appendingPathComponent("Real")
+        try link("Alias", to: real)
+
+        #expect(VMBundleItems.symbolicLink(below: real) == nil)
+        #expect(VMBundleItems.symbolicLink(below: scratch.url.appendingPathComponent("Alias")) == nil)
     }
 
     @Test("Copying a symbolic link itself fails, whatever it points at")

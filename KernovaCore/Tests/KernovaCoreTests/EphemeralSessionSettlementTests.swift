@@ -378,6 +378,40 @@ struct EphemeralSessionSettlementTests {
         #expect(instance.hostState.hasUnsettledSession)
     }
 
+    @Test("A start owing the revert, of a VM whose bundle holds a symbolic link, is refused before the revert")
+    func linkedStartIsRefusedBeforeTheOwedRevert() async throws {
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let (instance, _, _) = try makeVM(in: harness, unsettled: true)
+        try VMInstanceFixture.linkDiskImage(of: instance)
+
+        await #expect(throws: CommandError.self) {
+            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        }
+        await harness.library.waitForRevertsToSettle()
+
+        #expect(virtualization.revertCallCount == 0)
+        #expect(virtualization.startCallCount == 0)
+        #expect(instance.status == .stopped)
+        #expect(instance.hostState.hasUnsettledSession)
+    }
+
+    @Test("A live revert that would resume a VM whose bundle holds a symbolic link is refused before the revert")
+    func linkedRevertAndResumeIsRefusedBeforeTheRevert() async throws {
+        let virtualization = MockVirtualizationService()
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let (instance, _, other) = try makeVM(
+            in: harness, other: .warm, phase: .running(sessionID: UUID()))
+        try VMInstanceFixture.linkDiskImage(of: instance)
+
+        await #expect(throws: CommandError.self) {
+            try await harness.core.revertToSnapshot(.id(instance.id), snapshot: other.id, consent: .all)
+        }
+
+        #expect(virtualization.revertCallCount == 0)
+        #expect(instance.status == .running)
+    }
+
     // MARK: - Waiting
 
     @Test("A live Exact Copy arrives settled")
