@@ -96,14 +96,14 @@ struct ClipboardItemBridgeTests {
 
         /// Fires item `item`'s provider for `type` as a paste does, off the
         /// main actor so the pull can reach it.
-        func paste(_ type: NSPasteboard.PasteboardType, item: Int = 0) async -> Data? {
+        func paste(_ type: NSPasteboard.PasteboardType, item: Int = 0) async throws -> Data? {
             let destination = self.destination
-            return await offCooperativePool { destination.invokeProvider(forType: type, itemIndex: item) }
+            return try await offCooperativePool { destination.invokeProvider(forType: type, itemIndex: item) }
         }
 
         /// The file a paste of item `item`'s `public.file-url` lands.
-        func pasteFile(item: Int = 0) async -> URL? {
-            guard let data = await paste(.fileURL, item: item) else { return nil }
+        func pasteFile(item: Int = 0) async throws -> URL? {
+            guard let data = try await paste(.fileURL, item: item) else { return nil }
             return URL(string: String(decoding: data, as: UTF8.self))
         }
     }
@@ -169,7 +169,7 @@ struct ClipboardItemBridgeTests {
         let published = try publish(source)
         defer { published.registry.releaseAllForTesting() }
         #expect(published.destination.promisedTypesByItem == [[.string, rtfType]])
-        #expect(await published.paste(.string) == Data("hello".utf8))
+        #expect(try await published.paste(.string) == Data("hello".utf8))
         #expect(pasteboard.residentReads == [.string])
     }
 
@@ -183,7 +183,7 @@ struct ClipboardItemBridgeTests {
 
         let published = try publish(source)
         defer { published.registry.releaseAllForTesting() }
-        #expect(await published.paste(.png) == pngBytes)
+        #expect(try await published.paste(.png) == pngBytes)
     }
 
     @Test("several pasteboard items offer one item each")
@@ -196,7 +196,7 @@ struct ClipboardItemBridgeTests {
 
         let published = try publish(source)
         defer { published.registry.releaseAllForTesting() }
-        #expect(await published.paste(.string, item: 1) == Data("two".utf8))
+        #expect(try await published.paste(.string, item: 1) == Data("two".utf8))
     }
 
     @Test("a pull after the pasteboard moved on is refused unavailable")
@@ -235,7 +235,7 @@ struct ClipboardItemBridgeTests {
         let published = try publish(source)
         defer { published.registry.releaseAllForTesting() }
         #expect(published.destination.promisedTypesByItem == [[.fileURL]])
-        let landed = try #require(await published.pasteFile())
+        let landed = try #require(try await published.pasteFile())
         #expect(landed.lastPathComponent == "notes.txt")
         #expect(try Data(contentsOf: landed) == Data("file body".utf8))
     }
@@ -253,7 +253,7 @@ struct ClipboardItemBridgeTests {
         let published = try publish(source)
         defer { published.registry.releaseAllForTesting() }
         #expect(published.destination.promisedTypesByItem == [[.fileURL, .png]])
-        #expect(await published.paste(.png) == pngBytes)
+        #expect(try await published.paste(.png) == pngBytes)
 
         let withheld = try publish(source, servingFileURLs: false)
         defer { withheld.registry.releaseAllForTesting() }
@@ -275,7 +275,7 @@ struct ClipboardItemBridgeTests {
 
         let published = try publish(source)
         defer { published.registry.releaseAllForTesting() }
-        let landed = try #require(await published.pasteFile())
+        let landed = try #require(try await published.pasteFile())
         #expect(landed.lastPathComponent == "Album")
         #expect(try Data(contentsOf: landed.appendingPathComponent("b.txt")) == Data("bb".utf8))
     }
@@ -306,11 +306,11 @@ struct ClipboardItemBridgeTests {
 
         let published = try publish(source)
         defer { published.registry.releaseAllForTesting() }
-        let landed = try #require(await published.pasteFile())
+        let landed = try #require(try await published.pasteFile())
         #expect(landed.lastPathComponent == "photo.png")
         #expect(try Data(contentsOf: landed) == pngBytes)
 
-        guard case .file(let again) = try await source.serve(item: 0, representation: 0) else {
+        guard case .file(let again) = try await serve(source, item: 0, representation: 0) else {
             Issue.record("expected the promised file")
             return
         }
@@ -333,7 +333,7 @@ struct ClipboardItemBridgeTests {
         let names = source.items.map { $0.representations.first?.name }
         #expect(names == [Data("Untitled.png".utf8), Data("Export".utf8)])
         #expect(source.items.map { $0.representations.first?.storage } == [.file, .folder])
-        guard case .folder(let landed) = try await source.serve(item: 1, representation: 0) else {
+        guard case .folder(let landed) = try await serve(source, item: 1, representation: 0) else {
             Issue.record("expected the promised folder")
             return
         }
@@ -357,7 +357,17 @@ struct ClipboardItemBridgeTests {
         let source = try await readOffer(promisePasteboard(), promises: [receiver])
 
         await #expect(throws: ClipboardServeError.readFailed) {
-            try await source.serve(item: 0, representation: 0)
+            try await serve(source, item: 0, representation: 0)
+        }
+    }
+
+    /// `source`'s serve of `representation` of `item`, under the backstop: serving a promise waits on its
+    /// source's call-in, which sets no deadline of its own (`CalledInFilePromise.File.landed`).
+    private func serve(
+        _ source: ClipboardOfferSource, item: Int, representation: Int, fileID: String = #fileID, line: Int = #line
+    ) async throws -> ClipboardServedRepresentation {
+        try await Backstop("ClipboardOfferSource.serve(item:representation:)", fileID: fileID, line: line).run {
+            try await source.serve(item: item, representation: representation)
         }
     }
 
@@ -388,13 +398,13 @@ struct ClipboardItemBridgeTests {
         #expect(source.items.map { $0.representations.map(\.name) } == [[Data("a.png".utf8)], [Data("b.png".utf8)]])
         // The source reports its second file first: it lands on that file's item, not the first one owed.
         receiver.deliver(1)
-        guard case .file(let second) = try await source.serve(item: 1, representation: 0) else {
+        guard case .file(let second) = try await serve(source, item: 1, representation: 0) else {
             Issue.record("expected the second file")
             return
         }
         #expect(try Data(contentsOf: second) == Data("b".utf8))
         receiver.deliver(0)
-        guard case .file(let first) = try await source.serve(item: 0, representation: 0) else {
+        guard case .file(let first) = try await serve(source, item: 0, representation: 0) else {
             Issue.record("expected the first file")
             return
         }
@@ -518,7 +528,7 @@ struct ClipboardItemBridgeTests {
 
     /// The bytes a destination pasteboard is served for `uti` when a peer
     /// offers `bytes` under it.
-    private func served(_ bytes: Data, as uti: String) async -> Data? {
+    private func served(_ bytes: Data, as uti: String) async throws -> Data? {
         var item = OfferedItem()
         item.representations = [.make(TypeDescriptor(appleUTI: uti), .inline, size: 0)]
         let destination = FakePasteboard()
@@ -529,7 +539,7 @@ struct ClipboardItemBridgeTests {
                 [item], concealed: false, puller: FixedPuller(bytes: bytes),
                 serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection)
             )
-        return await offCooperativePool { destination.invokeProvider(forType: .init(uti)) }
+        return try await offCooperativePool { destination.invokeProvider(forType: .init(uti)) }
     }
 
     @Test(
@@ -582,8 +592,8 @@ struct ClipboardItemBridgeTests {
         }
 
         let web = try plist(["https://example.com/"], ["Example Domain"])
-        #expect(await served(web, as: uti) == web)
-        #expect(await served(try plist(["file:///etc/hosts"], ["Hosts"]), as: uti) == nil)
+        #expect(try await served(web, as: uti) == web)
+        #expect(try await served(try plist(["file:///etc/hosts"], ["Hosts"]), as: uti) == nil)
     }
 
     @Test(
@@ -595,19 +605,19 @@ struct ClipboardItemBridgeTests {
             "dyn.ah62d4rv4gu8yc6durvwwaznwmuuha2pxsvw0e55bsmwca7d3sbwu",
         ])
     func urlFlavorRefusesFileURLs(uti: String) async throws {
-        func served(_ bytes: Data) async -> Data? { await self.served(bytes, as: uti) }
+        func served(_ bytes: Data) async throws -> Data? { try await self.served(bytes, as: uti) }
         func plist(_ strings: [String]) throws -> Data {
             try PropertyListSerialization.data(fromPropertyList: strings, format: .xml, options: 0)
         }
 
         let web = Data("https://example.com/".utf8)
-        #expect(await served(web) == web)
-        #expect(await served(try plist(["https://example.com/", ""])) != nil)
+        #expect(try await served(web) == web)
+        #expect(try await served(try plist(["https://example.com/", ""])) != nil)
         for smuggled in [
             Data("file:///etc/hosts".utf8), Data(" FILE:///etc/hosts".utf8), Data("/etc/hosts".utf8),
             try plist(["file:///etc/hosts", ""]), try plist(["hosts", "file:///etc/"]),
         ] {
-            #expect(await served(smuggled) == nil, "\(String(decoding: smuggled, as: UTF8.self))")
+            #expect(try await served(smuggled) == nil, "\(String(decoding: smuggled, as: UTF8.self))")
         }
     }
 

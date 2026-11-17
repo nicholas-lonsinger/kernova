@@ -595,27 +595,26 @@ extension VMInstance {
 /// non-observed state keeps `waitUntil`.
 @MainActor
 func waitForChange(
-    timeout: TimeInterval = testWaitBackstop,
+    timeout: TimeInterval = testWaitBackstop, fileID: String = #fileID, line: Int = #line,
     until predicate: @escaping @MainActor () -> Bool
 ) async throws {
-    let stopwatch = BackstopStopwatch()
+    let backstop = Backstop("waitForChange", timeout: timeout, fileID: fileID, line: line)
     // The production wait answers from the observation loop's apply, a hop
     // before this caller resumes, and work queued between the two can move the
     // state again — so the answer is re-read here, in the caller's own turn.
     while !predicate() {
-        let remaining = timeout - stopwatch.elapsed
+        let remaining = backstop.remaining
         guard remaining > 0,
             await waitForObservedChange(
                 until: predicate,
                 before: ObservedChangeDeadline(seconds: remaining, clock: MonotonicEngineClock()))
         else {
-            throw TestFailure.backstop(
-                "Observed condition not met within \(timeout) s", stopwatch: stopwatch, timeout: timeout)
+            throw backstop.failure()
         }
-        guard stopwatch.elapsed < timeout else {
-            throw TestFailure.backstop(
-                "Condition held only when the deadline re-read it: no observed change to what the predicate reads made it hold",
-                stopwatch: stopwatch, timeout: timeout)
+        guard !backstop.expired else {
+            throw backstop.failure(
+                "its predicate held only when the deadline re-read it: no observed change to what it reads made it hold"
+            )
         }
     }
 }
@@ -654,7 +653,7 @@ extension VMLifecycleCoordinator {
             try record(permit, captured)
             landed.snapshot = captured
         }
-        try await outcome.value()
+        try await Backstop("the snapshot's outcome").run { try await outcome.value() }
         return try #require(landed.snapshot)
     }
 }
@@ -685,7 +684,7 @@ extension VMActivity {
                 return .failed(rest, error)
             }
         }
-        try await outcome.value()
+        try await Backstop("the capture's outcome").run { try await outcome.value() }
         return try #require(landed.value)
     }
 }

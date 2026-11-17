@@ -80,7 +80,9 @@ final class MockVmnetNetworkOperator: VmnetNetworkOperating {
         }
         if let createHold {
             createEntered.notify()
-            createHold.wait()
+            do { try Backstop("the test's release of the create").wait(for: createHold) } catch {
+                Issue.record(error)
+            }
         }
         let subnet = try state.withLock { state in
             if let error = state.createNetworkError { throw error }

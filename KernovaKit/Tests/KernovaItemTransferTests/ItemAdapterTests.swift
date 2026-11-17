@@ -87,18 +87,18 @@ struct ItemAdapterTests {
         // Land the first bytes, so the root exists under its final name.
         while (try? bench.names("landed"))?.isEmpty ?? true {
             source.handle(.read(Bench.id, maxBytes: WireConstants.maxRawDataPayload), reporter: sourceReporter)
-            guard case .bytes(_, let bytes)? = await sources.next() else {
+            guard case .bytes(_, let bytes)? = try await sources.next() else {
                 Issue.record("the source finished before the landing began")
                 return
             }
             sink.handle(.bytes(Bench.id, bytes), reporter: sinkReporter)
-            #expect(await sinks.next() == .consumed(Bench.id, bytes.count))
+            #expect(try await sinks.next() == .consumed(Bench.id, bytes.count))
         }
         // Queue more writes on the pull's lane, unawaited, as a pull mid-copy has.
         var queued: [Data] = []
         for _ in 0..<24 {
             source.handle(.read(Bench.id, maxBytes: WireConstants.maxRawDataPayload), reporter: sourceReporter)
-            guard case .bytes(_, let bytes)? = await sources.next() else { break }
+            guard case .bytes(_, let bytes)? = try await sources.next() else { break }
             queued.append(bytes)
         }
         for bytes in queued { sink.handle(.bytes(Bench.id, bytes), reporter: sinkReporter) }
@@ -189,20 +189,20 @@ struct ItemAdapterTests {
         for index in 0..<max(containers.0.count, containers.1.count) {
             if index < containers.0.count {
                 sink.handle(.bytes(Bench.id, containers.0[index]), reporter: firstReporter)
-                #expect(await firstReports.next() == .consumed(Bench.id, containers.0[index].count))
+                #expect(try await firstReports.next() == .consumed(Bench.id, containers.0[index].count))
             }
             if index < containers.1.count {
                 sink.handle(.bytes(Bench.id, containers.1[index]), reporter: secondReporter)
-                #expect(await secondReports.next() == .consumed(Bench.id, containers.1[index].count))
+                #expect(try await secondReports.next() == .consumed(Bench.id, containers.1[index].count))
             }
         }
         for (reports, reporter) in [(firstReports, firstReporter), (secondReports, secondReporter)] {
             sink.handle(.finish(Bench.id), reporter: reporter)
-            #expect(await reports.next() == .verified(Bench.id))
+            #expect(try await reports.next() == .verified(Bench.id))
             sink.handle(.commit(Bench.id), reporter: reporter)
         }
         // The two publishes race for the name, so either may keep it.
-        let names = [await firstReports.next(), await secondReports.next()].map { report -> String? in
+        let names = [try await firstReports.next(), try await secondReports.next()].map { report -> String? in
             guard case .published(_, .named(let name))? = report else { return nil }
             return String(decoding: name, as: UTF8.self)
         }
@@ -417,10 +417,10 @@ final class Bench: Sendable {
         defer { source.handle(.release(Self.id), reporter: sourceReporter) }
         reading: while true {
             source.handle(.read(Self.id, maxBytes: WireConstants.maxRawDataPayload), reporter: sourceReporter)
-            switch await sources.next() {
+            switch try await sources.next() {
             case .bytes(_, let bytes)?:
                 sink.handle(.bytes(Self.id, bytes), reporter: sinkReporter)
-                let report = await sinks.next()
+                let report = try await sinks.next()
                 guard case .consumed? = report else { return report }
             case .finished?:
                 break reading
@@ -429,10 +429,10 @@ final class Bench: Sendable {
             }
         }
         sink.handle(.finish(Self.id), reporter: sinkReporter)
-        let verdict = await sinks.next()
+        let verdict = try await sinks.next()
         guard verdict == .verified(Self.id) else { return verdict }
         sink.handle(.commit(Self.id), reporter: sinkReporter)
-        return await sinks.next()
+        return try await sinks.next()
     }
 
     /// The container a side of role `server` serves of INLINE `content` for a pull that takes LZ4, read by read.
@@ -451,7 +451,7 @@ final class Bench: Sendable {
         var reads: [Data] = []
         while true {
             source.handle(.read(id, maxBytes: WireConstants.maxRawDataPayload), reporter: reporter)
-            switch await sources.next() {
+            switch try await sources.next() {
             case .bytes(_, let bytes)?: reads.append(bytes)
             case .finished?: return reads
             case let report: throw WireError(.internal, debugDetail: "\(String(describing: report))")
@@ -473,7 +473,7 @@ final class Bench: Sendable {
         source.handle(.serve(Self.id, .clipboard, request, representation), reporter: reporter)
         while true {
             source.handle(.read(Self.id, maxBytes: WireConstants.maxRawDataPayload), reporter: reporter)
-            switch await sources.next() {
+            switch try await sources.next() {
             case .failed(_, let error)?: return error
             case .bytes?: continue
             default: return nil
@@ -491,10 +491,13 @@ struct Inbox<Element: Sendable>: Sendable {
         return (Inbox(stream: stream), reporter { continuation.yield($0) })
     }
 
-    /// The next report.
-    func next() async -> Element? {
-        var iterator = stream.makeAsyncIterator()
-        return await iterator.next()
+    /// The next report, or `nil` once the reporter is gone.
+    func next(fileID: String = #fileID, line: Int = #line) async throws -> Element? {
+        let stream = stream
+        return try await Backstop("Inbox.next()", fileID: fileID, line: line).run {
+            var iterator = stream.makeAsyncIterator()
+            return await iterator.next()
+        }
     }
 }
 #endif

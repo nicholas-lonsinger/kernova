@@ -792,7 +792,7 @@ struct SidebarViewControllerTests {
         try await waitForChange { presenter.forceStopInstances.count == 1 }
         // Then let whatever is still queued run, so the count below reads
         // "exactly once" rather than "once so far".
-        await drainMainQueue()
+        try await drainMainQueue()
 
         #expect(presenter.forceStopInstances.map(\.id) == [suspended.id])
     }

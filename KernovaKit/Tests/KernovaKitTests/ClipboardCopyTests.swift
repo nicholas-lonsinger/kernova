@@ -562,8 +562,7 @@ struct ClipboardCopyTests {
         let watched = writeWatched(on: pasteboard, publisher, concealed: false)
         let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
         #expect(pasteboard.promisedTypesByItem == [[text]])
-        let paste = Task.detached { pasteboard.invokeProvider(forType: text) }
-        #expect(await paste.value == Data("a password".utf8))
+        #expect(try await offCooperativePool { pasteboard.invokeProvider(forType: text) } == Data("a password".utf8))
         let fires = pasteboard.providerInvocations
 
         #expect(publisher.retractWrite(servingOffer: Self.writeOffer, withdrawing: .unread) == .keptEverything)
@@ -583,8 +582,7 @@ struct ClipboardCopyTests {
             pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
         let watched = writeWatched(on: pasteboard, publisher)
         let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
-        let paste = Task.detached { pasteboard.invokeProvider(forType: text) }
-        #expect(await paste.value == Data("a password".utf8))
+        #expect(try await offCooperativePool { pasteboard.invokeProvider(forType: text) } == Data("a password".utf8))
 
         #expect(publisher.retractWrite(servingOffer: Self.writeOffer, withdrawing: .unread) == .cleared)
         #expect(pasteboard.items.isEmpty)
@@ -613,10 +611,9 @@ struct ClipboardCopyTests {
         #expect(written && holdsCopy)
 
         // A paste has the file URL, and AppKit finishes with the provider, the write standing.
-        let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
-        #expect(await paste.value != nil)
+        #expect(try await offCooperativePool { pasteboard.invokeProvider(forType: .fileURL) } != nil)
         pasteboard.finishProvider(itemIndex: 0)
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(!wasReleased)
         #expect(ledger.standingWrite(on: pasteboard) != nil)
 

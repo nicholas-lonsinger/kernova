@@ -162,7 +162,7 @@ struct VMToolbarManagerTests {
         // from still names a capture — one requested now is refused as busy,
         // so the button has to go dim rather than error on click.
         let resume = try lifecycle.launchResume(instance)
-        await suspending.waitUntilSuspended()
+        try await suspending.waitUntilSuspended()
         try await applied.wait { item("testTakeSnapshot", in: toolbar)?.isEnabled == false }
 
         #expect(

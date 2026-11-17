@@ -229,7 +229,7 @@ struct VMCommandCoreTests {
         let first = Task { @MainActor in
             try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
         }
-        await harness.virtualization.waitUntilSuspended()
+        try await harness.virtualization.waitUntilSuspended()
         #expect(instance.status == .starting)
 
         // The join is entered synchronously from the call below and parks with
@@ -254,7 +254,7 @@ struct VMCommandCoreTests {
         let first = Task { @MainActor in
             try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
         }
-        await harness.virtualization.waitUntilSuspended()
+        try await harness.virtualization.waitUntilSuspended()
 
         let error = try await #require(throws: CommandError.self) {
             try await harness.core.start(.id(instance.id), recovery: true, consent: .none)
@@ -272,7 +272,7 @@ struct VMCommandCoreTests {
         try VMInstanceFixture.writeSaveFile(for: instance)
 
         let first = Task { @MainActor in try await harness.core.resume(.id(instance.id), consent: .none) }
-        await harness.virtualization.waitUntilSuspended()
+        try await harness.virtualization.waitUntilSuspended()
         #expect(instance.status == .restoring)
 
         Task { @MainActor in harness.virtualization.resumeSuspended() }
@@ -586,7 +586,7 @@ struct VMCommandCoreTests {
         }
 
         try await core.start(.id(instance.id), recovery: false, consent: .none)
-        for await _ in installService.installStartedStream { break }
+        _ = try await awaitFirst(installService.installStartedStream)
 
         try core.cancelGuestSetup(.id(instance.id), consent: .all)
         installService.release()
@@ -994,7 +994,7 @@ struct VMCommandCoreTests {
             try await harness.core.revertToSnapshot(
                 .id(instance.id), snapshot: snapshot.id, consent: .all)
         }
-        await harness.virtualization.waitUntilSuspended()
+        try await harness.virtualization.waitUntilSuspended()
 
         #expect(!harness.library.capabilities.accepts(.delete, on: instance))
         let error = try await #require(throws: CommandError.self) {
@@ -2110,7 +2110,7 @@ struct VMCommandCoreTests {
 
         // The stop answered on the power-off; the revert it started is parked
         // mid-copy behind it.
-        await harness.virtualization.waitUntilSuspended()
+        try await harness.virtualization.waitUntilSuspended()
         #expect(!instance.hasLiveVirtualMachine)
         #expect(instance.isHeldByRevert)
 

@@ -76,10 +76,10 @@ struct GuestClipboardStagingTests {
         ]
         for (index, paste) in pastes.enumerated() {
             let (item, type) = (paste.item, paste.type)
-            let fired = Task.detached { pasteboard.invokeProvider(forType: type, itemIndex: item) }
+            let fired = BlockingCall { pasteboard.invokeProvider(forType: type, itemIndex: item) }
             try await link.changed.wait { link.opened.count == index + 1 }
             try land(paste.bytes, pull: index, clipboard, link)
-            #expect(await fired.value != nil)
+            #expect(try await fired.value() != nil)
         }
         clipboard.setLink(nil)
         try await pasteboard.changed.wait { pasteboard.promisedTypes.isEmpty }
@@ -152,7 +152,7 @@ struct GuestClipboardStagingTests {
         }
         let file = try await keepPastedFile(try #require(clipboard), pasteboard, pastedLink())
         clipboard = nil
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(exited == nil, "the exited agent's staging root is still held")
         return file
     }
@@ -165,7 +165,8 @@ struct GuestClipboardStagingTests {
 
         let relaunched = staging.makeSibling(
             retirement: ClipboardStagingRetirement(ledger: ClipboardWriteLedger(), pasteboard: { pasteboard }))
-        await withCheckedContinuation { done in relaunched.reclaimAbandonedRoots { done.resume() } }
+        try await Backstop("reclaimAbandonedRoots(then:)").park { done in relaunched.reclaimAbandonedRoots { done(()) }
+        }
         #expect(pasteboard.dataByItem == [[Self.text: Data("first".utf8)]])
         #expect(!FileManager.default.fileExists(atPath: file.path))
     }
@@ -180,7 +181,8 @@ struct GuestClipboardStagingTests {
 
         let relaunched = staging.makeSibling(
             retirement: ClipboardStagingRetirement(ledger: ClipboardWriteLedger(), pasteboard: { pasteboard }))
-        await withCheckedContinuation { done in relaunched.reclaimAbandonedRoots { done.resume() } }
+        try await Backstop("reclaimAbandonedRoots(then:)").park { done in relaunched.reclaimAbandonedRoots { done(()) }
+        }
         #expect(pasteboard.changeCount == movedOn)
         #expect(pasteboard.items.first?.data(forType: .string) == Data("moved on".utf8))
         #expect(!FileManager.default.fileExists(atPath: file.path))
@@ -216,11 +218,11 @@ struct GuestClipboardStagingTests {
             .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: true, count: 1)),
             on: link)
         try await pasteboard.changed.wait { !pasteboard.promisedTypes.isEmpty }
-        let fired = Task.detached { pasteboard.invokeProvider(forType: Self.text) }
+        let fired = BlockingCall { pasteboard.invokeProvider(forType: Self.text) }
         try await link.changed.wait { link.opened.count == 1 }
         try land(Data("hunter2-mac".utf8), pull: 0, clipboard, link)
-        #expect(await fired.value == Data("hunter2-mac".utf8))
-        await drainMainQueue()
+        #expect(try await fired.value() == Data("hunter2-mac".utf8))
+        try await drainMainQueue()
 
         clipboard.exchange.handle(
             .offerEnded(.clipboard, .remote, token: Self.hostToken, .resetByPeer(WireError(.disabledByPolicy))),

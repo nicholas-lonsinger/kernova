@@ -135,8 +135,8 @@ struct ContainerTreeTests {
     func updateLandsGolden() throws {
         let frozen = try #require(FileManager.default.contents(atPath: Self.golden.path))
         let fixture = try SlotFixture()
-        let ran = Inbox<String>()
-        let checked = Inbox<String>()
+        let ran = BlockingInbox<String>()
+        let checked = BlockingInbox<String>()
         let lander = ContainerTreeLander(
             itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent",
             system: .init(

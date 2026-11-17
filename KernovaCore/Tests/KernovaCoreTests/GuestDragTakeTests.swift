@@ -488,9 +488,13 @@ struct GuestDragTakeTests {
         let display = display
         let delivery = try #require(transport.delivery)
         let guest = Thread {
-            transport.delivering.wait()
-            delivery.peerAnswered()
-            display.released.wait()
+            do {
+                try Backstop("the transport's delivery").wait(for: transport.delivering)
+                delivery.peerAnswered()
+                try Backstop("the display's release").wait(for: display.released)
+            } catch {
+                Issue.record(error)
+            }
             delivery.settle(.delivered([Self.namedPromise]))
         }
         guest.start()
@@ -512,10 +516,9 @@ struct GuestDragTakeTests {
     nonisolated static func expireDeadline(on clock: GatedEngineClock, advancing seconds: TimeInterval) {
         let armed = DispatchSemaphore(value: 0)
         Task {
-            try? await clock.sleepRequested.wait { !clock.parked.isEmpty }
-            armed.signal()
+            if (try? await clock.sleepRequested.wait { !clock.parked.isEmpty }) != nil { armed.signal() }
         }
-        armed.wait()
+        do { try Backstop("the naming deadline's arming").wait(for: armed) } catch { Issue.record(error) }
         clock.advance(seconds: seconds)
         for sleep in clock.parked { clock.release(sleep) }
     }
@@ -532,10 +535,14 @@ struct GuestDragTakeTests {
         // The guest answers and its drop names nothing, or the guest answers
         // nothing at all; either way the deadline is what ends the wait.
         let guest = Thread {
-            transport.delivering.wait()
-            if guestAnswers {
-                delivery.peerAnswered()
-                display.released.wait()
+            do {
+                try Backstop("the transport's delivery").wait(for: transport.delivering)
+                if guestAnswers {
+                    delivery.peerAnswered()
+                    try Backstop("the display's release").wait(for: display.released)
+                }
+            } catch {
+                Issue.record(error)
             }
             Self.expireDeadline(on: clock, advancing: GuestDragDelivery.namingDeadline)
         }
@@ -583,9 +590,13 @@ struct GuestDragTakeTests {
         clock.advance(seconds: GuestDragDelivery.namingDeadline / 2)
 
         let guest = Thread {
-            transport.delivering.wait()
-            delivery.peerAnswered()
-            display.released.wait()
+            do {
+                try Backstop("the transport's delivery").wait(for: transport.delivering)
+                delivery.peerAnswered()
+                try Backstop("the display's release").wait(for: display.released)
+            } catch {
+                Issue.record(error)
+            }
             Self.expireDeadline(on: clock, advancing: GuestDragDelivery.namingDeadline / 2)
         }
         guest.start()

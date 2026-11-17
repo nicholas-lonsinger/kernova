@@ -57,7 +57,11 @@ struct DropReceiverTests {
                     usable: { _ in }, events: { _, event in hostEvents.record(event) },
                     content: { _, _, representation in
                         served.record(String(decoding: representation.name, as: UTF8.self))
-                        if held.withLock({ $0 }) { released.wait() }
+                        if held.withLock({ $0 }) {
+                            do { try Backstop("the held serve's release").wait(for: released) } catch {
+                                Issue.record(error)
+                            }
+                        }
                         return .success(
                             .tree(path: source + "/" + String(decoding: representation.name, as: UTF8.self)))
                     }), logger: Fixture.logger)
@@ -69,7 +73,7 @@ struct DropReceiverTests {
                     },
                     sink: MemoryItems(), features: hostRouter.features),
                 itemEvents: { hostRouter.deliver($0) })
-            await harness.attached()
+            try await harness.attached()
             let sink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
             let receiver = DropReceiver(
                 directory: landing ?? scratch.path + "/Downloads", sink: sink, logger: Fixture.logger
@@ -87,7 +91,7 @@ struct DropReceiverTests {
                 handlers: PeerAgentRuntime.Handlers(event: { peerRouter.deliver($0) }, stop: { _ in }))
             receiver.attach(runtime)
             runtime.start()
-            _ = await harness.snapshot { $0.consolePeers[.drop] != nil }
+            _ = try await harness.snapshot { $0.consolePeers[.drop] != nil }
         }
 
         /// Lets every serve held so far, and every later one, go on.
@@ -105,32 +109,32 @@ struct DropReceiverTests {
         }
 
         /// Offers the source entries `names` as one drop, each a FILE or, ending in `/`, a FOLDER.
-        func drop(_ names: [String], token tag: UInt8 = 1) async -> Result<PeerHandle, WireError> {
+        func drop(_ names: [String], token tag: UInt8 = 1) async throws -> Result<PeerHandle, WireError> {
             let items = names.map { name -> [Representation] in
                 var representation = Representation()
                 representation.storage = name.hasSuffix("/") ? .folder : .file
                 representation.name = Data((name.hasSuffix("/") ? String(name.dropLast()) : name).utf8)
                 return [representation]
             }
-            return await withCheckedContinuation { continuation in
+            return try await Backstop("harness.hub.offerItems").park { resume in
                 harness.hub.offerItems(SimItems.offer(tag, items), feature: .drop) {
-                    continuation.resume(returning: $0)
+                    resume($0)
                 }
             }
         }
 
         /// How the host's drop offer `tag` ended, once it has.
-        func offerEnd(_ tag: UInt8 = 1) async -> StreamClosure {
+        func offerEnd(_ tag: UInt8 = 1, fileID: String = #fileID, line: Int = #line) async throws -> StreamClosure {
             var waiter = hostEvents.waiter()
-            let ended = await waiter.next {
+            let ended = try await waiter.next(fileID: fileID, line: line) {
                 if case .offerEnded(.drop, .local, SimItems.token(tag), _) = $0 { true } else { false }
             }
             guard case .offerEnded(_, _, _, let closure) = ended else { preconditionFailure() }
             return closure
         }
 
-        func close() async {
-            await withCheckedContinuation { continuation in runtime.close { continuation.resume() } }
+        func close() async throws {
+            try await Backstop("runtime.close").park { resume in runtime.close { resume(()) } }
             harness.hub.close()
         }
     }
@@ -146,12 +150,12 @@ struct DropReceiverTests {
         #expect(try await bench.drop(["a.txt", "Album/"]).get().rawValue > 0)
 
         var landed = bench.landed.waiter()
-        #expect(await landed.next { _ in true } == ["a 2.txt", "Album"])
+        #expect(try await landed.next { _ in true } == ["a 2.txt", "Album"])
         #expect(bench.read("a.txt") == "old")
         #expect(bench.read("a 2.txt") == "new")
         #expect(bench.read("Album/p.jpg") == "photo")
-        #expect(await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [0, 1]).endBody))
-        await bench.close()
+        #expect(try await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [0, 1]).endBody))
+        try await bench.close()
     }
 
     @Test("A landing folder the peer cannot open refuses the drop with why, landing and revealing nothing")
@@ -161,14 +165,14 @@ struct DropReceiverTests {
 
         _ = try await bench.drop(["a.txt"]).get()
 
-        guard case .resetByPeer(let error) = await bench.offerEnd() else {
+        guard case .resetByPeer(let error) = try await bench.offerEnd() else {
             Issue.record("the drop ended otherwise"); return
         }
         #expect(error.code == .writeFailed)
         #expect(error.posixErrno == ENOENT)
-        await bench.harness.settled()
+        try await bench.harness.settled()
         #expect(bench.landed.elements.isEmpty)
-        await bench.close()
+        try await bench.close()
     }
 
     @Test(
@@ -180,9 +184,9 @@ struct DropReceiverTests {
         _ = try await bench.drop(["gone.txt", "b.txt"]).get()
 
         var landed = bench.landed.waiter()
-        #expect(await landed.next { _ in true } == ["b.txt"])
-        #expect(await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [1]).endBody))
-        await bench.close()
+        #expect(try await landed.next { _ in true } == ["b.txt"])
+        #expect(try await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [1]).endBody))
+        try await bench.close()
     }
 
     @Test(
@@ -201,10 +205,10 @@ struct DropReceiverTests {
         _ = try await bench.drop(["Album/", "b.txt"]).get()
 
         var landed = bench.landed.waiter()
-        #expect(await landed.next { _ in true } == ["b.txt"])
-        #expect(await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [1]).endBody))
+        #expect(try await landed.next { _ in true } == ["b.txt"])
+        #expect(try await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [1]).endBody))
         #expect(bench.read("Album/p.jpg") == nil)
-        await bench.close()
+        try await bench.close()
     }
 
     @Test("A drop the host withdraws mid-drop lands nothing more and reveals nothing")
@@ -213,21 +217,21 @@ struct DropReceiverTests {
         try bench.write("a", to: "a.txt")
         let peer = try await bench.drop(["a.txt", "a.txt"]).get()
         var served = bench.served.waiter()
-        _ = await served.next { _ in true }
+        _ = try await served.next { _ in true }
 
         bench.harness.hub.withdrawOffer(SimItems.token(1), from: peer)
 
-        guard case .resetLocally(let error) = await bench.offerEnd() else {
+        guard case .resetLocally(let error) = try await bench.offerEnd() else {
             Issue.record("the drop ended otherwise"); return
         }
         #expect(error.code == .cancelled)
         bench.releaseServes()
-        await bench.harness.settled()
-        await flush(bench.runtime.queue)
+        try await bench.harness.settled()
+        try await flush(bench.runtime.queue)
         #expect(bench.landed.elements.isEmpty)
         #expect(bench.read("a.txt") == nil)
         #expect(bench.served.elements == ["a.txt"])
-        await bench.close()
+        try await bench.close()
     }
 }
 #endif

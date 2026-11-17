@@ -206,7 +206,7 @@ struct SidebarTagTests {
         try library.setTag(lab.id, assigned: true, on: vm)
         try library.setTag(work.id, assigned: true, on: vm)
         // The row repaints from its observation loop's apply, already queued.
-        await drainMainQueue()
+        try await drainMainQueue()
         // Row → cell → the dots, an image VoiceOver reads by its label.
         let tagLabels = try rowLabels().filter { $0.0.hasPrefix("Tags:") }
         #expect(tagLabels.map(\.0) == ["Tags: Work, Lab"])

@@ -2,53 +2,60 @@
 import Foundation
 import KernovaDBus
 import KernovaPlatformLinux
+import KernovaPortableTestSupport
 import Testing
 
 /// A bus the test plays: it accepts SASL EXTERNAL, answers Hello, AddMatch and
 /// GetNameOwner, and puts every message the connection writes into `written`,
 /// in order.
 final class RecordingTransport: DBusTransport, @unchecked Sendable {
-    let written = Inbox<DBusReceivedMessage>()
+    let written = BlockingInbox<DBusReceivedMessage>()
 
     private enum Phase {
         case authenticating, awaitingBegin, messages
     }
 
-    private let condition = NSCondition()
-    // Read and written only while `condition` is locked.
+    private let lock = NSLock()
+    /// Signalled whenever a write or a shutdown may have left something for `read` to return.
+    private let readable = DispatchSemaphore(value: 0)
+    // Read and written only while `lock` is held.
     private var toClient: [UInt8] = []
     private var fromClient: [UInt8] = []
     private var phase = Phase.authenticating
     private var serial: UInt32 = 1
     private var isShut = false
 
+    /// Blocks, as a socket's read does, until the bus has bytes for the client or shuts — failing with `ETIMEDOUT`
+    /// at the backstop, so a connection a test leaves open does not hold its reader thread for good.
     func read(into buffer: UnsafeMutableRawBufferPointer) throws(DBusTransportError) -> Int {
-        condition.lock()
-        defer { condition.unlock() }
-        while toClient.isEmpty, !isShut {
-            condition.wait()
+        let backstop = Backstop("RecordingTransport.read(into:)")
+        while true {
+            lock.lock()
+            if !toClient.isEmpty || isShut {
+                let count = min(buffer.count, toClient.count)
+                buffer.copyBytes(from: toClient[0..<count])
+                toClient.removeFirst(count)
+                lock.unlock()
+                return count
+            }
+            lock.unlock()
+            do { try backstop.wait(for: readable) } catch { throw .readFailed(errno: ETIMEDOUT) }
         }
-        let count = min(buffer.count, toClient.count)
-        buffer.copyBytes(from: toClient[0..<count])
-        toClient.removeFirst(count)
-        return count
     }
 
     func write(_ bytes: [UInt8]) throws(DBusTransportError) {
-        condition.lock()
-        defer {
-            condition.broadcast()
-            condition.unlock()
-        }
+        lock.lock()
         fromClient += bytes
         while consumeOne() {}
+        lock.unlock()
+        readable.signal()
     }
 
     func shutdown() {
-        condition.lock()
+        lock.lock()
         isShut = true
-        condition.broadcast()
-        condition.unlock()
+        lock.unlock()
+        readable.signal()
     }
 
     /// Consumes one line or message the client wrote, if it has all arrived.

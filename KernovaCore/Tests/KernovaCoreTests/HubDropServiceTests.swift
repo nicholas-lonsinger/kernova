@@ -302,7 +302,7 @@ extension HubDropServiceTests {
         let second = pull
         let owner = instance.dropService.owner
         let representation = offer.items[1].representations[0]
-        let served = await Task.detached { owner.content(Self.pull, second, representation) }.value
+        let served = try await offCooperativePool { owner.content(Self.pull, second, representation) }
         guard case .success(.tree(let path)) = served else {
             Issue.record("served \(served)"); return
         }

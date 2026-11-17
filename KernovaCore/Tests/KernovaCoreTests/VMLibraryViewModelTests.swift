@@ -1435,7 +1435,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("tryForceStop throws on failure")
-    func tryForceStopThrows() async {
+    func tryForceStopThrows() async throws {
         let virtService = MockVirtualizationService()
         virtService.forceStopError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
@@ -1667,7 +1667,7 @@ struct VMLibraryViewModelTests {
 
         // Wait until the mock install has parked, so the cancel below
         // actually races a running install rather than a not-yet-started one.
-        for await _ in raceInstaller.installStartedStream { break }
+        _ = try await awaitFirst(raceInstaller.installStartedStream)
 
         viewModel.cancelGuestSetup(instance)
 
@@ -1838,7 +1838,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("a keepInMenuBarOnQuit change wakes an observer")
-    func keepInMenuBarOnQuitWakesObservers() async {
+    func keepInMenuBarOnQuitWakesObservers() async throws {
         // The whole reason the preference is mirrored here: `AppDelegate` creates
         // and tears down the status item from an observation, which a bare
         // `UserDefaults` write never wakes.
@@ -1849,7 +1849,7 @@ struct VMLibraryViewModelTests {
             apply: { wakeCount += 1 })
 
         viewModel.keepInMenuBarOnQuit = false
-        await drainMainQueue()
+        try await drainMainQueue()
 
         #expect(wakeCount == 1)
         loop.cancel()

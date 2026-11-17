@@ -77,7 +77,7 @@ struct VMLifecycleCoordinatorTests {
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         let pause = Task { @MainActor in try await coordinator.pause(instance) }
-        await suspendingService.waitUntilSuspended()
+        try await suspendingService.waitUntilSuspended()
 
         try await coordinator.requestStop(instance)
 
@@ -126,7 +126,7 @@ struct VMLifecycleCoordinatorTests {
         let task = Task { @MainActor in
             try await coordinator.launchStart(instance, Self.coldBoot).value()
         }
-        await suspendingService.waitUntilSuspended()
+        try await suspendingService.waitUntilSuspended()
 
         // A revert reads the very directory this would move to the Trash.
         await #expect(throws: VMAdmissionRefusal(refusal: .busy(.bringUp(.guestStart(Self.coldBoot))))) {

@@ -259,9 +259,9 @@ struct VMCommandSocketListenerTests {
 
 /// A client on the command socket, for driving the transport from a test.
 ///
-/// The socket is blocking with a receive deadline, so `nextResponse()` returns
-/// the moment bytes land rather than polling for them, and a stuck transport
-/// fails the read instead of hanging the suite.
+/// The socket is blocking, so `nextResponse()` returns the moment bytes land
+/// rather than polling for them; a stuck transport fails the read's wait at
+/// its backstop, and `close()` ends the read it abandoned.
 @MainActor
 private final class TestCommandClient {
     private let fd: Int32
@@ -281,10 +281,6 @@ private final class TestCommandClient {
             throw TestFailure("client connect() failed: errno \(errno)")
         }
 
-        var deadline = timeval(tv_sec: Int(testWaitBackstop), tv_usec: 0)
-        _ = setsockopt(
-            descriptor, SOL_SOCKET, SO_RCVTIMEO, &deadline,
-            socklen_t(MemoryLayout<timeval>.size))
         fd = descriptor
     }
 
@@ -315,7 +311,7 @@ private final class TestCommandClient {
                 return try JSONDecoder().decode(VMCommandResponse.self, from: Data(payload))
             }
             let descriptor = fd
-            let chunk = await offCooperativePool { () -> Data? in
+            let chunk = try await offCooperativePool { () -> Data? in
                 var buffer = [UInt8](repeating: 0, count: 64 * 1024)
                 let count = buffer.withUnsafeMutableBytes {
                     read(descriptor, $0.baseAddress, $0.count)
@@ -323,7 +319,7 @@ private final class TestCommandClient {
                 guard count > 0 else { return nil }
                 return Data(buffer[0..<count])
             }
-            guard let chunk else { return nil }  // EOF, error, or the deadline
+            guard let chunk else { return nil }  // EOF or error
             decoder.feed(chunk)
         }
     }
@@ -331,6 +327,7 @@ private final class TestCommandClient {
     func close() {
         guard !isClosed else { return }
         isClosed = true
+        shutdown(fd, SHUT_RDWR)
         Darwin.close(fd)
     }
 }

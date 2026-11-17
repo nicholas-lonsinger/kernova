@@ -80,8 +80,8 @@ var targets: [Target] = [
         swiftSettings: sharedSwiftSettings
     ),
     // The C calls the portable targets make without importing an OS module:
-    // the CRC32C instructions, the monotonic clock that counts sleep, the
-    // vsock connect, whose `sockaddr_vm` neither Glibc nor Musl exports, and
+    // the CRC32C instructions, the monotonic clocks that count and skip sleep,
+    // the vsock connect, whose `sockaddr_vm` neither Glibc nor Musl exports, and
     // the `openat2` and `renameat2` system calls, which musl does not wrap.
     .target(
         name: "CKernovaShims",
@@ -114,11 +114,11 @@ var targets: [Target] = [
         name: "KernovaISO9660",
         swiftSettings: sharedSwiftSettings
     ),
-    // The scratch directory, wait backstop and interposed file system of the test targets that cannot
+    // The scratch directory, test waits and interposed file system of the test targets that cannot
     // reach `KernovaTestSupport` (Tools/check-test-seams.sh), which re-exports it.
     .target(
         name: "KernovaPortableTestSupport",
-        dependencies: ["KernovaFileTree"],
+        dependencies: ["KernovaFileTree", "KernovaSynchronization", "CKernovaShims"],
         swiftSettings: sharedSwiftSettings
     ),
     // The Linux agent's display version. Tools/build-linux-guest-agent.sh
@@ -277,7 +277,10 @@ var targets: [Target] = [
     // target it tests, only for Linux.
     .testTarget(
         name: "KernovaPlatformLinuxTests",
-        dependencies: ["KernovaPlatformLinux", "KernovaDBus", "KernovaAgentCore", "KernovaAgentRuntime"],
+        dependencies: [
+            "KernovaPlatformLinux", "KernovaDBus", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaSynchronization",
+            "KernovaPortableTestSupport",
+        ],
         swiftSettings: sharedSwiftSettings
     ),
     .testTarget(

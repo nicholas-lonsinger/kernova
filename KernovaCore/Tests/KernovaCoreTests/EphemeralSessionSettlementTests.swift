@@ -449,7 +449,7 @@ struct EphemeralSessionSettlementTests {
                 try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
             }
         }
-        await virtualization.waitUntilSuspended()
+        try await virtualization.waitUntilSuspended()
         #expect(instance.isHeldByRevert)
 
         // Run to its first suspension in this turn, so what it queued is read

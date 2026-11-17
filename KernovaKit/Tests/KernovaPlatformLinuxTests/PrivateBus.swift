@@ -76,43 +76,6 @@ final class PrivateBus {
 enum PrivateBusError: Error {
     case exitedEarly(String)
     case notPrimaryOwner
-    case backstopElapsed
-}
-
-/// Values a handler on another thread delivers, read in order.
-final class Inbox<Value: Sendable>: @unchecked Sendable {
-    /// How long `next()` waits before failing the test. Nothing a passing test
-    /// waits for takes more than milliseconds; this only bounds a failure.
-    static var backstop: TimeInterval { 30 }
-
-    private let condition = NSCondition()
-    /// Read and written only while `condition` is locked.
-    private var values: [Value] = []
-
-    func put(_ value: Value) {
-        condition.lock()
-        values.append(value)
-        condition.broadcast()
-        condition.unlock()
-    }
-
-    /// Whether every value delivered so far has been read.
-    var isEmpty: Bool {
-        condition.lock()
-        defer { condition.unlock() }
-        return values.isEmpty
-    }
-
-    /// The oldest value not yet read, waiting for one to arrive.
-    func next() throws -> Value {
-        let deadline = Date(timeIntervalSinceNow: Self.backstop)
-        condition.lock()
-        defer { condition.unlock() }
-        while values.isEmpty {
-            guard condition.wait(until: deadline) || !values.isEmpty else { throw PrivateBusError.backstopElapsed }
-        }
-        return values.removeFirst()
-    }
 }
 
 /// Asks the bus for `name` on `connection`, failing unless it becomes the

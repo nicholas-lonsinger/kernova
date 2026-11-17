@@ -45,7 +45,7 @@ struct VMScriptingGatewayTests {
                 try await gate.wait { self.isOpen }
             } catch {
                 Issue.record("readiness gate was never opened: \(error)")
-                await VMScriptingGatewayTests.parkForever()
+                await parkForever()
             }
         }
 
@@ -59,12 +59,6 @@ struct VMScriptingGatewayTests {
         func awaitWaiting() async throws {
             try await gate.wait { self.isWaiting }
         }
-    }
-
-    /// A readiness await that never lands and arms no clock, for a deferred
-    /// read that must stay parked for the rest of the process's life.
-    private static func parkForever() async {
-        await withUnsafeContinuation { (_: UnsafeContinuation<Void, Never>) in }
     }
 
     private func makeGateway(
@@ -413,7 +407,7 @@ struct VMScriptingGatewayTests {
         var runtime = standIn.runtime
         var suspensions: [ObjectIdentifier] = []
         runtime.suspend = { suspensions.append(ObjectIdentifier($0)) }
-        let gateway = makeGateway(wired, awaitReady: { await Self.parkForever() }, runtime: runtime)
+        let gateway = makeGateway(wired, awaitReady: { await parkForever() }, runtime: runtime)
 
         #expect(gateway.virtualMachines().isEmpty)
         #expect(gateway.virtualMachine(named: "Alpha") == nil)

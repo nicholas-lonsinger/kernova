@@ -210,7 +210,7 @@ struct VMLibraryIntentTests {
 
         #expect(asked.map(\.kind) == [.cancelPreparing, .cancelGuestSetup])
         #expect(arrival.isCancelling)
-        for await _ in setupCancelled { break }
+        _ = try await awaitFirst(setupCancelled)
         gate.release()
         #expect(await arrival.settle() == nil)
         await installing.setupOperationTask?.value

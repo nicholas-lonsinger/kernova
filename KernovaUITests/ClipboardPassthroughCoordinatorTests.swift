@@ -408,7 +408,7 @@ struct ClipboardPassthroughCoordinatorTests {
         // thread, where the publisher's hold parks rather than running an event loop.
         let textType = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
         nonisolated(unsafe) let consumer = h.pasteboard
-        let served = await Task.detached { consumer.data(forType: textType) }.value
+        let served = try await offCooperativePool { consumer.data(forType: textType) }
         #expect(served == Data("over the cap".utf8))
     }
 
@@ -555,7 +555,7 @@ struct ClipboardPassthroughCoordinatorTests {
         // Only a consumer's flavor read fires a pull. Read off the main thread,
         // where the publisher's hold parks rather than running an event loop.
         nonisolated(unsafe) let consumer = pasteboard
-        let served = await Task.detached { consumer.data(forType: textType) }.value
+        let served = try await offCooperativePool { consumer.data(forType: textType) }
         #expect(served == Data("promised bytes".utf8))
         #expect(service.puller.pullCount == 1)
     }

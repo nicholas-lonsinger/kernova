@@ -15,114 +15,114 @@ import Testing
 @Suite("Peer agent runtime")
 struct PeerAgentRuntimeTests {
     @Test("The host connection reads connected from the host's Hello, and connecting once the connection ends")
-    func hostConnectionFollowsTheConnection() async {
+    func hostConnectionFollowsTheConnection() async throws {
         let harness = PeerRuntimeHarness()
         harness.runtime.start()
-        await harness.settle()
+        try await harness.settle()
         #expect(harness.runtime.hostConnection == .connecting)
 
-        let link = await harness.connect(1)
+        let link = try await harness.connect(1)
         var changes = harness.hostConnections.waiter()
-        _ = await changes.next { $0 == .connected }
+        _ = try await changes.next { $0 == .connected }
         #expect(harness.runtime.hostConnection == .connected)
 
         link.far.command(.close(.shuttingDown, retryAfter: nil))
-        await harness.pump(link)
-        _ = await changes.next { $0 == .connecting }
+        try await harness.pump(link)
+        _ = try await changes.next { $0 == .connecting }
         #expect(harness.runtime.hostConnection == .connecting)
         #expect(harness.hostConnections.elements == [.connected, .connecting])
     }
 
     @Test("A dial timer that fires early is armed again, and dials at its deadline")
-    func earlyDialFire() async {
+    func earlyDialFire() async throws {
         let harness = PeerRuntimeHarness()
         harness.runtime.start()
         var dials = harness.dialer.dials.waiter()
-        _ = await dials.next { $0 == 1 }
+        _ = try await dials.next { $0 == 1 }
         harness.dialer.answer(1, .failure(.transient))
-        await harness.settle()
+        try await harness.settle()
 
         harness.scheduler.fireEarliestEarly()
-        await harness.settle()
+        try await harness.settle()
         #expect(harness.scheduler.armed == [Fixture.at(milliseconds: 1_000)])
         #expect(harness.dialer.dials.elements == [1])
         harness.scheduler.advance(to: Fixture.at(milliseconds: 1_000))
-        await harness.settle()
+        try await harness.settle()
         #expect(harness.dialer.dials.elements == [1, 2])
     }
 
     @Test("The power ledger crosses connections, and a late report naming generation 1 reaches no stream")
-    func ledgerAndLateReport() async {
+    func ledgerAndLateReport() async throws {
         let harness = PeerRuntimeHarness()
         harness.runtime.start()
-        let first = await harness.connect(1)
+        let first = try await harness.connect(1)
         let hostID = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 1)
         first.far.command(.requestPower(hostID, .shutdown))
-        await harness.pump(first)
+        try await harness.pump(first)
         var performed = harness.power.performed.waiter()
-        let held = await performed.next { _ in true }
+        let held = try await performed.next { _ in true }
         #expect(held.generation == ConnectionGeneration(rawValue: 1))
 
         first.far.command(.close(.shuttingDown, retryAfter: nil))
-        await harness.pump(first)
+        try await harness.pump(first)
         var dials = harness.dialer.dials.waiter()
         harness.scheduler.advance(to: Fixture.at(milliseconds: 1_000))
-        _ = await dials.next { $0 == 2 }
-        let second = await harness.connect(2)
+        _ = try await dials.next { $0 == 2 }
+        let second = try await harness.connect(2)
 
         let refused = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 2)
         second.far.command(.requestPower(refused, .shutdown))
-        await harness.pump(second)
+        try await harness.pump(second)
         var results = second.far.events.waiter()
-        _ = await results.next { $0 == .power(refused, .indeterminate) }
+        _ = try await results.next { $0 == .power(refused, .indeterminate) }
 
         let writes = second.stream.calls.elements.filter { $0 == "write" }.count
         let events = second.far.events.elements.count
         harness.power.report(.handedOff(held))
-        await harness.pump(second)
+        try await harness.pump(second)
         #expect(second.stream.calls.elements.filter { $0 == "write" }.count == writes)
         #expect(second.far.events.elements.dropFirst(events).isEmpty)
 
         let accepted = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 3)
         second.far.command(.requestPower(accepted, .shutdown))
-        await harness.pump(second)
-        let next = await performed.next { _ in true }
+        try await harness.pump(second)
+        let next = try await performed.next { _ in true }
         #expect(next.generation == ConnectionGeneration(rawValue: 2))
     }
 
     @Test("close() with no connection completes at once, and a dial it outlived is shut down unstarted")
-    func closeDuringDial() async {
+    func closeDuringDial() async throws {
         let harness = PeerRuntimeHarness()
         harness.runtime.start()
         var dials = harness.dialer.dials.waiter()
-        _ = await dials.next { $0 == 1 }
+        _ = try await dials.next { $0 == 1 }
         let completions = Recorder<Int>()
         harness.runtime.close { completions.record(1) }
         var done = completions.waiter()
-        _ = await done.next { _ in true }
+        _ = try await done.next { _ in true }
 
         let stream = ScriptedStream()
         harness.dialer.answer(1, .success(stream))
-        await harness.settle()
+        try await harness.settle()
         #expect(stream.calls.elements == ["shutdown"])
         #expect(harness.scheduler.armed.isEmpty)
         #expect(harness.stops.elements.isEmpty)
     }
 
     @Test("A session peer's new session closes its connection SHUTTING_DOWN and redials at once to say Hello with it")
-    func sessionMoves() async {
+    func sessionMoves() async throws {
         let harness = PeerRuntimeHarness()
         harness.runtime.start()
-        let first = await harness.connect(1)
+        let first = try await harness.connect(1)
         let moved = PeerSessionState(console: .on, sessionID: "3", userName: "user")
         harness.runtime.setPeerState(moved)
-        await harness.pump(first)
+        try await harness.pump(first)
         var firstEvents = first.far.events.waiter()
-        _ = await firstEvents.next { $0 == .closed(.closedByPeer(WireError(.shuttingDown))) }
+        _ = try await firstEvents.next { $0 == .closed(.closedByPeer(WireError(.shuttingDown))) }
 
-        let second = await harness.connect(2)
+        let second = try await harness.connect(2)
         var secondEvents = second.far.events.waiter()
-        _ = await secondEvents.next { event in
+        _ = try await secondEvents.next { event in
             if case .helloReceived(_, moved) = event { true } else { false }
         }
         // At once: the clock never moved, so no backoff came between the two dials.
@@ -131,37 +131,37 @@ struct PeerAgentRuntimeTests {
     }
 
     @Test("With no session the peer closes SHUTTING_DOWN and dials nothing, until a session dials at once")
-    func sessionEnds() async {
+    func sessionEnds() async throws {
         let harness = PeerRuntimeHarness()
         harness.runtime.start()
-        let first = await harness.connect(1)
+        let first = try await harness.connect(1)
         harness.runtime.setPeerState(nil)
-        await harness.pump(first)
+        try await harness.pump(first)
         var firstEvents = first.far.events.waiter()
-        _ = await firstEvents.next { $0 == .closed(.closedByPeer(WireError(.shuttingDown))) }
-        await harness.settle()
+        _ = try await firstEvents.next { $0 == .closed(.closedByPeer(WireError(.shuttingDown))) }
+        try await harness.settle()
         #expect(harness.scheduler.armed.isEmpty)
         harness.scheduler.advance(to: Fixture.at(milliseconds: 600_000))
-        await harness.settle()
+        try await harness.settle()
         #expect(harness.dialer.dials.elements == [1])
 
         harness.runtime.setPeerState(Fixture.peerState)
-        let second = await harness.connect(2)
+        let second = try await harness.connect(2)
         var secondEvents = second.far.events.waiter()
-        _ = await secondEvents.next { event in
+        _ = try await secondEvents.next { event in
             if case .helloReceived(_, Fixture.peerState) = event { true } else { false }
         }
     }
 
     @Test("SUPERSEDED stops the agent, and no dial timer stays armed")
-    func stopDisarms() async {
+    func stopDisarms() async throws {
         let harness = PeerRuntimeHarness()
         harness.runtime.start()
-        let link = await harness.connect(1)
+        let link = try await harness.connect(1)
         link.far.command(.close(.superseded, retryAfter: nil))
-        await harness.pump(link)
+        try await harness.pump(link)
         var stops = harness.stops.waiter()
-        #expect(await stops.next { _ in true } == .superseded)
+        #expect(try await stops.next { _ in true } == .superseded)
         #expect(harness.scheduler.armed.isEmpty)
     }
 }
@@ -199,17 +199,17 @@ struct HostConnectionRuntimeTests {
             connection.start()
         }
 
-        func pump() async {
-            await exchange(stream, queues: [hub], read: far.read, output: far.output)
+        func pump() async throws {
+            try await exchange(stream, queues: [hub], read: far.read, output: far.output)
         }
     }
 
     @Test("A source that runs out short of the payload's size fails the pull READ_FAILED")
-    func shortSourceFails() async {
+    func shortSourceFails() async throws {
         let harness = Harness(content: FakePayloadSource.payload(1_048_576 + 7))
-        await harness.pump()
+        try await harness.pump()
         var events = harness.events.waiter()
-        let closed = await events.next {
+        let closed = try await events.next {
             if case .update(.closed) = $0 { return true }
             return false
         }
@@ -223,9 +223,9 @@ struct HostConnectionRuntimeTests {
     @Test(
         "Item transfer is advertised available with item adapters given, and absent NOT_IMPLEMENTED without",
         arguments: [true, false])
-    func itemTransferAdvert(registered: Bool) async {
+    func itemTransferAdvert(registered: Bool) async throws {
         let harness = Harness(content: Data(), items: registered ? RegisteredItemAdapters.adapters([.drop]) : nil)
-        await harness.pump()
+        try await harness.pump()
         let advert = harness.far.hostAdvert(.itemTransfer)
         if registered {
             #expect(advert == .available(Data()))
@@ -237,12 +237,12 @@ struct HostConnectionRuntimeTests {
     }
 
     @Test("A hub command reaches the connection")
-    func hubCommand() async {
+    func hubCommand() async throws {
         let harness = Harness(content: Data())
         harness.connection.send(.close(.shuttingDown, retryAfter: nil))
-        await harness.pump()
+        try await harness.pump()
         var events = harness.events.waiter()
-        _ = await events.next { $0 == .closed(.closedLocally(WireError(.shuttingDown))) }
+        _ = try await events.next { $0 == .closed(.closedLocally(WireError(.shuttingDown))) }
         #expect(harness.stream.shutdowns == 1)
     }
 }
@@ -251,7 +251,7 @@ struct HostConnectionRuntimeTests {
 @Suite("System scheduler")
 struct SystemSchedulerTests {
     @Test("A fire runs on its queue at or after its deadline; a cancelled one never runs")
-    func fires() async {
+    func fires() async throws {
         let scheduler = SystemScheduler()
         let queue = DispatchQueue(label: "app.kernova.tests.scheduler")
         let key = DispatchSpecificKey<Int>()
@@ -267,11 +267,11 @@ struct SystemSchedulerTests {
             fired.record(("kept", scheduler.now, DispatchQueue.getSpecific(key: key) == 1))
         }
         var waiter = fired.waiter()
-        let kept = await waiter.next { $0.name == "kept" }
+        let kept = try await waiter.next { $0.name == "kept" }
         held.cancel()
         #expect(kept.at >= deadline)
         #expect(kept.onQueue)
-        await flush(queue)
+        try await flush(queue)
         #expect(fired.elements.map(\.name) == ["kept"])
     }
 }

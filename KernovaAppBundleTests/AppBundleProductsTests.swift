@@ -44,10 +44,17 @@ struct AppBundleProductsTests {
         let pack = Process()
         pack.executableURL = agent.appending(path: "Contents/MacOS/KernovaMacOSAgent")
         pack.arguments = ["pack-payload", agent.path(percentEncoded: false), packed.path(percentEncoded: false)]
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            pack.terminationHandler = { _ in continuation.resume() }
-            do { try pack.run() } catch { continuation.resume(throwing: error) }
+        let ran: Result<Void, any Error>
+        do {
+            ran = try await Backstop("the payload pack").park { resume in
+                pack.terminationHandler = { _ in resume(.success(())) }
+                do { try pack.run() } catch { resume(.failure(error)) }
+            }
+        } catch {
+            pack.terminate()
+            throw error
         }
+        try ran.get()
         #expect(pack.terminationStatus == 0)
 
         #expect(

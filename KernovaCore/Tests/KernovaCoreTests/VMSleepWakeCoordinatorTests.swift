@@ -141,7 +141,7 @@ struct VMSleepWakeCoordinatorTests {
         }
         #expect(instance.activity.queuedFollowUpCountForTesting == 1)
         #expect(instance.status == .snapshotting)
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(ack.count == 0)
         #expect(virtService.pauseCallCount == 0)
 
@@ -233,7 +233,7 @@ struct VMSleepWakeCoordinatorTests {
     /// then wakes while the pause still holds the VM.
     private func wakeDuringAParkedPause(
         _ mock: SuspendingMockVirtualizationService
-    ) async -> (
+    ) async throws -> (
         coordinator: VMSleepWakeCoordinator, instance: VMInstance, session: UUID,
         sleep: Task<Void, Never>, wake: Task<Void, Never>
     ) {
@@ -249,7 +249,7 @@ struct VMSleepWakeCoordinatorTests {
         instance.activity.placeForTesting(.running(sessionID: session))
         roster.instances = [instance]
         let sleep = coordinator.pauseAllForSleep {}
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
         #expect(instance.phase.operation?.kind == .pausing)
 
         let wake = coordinator.resumeAllAfterWake()
@@ -257,10 +257,10 @@ struct VMSleepWakeCoordinatorTests {
     }
 
     @Test("Wake while the sleep pause still runs resumes nothing when the pause fails")
-    func wakeDuringARunningPauseThatFailsResumesNothing() async {
+    func wakeDuringARunningPauseThatFailsResumesNothing() async throws {
         let mock = SuspendingMockVirtualizationService()
         mock.pauseError = VirtualizationError.noVirtualMachine
-        let (coordinator, instance, session, sleep, wake) = await wakeDuringAParkedPause(mock)
+        let (coordinator, instance, session, sleep, wake) = try await wakeDuringAParkedPause(mock)
         #expect(instance.activity.queuedFollowUpCountForTesting == 1)
 
         mock.resumeSuspended()

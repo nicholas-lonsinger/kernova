@@ -173,7 +173,7 @@ struct NetworksSettingsViewControllerTests {
 
         // The list repaints from its observation loop, a main-actor task the
         // create enqueued.
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(pane.networks.map(\.name) == ["Lab"])
     }
 

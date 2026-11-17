@@ -60,11 +60,12 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
     /// Suspends until the hub has handled every event delivered so far, and every main-queue block that
     /// handling queued has run: a delivery reaches the hub on its own queue, which hops to the main queue only
     /// once it gets to the event, so draining the main queue alone can finish before the hub got to it.
-    package func settle() async {
+    package func settle(fileID: String = #fileID, line: Int = #line) async throws {
         let queues = state.withLock { $0.handlers.map(\.queue) }
+        let backstop = Backstop("AgentHubProbe.settle()", fileID: fileID, line: line)
         for queue in queues {
-            await withCheckedContinuation { continuation in
-                queue.async { DispatchQueue.main.async { continuation.resume() } }
+            try await backstop.park { resume in
+                queue.async { DispatchQueue.main.async { resume(()) } }
             }
         }
     }

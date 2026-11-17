@@ -1,5 +1,6 @@
 import Foundation
 import Synchronization
+import Testing
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
@@ -100,7 +101,7 @@ final class MockFileSystem: FileSystemOperating {
         }
         guard let hold else { return }
         trashParked.notify()
-        hold.wait()
+        do { try Backstop("the test's release of the trash").wait(for: hold) } catch { Issue.record(error) }
         state.withLock { $0.parkedTrashes -= 1 }
     }
 

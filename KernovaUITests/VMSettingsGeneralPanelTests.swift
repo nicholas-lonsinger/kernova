@@ -655,7 +655,7 @@ struct VMSettingsGeneralPanelTests {
 
         viewModel.library.registerFixture(name: "Twin") { $0.genericMachineIdentifierData = identity }
         // The pane's repaint is the main-actor task the change enqueued.
-        await drainMainQueue()
+        try await drainMainQueue()
 
         #expect(visibleLabel(Self.sharedMachineIDNote, in: vc.view))
         let title = try #require(panelLabel("Machine ID", in: vc))

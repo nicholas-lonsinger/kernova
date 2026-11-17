@@ -75,7 +75,7 @@ struct DarwinPeerTests {
         queue.sync {}
         #expect(changes.withLock { $0 }.isEmpty)
         #expect(unlink(root + "/current") == 0)
-        changed.wait()
+        try Backstop("the watcher's report").wait(for: changed)
         #expect(changes.withLock { $0 } == [.removed])
     }
 }
@@ -169,7 +169,9 @@ struct BlockingConnectTests {
         #expect(
             DarwinVsockConnect.boundedBlockingConnect(fd: pipeEnds[0], label: "t", port: 1, gate: gate, deadline: 0.05)
             {
-                release.wait()
+                do { try Backstop("the test's release of the connect").wait(for: release) } catch {
+                    Issue.record(error)
+                }
                 return 0
             } == .abandoned)
         #expect(gate.parkedCount("t") == 1)

@@ -3,6 +3,7 @@ import Dispatch
 import KernovaAgentCore
 import KernovaDBus
 import KernovaPlatformLinux
+import KernovaPortableTestSupport
 import Testing
 
 @Suite("A peer's session state, followed in a fake org.freedesktop.login1")
@@ -13,7 +14,7 @@ struct LogindPeerStateTests {
         let fake: FakeLogind
         let connection: DBusBusConnection
         let queue = DispatchQueue(label: "app.kernova.tests.logind-watch")
-        let inbox = Inbox<Result<PeerSessionState?, DBusServiceError>>()
+        let inbox = BlockingInbox<Result<PeerSessionState?, DBusServiceError>>()
         private let watcher: LogindPeerStateWatcher
 
         enum Role {
@@ -284,7 +285,7 @@ struct LogindPeerStateTests {
         let fake = try NoSuchSeatLogind(on: bus)
         defer { withExtendedLifetime(fake) {} }
         let logind = Logind(connection: try bus.connect())
-        let inbox = Inbox<Result<PeerSessionState?, DBusServiceError>>()
+        let inbox = BlockingInbox<Result<PeerSessionState?, DBusServiceError>>()
         let watcher = try LogindPeerStateWatcher.systemPeer(logind, on: DispatchQueue(label: "test")) {
             inbox.put($0)
         }

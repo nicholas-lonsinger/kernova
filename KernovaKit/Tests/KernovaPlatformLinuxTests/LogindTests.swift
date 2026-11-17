@@ -1,6 +1,7 @@
 #if os(Linux)
 import KernovaDBus
 import KernovaPlatformLinux
+import KernovaPortableTestSupport
 import Synchronization
 import Testing
 
@@ -214,7 +215,7 @@ struct LogindTests {
         let fake = try FakeLogind(on: bus)
         let logind = Logind(connection: try bus.connect())
         let seat = try logind.seat("seat0")
-        let inbox = Inbox<Result<LogindSeatChange, DBusServiceError>>()
+        let inbox = BlockingInbox<Result<LogindSeatChange, DBusServiceError>>()
         let subscription = try logind.observeSeat(seat) { inbox.put($0) }
 
         let interface = Logind.seatInterface
@@ -237,7 +238,7 @@ struct LogindTests {
         let fake = try FakeLogind(on: bus)
         let logind = Logind(connection: try bus.connect())
         let user = try logind.user(FakeLogind.displayUID)
-        let inbox = Inbox<Result<LogindUserChange, DBusServiceError>>()
+        let inbox = BlockingInbox<Result<LogindUserChange, DBusServiceError>>()
         let subscription = try logind.observeUser(user) { inbox.put($0) }
 
         let interface = Logind.userInterface
@@ -263,7 +264,7 @@ struct LogindTests {
         let fake = try FakeLogind(on: bus)
         let logind = Logind(connection: try bus.connect())
         let path = FakeLogind.userSession.path
-        let inbox = Inbox<Result<LogindSessionChange, DBusServiceError>>()
+        let inbox = BlockingInbox<Result<LogindSessionChange, DBusServiceError>>()
         let subscription = try logind.observeSession(path) { inbox.put($0) }
 
         let interface = Logind.sessionInterface

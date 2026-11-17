@@ -63,6 +63,10 @@ uint64_t kernova_monotonic_nanoseconds(void) {
     return clock_gettime_nsec_np(CLOCK_MONOTONIC);
 }
 
+uint64_t kernova_uptime_nanoseconds(void) {
+    return clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+}
+
 #elif defined(_WIN32)
 
 uint64_t kernova_monotonic_nanoseconds(void) {
@@ -71,11 +75,23 @@ uint64_t kernova_monotonic_nanoseconds(void) {
     return (uint64_t)hundreds * 100;
 }
 
+uint64_t kernova_uptime_nanoseconds(void) {
+    ULONGLONG hundreds;
+    QueryUnbiasedInterruptTimePrecise(&hundreds);
+    return (uint64_t)hundreds * 100;
+}
+
 #else
 
 uint64_t kernova_monotonic_nanoseconds(void) {
     struct timespec now;
     clock_gettime(CLOCK_BOOTTIME, &now);
+    return (uint64_t)now.tv_sec * 1000000000u + (uint64_t)now.tv_nsec;
+}
+
+uint64_t kernova_uptime_nanoseconds(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
     return (uint64_t)now.tv_sec * 1000000000u + (uint64_t)now.tv_nsec;
 }
 

@@ -443,7 +443,7 @@ struct VMLibraryViewModelSnapshotTests {
     }
 
     @Test("A rename made mid-revert survives the revert's own manifest write")
-    func renameSurvivesAConcurrentRevert() async {
+    func renameSurvivesAConcurrentRevert() async throws {
         let harness = makeSuspendingHarness()
         harness.virtualization.shouldSuspendOnRevert = true
         // At rest when the revert is asked for — the verb refuses a VM already
@@ -457,7 +457,7 @@ struct VMLibraryViewModelSnapshotTests {
         // The revert is parked mid-copy, and the rename lands here — the
         // assertion below only holds if `performRevert` re-reads the manifest
         // after this await rather than writing a copy captured before it.
-        await harness.virtualization.waitUntilSuspended()
+        try await harness.virtualization.waitUntilSuspended()
         harness.viewModel.renameSnapshot(snapshot, newName: "Renamed mid-revert", on: instance)
         harness.virtualization.resumeSuspended()
         await revertTask.value

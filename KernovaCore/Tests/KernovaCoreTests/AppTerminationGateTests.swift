@@ -152,9 +152,9 @@ struct AppTerminationGateTests {
     /// anything else happening: the pass is a main-actor task enqueued by the
     /// request, so once the main queue has drained it has either ended or is
     /// parked on what it waits out.
-    private func requestFullQuitAndLetItRun(_ controller: AppTerminationController) async {
+    private func requestFullQuitAndLetItRun(_ controller: AppTerminationController) async throws {
         controller.requestFullQuit()
-        await drainMainQueue()
+        try await drainMainQueue()
     }
 
     @Test("A quit waits out a snapshot trash")
@@ -169,7 +169,7 @@ struct AppTerminationGateTests {
         }
         try await gate.waitUntilEntered()
 
-        await requestFullQuitAndLetItRun(controller)
+        try await requestFullQuitAndLetItRun(controller)
         #expect(viewModel.library.isTerminating)
         #expect(spy.endings.isEmpty)
 
@@ -188,7 +188,7 @@ struct AppTerminationGateTests {
         #expect(arrival.beginPublishing())
         #expect(arrival.requestCancel() == .withdrawn)
 
-        await requestFullQuitAndLetItRun(controller)
+        try await requestFullQuitAndLetItRun(controller)
         #expect(spy.endings.isEmpty)
 
         gate.release()

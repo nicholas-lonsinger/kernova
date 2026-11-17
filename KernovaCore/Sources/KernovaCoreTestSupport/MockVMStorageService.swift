@@ -2,6 +2,7 @@ import Foundation
 import KernovaCommandModel
 import KernovaKit
 import Synchronization
+import Testing
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
@@ -286,7 +287,7 @@ final class MockVMStorageService: VMStorageProviding {
         }
         if let cloneHold {
             cloneEntered.notify()
-            cloneHold.wait()
+            do { try Backstop("the test's release of the clone").wait(for: cloneHold) } catch { Issue.record(error) }
         }
         if let error = state.withLock({ $0.cloneVMBundleError }) { throw error }
         // Mirrors the real service on disk: a macOS clone's `copyOut` writes
@@ -321,7 +322,9 @@ final class MockVMStorageService: VMStorageProviding {
         files.moveBundle(from: stagedURL, to: bundleURL)
         if let publishHold = state.withLock({ $0.publishHold }) {
             publishLanded.notify()
-            publishHold.wait()
+            do { try Backstop("the test's release of the publish").wait(for: publishHold) } catch {
+                Issue.record(error)
+            }
         }
         if let afterPublish = state.withLock({ $0.afterPublish }) {
             DispatchQueue.main.sync { MainActor.assumeIsolated { afterPublish() } }

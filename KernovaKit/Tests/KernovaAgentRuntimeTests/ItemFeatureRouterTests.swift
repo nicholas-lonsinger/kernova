@@ -12,6 +12,7 @@ import KernovaAgentSimulation
 import KernovaFileTree
 import KernovaItemTransfer
 import KernovaLogging
+import KernovaPortableTestSupport
 import KernovaSynchronization
 import KernovaWire
 import Testing
@@ -109,13 +110,13 @@ struct ItemFeatureRouterTests {
     @Test(
         "A peer advertises available exactly the features its router has owners for, and item transfer only with one",
         arguments: [Set<FeatureID>(), [.clipboard], [.clipboard, .drag]])
-    func advertFollowsOwners(_ owned: Set<FeatureID>) async {
+    func advertFollowsOwners(_ owned: Set<FeatureID>) async throws {
         let router: ItemFeatureRouter<Void> = router(owned, heard: Recorder())
         let harness = PeerRuntimeHarness(
             items: ItemAdapters(
                 source: RegisteredItemAdapters(), sink: RegisteredItemAdapters(), features: router.features))
         harness.runtime.start()
-        let link = await harness.connect(1)
+        let link = try await harness.connect(1)
         switch link.far.peerAdvert(.itemTransfer) {
         case .available? where !owned.isEmpty, .absent(.notImplemented, _)? where owned.isEmpty: break
         case let advert: Issue.record("item transfer advertised \(String(describing: advert))")
@@ -131,14 +132,14 @@ struct ItemFeatureRouterTests {
     }
 
     @Test("Through a hub and a peer runtime, each end's owners hear their features' events in order, and serve")
-    func routesThroughHubAndPeer() async {
+    func routesThroughHubAndPeer() async throws {
         let (hostHeard, peerHeard) = (Recorder<Heard>(), Recorder<Heard>())
         let hostRouter: ItemFeatureRouter<PeerHandle> = router(heard: hostHeard)
         let harness = HubHarness(
             policy: SimItems.policy(PolicySnapshot()),
             items: ItemAdapters(source: MemoryItems(), sink: MemoryItems(), features: hostRouter.features),
             itemEvents: { hostRouter.deliver($0) })
-        await harness.attached()
+        try await harness.attached()
         let runtime = Locked<PeerAgentRuntime?>(nil)
         let peerRouter: ItemFeatureRouter<Void> = router([.clipboard, .drag], heard: peerHeard) { event in
             if case .requested(let id, _) = event {
@@ -157,42 +158,42 @@ struct ItemFeatureRouterTests {
             handlers: PeerAgentRuntime.Handlers(event: { peerRouter.deliver($0) }, stop: { _ in }))
         runtime.withLock { $0 = peer }
         peer.start()
-        let ready = await harness.snapshot { $0.consolePeers[.clipboard] != nil && $0.consolePeers[.drag] != nil }
+        let ready = try await harness.snapshot { $0.consolePeers[.clipboard] != nil && $0.consolePeers[.drag] != nil }
         let handle = ready.peers[0].handle
         guard case .absent(.notImplemented, _) = ready.features[.drop] else {
             Issue.record("DROP, which the peer has no owner for, is \(ready.features[.drop])"); return
         }
 
         let representation = SimItems.representation(.inline, size: 6)
-        #expect(await offer(SimItems.offer(1, [[representation]]), .clipboard, on: peer) == nil)
+        #expect(try await offer(SimItems.offer(1, [[representation]]), .clipboard, on: peer) == nil)
         var host = hostHeard.waiter()
-        _ = await host.next { if case .items(.clipboard, .offerReceived) = $0 { true } else { false } }
-        let pulled = await withCheckedContinuation { continuation in
+        _ = try await host.next { if case .items(.clipboard, .offerReceived) = $0 { true } else { false } }
+        let pulled = try await Backstop("harness.hub.pullItem").park { resume in
             harness.hub.pullItem(ItemPullOrder(SimItems.request(1), landing: DecodingItemSink.landing), from: handle) {
-                continuation.resume(returning: $0)
+                resume($0)
             }
         }
         guard case .success(let id) = pulled else { Issue.record("pulled \(pulled)"); return }
-        _ = await host.next { $0 == .items(.clipboard, .pullEnded(.clipboard, id, .landed(.named(Data())))) }
+        _ = try await host.next { $0 == .items(.clipboard, .pullEnded(.clipboard, id, .landed(.named(Data())))) }
         var served = peerHeard.waiter()
-        _ = await served.next { $0 == .content(.clipboard, token: SimItems.token(1)) }
-        _ = await served.next {
+        _ = try await served.next { $0 == .content(.clipboard, token: SimItems.token(1)) }
+        _ = try await served.next {
             if case .items(.clipboard, .serveEnded(.clipboard, _, .landed)) = $0 { true } else { false }
         }
 
-        #expect(await offer(SimItems.offer(2, []), .drag, on: peer) == nil)
-        _ = await host.next { if case .items(.drag, .offerReceived) = $0 { true } else { false } }
-        let took = await withCheckedContinuation { continuation in
-            harness.hub.takeDrag(SimItems.token(2), of: handle) { continuation.resume(returning: $0) }
+        #expect(try await offer(SimItems.offer(2, []), .drag, on: peer) == nil)
+        _ = try await host.next { if case .items(.drag, .offerReceived) = $0 { true } else { false } }
+        let took = try await Backstop("harness.hub.takeDrag").park { resume in
+            harness.hub.takeDrag(SimItems.token(2), of: handle) { resume($0) }
         }
         guard case .success(let take) = took else { Issue.record("took \(took)"); return }
-        _ = await host.next { $0 == .take(.ended(take, .caught(nil))) }
+        _ = try await host.next { $0 == .take(.ended(take, .caught(nil))) }
         let asked = peerHeard.elements.contains { heard in
             if case .take(.requested(_, SimItems.token(2))) = heard { true } else { false }
         }
         #expect(asked)
 
-        await harness.settled()
+        try await harness.settled()
         let delivered = harness.itemLog.elements.compactMap { entry -> Heard? in
             switch entry {
             case .event(.items(_, let event)): .items(event.feature, event)
@@ -215,9 +216,9 @@ struct ItemFeatureRouterTests {
                 .usable(.clipboard, on: "()"), .usable(.drag, on: "()"),
             ])
 
-        await withCheckedContinuation { continuation in peer.close { continuation.resume() } }
-        _ = await host.next { $0 == .usable(.drag, on: nil) }
-        await harness.settled()
+        try await Backstop("peer.close").park { resume in peer.close { resume(()) } }
+        _ = try await host.next { $0 == .usable(.drag, on: nil) }
+        try await harness.settled()
         let hostTail = hostHeard.elements.suffix(2)
         #expect(Array(hostTail) == [.usable(.clipboard, on: nil), .usable(.drag, on: nil)])
         let peerTail = peerHeard.elements.filter { if case .usable = $0 { true } else { false } }.suffix(2)
@@ -230,11 +231,11 @@ struct ItemFeatureRouterTests {
     /// A hub whose router owns every item feature, recording into `heard`, its policy `policy`.
     private static func hub(
         _ heard: Recorder<Heard>, policy: PolicySnapshot = SimItems.policy(PolicySnapshot())
-    ) async -> HubHarness {
+    ) async throws -> HubHarness {
         let router: ItemFeatureRouter<PeerHandle> = router(heard: heard)
         let harness = HubHarness(
             policy: policy, items: MemoryItems().adapters(), itemEvents: { router.deliver($0) })
-        await harness.attached()
+        try await harness.attached()
         return harness
     }
 
@@ -257,29 +258,29 @@ struct ItemFeatureRouterTests {
         heard.elements.filter { if case .usable = $0 { true } else { false } }
     }
 
-    private static func close(_ runtime: PeerAgentRuntime) async {
-        await withCheckedContinuation { continuation in runtime.close { continuation.resume() } }
+    private static func close(_ runtime: PeerAgentRuntime) async throws {
+        try await Backstop("runtime.close").park { resume in runtime.close { resume(()) } }
     }
 
     @Test(
         "Host: a feature's first console peer, its move away and back, and its connection's end each reach the owner once"
     )
-    func hostConsoleMoves() async {
+    func hostConsoleMoves() async throws {
         let heard = Recorder<Heard>()
-        let harness = await Self.hub(heard)
+        let harness = try await Self.hub(heard)
         let first = Self.peer(harness)
         var waiter = heard.waiter()
-        _ = await waiter.next { $0 == .usable(.drag, on: "\(PeerHandle(rawValue: 1))") }
+        _ = try await waiter.next { $0 == .usable(.drag, on: "\(PeerHandle(rawValue: 1))") }
         let a = "\(PeerHandle(rawValue: 1))"
         #expect(Self.usable(heard) == [.usable(.clipboard, on: a), .usable(.drag, on: a)])
 
         // The host's offer on the console peer ends before the owner hears the console moved off it.
-        let offered = await withCheckedContinuation { continuation in
-            harness.hub.offerItems(SimItems.offer(1, []), feature: .clipboard) { continuation.resume(returning: $0) }
+        let offered = try await Backstop("harness.hub.offerItems").park { resume in
+            harness.hub.offerItems(SimItems.offer(1, []), feature: .clipboard) { resume($0) }
         }
         #expect(offered == .success(PeerHandle(rawValue: 1)))
         first.setPeerState(PeerSessionState(console: .off, sessionID: "1", userName: "user"))
-        _ = await waiter.next { $0 == .usable(.drag, on: nil) }
+        _ = try await waiter.next { $0 == .usable(.drag, on: nil) }
         let afterOffer = heard.elements.drop { $0 != .usable(.drag, on: a) }.dropFirst()
         guard case .items(.clipboard, .offerEnded(.clipboard, .local, _, _))? = afterOffer.first else {
             Issue.record("after the move: \(Array(afterOffer))"); return
@@ -289,55 +290,55 @@ struct ItemFeatureRouterTests {
         let second = Self.peer(
             harness, claim: AgentHubItemTests.offConsole,
             state: PeerSessionState(console: .on, sessionID: "2", userName: "other"))
-        _ = await waiter.next { if case .usable(.drag, on: .some) = $0 { true } else { false } }
+        _ = try await waiter.next { if case .usable(.drag, on: .some) = $0 { true } else { false } }
         let b = "\(PeerHandle(rawValue: 2))"
-        await Self.close(second)
-        _ = await waiter.next { $0 == .usable(.drag, on: nil) }
-        await harness.settled()
+        try await Self.close(second)
+        _ = try await waiter.next { $0 == .usable(.drag, on: nil) }
+        try await harness.settled()
         #expect(
             Self.usable(heard) == [
                 .usable(.clipboard, on: a), .usable(.drag, on: a), .usable(.clipboard, on: nil),
                 .usable(.drag, on: nil), .usable(.clipboard, on: b), .usable(.drag, on: b),
                 .usable(.clipboard, on: nil), .usable(.drag, on: nil),
             ])
-        await Self.close(first)
+        try await Self.close(first)
         harness.hub.close()
     }
 
     @Test("Host: a policy turning a feature off takes its console peer, and no other feature's")
-    func hostPolicyOff() async {
+    func hostPolicyOff() async throws {
         let heard = Recorder<Heard>()
-        let harness = await Self.hub(heard)
+        let harness = try await Self.hub(heard)
         let peer = Self.peer(harness)
         var waiter = heard.waiter()
-        _ = await waiter.next { if case .usable(.drag, on: .some) = $0 { true } else { false } }
+        _ = try await waiter.next { if case .usable(.drag, on: .some) = $0 { true } else { false } }
         let a = "\(PeerHandle(rawValue: 1))"
         harness.hub.setPolicy(PolicySnapshot([FeaturePolicyValue(feature: .drag, enabled: true)]))
-        _ = await waiter.next { $0 == .usable(.clipboard, on: nil) }
-        await harness.settled()
+        _ = try await waiter.next { $0 == .usable(.clipboard, on: nil) }
+        try await harness.settled()
         #expect(
             Self.usable(heard) == [.usable(.clipboard, on: a), .usable(.drag, on: a), .usable(.clipboard, on: nil)])
-        await Self.close(peer)
+        try await Self.close(peer)
         harness.hub.close()
     }
 
     @Test(
         "Agent: first usability, policy off and the connection's end each reach the owner once; a console move is its own"
     )
-    func agentUsability() async {
+    func agentUsability() async throws {
         let heard = Recorder<Heard>()
-        let harness = await Self.hub(Recorder())
+        let harness = try await Self.hub(Recorder())
         let peer = Self.peer(harness, heard)
         var waiter = heard.waiter()
-        _ = await waiter.next { $0 == .usable(.drag, on: "()") }
+        _ = try await waiter.next { $0 == .usable(.drag, on: "()") }
         #expect(Self.usable(heard) == [.usable(.clipboard, on: "()"), .usable(.drag, on: "()")])
 
         peer.setPeerState(PeerSessionState(console: .off, sessionID: "1", userName: "user"))
         harness.hub.setPolicy(PolicySnapshot([FeaturePolicyValue(feature: .drag, enabled: true)]))
-        _ = await waiter.next { $0 == .usable(.clipboard, on: nil) }
-        await Self.close(peer)
-        _ = await waiter.next { $0 == .usable(.drag, on: nil) }
-        await flush(peer.queue)
+        _ = try await waiter.next { $0 == .usable(.clipboard, on: nil) }
+        try await Self.close(peer)
+        _ = try await waiter.next { $0 == .usable(.drag, on: nil) }
+        try await flush(peer.queue)
         #expect(
             Self.usable(heard) == [
                 .usable(.clipboard, on: "()"), .usable(.drag, on: "()"), .usable(.clipboard, on: nil),
@@ -346,9 +347,9 @@ struct ItemFeatureRouterTests {
         harness.hub.close()
     }
 
-    private func offer(_ offer: ItemOffer, _ feature: FeatureID, on peer: PeerAgentRuntime) async -> WireError? {
-        await withCheckedContinuation { continuation in
-            peer.offerItems(offer, feature: feature) { continuation.resume(returning: $0) }
+    private func offer(_ offer: ItemOffer, _ feature: FeatureID, on peer: PeerAgentRuntime) async throws -> WireError? {
+        try await Backstop("peer.offerItems").park { resume in
+            peer.offerItems(offer, feature: feature) { resume($0) }
         }
     }
 }

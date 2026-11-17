@@ -209,7 +209,7 @@ struct VMIntentGatewayTests {
             index: index, record: makeTestIndexRecord())
 
         let read = Task { await gateway.vms() }
-        for await _ in entered.stream { break }
+        _ = try await awaitFirst(entered.stream)
         // Registered while the read is parked: a read that had already
         // reached the core would answer an empty library.
         let late = harness.register(name: "Late")
@@ -292,7 +292,7 @@ struct VMIntentGatewayTests {
         try await virtualization.stopRequested.wait { virtualization.stopCallCount == 1 }
         // The turn that sent the request is the one that arms any deadline, and
         // a deadline's sleep is queued behind it.
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(clock.requestedSeconds.isEmpty)
         #expect(vm.liveSessionID == session)
 
@@ -362,7 +362,7 @@ struct VMIntentGatewayTests {
     // MARK: - Search
 
     @Test("A search term reaches the library's search once the library has landed, addressing no VM")
-    func searchFillsTheLibrarySearchOnceReady() async {
+    func searchFillsTheLibrarySearchOnceReady() async throws {
         let harness = WiredCommandCore()
         harness.register(name: "Sonoma")
         let entered = AsyncStream<Void>.makeStream()
@@ -375,7 +375,7 @@ struct VMIntentGatewayTests {
             showSearchResults: { terms.append($0) })
 
         let search = Task { await gateway.showSearchResults(for: "sonoma") }
-        for await _ in entered.stream { break }
+        _ = try await awaitFirst(entered.stream)
         #expect(terms.isEmpty)
 
         release.continuation.yield(())
@@ -496,8 +496,8 @@ struct VMIntentGatewayTests {
     /// Every stream the core hands out is fed the same batches in the same
     /// order, so the gateway's own subscription holds that batch too, ahead of
     /// anything changed after this returns.
-    private func readUntilRunning(_ vm: VMInstance, on events: AsyncStream<[VMLibraryEvent]>) async {
-        await readUntil(on: events) {
+    private func readUntilRunning(_ vm: VMInstance, on events: AsyncStream<[VMLibraryEvent]>) async throws {
+        try await readUntil(on: events) {
             if case .statusChanged(let id, _, _, "running") = $0 { id == vm.id } else { false }
         }
     }
@@ -505,9 +505,9 @@ struct VMIntentGatewayTests {
     /// Reads `events` up to the batch holding an event `matches` admits, on
     /// the same ordering ``readUntilRunning(_:on:)`` states.
     private func readUntil(
-        on events: AsyncStream<[VMLibraryEvent]>, _ matches: (VMLibraryEvent) -> Bool
-    ) async {
-        for await batch in events where batch.contains(where: matches) { return }
+        on events: AsyncStream<[VMLibraryEvent]>, _ matches: @escaping @Sendable (VMLibraryEvent) -> Bool
+    ) async throws {
+        _ = try await awaitFirst(events) { batch in batch.contains(where: matches) }
     }
 
     @Test("Readiness drops only the VMs it recorded indexing that the library no longer holds")
@@ -600,9 +600,9 @@ struct VMIntentGatewayTests {
         // Each drained through one stream ahead of the addition whose write is
         // awaited, so the count proves neither batch wrote.
         try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
-        await readUntilRunning(vm, on: events)
+        try await readUntilRunning(vm, on: events)
         vm.beginSessionContextForTesting().hasAgentTransport = true
-        await readUntil(on: events) {
+        try await readUntil(on: events) {
             if case .agentStatusChanged(let id, _, _) = $0 { id == vm.id } else { false }
         }
         let added = harness.register(name: "Added")

@@ -88,10 +88,10 @@ final class MeetingLanes: Sendable {
             }
             if ordinal == self.count {
                 for _ in 1..<self.count { self.everyoneStarted.signal() }
-            } else if ordinal < self.count, !missed,
-                self.everyoneStarted.wait(timeout: .now() + testWaitBackstop) == .timedOut
-            {
-                self.state.withLock { state in state.startedWhenMissed = state.startedWhenMissed ?? state.started }
+            } else if ordinal < self.count, !missed {
+                do { try Backstop("the meeting of every lane").wait(for: self.everyoneStarted) } catch {
+                    self.state.withLock { state in state.startedWhenMissed = state.startedWhenMissed ?? state.started }
+                }
             }
             work()
         }

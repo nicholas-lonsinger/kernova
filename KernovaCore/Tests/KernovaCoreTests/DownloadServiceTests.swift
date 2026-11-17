@@ -979,7 +979,9 @@ struct DownloadServiceTests {
         StubURLProtocol.setHandler { request in
             handlerCalls.increment()
             started.notify()
-            release.wait()
+            do { try Backstop("the test's release of the response").wait(for: release) } catch {
+                Issue.record(error)
+            }
             return .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
         }
         defer { StubURLProtocol.setHandler(nil) }

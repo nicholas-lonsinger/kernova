@@ -1,6 +1,7 @@
 import Foundation
 import KernovaCommandModel
 import Synchronization
+import Testing
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
@@ -202,7 +203,9 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
             return (sizes, hold)
         }
         sizeReadEntered.notify()
-        hold?.wait()
+        if let hold {
+            do { try Backstop("the test's release of the size read").wait(for: hold) } catch { Issue.record(error) }
+        }
         return sizes
     }
 
@@ -218,7 +221,11 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
             return (sizes, hold)
         }
         diskSizeReadEntered.notify()
-        hold?.wait()
+        if let hold {
+            do { try Backstop("the test's release of the disk size read").wait(for: hold) } catch {
+                Issue.record(error)
+            }
+        }
         return sizes
     }
 

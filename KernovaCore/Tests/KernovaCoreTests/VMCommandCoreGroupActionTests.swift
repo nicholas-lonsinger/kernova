@@ -334,7 +334,7 @@ struct VMCommandCoreGroupActionTests {
         try await deletion.waitUntilEntered()
 
         let pass = Task { @MainActor in await harness.core.startVMsMarkedToStartAutomatically([held.id]) }
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(held.activity.queuedFollowUpCountForTesting == 1)
         deletion.release()
         try await deleting.value
@@ -359,7 +359,7 @@ struct VMCommandCoreGroupActionTests {
         try await copy.waitUntilEntered()
 
         let pass = Task { @MainActor in await harness.core.startVMsMarkedToStartAutomatically([held.id]) }
-        await drainMainQueue()
+        try await drainMainQueue()
         let start = harness.core.startFollowUp(held, identity: .unavailable)
         held.activity.follow(start)
         #expect(held.activity.queuedFollowUpCountForTesting == 2)
@@ -407,7 +407,7 @@ struct VMCommandCoreGroupActionTests {
         let running = Task { @MainActor in
             try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Pair"))
         }
-        await harness.virtualization.waitUntilSuspended()
+        try await harness.virtualization.waitUntilSuspended()
         running.cancel()
         harness.virtualization.resumeSuspended()
         let report = try await running.value
@@ -428,7 +428,7 @@ struct VMCommandCoreGroupActionTests {
         let running = Task { @MainActor in
             try await harness.core.groupAction(.start, on: group)
         }
-        await harness.virtualization.waitUntilSuspended()
+        try await harness.virtualization.waitUntilSuspended()
         try await midRun()
         harness.virtualization.shouldSuspendOnStart = false
         harness.virtualization.resumeSuspended()

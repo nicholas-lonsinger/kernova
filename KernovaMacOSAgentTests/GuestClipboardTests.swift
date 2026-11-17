@@ -63,7 +63,7 @@ struct GuestClipboardTests {
         rig.clipboard.setOnConsole(true)
         rig.clipboard.setLink(link)
         copy("passthrough off", rig)
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(!rig.clipboard.isOffering)
         #expect(link.offers.isEmpty)
 
@@ -85,7 +85,7 @@ struct GuestClipboardTests {
         rig.clipboard.apply(Self.policy(passthrough: false))
         try await link.changed.wait { link.withdrawals == [link.offers[0].token] }
         copy("not offered", rig)
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(link.offers.count == 1)
     }
 
@@ -95,7 +95,7 @@ struct GuestClipboardTests {
         let link = RecordingLink()
         #expect(rig.pasteboard.setString("copied before the first connection", forType: .string))
         openGate(rig, link)
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(link.offers.isEmpty)
 
         rig.clipboard.setLink(nil)
@@ -103,7 +103,7 @@ struct GuestClipboardTests {
         #expect(rig.pasteboard.setString("copied while unlinked", forType: .string))
         rig.clipboard.setLink(link)
         rig.clipboard.checkPasteboard()
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(link.offers.isEmpty)
 
         copy("copied after the return", rig)
@@ -118,7 +118,7 @@ struct GuestClipboardTests {
         copy("offered", rig)
         try await link.changed.wait { link.offers.count == 1 }
         let token = link.offers[0].token
-        await drainMainQueue()
+        try await drainMainQueue()
 
         rig.clipboard.setOnConsole(false)
         try await link.changed.wait { link.withdrawals == [token] }
@@ -181,7 +181,7 @@ struct GuestClipboardTests {
         let type = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
 
         // A paste holds its thread until the pull ends, so it fires off the main actor.
-        _ = await Task.detached { pasteboard.invokeProvider(forType: type) }.value
+        _ = try await offCooperativePool { pasteboard.invokeProvider(forType: type) }
         #expect(link.ceilings == [UInt64(first)])
 
         // An offer's pulls land against one budget, the ceiling as its first pull read it.
@@ -192,7 +192,7 @@ struct GuestClipboardTests {
             .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: later, concealed: false, count: 1)),
             on: link)
         try await rig.pasteboard.changed.wait { rig.clipboard.exchange.remote?.token == later }
-        _ = await Task.detached { pasteboard.invokeProvider(forType: type) }.value
+        _ = try await offCooperativePool { pasteboard.invokeProvider(forType: type) }
         #expect(link.ceilings == [UInt64(first), UInt64(raised)])
         #expect(rig.clipboard.pasteCeilingBytes == raised)
     }
@@ -220,12 +220,12 @@ struct GuestClipboardTests {
         // Published within the ceiling: the offer's estimate fits, and only the pull finds it does not.
         #expect(clipboard.activity == .offeredFromHost)
 
-        let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
+        let paste = BlockingCall { pasteboard.invokeProvider(forType: .fileURL) }
         try await link.changed.wait { link.opened.count == 1 }
         let limit = ClipboardPasteLimit.defaultBytes
         clipboard.exchange.pullEnded(link.opened[0], .failed(WireError(.tooLarge, limit: UInt64(limit))))
 
-        #expect(await paste.value == nil)
+        #expect(try await paste.value() == nil)
         try await noticed.wait { clipboard.activity == .pasteRefused(.pasteTooLarge, pasteLimitBytes: limit) }
         #expect(
             AgentMenuText.clipboardLine(clipboard.activity)
@@ -277,11 +277,11 @@ struct GuestClipboardTests {
         // `pbpaste` in the guest lands the Mac's text; AppKit finishes with the provider, the write standing.
         let text = NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)
         let pasted = Data("pasted before off".utf8)
-        let paste = Task.detached { pasteboard.invokeProvider(forType: text) }
+        let paste = BlockingCall { pasteboard.invokeProvider(forType: text) }
         try await landPull(pasted, clipboard, link)
-        #expect(await paste.value == pasted)
+        #expect(try await paste.value() == pasted)
         pasteboard.finishProvider(itemIndex: 0)
-        await drainMainQueue()
+        try await drainMainQueue()
 
         passthroughStops(clipboard, link, code)
         #expect(pasteboard.promisedTypes.isEmpty)
@@ -324,12 +324,12 @@ struct GuestClipboardTests {
         func id(_ stream: UInt32) -> ItemPullID {
             ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: stream))
         }
-        func pull(_ stream: UInt32, of offer: ItemOffer) -> Task<Result<ItemContent, WireError>, Never> {
+        func pull(_ stream: UInt32, of offer: ItemOffer) -> BlockingCall<Result<ItemContent, WireError>> {
             var request = PullRequest()
             request.token = offer.token
             let id = id(stream)
             let representation = offer.items[0].representations[0]
-            return Task.detached { exchange.content(id, request, representation) }
+            return BlockingCall { [request] in exchange.content(id, request, representation) }
         }
         func failure(_ result: Result<ItemContent, WireError>) -> ErrorCode? {
             if case .failure(let error) = result { error.code } else { nil }
@@ -343,11 +343,11 @@ struct GuestClipboardTests {
         let ended = pull(2, of: offer)
         try await calledIn.wait { first.callIns == 1 }
         exchange.handle(.serveEnded(.clipboard, id(2), .closed(.connectionLost)), on: link)
-        #expect(failure(await ended.value) == .cancelled)
+        #expect(failure(try await ended.value()) == .cancelled)
 
         // A pull whose end came before its content was asked for is not served at all.
         exchange.handle(.serveEnded(.clipboard, id(4), .closed(.connectionLost)), on: link)
-        #expect(failure(await pull(4, of: offer).value) == .cancelled)
+        #expect(failure(try await pull(4, of: offer).value()) == .cancelled)
 
         let second = FakeFilePromiseReceiver(
             files: [("b.png", .file(Data("b".utf8)))], fileType: "public.png", deferred: true)
@@ -356,7 +356,7 @@ struct GuestClipboardTests {
         try await calledIn.wait { second.callIns == 1 }
         exchange.handle(
             .offerEnded(.clipboard, .local, token: replacing.token, .resetLocally(WireError(.cancelled))), on: link)
-        #expect(failure(await withdrawn.value) == .itemRepresentationUnavailable)
+        #expect(failure(try await withdrawn.value()) == .itemRepresentationUnavailable)
     }
 
     // MARK: - One current clipboard
@@ -480,7 +480,7 @@ struct GuestClipboardTests {
         let exchange = rig.clipboard.exchange
         let representation = copy.items[0].representations[0]
         let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
-        let served = await Task.detached { exchange.content(pull, request, representation) }.value
+        let served = try await offCooperativePool { [request] in exchange.content(pull, request, representation) }
         #expect(served == .success(.inline(Data("copied in the guest".utf8))))
         #expect(!link.withdrawals.contains(copy.token))
     }
@@ -519,7 +519,7 @@ struct GuestClipboardTests {
         Self.setConcealed("hunter2-guest", on: rig.pasteboard)
         let concealed = try await answerAsk(Data(repeating: 0xA2, count: 16), rig, link)
         #expect(concealed.concealed)
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(link.withdrawals.isEmpty)
 
         if cleared {
@@ -625,7 +625,7 @@ struct GuestClipboardTests {
         // The host lets the guest's copy go, and its called-in file with it; the written clone stays.
         rig.clipboard.exchange.handle(
             .offerEnded(.clipboard, .local, token: guestCopy.token, .completed(remoteEndBody: Data())), on: first)
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(FileManager.default.fileExists(atPath: url.path))
         #expect(try Data(contentsOf: url) == Data("png".utf8))
     }
@@ -832,7 +832,7 @@ struct GuestClipboardTests {
                     NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI): Data(),
                 ]
             ])
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(!link.releases.contains(Self.copyToken))
     }
 
@@ -937,7 +937,7 @@ struct GuestClipboardTests {
         try await link.changed.wait { link.releases.contains(second) }
         let written = rig.pasteboard.changeCount
         try land("first, older", pull: 0, on: rig, link)
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(rig.pasteboard.changeCount == written)
         #expect(
             rig.pasteboard.dataByItem.first?[NSPasteboard.PasteboardType(ClipboardContent.utf8TextUTI)]

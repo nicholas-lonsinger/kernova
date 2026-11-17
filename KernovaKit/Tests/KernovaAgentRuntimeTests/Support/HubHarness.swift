@@ -154,9 +154,9 @@ final class TestTransport: GuestStreamTransport {
 
     /// Waits until `count` of its connections' streams have released their slots. A stream releases after
     /// the driver's final turn, so a connection's `.closed` orders nothing about its slot.
-    func released(_ count: Int) async {
+    func released(_ count: Int, fileID: String = #fileID, line: Int = #line) async throws {
         var waiter = releases.waiter()
-        for _ in 0..<count { _ = await waiter.next { _ in true } }
+        for _ in 0..<count { _ = try await waiter.next(fileID: fileID, line: line) { _ in true } }
     }
 }
 
@@ -200,8 +200,8 @@ final class HubHarness: Sendable {
     }
 
     /// Waits until the transport is accepting.
-    func attached() async {
-        await flush(hub.queue)
+    func attached(fileID: String = #fileID, line: Int = #line) async throws {
+        try await flush(hub.queue, fileID: fileID, line: line)
     }
 
     /// The republisher the harness attaches with, recording into `guestLogs`.
@@ -214,15 +214,17 @@ final class HubHarness: Sendable {
     }
 
     /// Waits until every event the hub has received is reflected in `snapshots`.
-    func settled() async {
-        await flush(hub.queue)
-        await flush(publishQueue)
+    func settled(fileID: String = #fileID, line: Int = #line) async throws {
+        try await flush(hub.queue, fileID: fileID, line: line)
+        try await flush(publishQueue, fileID: fileID, line: line)
     }
 
     /// The next snapshot `predicate` accepts, from the first.
-    func snapshot(where predicate: (AgentHubSnapshot) -> Bool) async -> AgentHubSnapshot {
+    func snapshot(
+        fileID: String = #fileID, line: Int = #line, where predicate: (AgentHubSnapshot) -> Bool
+    ) async throws -> AgentHubSnapshot {
         var waiter = snapshots.waiter()
-        return await waiter.next(where: predicate)
+        return try await waiter.next(fileID: fileID, line: line, where: predicate)
     }
 
     /// Opens a connection through the transport, answering its peer end, or `nil` when refused.
@@ -314,9 +316,11 @@ final class HubPeer: Sendable {
     }
 
     /// How the connection ended, once it has.
-    func closure() async -> ConnectionClosure {
+    func closure(fileID: String = #fileID, line: Int = #line) async throws -> ConnectionClosure {
         var waiter = events.waiter()
-        guard case .closed(let closure) = await waiter.next(where: { if case .closed = $0 { true } else { false } })
+        guard
+            case .closed(let closure) = try await waiter.next(
+                fileID: fileID, line: line, where: { if case .closed = $0 { true } else { false } })
         else { preconditionFailure() }
         return closure
     }

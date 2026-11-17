@@ -204,14 +204,17 @@ extension WiredCommandCore {
     ) async throws -> [VMLibraryEvent] {
         let sentinel = "Read past the events"
         try core.rename(.id(instance.id), to: sentinel)
-        var events: [VMLibraryEvent] = []
-        for await batch in stream {
-            for event in batch where event.vmID == instance.id {
-                if case .renamed(_, _, let to) = event, to == sentinel { return events }
-                events.append(event)
+        let id = instance.id
+        return try await Backstop("eventsReadPastRename(of:on:)").run {
+            var events: [VMLibraryEvent] = []
+            for await batch in stream {
+                for event in batch where event.vmID == id {
+                    if case .renamed(_, _, let to) = event, to == sentinel { return events }
+                    events.append(event)
+                }
             }
+            return events
         }
-        return events
     }
 
     /// The message of each failure `stream` carried about `instance`, read as

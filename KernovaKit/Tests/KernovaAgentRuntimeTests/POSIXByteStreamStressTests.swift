@@ -45,11 +45,11 @@ private final class DrainedStream: Sendable {
     }
 
     /// Writes `chunks` from the start queue and waits for the completion.
-    func write(_ chunks: [Data]) async -> ByteStreamError? {
+    func write(_ chunks: [Data]) async throws -> ByteStreamError? {
         let done = Recorder<ByteStreamError?>()
         queue.async { [stream] in stream.write(chunks) { done.record($0) } }
         var waiter = done.waiter()
-        return await waiter.next { _ in true }
+        return try await waiter.next { _ in true }
     }
 }
 
@@ -92,19 +92,19 @@ extension SocketTests {
                         }
                         onOwnQueue { farRead.record(RawSocket.read(far, total: size).count) }
                         for _ in 0..<4 {
-                            #expect(await drained.write([Data(count: size / 4)]) == nil)
+                            #expect(try await drained.write([Data(count: size / 4)]) == nil)
                         }
                         var read = farRead.waiter()
-                        #expect(await read.next { _ in true } == size)
+                        #expect(try await read.next { _ in true } == size)
                         var wrote = farWrote.waiter()
-                        _ = await wrote.next { _ in true }
+                        _ = try await wrote.next { _ in true }
                         var ends = drained.ends.waiter()
-                        #expect(await ends.next { _ in true } == .ended(.eof))
+                        #expect(try await ends.next { _ in true } == .ended(.eof))
                         #expect(drained.receivedBytes.withLock { $0 } == size)
                         drained.stream.shutdown()
                         var released = drained.released.waiter()
-                        _ = await released.next { _ in true }
-                        await flush(drained.queue)
+                        _ = try await released.next { _ in true }
+                        try await flush(drained.queue)
                         #expect(drained.ends.elements == [.ended(.eof)])
                         close(far)
                     }
@@ -147,21 +147,21 @@ extension SocketTests {
                             let threshold = (round * 31 + lane * 17) % 400 * 10
                             var receipts = drained.receipts.waiter()
                             var received = 0
-                            while received < threshold { received += await receipts.next { _ in true } }
+                            while received < threshold { received += try await receipts.next { _ in true } }
                             onOwnQueue {
                                 drained.stream.shutdown()
                                 drained.stream.shutdown()
                             }
                             var released = drained.released.waiter()
-                            _ = await released.next { _ in true }
+                            _ = try await released.next { _ in true }
                             var written = writeDone.waiter()
-                            let writeError = await written.next { _ in true }
+                            let writeError = try await written.next { _ in true }
                             #expect(writeError == .shutDown || writeError == nil)
                             var sent = senderDone.waiter()
-                            _ = await sent.next { _ in true }
+                            _ = try await sent.next { _ in true }
                             close(far)
                             // Anything delivered after the release would already be on the start queue.
-                            await flush(drained.queue)
+                            try await flush(drained.queue)
                             let ends = drained.ends.elements
                             #expect(ends.count == 1)
                             #expect(!ends.contains(.ended(.failed(.system(EBADF)))))
