@@ -111,6 +111,9 @@ struct HubDragOutTests {
     /// Held here: a take holds its display weakly.
     private let display = SessionDisplay()
     private let dragOut: HubDragOut
+    /// The clock every take's timers run on: none fires unless a test
+    /// releases it.
+    private let clock = GatedEngineClock()
     private let peer = PeerHandle(rawValue: 7)
     private let token = Data(repeating: 0xAB, count: 16)
     private let takeID = DragTakeID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 5))
@@ -119,7 +122,7 @@ struct HubDragOutTests {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         dragOut = HubDragOut(
             sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()), reporter: reporter, progressRevealDelay: 0,
-            peerName: { "Test VM" })
+            clock: clock, peerName: { "Test VM" })
         dragOut.hub = hub
     }
 
