@@ -52,8 +52,10 @@ package protocol VirtualizationProviding: Sendable {
     /// Sends the guest the ACPI shutdown request.
     func requestStop(_ instance: VMInstance) async throws
 
-    /// Terminates the guest where it stands.
-    func forceStop(_ instance: VMInstance) async throws
+    /// Sends the live session the stop that terminates the guest where it
+    /// stands, returning once it is sent: the session delivers its completion
+    /// as an event (``VMSessionOperating/stop()``).
+    func forceStop(_ instance: VMInstance) throws
 
     func pause(
         _ instance: VMInstance, _ context: borrowing VMOperationContext

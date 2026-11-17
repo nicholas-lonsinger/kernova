@@ -2,8 +2,8 @@ import Foundation
 import KernovaCommandModel
 
 extension VMStatus {
-    /// Overlay label for save/restore transitions, or `nil` for all other
-    /// states.
+    /// Overlay label for a transition the display shows an overlay for, or
+    /// `nil` for all other states.
     ///
     /// AppKit-surface copy rather than wire vocabulary, so it stays with the
     /// overlays that render it.
@@ -13,6 +13,7 @@ extension VMStatus {
         case .snapshotting: "Taking Snapshot\u{2026}"
         case .cloning: "Cloning\u{2026}"
         case .restoring: "Restoring\u{2026}"
+        case .forceStopping: "Force Stopping\u{2026}"
         default: nil
         }
     }

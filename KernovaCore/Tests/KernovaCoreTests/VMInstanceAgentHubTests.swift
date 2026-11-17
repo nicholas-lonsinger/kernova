@@ -376,11 +376,9 @@ struct VMInstanceAgentHubTests {
         #expect(context.agentAbsenceTimerDeadline == floor + grace)
         defer { instance.cancelAgentAbsenceWatchdog() }
 
-        // A pause cancels the timer, as the pause operation does.
+        // A pause cancels the timer: the guest is no longer running.
         let sessionID = try #require(instance.liveSessionID)
         instance.activity.placeForTesting(.livePaused(sessionID: sessionID))
-        instance.cancelAgentAbsenceWatchdog()
-        instance.agentPresenceChanged()
         #expect(instance.agentAbsenceTimerForTesting == nil)
 
         let beforeResume = SystemScheduler().now

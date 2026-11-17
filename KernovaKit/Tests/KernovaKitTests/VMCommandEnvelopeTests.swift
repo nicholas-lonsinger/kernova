@@ -236,6 +236,9 @@ struct VMCommandEnvelopeTests {
             .ambiguous(selector: selector, candidates: [summary, summary]),
             .invalidState(vm: summary, current: "running", allowed: [.stop, .pause, .suspend]),
             .busy(vm: summary, operation: "taking snapshot"),
+            .busy(
+                vm: summary, operation: "force stopping",
+                processEnd: VMProcessEndInstruction(appName: "Kernova", bundlePath: "/VMs/Alpha.kernova")),
             .heldByAnotherCopy(vm: summary),
             .confirmationRequired(prompt: prompt),
             .stepRequired(
@@ -275,6 +278,9 @@ struct VMCommandEnvelopeTests {
             .invalidArgument(message: "There is no setting called \u{201C}cpu\u{201D}."),
             .timedOut(vm: summary, verb: .stop, seconds: 60),
             .timedOut(vm: summary, verb: .restart, seconds: 12.5),
+            .timedOut(
+                vm: summary, verb: .stop, seconds: 5,
+                processEnd: VMProcessEndInstruction(appName: "Kernova", bundlePath: "/VMs/Alpha.kernova")),
             .operationFailed(
                 verb: .start, title: nil, message: "could not open the disk", recovery: nil),
             .operationFailed(

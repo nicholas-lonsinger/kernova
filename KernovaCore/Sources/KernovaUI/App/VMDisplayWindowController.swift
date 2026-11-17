@@ -72,6 +72,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
             display: instance.session?.virtualMachineSession?.displayHandle,
             isPaused: instance.isLivePaused,
             transitionText: instance.status.transitionLabel,
+            processEnd: instance.processEndInstruction,
             settings: instance.displayViewSettings
         )
         self.backingView = backing
@@ -196,6 +197,7 @@ final class VMDisplayWindowController: NSWindowController, NSWindowDelegate {
                         display: self.instance.session?.virtualMachineSession?.displayHandle,
                         isPaused: self.instance.isLivePaused,
                         transitionText: status.transitionLabel,
+                        processEnd: self.instance.processEndInstruction,
                         settings: self.instance.displayViewSettings
                     )
                     self.updateToolbarItems()

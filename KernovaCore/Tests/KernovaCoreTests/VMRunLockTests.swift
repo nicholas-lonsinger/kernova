@@ -207,7 +207,10 @@ struct VMRunLockTests {
 
         // A Force Stop's ending.
         try await startLive(instance)
-        try await instance.activity.forceStop {}
+        let stopped = try #require(instance.liveSessionID)
+        let stop = try instance.activity.forceStop {}
+        instance.deliverSessionEvent(.stopDidComplete, from: stopped)
+        try await stop.value()
         #expect(instance.phase == .stopped)
         expectLockFollowsPhase(instance, store)
 

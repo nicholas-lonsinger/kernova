@@ -37,7 +37,7 @@ extension VMInstance {
         // stopped color on the selection highlight instead of inverting to white.
         case .stopped: return .systemGray
         case .starting, .suspended, .saving, .snapshotting, .cloning, .restoring, .installing,
-            .initialBoot:
+            .forceStopping, .initialBoot:
             return StatusColor.warning
         case .running: return StatusColor.running
         case .paused: return StatusColor.pausedInMemory

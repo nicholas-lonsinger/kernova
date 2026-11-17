@@ -31,13 +31,13 @@ struct VMDisplayBackingViewTests {
         let backing = makeBacking()
 
         backing.update(
-            display: nil, isPaused: false, transitionText: nil,
+            display: nil, isPaused: false, transitionText: nil, processEnd: nil,
             settings: settings(autoResize: true, capturesSystemKeys: true))
         #expect(backing.machineView.automaticallyReconfiguresDisplay == true)
         #expect(backing.machineView.capturesSystemKeys == true)
 
         backing.update(
-            display: nil, isPaused: false, transitionText: nil,
+            display: nil, isPaused: false, transitionText: nil, processEnd: nil,
             settings: settings(autoResize: false, capturesSystemKeys: false))
         #expect(backing.machineView.automaticallyReconfiguresDisplay == false)
         #expect(backing.machineView.capturesSystemKeys == false)

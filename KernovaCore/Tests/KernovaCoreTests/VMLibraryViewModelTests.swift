@@ -1808,8 +1808,9 @@ struct VMLibraryViewModelTests {
             #expect(viewModel.quitMustWaitOut == waitsOut, "\(phase)")
         }
         // Spelled out, so the declarations above cannot drift unnoticed: a
-        // quit exits through a bring-up and a copy out, and waits out the
-        // writes a snapshot trash, a delete and a revert make.
+        // quit exits through a bring-up, a copy out and a Force Stop — whose
+        // process the exit ends — and waits out the writes a snapshot trash,
+        // a delete and a revert make.
         let live = VMLifecyclePhase.running(sessionID: UUID())
         for phase in [
             VMLifecyclePhase.operating(.saving, from: live),
@@ -1817,7 +1818,6 @@ struct VMLibraryViewModelTests {
             .operating(.deletingSnapshot, from: live),
             .operating(.deleting, from: .stopped),
             .operating(.bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)), from: .stopped),
-            .operating(.forceStopping, from: live),
             .operating(.creatingStorageDisk, from: .stopped),
             .operating(.removingStorageDisk, from: .stopped),
             .operating(.creatingRemovableMedia, from: live),
@@ -1830,6 +1830,7 @@ struct VMLibraryViewModelTests {
                 .bringUp(.guestStart(.starting(recovery: false))), from: .stopped, boundSession: UUID()),
             .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot),
             .operating(.copyingOut(.stopped), from: .stopped),
+            .operating(.forceStopping, from: live),
             live, .suspended, .stopped,
         ] {
             instance.activity.placeForTesting(phase)

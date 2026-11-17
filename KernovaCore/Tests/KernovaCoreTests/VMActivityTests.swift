@@ -1,4 +1,5 @@
 import Foundation
+import KernovaAgentHost
 import KernovaCommandModel
 import KernovaTestSupport
 import Testing
@@ -461,7 +462,7 @@ struct VMActivityTests {
             try instance.activity.launch(.deletingSnapshot) { _ in .rest(.asStarted, ()) }
         }
         await #expect(throws: removed) { try await instance.activity.requestStop { _ in } }
-        await #expect(throws: removed) { try await instance.activity.forceStop {} }
+        #expect(throws: removed) { try instance.activity.forceStop {} }
         #expect(throws: removed) { try instance.activity.cancel(.guestSetup) }
         #expect(throws: removed) { try instance.activity.remove() }
         #expect(instance.phase == .removed)
@@ -719,29 +720,144 @@ struct VMActivityTests {
 
     // MARK: - Force Stop
 
-    @Test("A Force Stop of a settled VM whose termination fails ends back where it started, for every caller")
+    @Test("A Force Stop of a settled VM whose stop fails ends back where it started, for every caller")
     func failedTerminationOfASettledStopRestsLive() async throws {
         let session = UUID()
         let (instance, recorder) = makeInstance(.running(sessionID: session))
-        let terminate = GatedStep()
 
-        let first = Task { @MainActor in
-            try await instance.activity.forceStop { try await terminate.pass() }
-        }
-        try await terminate.waitUntilEntered()
+        let first = try instance.activity.forceStop { recorder.terminations += 1 }
         #expect(instance.phase.operation?.kind == .forceStopping)
-        // Entered synchronously, so it is parked on the stop before the
-        // release below can end it.
-        let second = Task.immediate { @MainActor in
-            try await instance.activity.forceStop { recorder.terminations += 1 }
-        }
+        let second = try instance.activity.forceStop { recorder.terminations += 1 }
+        #expect(second === first)
 
-        terminate.release(throwing: Probe())
-        await #expect(throws: Probe.self) { try await first.value }
-        await #expect(throws: Probe.self) { try await second.value }
-        #expect(recorder.terminations == 0)
+        instance.activity.deliverSessionEvent(.stopDidFail(Probe()), from: session)
+        await #expect(throws: Probe.self) { try await first.value() }
+        await #expect(throws: Probe.self) { try await second.value() }
+        #expect(recorder.terminations == 1)
         #expect(instance.phase == .running(sessionID: session))
         #expect(recorder.settled == 0)
+    }
+
+    @Test(
+        "A Force Stop whose stop never completes ends — for its caller and a joiner — when the session ends another way, leaving nothing pending",
+        arguments: SessionEndUnderAStop.allCases)
+    func forceStopEndsWithItsSession(_ end: SessionEndUnderAStop) async throws {
+        let event: VMSessionEvent =
+            switch end {
+            case .stoppedWithError: .didStopWithError(Probe())
+            case .guestStopped: .guestDidStop
+            }
+        let session = UUID()
+        let (instance, recorder) = makeInstance(.running(sessionID: session))
+        instance.beginSessionContextForTesting()
+
+        // The send returns and no completion ever arrives.
+        let first = try instance.activity.forceStop { recorder.terminations += 1 }
+        let joined = try instance.activity.forceStop { recorder.terminations += 1 }
+        let waiters = [first, joined].map { stop in
+            Task { @MainActor in try await stop.value() }
+        }
+        #expect(instance.status == .forceStopping)
+
+        instance.activity.deliverSessionEvent(event, from: session)
+        for waiter in waiters { try await waiter.value }
+
+        #expect(recorder.terminations == 1)
+        #expect(instance.activity.pendingForceStop == nil)
+        #expect(instance.phase.operation == nil)
+        #expect(instance.activity.sessionContext == nil)
+        #expect(recorder.settled == 1)
+        // A completion arriving after the end belongs to no session the VM
+        // holds.
+        instance.activity.deliverSessionEvent(.stopDidComplete, from: session)
+        instance.activity.deliverSessionEvent(.stopDidFail(Probe()), from: session)
+        #expect(recorder.settled == 1)
+    }
+
+    @Test("A Force Stop presents as Force Stopping, as its own operation and on the session of one that tolerated it")
+    func forceStopPresentsItsOwnStatus() async throws {
+        let session = UUID()
+        let (instance, _, library) = makeWiredInstance(.running(sessionID: session))
+        defer { withExtendedLifetime(library) {} }
+        let gate = GatedStep()
+        let pause = try launchGated(.pausing, on: instance, gate: gate)
+        try await gate.waitUntilEntered()
+        #expect(instance.status == .running)
+
+        let stop = try instance.activity.forceStop {}
+        #expect(instance.phase.operation?.kind == .pausing)
+        #expect(instance.status == .forceStopping)
+        #expect(!instance.hasActiveDisplay)
+
+        // The pause ends on a session still stopping, which hands the VM to
+        // the Force Stop's own operation: still Force Stopping.
+        gate.release()
+        try await pause.value()
+        #expect(instance.phase.operation?.kind == .forceStopping)
+        #expect(instance.status == .forceStopping)
+
+        instance.activity.deliverSessionEvent(.stopDidComplete, from: session)
+        try await stop.value()
+        #expect(instance.status == .stopped)
+    }
+
+    @Test(
+        "An operation's stop of its own session ends on the session ending another way, with no completion",
+        arguments: SessionEndUnderAStop.allCases)
+    func operationStopEndsWithItsSession(_ end: SessionEndUnderAStop) async throws {
+        let session = UUID()
+        let (instance, _) = makeInstance(.running(sessionID: session))
+        let recorder = StopRecordingSession(id: session)
+        instance.beginSessionContextForTesting().session = recorder
+
+        let outcome = try instance.activity.launch(.deletingSnapshot) { context in
+            try await context.stopSession()
+            return .rest(.afterSessionEnd, ())
+        }
+        try await recorder.stopped.wait { recorder.stops == 1 }
+        #expect(instance.status == .running)
+
+        let event: VMSessionEvent =
+            switch end {
+            case .stoppedWithError: .didStopWithError(Probe())
+            case .guestStopped: .guestDidStop
+            }
+        instance.activity.deliverSessionEvent(event, from: session)
+        try await outcome.value()
+        #expect(instance.phase.operation == nil)
+        #expect(!instance.hasLiveVirtualMachine)
+    }
+
+    @Test("An operation's stop of its own session returns on the stop's completion, and throws its failure")
+    func operationStopAnswersItsCompletion() async throws {
+        for fails in [false, true] {
+            let session = UUID()
+            let (instance, _) = makeInstance(.running(sessionID: session))
+            let recorder = StopRecordingSession(id: session)
+            instance.beginSessionContextForTesting().session = recorder
+
+            let outcome = try instance.activity.launch(.deletingSnapshot) { context in
+                do {
+                    try await context.stopSession()
+                } catch {
+                    return .failed(.asStarted, error)
+                }
+                // Still held: the operation ends the session it stopped.
+                #expect(context.sessionID == session)
+                context.endSession()
+                return .rest(.afterSessionEnd, ())
+            }
+            try await recorder.stopped.wait { recorder.stops == 1 }
+            instance.activity.deliverSessionEvent(fails ? .stopDidFail(Probe()) : .stopDidComplete, from: session)
+
+            if fails {
+                await #expect(throws: Probe.self) { try await outcome.value() }
+                #expect(instance.phase == .running(sessionID: session))
+            } else {
+                try await outcome.value()
+                #expect(instance.phase == .stopped)
+            }
+        }
     }
 
     /// One operation of every kind that holds a live session, admitted from
@@ -779,8 +895,11 @@ struct VMActivityTests {
             #expect(recorder.sent == 1, "\(kind)")
             #expect(instance.phase == held, "\(kind)")
 
-            try await instance.activity.forceStop { recorder.terminations += 1 }
+            let stop = try instance.activity.forceStop { recorder.terminations += 1 }
             #expect(recorder.terminations == 1, "\(kind)")
+            let session = try #require(instance.liveSessionID, "\(kind)")
+            instance.activity.deliverSessionEvent(.stopDidComplete, from: session)
+            try await stop.value()
             let operation = try #require(instance.phase.operation, "\(kind)")
             #expect(operation.kind == kind)
             #expect(operation.outcome === outcome, "\(kind)")
@@ -822,4 +941,48 @@ struct VMActivityTests {
 @MainActor
 private final class FollowUpOrder {
     var admitted: [String] = []
+}
+
+/// A session that counts the stops sent to it and answers nothing else — the
+/// VM process a stop is waiting on.
+private final class StopRecordingSession: VMSessionOperating, @unchecked Sendable {
+    let id: UUID
+    let hasVirtioSocketDevice = false
+    let hasUSBController = false
+    /// Fires as each stop arrives, after ``stops`` rises.
+    let stopped = AsyncGate()
+    private let lock = NSLock()
+    private var stopCount = 0
+
+    var stops: Int { lock.withLock { stopCount } }
+
+    init(id: UUID) {
+        self.id = id
+    }
+
+    func stop() {
+        lock.withLock { stopCount += 1 }
+        stopped.notify()
+    }
+
+    func requestStop() async throws {}
+    func pause() async throws {}
+    func attachMassStorage(url: URL, readOnly: Bool, uuid: UUID?) async throws -> UUID { UUID() }
+    func makeAgentTransport() -> (any GuestStreamTransport)? { nil }
+    func applyDirectoryShare(_ share: MacOSDirectoryShare, installed: @escaping @Sendable () -> Void) {}
+    func pauseIfRunning() async throws {}
+    func resumeIfPaused(_ execution: borrowing VMGuestExecution) async throws {}
+    func saveMachineState(to url: URL, _ grant: VMLiveStateCapture.SaveGrant) async throws {}
+    func restoreMachineState(from url: URL) async throws {}
+    func resume(_ execution: borrowing VMGuestExecution) async throws {}
+    func detachUSBDevice(uuid: UUID) async throws {}
+}
+
+/// The ways Virtualization can end a session a Force Stop is waiting on before
+/// the stop's completion arrives, if it ever does.
+enum SessionEndUnderAStop: CaseIterable, Sendable {
+    /// `didStopWithError` — what killing the VM's process raises.
+    case stoppedWithError
+    /// `guestDidStop`.
+    case guestStopped
 }

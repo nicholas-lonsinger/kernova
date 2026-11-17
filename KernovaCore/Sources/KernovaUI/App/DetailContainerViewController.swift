@@ -329,6 +329,7 @@ final class DetailContainerViewController: NSViewController {
             display: display,
             isPaused: instance.isLivePaused,
             transitionText: instance.status.transitionLabel,
+            processEnd: instance.processEndInstruction,
             settings: instance.displayViewSettings
         )
 

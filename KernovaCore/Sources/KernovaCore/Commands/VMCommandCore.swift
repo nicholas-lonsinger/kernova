@@ -378,7 +378,9 @@ package final class VMCommandCore {
     ) -> CommandError {
         switch reason {
         case .busy(let kind):
-            .busy(vm: summary(instance), operation: Self.busyDescription(kind))
+            .busy(
+                vm: summary(instance), operation: Self.busyDescription(kind),
+                processEnd: instance.processEndInstruction)
         case .invalidState:
             invalidState(instance)
         case .takesStoppedVM(let change):
@@ -466,7 +468,7 @@ package final class VMCommandCore {
     func invalidState(_ instance: VMInstance) -> CommandError {
         .invalidState(
             vm: summary(instance), current: instance.status,
-            allowed: allowedVerbs(for: instance))
+            allowed: allowedVerbs(for: instance), processEnd: instance.processEndInstruction)
     }
 
     /// The refusal for something the verb named on a VM that has no such thing

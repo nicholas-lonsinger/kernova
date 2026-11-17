@@ -93,7 +93,7 @@ struct VMLifecyclePhaseTests {
             Row(
                 status: .snapshotting, presented: nil, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: true,
                 hasActiveDisplay: true, isAtRest: false),
-            // Snapshot delete, USB attach, media reconcile, Force Stop.
+            // Snapshot delete, USB attach, media reconcile.
             Row(
                 status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
                 hasActiveDisplay: true, isAtRest: false),
@@ -103,9 +103,10 @@ struct VMLifecyclePhaseTests {
             Row(
                 status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
                 hasActiveDisplay: true, isAtRest: false),
+            // A Force Stop waits on a session whose display is gone.
             Row(
-                status: .running, presented: running, sessionID: s, hasLiveSession: true, holdsLiveIdentity: true,
-                hasActiveDisplay: true, isAtRest: false),
+                status: .forceStopping, presented: nil, sessionID: s, hasLiveSession: false, holdsLiveIdentity: true,
+                hasActiveDisplay: false, isAtRest: false),
             // Deleting a stopped VM, and creating a disk on one.
             Row(
                 status: .stopped, presented: .stopped, sessionID: nil, hasLiveSession: false, holdsLiveIdentity: false,
@@ -137,5 +138,27 @@ struct VMLifecyclePhaseTests {
             #expect(phase.hasActiveDisplay == row.hasActiveDisplay, "hasActiveDisplay of \(phase)")
             #expect(phase.isAtRest == row.isAtRest, "isAtRest of \(phase)")
         }
+    }
+
+    @Test("A Force Stop pending under an operation that tolerates it projects as Force Stopping")
+    func toleratedForceStopProjectsAsForceStopping() {
+        var swept = 0
+        for phase in VMLifecyclePhaseFixtures.operations {
+            guard case .operating(var operation) = phase, var session = operation.session,
+                operation.kind.declaration.toleratedSessionActions.contains(.forceStop)
+            else { continue }
+            session.stopping = VMOutcome()
+            operation.sessionState = .live(session)
+            let stopping = VMLifecyclePhase.operating(operation)
+            swept += 1
+
+            #expect(stopping.status == .forceStopping, "status under \(operation.kind)")
+            #expect(stopping.presented == stopping, "presented under \(operation.kind)")
+            #expect(stopping.sessionID == session.id, "sessionID under \(operation.kind)")
+            #expect(!stopping.hasLiveSession, "hasLiveSession under \(operation.kind)")
+            #expect(stopping.holdsLiveIdentity, "holdsLiveIdentity under \(operation.kind)")
+            #expect(!stopping.hasActiveDisplay, "hasActiveDisplay under \(operation.kind)")
+        }
+        #expect(swept > 0)
     }
 }

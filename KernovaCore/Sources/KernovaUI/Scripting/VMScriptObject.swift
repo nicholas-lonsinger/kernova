@@ -165,6 +165,7 @@ enum VMScriptState: CaseIterable {
     case cloning
     case restoring
     case installing
+    case forceStopping
     case initialBoot
     /// ``VMStatus/error`` under a term AppleScript can parse: `error` is a
     /// reserved word there, so a script comparing against it would not compile.
@@ -196,6 +197,7 @@ enum VMScriptState: CaseIterable {
         case .cloning: self = .cloning
         case .restoring: self = .restoring
         case .installing: self = .installing
+        case .forceStopping: self = .forceStopping
         case .initialBoot: self = .initialBoot
         case .error: self = .failed
         }
@@ -214,6 +216,7 @@ enum VMScriptState: CaseIterable {
         case .cloning: "cloning"
         case .restoring: "restoring"
         case .installing: "installing"
+        case .forceStopping: "force stopping"
         case .initialBoot: "initial boot"
         case .failed: "failed"
         case .preparing: "preparing"
@@ -233,6 +236,7 @@ enum VMScriptState: CaseIterable {
         case .cloning: FourCharCode(scriptingCode: "KsCl")
         case .restoring: FourCharCode(scriptingCode: "KsRs")
         case .installing: FourCharCode(scriptingCode: "KsIn")
+        case .forceStopping: FourCharCode(scriptingCode: "KsFs")
         case .initialBoot: FourCharCode(scriptingCode: "KsIb")
         case .failed: FourCharCode(scriptingCode: "KsEr")
         case .preparing: FourCharCode(scriptingCode: "KsPr")

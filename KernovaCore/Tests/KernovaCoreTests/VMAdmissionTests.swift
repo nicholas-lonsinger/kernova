@@ -490,11 +490,11 @@ struct VMAdmissionTests {
             kind: .reconcilingMedia, startedFrom: live,
             expected: "III BBBBJB IIII BBI IIB IAAAAAAAA AAII AAAAAA"),
         // Answered as the powered-off VM will answer, with a second Force Stop
-        // joining the first and presentation and metadata edits taken; the
-        // guest is presented until its session ends.
+        // joining the first and presentation and metadata edits taken; nothing
+        // of the guest is presented, its display gone with the stop.
         HeldRow(
             kind: .forceStopping, startedFrom: live,
-            expected: "BBI IIIIII BIIB BBB BBB BBBBAAAAA IJIB AAAABA"),
+            expected: "BBI IIIIII BIIB BBB BBB BBBBAAAAA IJIB AIIIII"),
         HeldRow(
             kind: .discardingSavedState, startedFrom: .suspended, slot: true,
             expected: "BIB IIIIII IBBI BBB III IBIIBBBBB IIIB AAIIII"),

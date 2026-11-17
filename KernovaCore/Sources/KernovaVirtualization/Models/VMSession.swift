@@ -41,7 +41,8 @@ private actor VMQueueIsolation {
             usbAdapter = usb
         }
         return VMSession(
-            id: id, queue: queue, vm: vm, delegateAdapter: adapter, usbDelegateAdapter: usbAdapter)
+            id: id, queue: queue, vm: vm, events: events, delegateAdapter: adapter,
+            usbDelegateAdapter: usbAdapter)
     }
 }
 
@@ -111,6 +112,10 @@ package actor VMSession: VMSessionOperating {
 
     private let vm: VZVirtualMachine
 
+    /// Where the session delivers its events — the delegate's, and its own
+    /// stop's completion.
+    private let events: VMSessionEvents
+
     /// VZ holds its delegate weakly; the session retains it.
     private let delegateAdapter: VMDelegateAdapter
 
@@ -122,12 +127,13 @@ package actor VMSession: VMSessionOperating {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMSession")
 
     fileprivate init(
-        id: UUID, queue: DispatchSerialQueue, vm: VZVirtualMachine,
+        id: UUID, queue: DispatchSerialQueue, vm: VZVirtualMachine, events: VMSessionEvents,
         delegateAdapter: VMDelegateAdapter, usbDelegateAdapter: AnyObject?
     ) {
         self.id = id
         self.queue = queue
         self.vm = vm
+        self.events = events
         self.delegateAdapter = delegateAdapter
         self.usbDelegateAdapter = usbDelegateAdapter
         self.displayHandle = VMDisplayHandle(vm: vm)
@@ -170,37 +176,27 @@ package actor VMSession: VMSessionOperating {
         }
     }
 
-    /// Forcefully terminates the VM.
-    package func stop() async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            vm.stop { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume()
+    /// Sends the VM a stop, enqueued on the VM's queue in program order, and
+    /// returns at once: the completion arrives as
+    /// ``VMSessionEvent/stopDidComplete`` or ``VMSessionEvent/stopDidFail(_:)``.
+    ///
+    /// Nothing suspends on the completion handler: on macOS 27.2.1, with the
+    /// VM process not answering, Virtualization never called it — not even
+    /// after the process was killed, when `didStopWithError` did arrive
+    /// (FB25600804).
+    package nonisolated func stop() {
+        queue.async {
+            self.assumeIsolated { session in
+                let (events, id) = (session.events, session.id)
+                session.vm.stop { error in
+                    events.handle(id, error.map(VMSessionEvent.stopDidFail) ?? .stopDidComplete)
                 }
             }
         }
     }
 
-    /// Stops the VM unless VZ reports it cannot be stopped, answering whether
-    /// `stop` ran to success.
-    ///
-    /// `false` when `canStop` is off, or when `stop`'s completion reports an
-    /// invalid state transition — the VM left a stoppable state between the
-    /// check and the call.
-    func stopIfStoppable() async throws -> Bool {
-        guard vm.canStop else { return false }
-        do {
-            try await stop()
-        } catch let error as NSError
-            where error.domain == VZError.errorDomain
-            && VZError.Code(rawValue: error.code) == .invalidVirtualMachineStateTransition
-        {
-            return false
-        }
-        return true
-    }
+    /// Whether VZ reports the VM in a state it can be stopped from.
+    var canStop: Bool { vm.canStop }
 
     /// Requests a graceful ACPI shutdown.
     package func requestStop() throws {

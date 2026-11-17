@@ -72,7 +72,6 @@ struct DetailRouteTests {
             (.operating(.discardingSavedState, from: .suspended), displayed),
             (.operating(.attachingUSB(registryID: 1), from: live), displayed),
             (.operating(.reconcilingMedia, from: live), displayed),
-            (.operating(.forceStopping, from: live), displayed),
             (.operating(.resuming, from: .livePaused(sessionID: Self.session)), displayed),
             // The session ended under the operation: it presents the rest.
             (.operating(.pausing, from: live, sessionEnd: .poweredOff), form),
@@ -88,6 +87,16 @@ struct DetailRouteTests {
                 phase: phase, hasSetupState: false, detailPaneMode: .settings)
             #expect(display == expected.display, "\(phase)")
             #expect(settings == expected.settings, "\(phase)")
+        }
+    }
+
+    @Test("A Force Stop routes to its status, whichever pane was chosen")
+    func forceStopRoutesToItsStatus() {
+        let live = VMLifecyclePhase.running(sessionID: Self.session)
+        for mode in [DetailPaneMode.display, .settings] {
+            let route = DetailRoute.resolve(
+                phase: .operating(.forceStopping, from: live), hasSetupState: false, detailPaneMode: mode)
+            #expect(route == .transition(label: "Force Stopping"), "\(mode)")
         }
     }
 }

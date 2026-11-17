@@ -76,10 +76,12 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// ``startError`` — so one VM's restore can fail while another boots.
     var restoreError: (any Error)?
     var stopError: (any Error)?
+    /// Thrown by the send itself, as the real one throws for a VM with no
+    /// session.
     var forceStopError: (any Error)?
-    /// Parks a termination before it ends the session, so a test can act
-    /// while a Force Stop is in flight.
-    var forceStopGate: GatedStep?
+    /// Whether a sent stop completes; off, it stays in flight — as when the
+    /// VM process doesn't answer — until a test delivers its end.
+    var forceStopCompletes = true
     /// Parks a start once its session is bound and before the guest is up, so
     /// a test can act while the bring-up still holds the VM.
     var startGate: GatedStep?
@@ -157,10 +159,13 @@ final class MockVirtualizationService: VirtualizationProviding {
         instance.activity.deliverSessionEvent(.guestDidStop, from: sessionID)
     }
 
-    func forceStop(_ instance: VMInstance) async throws {
+    /// Sends the stop; unless ``forceStopCompletes`` is off, it completes at
+    /// once, as the session event the real stop's completion raises.
+    func forceStop(_ instance: VMInstance) throws {
         forceStopCallCount += 1
-        try await forceStopGate?.pass()
         if let error = forceStopError { throw error }
+        guard forceStopCompletes, let sessionID = instance.liveSessionID else { return }
+        instance.activity.deliverSessionEvent(.stopDidComplete, from: sessionID)
     }
 
     func pause(
@@ -168,7 +173,6 @@ final class MockVirtualizationService: VirtualizationProviding {
     ) async throws -> VMOperationEnding<Void> {
         pauseCallCount += 1
         if let error = pauseError { throw error }
-        instance.cancelAgentAbsenceWatchdog()
         return .rest(.live(.paused), ())
     }
 

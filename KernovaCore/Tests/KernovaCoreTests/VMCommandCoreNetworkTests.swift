@@ -110,7 +110,7 @@ struct VMCommandCoreNetworkTests {
 
         let error = try #require(throws: CommandError.self) { try harness.core.deleteNetwork("Lab") }
 
-        guard case .invalidState(let vm, _, _, let settings) = error else {
+        guard case .invalidState(let vm, _, _, let settings, _) = error else {
             Issue.record("expected the member's own refusal, got \(error)")
             return
         }

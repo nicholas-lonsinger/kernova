@@ -40,15 +40,19 @@ package enum CommandError: Error, Sendable, Equatable {
     /// More than one VM answers to the selector; the candidates say which.
     case ambiguous(selector: VMSelector, candidates: [VMSummary])
     /// The VM's current state does not admit this verb; `allowed` names the
-    /// verbs it does admit, and `settings` the assignments a refused
-    /// `setConfiguration` would have made.
+    /// verbs it does admit, `settings` the assignments a refused
+    /// `setConfiguration` would have made, and `processEnd` how to end the
+    /// VM's process while that state is a Force Stop waiting on it.
     case invalidState(
-        vm: VMSummary, current: VMStatus, allowed: [VMVerb], settings: [ConfigurationEntry] = [])
+        vm: VMSummary, current: VMStatus, allowed: [VMVerb], settings: [ConfigurationEntry] = [],
+        processEnd: VMProcessEndInstruction? = nil)
     /// The VM's current state takes this verb, but not this change of it: only
     /// a stopped VM takes `change`.
     case changeTakesStoppedVM(vm: VMSummary, current: VMStatus, change: StoppedVMChange)
-    /// The VM has work in flight that this verb would race.
-    case busy(vm: VMSummary, operation: String)
+    /// The VM has work in flight that this verb would race; `processEnd` is
+    /// how to end the VM's process while that work is a Force Stop waiting on
+    /// it.
+    case busy(vm: VMSummary, operation: String, processEnd: VMProcessEndInstruction? = nil)
     /// Another running copy of Kernova holds the VM.
     case heldByAnotherCopy(vm: VMSummary)
     /// The verb is destructive and no consent was supplied.
@@ -76,8 +80,11 @@ package enum CommandError: Error, Sendable, Equatable {
     /// The app is quitting, and takes nothing new on.
     case terminating
     /// The guest had not powered off `seconds` after the shutdown request, so
-    /// the verb stopped waiting and left the VM as it was.
-    case timedOut(vm: VMSummary, verb: VMVerb, seconds: TimeInterval)
+    /// the verb stopped waiting and left the VM as it was; `processEnd` is how
+    /// to end the VM's process when the request was a Force Stop still waiting
+    /// on it.
+    case timedOut(
+        vm: VMSummary, verb: VMVerb, seconds: TimeInterval, processEnd: VMProcessEndInstruction? = nil)
     /// The verb ran and did not complete. `title` is the alert heading when the
     /// failure names its own; `recovery` is what the caller can do about it.
     case operationFailed(
@@ -173,12 +180,14 @@ extension CommandError {
             .itemNotFoundOnHost(item: item)
         case .ambiguous(let selector, let candidates):
             .ambiguous(selector: selector, candidates: candidates)
-        case .invalidState(let vm, let current, let allowed, let settings):
-            .invalidState(vm: vm, current: current.rawValue, allowed: allowed, settings: settings)
+        case .invalidState(let vm, let current, let allowed, let settings, let processEnd):
+            .invalidState(
+                vm: vm, current: current.rawValue, allowed: allowed, settings: settings,
+                processEnd: processEnd)
         case .changeTakesStoppedVM(let vm, let current, let change):
             .changeTakesStoppedVM(vm: vm, current: current.rawValue, change: change)
-        case .busy(let vm, let operation):
-            .busy(vm: vm, operation: operation)
+        case .busy(let vm, let operation, let processEnd):
+            .busy(vm: vm, operation: operation, processEnd: processEnd)
         case .heldByAnotherCopy(let vm):
             .heldByAnotherCopy(vm: vm)
         case .confirmationRequired(let prompt):
@@ -199,8 +208,8 @@ extension CommandError {
             .conflict(vm: vm, with: other, reason: reason)
         case .terminating:
             .terminating
-        case .timedOut(let vm, let verb, let seconds):
-            .timedOut(vm: vm, verb: verb, seconds: seconds)
+        case .timedOut(let vm, let verb, let seconds, let processEnd):
+            .timedOut(vm: vm, verb: verb, seconds: seconds, processEnd: processEnd)
         case .operationFailed(let verb, let title, let message, let recovery):
             .operationFailed(
                 verb: verb, title: title, message: message, recovery: recovery?.dto)
