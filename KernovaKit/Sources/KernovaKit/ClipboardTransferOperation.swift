@@ -40,12 +40,11 @@ public struct ClipboardTransferOperationID: Hashable, Comparable, Sendable {
 /// One user-visible clipboard operation, aggregating every transfer it makes
 /// into the single readout each progress surface renders.
 ///
-/// **One operation per object; the object is the identity** — a preview fetch, a
-/// paste, one side serving a peer's pulls, a drop. Its bar climbs once whether
-/// its transfers run sequentially or concurrently, it shows nothing until it has
-/// been running for `revealDelay` (evaluated on each event, so an operation that
-/// finishes inside the gate never flashes UI), and it publishes exactly one
-/// terminal to its ``ClipboardTransferReporter``.
+/// **One operation per object; the object is the identity.** Its bar climbs
+/// once whether its transfers run sequentially or concurrently, it shows nothing
+/// until it has been running for `revealDelay` (evaluated on each event, so an
+/// operation that finishes inside the gate never flashes UI), and it publishes
+/// exactly one terminal to its ``ClipboardTransferReporter``.
 ///
 /// Lock-based rather than `@MainActor`: stream lanes drive it from any thread.
 public final class ClipboardTransferOperation: Sendable {
@@ -428,10 +427,10 @@ public final class ClipboardTransferOperation: Sendable {
 
     /// Ends the operation, publishing its finished report.
     ///
-    /// For a caller that owns the loop — a preview fetch, a paste fire, a drop.
-    /// Idempotent; later events are dropped. `.completed` reports a failure
-    /// ``unitFailed(id:_:)`` recorded instead. A `.completed`/`.cancelled` terminal
-    /// inside the reveal gate publishes nothing, so an operation nobody saw never
+    /// For a caller that owns the loop. Idempotent; later events are dropped.
+    /// `.completed` reports a failure ``unitFailed(id:_:)`` recorded instead. A
+    /// `.completed`/`.cancelled` terminal inside the reveal gate publishes
+    /// nothing, so an operation nobody saw never
     /// flashes UI; a `.failed` one always reports, since a refusal is owed an
     /// answer whether or not a bar was on screen.
     public func finish(_ terminal: Terminal) {

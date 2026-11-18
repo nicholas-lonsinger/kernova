@@ -176,11 +176,11 @@ public enum DragItems {
 // MARK: - The features
 
 /// CLIPBOARD on one connection: this side's pasteboard offers, on the clipboard offer kind its role opens.
-/// This side keeps at most one open, and a new one supersedes every clipboard offer of either side's: it first
-/// withdraws this side's previous one `ITEM_OFFER_REPLACED`, so a pull of it ends `ITEM_OFFER_STALE`, and releases
-/// every one of the far side's this side holds. So a far-side offer that arrives while this side's is still open
-/// was made before the far side saw this side's: the two crossed. The host's request that the peer offer its
-/// clipboard is no offer, and withdraws none.
+/// This side keeps at most one open, and a new one supersedes every clipboard offer of either side's: once it
+/// opens, it withdraws this side's previous one `ITEM_OFFER_REPLACED`, so a pull of it ends `ITEM_OFFER_STALE`,
+/// and releases every one of the far side's this side holds. So a far-side offer that arrives while this side's is
+/// still open was made before the far side saw this side's: the two crossed. The host's request that the peer
+/// offer its clipboard is no offer, and withdraws none.
 struct ClipboardOffers: Sendable {
     /// CLIPBOARD.
     static let feature = FeatureID.clipboard
@@ -205,19 +205,22 @@ struct ClipboardOffers: Sendable {
         }
     }
 
-    /// Releases every clipboard offer of the far side's and withdraws this side's previous one, then offers
-    /// `offer`; nil when opened, or why not.
+    /// Offers `offer` and, once it opened, releases every clipboard offer of the far side's and withdraws this
+    /// side's previous one; nil when opened, or why not, every offer standing as it did.
     func offer(_ offer: ItemOffer, items: inout ItemTransfer, connection: inout Connection)
         -> WireError?
     {
-        for token in items.offers.remoteTokens(of: Self.feature) {
+        let farSide = items.offers.remoteTokens(of: Self.feature)
+        let previous = items.offers.localTokens(of: Self.feature)
+        let kind: StreamKind = connection.role == .host ? .clipboardOfferByHost : .clipboardOfferByPeer
+        if let refusal = items.offer(offer, kind: kind, connection: &connection) { return refusal }
+        for token in farSide {
             items.release(token, connection: &connection)
         }
-        for token in items.offers.localTokens(of: Self.feature) {
+        for token in previous {
             items.withdraw(token, code: .itemOfferReplaced, connection: &connection)
         }
-        let kind: StreamKind = connection.role == .host ? .clipboardOfferByHost : .clipboardOfferByPeer
-        return items.offer(offer, kind: kind, connection: &connection)
+        return nil
     }
 
     /// Host: asks the peer to offer its clipboard, on CLIPBOARD_OFFER_REQUEST of `token`; nil when opened, or why

@@ -82,7 +82,7 @@ public enum ClipboardEndEvent: Sendable, Equatable {
     /// This side's write of the far side's offer was withdrawn, leaving what the retraction says, because the
     /// offer ended so.
     case retracted(ClipboardRetraction, ClipboardItemExchange.RemoteEnding)
-    /// The host: the guest offered nothing for its request, and why.
+    /// The host: nothing the guest offered for its request was taken, and why.
     case requestRefused(ClipboardItemExchange.RequestRefusal)
     /// A pull of this side's offer was served.
     case served

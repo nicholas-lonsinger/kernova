@@ -36,9 +36,10 @@ final class ClipboardWireWork: Sendable {
 /// One CLIPBOARD connection between a host's end and a guest's, in memory, with the item registry's rules a
 /// clipboard end relies on: a side's call takes effect on its own side at once — its events reach it on the main
 /// queue, after the call's answer — and reaches the far side only when the test delivers it, one message at a time,
-/// in order. A side's clipboard offer first releases every offer of the far side's it holds and withdraws its own
-/// previous one `ITEM_OFFER_REPLACED`; only the host opens a request, which is no offer; a call naming a token its
-/// side does not hold changes nothing. Once ``cut()``, it carries nothing more.
+/// in order. A side's clipboard offer, once it opens, releases every offer of the far side's it holds and
+/// withdraws its own previous one `ITEM_OFFER_REPLACED`; only the host opens a request, which is no offer, and
+/// which ends as ``ItemCommand/requestClipboardOffer(_:token:)`` says; a call naming a token its side does not
+/// hold changes nothing. Once ``cut()``, it carries nothing more.
 ///
 /// An offer's open is answered at once, or — on a wire that holds opens — only when the test answers it
 /// (``answerOldestOpen(of:)``): the far side may hear the offer first, as on a real connection, where the answer
@@ -70,11 +71,25 @@ final class ClipboardWire: Sendable {
         let items: [OfferedItem]
     }
 
+    /// A request of the host's as its item registry holds it, until the guest released it and the offer answering
+    /// it, if one opened, arrived whole or ended.
+    private struct HostRequest: Sendable {
+        var released = false
+        var answer: Answer?
+    }
+
+    private enum Answer: Sendable {
+        /// The guest opened it, and the host does not hold it whole.
+        case arriving(Data)
+        case whole
+        case ended(StreamClosure)
+    }
+
     private struct State: Sendable {
         var local: [Side: [Data: Open]] = [.host: [:], .guest: [:]]
         var remote: [Side: [Data: [OfferedItem]]] = [.host: [:], .guest: [:]]
-        /// The host's requests still open, on its side and as the guest holds them.
-        var localRequests: Set<Data> = []
+        /// The host's requests, on its side and as the guest holds them.
+        var localRequests: [Data: HostRequest] = [:]
         var remoteRequests: Set<Data> = []
         /// The messages toward each side, oldest first.
         var queues: [Side: [Message]] = [.host: [], .guest: []]
@@ -134,8 +149,8 @@ final class ClipboardWire: Sendable {
     /// `side`'s open offers, by token.
     func open(_ side: Side) -> [Data: Open] { state.withLock { $0.local[side] ?? [:] } }
 
-    /// The host's requests still open on its side.
-    var openRequests: Set<Data> { state.withLock(\.localRequests) }
+    /// The host's requests its side holds, not yet ended.
+    var openRequests: Set<Data> { state.withLock { Set($0.localRequests.keys) } }
 
     /// Every offer `side` opened, in order.
     func opened(_ side: Side) -> [ItemOffer] { state.withLock { $0.opened[side] ?? [] } }
@@ -166,11 +181,14 @@ final class ClipboardWire: Sendable {
     /// The oldest message toward `side`, an offer, never reaches its end: `side`'s item registry resets it
     /// `TOO_LARGE`, as it does an offer over the budget its far side's open offers share.
     func refuseOverBudget(toward side: Side) {
-        state.withLock { state in
-            guard case .opened(let header, _)? = state.queues[side]?.first else { return }
+        let events = state.withLock { state -> [ItemTransferEvent] in
+            guard case .opened(let header, _)? = state.queues[side]?.first else { return [] }
             state.queues[side]?.removeFirst()
-            state.queues[side.far]?.append(.refused(token: header.token, error: WireError(.tooLarge)))
+            let error = WireError(.tooLarge)
+            state.queues[side.far]?.append(.refused(token: header.token, error: error))
+            return side == .host ? Self.answer(header.token, .ended(.resetLocally(error)), &state) : []
         }
+        hand(events, to: side)
     }
 
     /// Ends the connection: nothing queued arrives, and nothing more is carried.
@@ -180,7 +198,7 @@ final class ClipboardWire: Sendable {
             state.queues = [.host: [], .guest: []]
             state.local = [.host: [:], .guest: [:]]
             state.remote = [.host: [:], .guest: [:]]
-            state.localRequests = []
+            state.localRequests = [:]
             state.remoteRequests = []
         }
     }
@@ -206,44 +224,71 @@ final class ClipboardWire: Sendable {
                 if oldest == answering { break }
             }
         }
-        let (message, event) = state.withLock { state -> (Message?, ItemTransferEvent?) in
-            guard let message = state.queues[side]?.first else { return (nil, nil) }
+        let (message, events) = state.withLock { state -> (Message?, [ItemTransferEvent]) in
+            guard let message = state.queues[side]?.first else { return (nil, []) }
             state.queues[side]?.removeFirst()
             switch message {
             case .opened(let header, let items):
                 state.remote[side]?[header.token] = items
-                return (message, .offerReceived(header))
+                let answered = side == .host ? Self.answer(header.token, .whole, &state) : []
+                return (message, [.offerReceived(header)] + answered)
             case .requested(let token):
                 state.remoteRequests.insert(token)
-                return (message, .offerRequested(token: token))
+                return (message, [.offerRequested(token: token)])
             case .withdrawn(let token, let code):
                 let closure = StreamClosure.resetByPeer(WireError(code))
                 if state.remote[side]?.removeValue(forKey: token) != nil {
-                    return (message, .offerEnded(.clipboard, .remote, token: token, closure))
+                    return (message, [.offerEnded(.clipboard, .remote, token: token, closure)])
                 }
-                guard side == .guest, state.remoteRequests.remove(token) != nil else { return (message, nil) }
-                return (message, .requestEnded(.remote, token: token, closure))
+                guard side == .guest, state.remoteRequests.remove(token) != nil else { return (message, []) }
+                return (message, [.requestEnded(.remote, token: token, closure)])
             case .released(let token):
-                return (message, Self.endLocal(token, .completed(remoteEndBody: Data()), on: side, &state))
+                if state.local[side]?.removeValue(forKey: token) != nil {
+                    return (message, [.offerEnded(.clipboard, .local, token: token, .completed(remoteEndBody: Data()))])
+                }
+                guard side == .host, state.localRequests[token] != nil else { return (message, []) }
+                state.localRequests[token]?.released = true
+                return (message, Self.endRequest(token, &state))
             case .refused(let token, let error):
-                return (message, Self.endLocal(token, .resetByPeer(error), on: side, &state))
+                if state.local[side]?.removeValue(forKey: token) != nil {
+                    return (message, [.offerEnded(.clipboard, .local, token: token, .resetByPeer(error))])
+                }
+                guard side == .host, state.localRequests.removeValue(forKey: token) != nil else { return (message, []) }
+                return (message, [.requestEnded(.local, token: token, .resetByPeer(error))])
             }
         }
-        if let event {
-            if answering == nil { deliver(side, event, self) } else { hand([event], to: side) }
+        if answering == nil {
+            for event in events { deliver(side, event, self) }
+        } else {
+            hand(events, to: side)
         }
         return message
     }
 
-    /// Ends `side`'s offer or request of `token` as `closure` says; nil when it holds none.
-    private static func endLocal(_ token: Data, _ closure: StreamClosure, on side: Side, _ state: inout State)
-        -> ItemTransferEvent?
-    {
-        if state.local[side]?.removeValue(forKey: token) != nil {
-            return .offerEnded(.clipboard, .local, token: token, closure)
+    /// The guest's offer of `token`, if it answers a request of the host's still arriving, arrived whole or ended
+    /// as `answer` says: the request's end, once it has one.
+    private static func answer(_ token: Data, _ answer: Answer, _ state: inout State) -> [ItemTransferEvent] {
+        guard
+            let request = state.localRequests.first(where: {
+                if case .arriving(token)? = $0.value.answer { true } else { false }
+            })?.key
+        else { return [] }
+        state.localRequests[request]?.answer = answer
+        return endRequest(request, &state)
+    }
+
+    /// The host's request `token` ends once the guest released it and its answer, if one opened, arrived whole
+    /// or ended: `.completed` unless that answer ended first.
+    private static func endRequest(_ token: Data, _ state: inout State) -> [ItemTransferEvent] {
+        guard let request = state.localRequests[token], request.released else { return [] }
+        let closure: StreamClosure
+        switch request.answer {
+        case .arriving?: return []
+        case .ended(let ended)?: closure = ended
+        case .whole?, nil: closure = .completed(remoteEndBody: Data())
         }
-        guard side == .host, state.localRequests.remove(token) != nil else { return nil }
-        return .requestEnded(.local, token: token, closure)
+        state.localRequests[token] = nil
+        return [.requestEnded(.local, token: token, closure)]
     }
 
     // MARK: The calls
@@ -264,6 +309,9 @@ final class ClipboardWire: Sendable {
                 feature: .clipboard, token: offer.token, concealed: offer.concealed, count: offer.items.count,
                 request: offer.request)
             state.local[side]?[offer.token] = Open(header: header, items: offer.items)
+            if side == .guest, state.localRequests[offer.request]?.answer == nil {
+                state.localRequests[offer.request]?.answer = .arriving(offer.token)
+            }
             state.queues[side.far]?.append(.opened(header, offer.items))
             state.opened[side]?.append(offer)
             state.unanswered[side]?.append((token: offer.token, answer: { completion(nil) }, events: events))
@@ -279,7 +327,7 @@ final class ClipboardWire: Sendable {
     fileprivate func requestOffer(_ token: Data, _ completion: @escaping @Sendable (WireError?) -> Void) {
         let refusal = state.withLock { state -> WireError? in
             guard !state.cut else { return WireError(.cancelled, debugDetail: "the connection ended") }
-            state.localRequests.insert(token)
+            state.localRequests[token] = HostRequest()
             state.queues[.guest]?.append(.requested(token: token))
             state.requests.append(token)
             return nil
@@ -301,7 +349,9 @@ final class ClipboardWire: Sendable {
             state.queues[side.far]?.append(.withdrawn(token: token, code: code))
             return [.offerEnded(.clipboard, .local, token: token, closure)]
         }
-        guard side == .host, state.localRequests.remove(token) != nil else { return [] }
+        // A request the guest released is closed: withdrawing it changes nothing.
+        guard side == .host, state.localRequests[token]?.released == false else { return [] }
+        state.localRequests[token] = nil
         state.queues[.guest]?.append(.withdrawn(token: token, code: code))
         return [.requestEnded(.local, token: token, closure)]
     }

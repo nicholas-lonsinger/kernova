@@ -7,8 +7,8 @@ import KernovaWire
 /// console peer, a guest agent's to its host. Each completion runs once, on any queue; an answer comes before
 /// any event the call caused.
 public protocol ClipboardItemLink: Sendable {
-    /// Offers `offer` on CLIPBOARD, first releasing every clipboard offer of the far side's and withdrawing this
-    /// side's previous one; nil once it opened, or why it did not.
+    /// Offers `offer` on CLIPBOARD, once it opens releasing every clipboard offer of the far side's and withdrawing
+    /// this side's previous one; nil once it opened, or why it did not.
     func offerItems(_ offer: ItemOffer, _ completion: @escaping @Sendable (WireError?) -> Void)
     /// Withdraws this side's offer or request of `token`, RESET with `code`.
     func withdrawOffer(_ token: Data, code: ErrorCode)

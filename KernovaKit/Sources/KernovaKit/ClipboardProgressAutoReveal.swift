@@ -66,9 +66,9 @@ public struct ClipboardProgressAutoReveal: Equatable, Sendable {
         guard let readout else { return .none }
         if let lastSpent, readout.operationID <= lastSpent { return .none }
         // Must stay ahead of the `dropdownIsOpen` branch: a readout nobody is
-        // waiting on must not spend the reveal, or a preview fetch overlapping a
-        // paste would answer the paste's one chance with a dropdown the user
-        // never saw.
+        // waiting on must not spend the reveal, or one minted after an awaited
+        // transfer it overlaps would answer that transfer's one chance with a
+        // dropdown the user never saw.
         guard readout.gesture.isAwaited else { return .none }
         if dropdownIsOpen {
             // The readout goes straight into the open dropdown, so the operation

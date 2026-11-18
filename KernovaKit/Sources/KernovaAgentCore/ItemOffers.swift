@@ -48,18 +48,38 @@ package struct ItemOfferRegistry: Sendable {
         var complete = false
     }
 
-    /// A request that the peer offer its clipboard: the host's own, or the host's to this side.
-    struct Request: Sendable {
+    /// The host's request that the peer offer its clipboard, held past its stream's close while the peer's offer
+    /// answering it arrives, until it ends as ``ItemCommand/requestClipboardOffer(_:token:)`` says.
+    struct LocalRequest: Sendable {
         var stream: StreamID
         var token: Data
-        /// The far side's: its opener's END arrived.
+        /// How its stream closed, once it did.
+        var closed: StreamClosure?
+        /// The peer's clipboard offer naming it in `ItemSetHeader.request`, once that offer's OPEN arrived.
+        var answer: Answer?
+    }
+
+    /// The peer's offer answering a request of the host's.
+    enum Answer: Sendable {
+        /// Its OPEN arrived on this stream, and it has not arrived whole.
+        case arriving(StreamID)
+        case whole
+        /// Its stream closed before it arrived whole.
+        case ended(StreamClosure)
+    }
+
+    /// The host's request to this side.
+    struct RemoteRequest: Sendable {
+        var stream: StreamID
+        var token: Data
+        /// Its opener's END arrived.
         var complete = false
     }
 
     private var local: [Local] = []
     private var remote: [Remote] = []
-    private var localRequests: [Request] = []
-    private var remoteRequests: [Request] = []
+    private var localRequests: [LocalRequest] = []
+    private var remoteRequests: [RemoteRequest] = []
     private var remoteCharged = 0
 
     package init() {}
@@ -232,7 +252,7 @@ package struct ItemOfferRegistry: Sendable {
         header.token = token
         let stream = connection.open(.clipboardOfferRequest, body: header.encoded)
         guard stream != .session else { return WireError(.internal) }
-        localRequests.append(Request(stream: stream, token: token))
+        localRequests.append(LocalRequest(stream: stream, token: token))
         if connection.canQueue(on: stream) { connection.end(stream, body: Data()) }
         return nil
     }
@@ -310,6 +330,7 @@ package struct ItemOfferRegistry: Sendable {
                 }
                 remote[index].complete = true
                 events.append(.event(.offerReceived(remote[index].header)))
+                answerSettled(on: stream, .whole, events: &events)
             } else if let entry = local.first(where: { $0.stream == stream }), !entry.ended,
                 connection.canReset(stream)
             {
@@ -320,8 +341,8 @@ package struct ItemOfferRegistry: Sendable {
             pump(stream, &connection)
         case .streamClosed(let stream, let closure):
             if let index = localRequests.firstIndex(where: { $0.stream == stream }) {
-                let request = localRequests.remove(at: index)
-                events.append(.event(.requestEnded(.local, token: request.token, closure)))
+                localRequests[index].closed = closure
+                end(localRequestAt: index, events: &events)
             } else if let index = remoteRequests.firstIndex(where: { $0.stream == stream }) {
                 let request = remoteRequests.remove(at: index)
                 events.append(.event(.requestEnded(.remote, token: request.token, closure)))
@@ -334,15 +355,48 @@ package struct ItemOfferRegistry: Sendable {
                 remoteCharged -= remote[index].charged
                 remote.remove(at: index)
             }
+            answerSettled(on: stream, .ended(closure), events: &events)
         case .data, .sessionEstablished, .usabilityChanged, .policyChanged, .slotFreed, .deadline:
             break
         }
+    }
+
+    /// Ends the host's request at `index` once its stream closed, unless the peer released it while the offer
+    /// answering it is still arriving: as its stream closed, or as that offer's did when it ended before whole.
+    private mutating func end(localRequestAt index: Int, events: inout [ItemTransferOutput]) {
+        let request = localRequests[index]
+        guard let closure = request.closed else { return }
+        let ending: StreamClosure
+        switch (closure, request.answer) {
+        case (.completed, .arriving?): return
+        case (.completed, .ended(let answerClosure)?): ending = answerClosure
+        default: ending = closure
+        }
+        localRequests.remove(at: index)
+        events.append(.event(.requestEnded(.local, token: request.token, ending)))
+    }
+
+    /// The offer arriving on `stream`, if it answers a request of the host's, arrived whole or ended before it was.
+    private mutating func answerSettled(on stream: StreamID, _ answer: Answer, events: inout [ItemTransferOutput]) {
+        guard
+            let index = localRequests.firstIndex(where: {
+                if case .arriving(stream)? = $0.answer { true } else { false }
+            })
+        else { return }
+        localRequests[index].answer = answer
+        end(localRequestAt: index, events: &events)
     }
 
     private mutating func received(_ stream: StreamID, _ body: Data, _ connection: inout Connection) {
         // The connection admits only a kind the table lists, and routes only an item-set offer kind here.
         guard let descriptor = connection.descriptor(of: stream), let feature = descriptor.feature else { return }
         let wire = (try? Kernova_V2_ItemSetHeader(serializedBytes: body)) ?? Kernova_V2_ItemSetHeader()
+        // The first clipboard offer naming a request of the host's answers it, whether or not it is refused here.
+        if feature == .clipboard,
+            let index = localRequests.firstIndex(where: { $0.token == wire.request && $0.answer == nil })
+        {
+            localRequests[index].answer = .arriving(stream)
+        }
         guard remoteStream(wire.token) == nil else {
             return refuse(stream, .streamProtocolError, "a token the far side already offers", &connection)
         }
@@ -350,7 +404,7 @@ package struct ItemOfferRegistry: Sendable {
             guard wire.count == 0 else {
                 return refuse(stream, .malformedMessage, "a CLIPBOARD_OFFER_REQUEST that lists items", &connection)
             }
-            return remoteRequests.append(Request(stream: stream, token: wire.token))
+            return remoteRequests.append(RemoteRequest(stream: stream, token: wire.token))
         }
         let header = ItemSetHeaderValue(wire, feature: feature)
         // A drag's items come with its take (`carry`), never on its offer.

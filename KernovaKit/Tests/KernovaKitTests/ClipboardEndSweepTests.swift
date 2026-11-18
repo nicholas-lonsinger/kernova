@@ -10,12 +10,13 @@ import Testing
 /// against a reference model of the clipboard rules: a side offers only at a trigger its gate admits, the far side
 /// takes an offer only as its own gate admits it and not across an offer of the host's, an offer lives only while
 /// its source holds what it offered and nothing reset either side since, what an end wrote of the far side's offer
-/// stands only while that offer does — and, once nothing is in flight, the last copy a trigger offered is written on
-/// the far side unless a rule let it go.
+/// stands only while that offer does, a request of the host's whose answer is not taken is refused once unless a
+/// rule let it go unheard — and, once nothing is in flight, the last copy a trigger offered is written on the far
+/// side unless a rule let it go.
 ///
 /// Every read of a pasteboard lands, and every offer's open is answered, only as a step of its own, so each other
 /// step can land between a read's start and its end and between an open's start and its answer; each sequence
-/// ends by landing, answering and delivering everything still in flight.
+/// ends by landing, answering and delivering everything still in flight, once in each ``DrainOrder``.
 ///
 /// The model knows the rules, not the code: what each step permits it computes from the ends' gates, the link, the
 /// copies each user made and when each end's poll started, and the offers it observes on the wire.
@@ -82,6 +83,41 @@ struct ClipboardEndSweepTests {
         var description: String { "\(gate)\(copiedBefore ? ", each side holding a copy made before the link" : "")" }
     }
 
+    /// The order a sequence finishes what it has in flight in, a step at a time.
+    enum DrainOrder: CaseIterable, CustomStringConvertible {
+        /// The host's steps before the guest's — on each side a delivery toward it, then a landing, then an answer
+        /// — so the far side hears an offer before its opener knows it opened.
+        case deliveriesFirst
+        /// Every landing, then every answer, then every delivery: both sides offer what they read before either
+        /// hears the other's, so the offers cross.
+        case landingsFirst
+
+        /// The step this order takes next among `enabled`; nil once nothing is in flight.
+        func next(among enabled: [Action]) -> Action? {
+            func first(_ kinds: (Action) -> Bool) -> Action? { enabled.first(where: kinds) }
+            switch self {
+            case .deliveriesFirst:
+                return first { action in
+                    switch action {
+                    case .land, .answer, .deliver: true
+                    default: false
+                    }
+                }
+            case .landingsFirst:
+                return first { if case .land = $0 { true } else { false } }
+                    ?? first { if case .answer = $0 { true } else { false } }
+                    ?? first { if case .deliver = $0 { true } else { false } }
+            }
+        }
+
+        var description: String {
+            switch self {
+            case .deliveriesFirst: "deliveries first"
+            case .landingsFirst: "landings first"
+            }
+        }
+    }
+
     /// The deepest sequence the sweep runs from each start, before it lets what is in flight finish: the deepest
     /// that runs in seconds.
     static let depth = 4
@@ -99,13 +135,22 @@ struct ClipboardEndSweepTests {
     }
 
     /// Explores every enabled action after `prefix`, which `run` has just stepped through, to `depth` more steps,
-    /// and then lets everything in flight finish; the last action continues on `run` itself, every other on a fresh
-    /// replay of `prefix`. False once a sequence broke the rules, which it recorded.
+    /// and then lets everything in flight finish in each drain order; the last action, and the last drain order,
+    /// continue on `run` itself, every other on a fresh replay of `prefix`. False once a sequence broke the rules,
+    /// which it recorded.
     private func explore(_ run: Run, prefix: [Action], from start: Start, depth: Int) async throws -> Bool {
         guard depth > 0 else {
-            guard let (drained, violation) = try await run.drain() else { return true }
-            Issue.record("Starting \(start), after \(prefix + drained): \(violation)")
-            return false
+            // With nothing in flight, every order drains nothing.
+            guard DrainOrder.deliveriesFirst.next(among: run.enabled) != nil else { return true }
+            for (index, order) in DrainOrder.allCases.enumerated() {
+                let leaf =
+                    index == DrainOrder.allCases.count - 1
+                    ? run : try await Run.start(staging: staging.root, start, replaying: prefix)
+                guard let (drained, violation) = try await leaf.drain(order) else { continue }
+                Issue.record("Starting \(start), after \(prefix + drained), drained \(order): \(violation)")
+                return false
+            }
+            return true
         }
         let actions = run.enabled
         for (index, action) in actions.enumerated() {
@@ -168,17 +213,12 @@ struct ClipboardEndSweepTests {
             return actions
         }
 
-        /// Lands every read, answers every open and delivers every message, in that order of preference, until
+        /// Lands every read, answers every open and delivers every message, a step at a time in `order`, until
         /// nothing is in flight, checking each step: nil when every one keeps the rules, else the steps taken and the
         /// rule the last broke.
-        func drain() async throws -> (steps: [Action], violation: String)? {
+        func drain(_ order: DrainOrder) async throws -> (steps: [Action], violation: String)? {
             var steps: [Action] = []
-            while let next = enabled.first(where: { action in
-                switch action {
-                case .land, .answer, .deliver: true
-                default: false
-                }
-            }) {
+            while let next = order.next(among: enabled) {
                 steps.append(next)
                 if let violation = try await step(next) { return (steps, violation) }
             }
@@ -262,6 +302,10 @@ struct ClipboardEndSweepTests {
 
         /// What the rules say of the state the step left.
         private func check() -> String? {
+            let refusals = (pair.events[.host] ?? []).count { if case .requestRefused = $0 { true } else { false } }
+            guard refusals == model.requestRefusals else {
+                return "the host heard \(refusals) refusal(s) of its requests; the rules owe \(model.requestRefusals)"
+            }
             for side in Side.allCases {
                 for offer in pair.wire?.opened(side).dropFirst(model.seen[side] ?? 0) ?? [] {
                     model.seen[side, default: 0] += 1
@@ -433,6 +477,8 @@ struct ClipboardEndSweepTests {
         var pasted: [Side: Bool] = [.host: false, .guest: false]
         /// The host's request a guest offer may answer, until one does or it ends unanswered.
         var hostRequest: Data?
+        /// How many of the host's requests ended with their answer not taken, each heard once.
+        var requestRefusals = 0
         /// The host's command, admitted, its offer not yet opened.
         var pendingCommand = false
         /// The host's request the guest admitted, its answer not yet opened.
@@ -481,11 +527,10 @@ struct ClipboardEndSweepTests {
             if holding == .user(name(.host)) { owe(.host, request: Data()) }
         }
 
-        /// The far side's item registry reset the offer `header` announces over budget.
+        /// The far side's item registry reset the offer `header` announces over budget. An answer to the host's
+        /// request among them leaves the request to end unanswered once the guest's release of it arrives.
         mutating func overBudget(_ header: ItemSetHeaderValue) {
             offers[header.token]?.overBudget = true
-            // The guest answered the host's request with it: no answer follows.
-            if !header.request.isEmpty, header.request == hostRequest { hostRequest = nil }
         }
 
         private mutating func owe(_ side: Side, request: Data) {
@@ -513,6 +558,7 @@ struct ClipboardEndSweepTests {
                 ownResets[side, default: 0] += 1
                 baseline[side] = copies[side]
             }
+            if hostRequest != nil { requestRefusals += 1 }
             hostRequest = nil
             pendingCommand = false
             guestRequest = nil
@@ -568,11 +614,17 @@ struct ClipboardEndSweepTests {
                 // The host called its request off: the guest answers it with nothing.
                 if side == .guest, token == guestRequest { guestRequest = nil }
                 if side == .guest, owed[.guest]?.request == token { owed[.guest] = nil }
-            case .refused(let token, _):
-                if side == .host, token == hostRequest { hostRequest = nil }
-            case .released:
-                // The guest releases the host's request once its answer opened, and the answer may follow.
-                break
+            case .refused(let token, let error):
+                guard side == .host, token == hostRequest else { return }
+                hostRequest = nil
+                // An answer naming only what the host's clipboard holds already ends the request unheard.
+                if error.code != .clipboardAlreadyHeld { requestRefusals += 1 }
+            case .released(let token):
+                // The guest releases the host's request once its answer opened, which arrives first: a request
+                // still open here lost its answer on the way.
+                guard side == .host, token == hostRequest else { return }
+                hostRequest = nil
+                requestRefusals += 1
             }
         }
 

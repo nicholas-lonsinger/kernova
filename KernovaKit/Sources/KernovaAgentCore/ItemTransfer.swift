@@ -223,8 +223,9 @@ public enum ItemTransferEvent: Sendable, Equatable {
     /// answers once, by offering its clipboard naming `token` in ``ItemOffer/request`` and then releasing the
     /// request, or by refusing it with why it offers nothing.
     case offerRequested(token: Data)
-    /// A request that the peer offer its clipboard ended: the host's own (`.local`), or the host's to this side
-    /// (`.remote`). Once per request.
+    /// A request that the peer offer its clipboard ended: the host's own (`.local`), as
+    /// ``ItemCommand/requestClipboardOffer(_:token:)`` says, or the host's to this side (`.remote`). Once per
+    /// request.
     case requestEnded(ItemOfferOrigin, token: Data, StreamClosure)
     /// A pull this side opened, of an offer of `FeatureID`'s, ended. Once per pull `pull` returned; a committed
     /// pull's follows its sink's publish report, and may follow the connection's `.closed`.

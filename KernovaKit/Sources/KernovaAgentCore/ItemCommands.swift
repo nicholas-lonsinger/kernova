@@ -23,15 +23,17 @@ public struct ItemRequestID: Hashable, Sendable {
 /// stream slot when the connection ends, is never answered; one answered while the connection is closing
 /// follows `.closed`.
 public enum ItemCommand: Sendable, Equatable {
-    /// Offer on `feature`'s offer kind: CLIPBOARD, first releasing every clipboard offer of the far side's and
-    /// withdrawing this side's previous one, DROP from the host, or DRAG from a peer; answered `.offered`, refused
+    /// Offer on `feature`'s offer kind: CLIPBOARD, once it opens releasing every clipboard offer of the far side's
+    /// and withdrawing this side's previous one, DROP from the host, or DRAG from a peer; answered `.offered`, refused
     /// `UNSUPPORTED_KIND` for a kind this side does not open.
     case offer(ItemRequestID, ItemOffer, feature: FeatureID)
     /// Host: ask the peer to offer its clipboard, by a request of `token`, 16 bytes no open offer or request of
     /// this side holds, which withdraws no clipboard offer; answered `.offered`, refused `UNSUPPORTED_KIND`
     /// from a peer. The peer answers with a clipboard offer naming `token` in ``ItemOffer/request``; the
-    /// request's one `.requestEnded(.local, token:)` closes `.completed` once the peer released it, or
-    /// `.resetByPeer` with why it offers nothing. Withdrawing it calls it off.
+    /// request's one `.requestEnded(.local, token:)` closes `.completed` once the peer released it and that offer,
+    /// if one opened, arrived whole — after its `.offerReceived` — or as that offer's stream closed when it ended
+    /// before it was whole, or `.resetByPeer` with why the peer offers nothing. Withdrawing it before the peer
+    /// released it calls it off.
     case requestClipboardOffer(ItemRequestID, token: Data)
     /// Withdraw this side's offer or request of `token`, RESET with `code`; its `.offerEnded` or
     /// `.requestEnded` follows.

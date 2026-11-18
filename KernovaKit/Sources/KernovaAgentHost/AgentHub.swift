@@ -298,8 +298,8 @@ public final class AgentHub: Sendable {
 
     // MARK: Items
 
-    /// Offers `offer` on `feature` — CLIPBOARD, first releasing that peer's clipboard offers and withdrawing the
-    /// host's previous one there, or DROP — to the peer the snapshot's `consolePeers` names for it now, and calls
+    /// Offers `offer` on `feature` — CLIPBOARD, once it opens releasing that peer's clipboard offers and withdrawing
+    /// the host's previous one there, or DROP — to the peer the snapshot's `consolePeers` names for it now, and calls
     /// `completion` once with that peer, whose `.items` events then carry the offer, or why it was not opened:
     /// `FEATURE_UNAVAILABLE` with the absence when no console peer offers `feature`, and without one when `peer`
     /// is named and is not that console peer. Once the offer's peer is no longer `feature`'s console peer, the hub

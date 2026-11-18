@@ -693,18 +693,23 @@ struct HubClipboardServiceTests {
         try await written(Self.text, request: request, to: pasteboard, on: probe)
     }
 
-    @Test("Copy to Mac takes the guest's answer that arrives whole after the guest released the request")
-    func copyToMacTakesAnAnswerArrivingAfterTheRelease() async throws {
+    @Test("Copy to Mac takes the guest's answer whose request ends while the host reads the answer's items")
+    func copyToMacTakesAnAnswerWhoseRequestEndsWhileItIsRead() async throws {
         let probe = AgentHubProbe()
         let (instance, pasteboard) = try await connected(probe, passthrough: false)
         let request = try await askForGuestClipboard(instance, probe)
-        // The guest releases the request once its answer opened; the answer's items may still be crossing.
+        let before = pasteboard.changeCount
+        let readsBefore = reads(probe).count
+        deliverOffer(on: probe, token: Self.guestToken, request: request)
+        try await probe.changed.wait { reads(probe).count == readsBefore + 1 }
+        // The request ends once its answer arrived whole, before the host has its items.
         probe.deliver(
             .items(.requestEnded(.local, token: request, .completed(remoteEndBody: Data()))), fromConnection: 0)
         try await probe.settle()
-        #expect(instance.clipboardTransferReport == .idle)
-
-        try await written(Self.text, request: request, to: pasteboard, on: probe)
+        for (id, _) in reads(probe).dropFirst(readsBefore) {
+            probe.deliver(.itemReply(id, .read(Self.text)), fromConnection: 0)
+        }
+        try await pasteboard.changed.wait { pasteboard.changeCount != before && !pasteboard.promisedTypes.isEmpty }
         #expect(instance.clipboardTransferReport == .idle)
     }
 

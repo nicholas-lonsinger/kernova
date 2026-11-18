@@ -55,6 +55,10 @@ struct ClipboardEndTests {
         (pair.events[side] ?? []).compactMap { if case .readEnded(_, let outcome) = $0 { outcome } else { nil } }
     }
 
+    private func requestRefusals(_ pair: ClipboardEndPair) -> [ClipboardItemExchange.RequestRefusal] {
+        (pair.events[.host] ?? []).compactMap { if case .requestRefused(let refusal) = $0 { refusal } else { nil } }
+    }
+
     // MARK: - What the host takes
 
     @Test("On command, the host refuses unread a guest offer naming no request, or a request it no longer has open")
@@ -176,6 +180,83 @@ struct ClipboardEndTests {
         try await answer(.guest)
         try await deliver(toward: .host)
         #expect(pair.holding(.host) == .write("guest"))
+    }
+
+    @Test("Copy to Mac whose answer the host's item registry resets over budget is refused, once")
+    func copyToMacAnswerOverBudgetIsRefused() async throws {
+        let pair = ClipboardEndPair(staging: staging.root, gate: .onCommand, holdsSteps: true)
+        let wire = try #require(pair.wire)
+        pair.copy("guest", on: .guest)
+        pair.host.requestOffer()
+        try await pair.settle()
+        wire.deliverNext(toward: .guest)
+        try await pair.settle()
+        while pair.landRead(on: .guest) { try await pair.settle() }
+        try #require(wire.unansweredOpens(.guest).count == 1)
+        // The host's registry resets the answer at its OPEN; the guest hears its answer opened and releases the
+        // request.
+        wire.refuseOverBudget(toward: .host)
+        try await pair.settle()
+        wire.answerOldestOpen(of: .guest)
+        try await pair.settle()
+        while wire.deliverNext(toward: .host) != nil { try await pair.settle() }
+        while wire.deliverNext(toward: .guest) != nil { try await pair.settle() }
+
+        #expect(pair.holding(.host) == .nothing)
+        #expect(requestRefusals(pair) == [.failed(WireError(.tooLarge))])
+    }
+
+    @Test("Copy to Mac whose request the guest releases with no answer arriving is refused, once")
+    func copyToMacReleasedUnansweredIsRefused() async throws {
+        let pair = ClipboardEndPair(staging: staging.root, gate: .onCommand, holdsSteps: true)
+        let wire = try #require(pair.wire)
+        pair.host.requestOffer()
+        try await pair.settle()
+        let request = try #require(wire.requests.last)
+        wire.deliverNext(toward: .guest)
+        try await pair.settle()
+        // A guest end of any build releases the request, its answer never reaching the host's registry.
+        wire.link(.guest).releaseOffer(request)
+        try await pair.settle()
+        while wire.deliverNext(toward: .host) != nil { try await pair.settle() }
+
+        #expect(requestRefusals(pair).count == 1)
+        guard case .failed(let error)? = requestRefusals(pair).first else {
+            Issue.record("refusals: \(requestRefusals(pair))")
+            return
+        }
+        #expect(error.code == .cancelled)
+    }
+
+    enum AnswerLoss: CaseIterable, CustomStringConvertible, Sendable {
+        case linkDrops, guestWithdraws
+
+        var description: String { self == .linkDrops ? "the link drops" : "the guest withdraws it" }
+    }
+
+    @Test(
+        "Copy to Mac whose answer arrived whole is refused, once, when the answer ends before the host read it",
+        arguments: AnswerLoss.allCases)
+    func copyToMacAnswerLostWhileReadIsRefused(loss: AnswerLoss) async throws {
+        let pair = ClipboardEndPair(staging: staging.root, gate: .onCommand)
+        let wire = try #require(pair.wire)
+        pair.copy("guest", on: .guest)
+        pair.host.requestOffer()
+        try await pair.settle()
+        wire.deliverNext(toward: .guest)
+        try await pair.settle()
+        try #require(wire.queue(toward: .host).count == 2, "the answer, then the request's release")
+        if loss == .guestWithdraws {
+            pair.copy("next", on: .guest)
+            pair.poll()
+        }
+        // Each arrives before the host's read of the answer's items lands.
+        while wire.deliverNext(toward: .host) != nil {}
+        if loss == .linkDrops { pair.linkDown() }
+        try await pair.settle()
+
+        #expect(pair.holding(.host) == .nothing)
+        #expect(requestRefusals(pair).count == 1)
     }
 
     // MARK: - The poll
