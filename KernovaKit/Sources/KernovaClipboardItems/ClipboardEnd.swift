@@ -29,6 +29,8 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
     private let pasteCeiling: @Sendable () -> Int
     private let logger: KernovaLogger
     private var mayOffer = false
+    /// The connection that carries the clipboard now, whose item calls the exchange makes.
+    private var link: Role.Link?
 
     /// The poll for copies, which exists exactly while a connection carries the clipboard, the gate is
     /// ``ClipboardOfferGate/everyCopy`` and this side may offer: what every setter of those rebuilds.
@@ -112,9 +114,10 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
     /// Runs over `link` from now on, or over nothing: everything the connection before carried ends — the read in
     /// flight, both sides' offers, this end's write of the far side's, retracted as at a link's end — and the
     /// new one is offered only what is copied after it.
-    public func setLink(_ link: (any ClipboardItemLink)?) {
+    public func setLink(_ link: Role.Link?) {
         voidRead(refusing: WireError(.cancelled, debugDetail: "the connection left"))
-        exchange.setLink(link)
+        self.link = link
+        exchange.setLink(link.map { Role.itemCalls($0) })
         rearmPoll()
     }
 
@@ -157,8 +160,8 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
     // MARK: The connection's events
 
     /// Hands `event`, of the connection `link` names, to this end; a pull's end goes to ``pullEnded(_:_:)``.
-    public func handle(_ event: ItemTransferEvent, on link: any ClipboardItemLink) {
-        exchange.handle(event, on: link)
+    public func handle(_ event: ItemTransferEvent, on link: Role.Link) {
+        exchange.handle(event, on: Role.itemCalls(link))
     }
 
     /// A pull of the far side's offer ended: handled where it arrives, on any queue.
@@ -178,7 +181,7 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
     /// is ``ClipboardOfferGate/everyCopy`` and this side may offer, and not otherwise.
     private func rearmPoll() {
         poll = nil
-        guard exchange.isLinked, exchange.gate == .everyCopy, mayOffer else { return }
+        guard link != nil, exchange.gate == .everyCopy, mayOffer else { return }
         poll = Poll(
             observation: ClipboardPasteboardWatch.observe(pasteboard, in: .newCopies) { [weak self] in
                 self?.polled()
@@ -266,9 +269,12 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
         case .offer(let source, let lost):
             let offered = exchange.offer(source, answering: request)
             emit(.readEnded(trigger, offered ? .offered(skipped: lost) : .superseded))
-        case .empty, .suppressed, .nothingOfferable(lost: 0):
+        case .empty, .suppressed:
             if let request { exchange.refuseRequest(request, WireError(.clipboardNothingToCopy)) }
             emit(.readEnded(trigger, .nothingToCopy))
+        case .nothingOfferable(lost: 0):
+            if let request { exchange.refuseRequest(request, WireError(.clipboardNothingToCopy)) }
+            emit(.readEnded(trigger, .nothingCarriable))
         case .nothingOfferable:
             if let request { exchange.refuseRequest(request, WireError(.readFailed)) }
             emit(.readEnded(trigger, .unreadable))
@@ -305,7 +311,7 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
         published = Publication(remote: remote, id: id)
         let outcome = publisher.publish(
             remote.items, concealed: remote.concealed, pasteCeiling: pasteCeiling(), puller: remote,
-            serving: remote.serving, onReleased: { [weak self] in self?.writeEnded(id) })
+            serving: remote.token, onReleased: { [weak self] in self?.writeEnded(id) })
         switch outcome {
         case .written:
             break
@@ -336,7 +342,7 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
         switch ending {
         case .superseded: return
         case .linkLost, .settingChanged: withdrawal = .unread
-        case .byFarSide, .movedOn: withdrawal = .everyPromise
+        case .byFarSide: withdrawal = .everyPromise
         }
         guard let retraction = publisher.retractWrite(servingOffer: remote.token, withdrawing: withdrawal) else {
             return
@@ -357,8 +363,13 @@ extension ClipboardEnd where Role == ClipboardHost {
     }
 
     /// "Copy to Mac": asks the guest to offer its clipboard as it stands now; its offer answering the request is
-    /// taken whatever the gate, and a refusal is heard as ``ClipboardEndEvent/requestRefused(_:)``.
+    /// taken whatever the gate, and a refusal, or no connection to ask over, is heard as
+    /// ``ClipboardEndEvent/requestRefused(_:)``.
     public func requestOffer() {
-        exchange.requestOffer()
+        guard let link else {
+            let unconnected = WireError(.cancelled, debugDetail: "no connection carries the clipboard")
+            return emit(.requestRefused(.failed(unconnected)))
+        }
+        exchange.requestOffer(on: link)
     }
 }

@@ -94,8 +94,7 @@ extension NSPasteboard: ClipboardWritePasteboard {
 /// Everything else the write holds as data stays.
 public enum ClipboardWithdrawal: Equatable, Sendable {
     /// Each promised type no reader has had, while what a paste had stays as data: the offer's carriage ended —
-    /// passthrough stopped, the link ended, what a copy's files came from ended — and the far side may hold it
-    /// still.
+    /// the link ended, or the clipboard setting changed — and the far side may hold it still.
     case unread
     /// Every promise, read or not: the far side's clipboard moved on, and nothing of what it promised stays.
     case everyPromise
@@ -193,24 +192,15 @@ public final class ClipboardPasteboardPublisher {
     /// Writes `specs`, made from `source`, reporting whether the pasteboard took them: each item's data now, its
     /// promised types served lazily.
     ///
-    /// The write serves `source`'s offer, the one ``retractWrite(servingOffer:withdrawing:)`` withdraws it for; nil for a
-    /// write that serves from what this side holds. Its record (``ClipboardStandingWrite``), `source` with it,
-    /// lives as long as the write stands. `onReleased` runs once the write no longer stands, which is when no
-    /// paste can be served from the offer any more; a paste of every promised type leaves the write standing, so
-    /// it runs nothing. A write that fails, or neither promises anything nor holds an item marked concealed, never
-    /// runs it.
+    /// The write serves `source`'s offer, the one ``retractWrite(servingOffer:withdrawing:)`` withdraws it for.
+    /// Its record (``ClipboardStandingWrite``), `source` with it, lives as long as the write stands. `onReleased`
+    /// runs once the write no longer stands, which is when no paste can be served from the offer any more; a
+    /// paste of every promised type leaves the write standing, so it runs nothing. A write that fails, or neither
+    /// promises anything nor holds an item marked concealed, never runs it.
     @discardableResult
-    public func write(
+    func write(
         _ specs: [ItemSpec], source: ClipboardWriteSource, onReleased: (@MainActor @Sendable () -> Void)? = nil
     ) -> Bool {
-        place(specs, source: source, onReleased: onReleased) != nil
-    }
-
-    /// Writes `specs` as ``write(_:source:onReleased:)`` does, returning the write's record while it stands; nil
-    /// when the pasteboard refused it.
-    func place(
-        _ specs: [ItemSpec], source: ClipboardWriteSource, onReleased: (@MainActor @Sendable () -> Void)?
-    ) -> ClipboardStandingWrite? {
         // Captures the registry, not `self`, so a provider's lifetime is
         // decoupled from this object.
         let registry = providerRegistry
@@ -255,11 +245,11 @@ public final class ClipboardPasteboardPublisher {
         guard written else {
             heldChangeCount = nil
             ledger.record(nil, by: self, on: pasteboard)
-            return nil
+            return false
         }
         stand(record)
         providerRegistry.retain(providers)
-        return record
+        return true
     }
 
     /// The pasteboard took `record`'s write, which stands from now on.

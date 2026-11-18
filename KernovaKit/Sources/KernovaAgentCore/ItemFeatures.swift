@@ -177,9 +177,8 @@ public enum DragItems {
 
 /// CLIPBOARD on one connection: this side's pasteboard offers, on the clipboard offer kind its role opens.
 /// This side keeps at most one open: a new offer withdraws the previous one first, `ITEM_OFFER_REPLACED`, so
-/// the far side knows a newer one follows and a pull of the old one ends `ITEM_OFFER_STALE`. A copy
-/// (``ItemOffer/copy``) is not one of them: it withdraws nothing, and nothing but its own end withdraws it. Nor
-/// is the host's request that the peer offer its clipboard, which rides a kind of its own.
+/// the far side knows a newer one follows and a pull of the old one ends `ITEM_OFFER_STALE`. The host's request
+/// that the peer offer its clipboard is no offer, and withdraws none.
 struct ClipboardOffers: Sendable {
     /// CLIPBOARD.
     static let feature = FeatureID.clipboard
@@ -204,22 +203,21 @@ struct ClipboardOffers: Sendable {
         }
     }
 
-    /// Withdraws this side's previous clipboard offer, then offers `offer`; nil when opened, or why not. A copy
-    /// withdraws nothing.
+    /// Withdraws this side's previous clipboard offer, then offers `offer`; nil when opened, or why not.
     func offer(_ offer: ItemOffer, items: inout ItemTransfer, connection: inout Connection)
         -> WireError?
     {
-        let kind: StreamKind = connection.role == .host ? .clipboardOfferByHost : .clipboardOfferByPeer
-        for token in offer.copy == .notACopy ? items.offers.localTokens(on: kind) : [] {
+        for token in items.offers.localTokens(of: Self.feature) {
             items.withdraw(token, code: .itemOfferReplaced, connection: &connection)
         }
+        let kind: StreamKind = connection.role == .host ? .clipboardOfferByHost : .clipboardOfferByPeer
         return items.offer(offer, kind: kind, connection: &connection)
     }
 
-    /// Host: asks the peer to offer its clipboard, on CLIPBOARD_OFFER_REQUEST of `token`, which withdraws no
-    /// offer; nil when opened, or why not: `UNSUPPORTED_KIND` from a peer.
+    /// Host: asks the peer to offer its clipboard, on CLIPBOARD_OFFER_REQUEST of `token`; nil when opened, or why
+    /// not: `UNSUPPORTED_KIND` from a peer.
     func requestOffer(_ token: Data, items: inout ItemTransfer, connection: inout Connection) -> WireError? {
-        items.offer(ItemOffer(token: token, items: []), kind: .clipboardOfferRequest, connection: &connection)
+        items.requestClipboardOffer(token, connection: &connection)
     }
 }
 

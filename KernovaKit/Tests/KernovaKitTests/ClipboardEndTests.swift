@@ -287,4 +287,62 @@ struct ClipboardEndTests {
         #expect(pasted == Data("words".utf8))
         #expect(wire.pulls(.host) == 1)
     }
+
+    // MARK: - What a copy carries
+
+    @Test("A Photos copy whose file cannot be opened crosses as its image data, its file left out and counted")
+    func photosCopyCrossesAsItsData() async throws {
+        let pair = ClipboardEndPair(staging: staging.root, gate: .everyCopy)
+        let wire = try #require(pair.wire)
+        let derivative = scratch.url.appendingPathComponent("derivative.jpeg")
+        try Data("derivative".utf8).write(to: derivative)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: derivative.path)
+        #expect(pair.guestPasteboard.setItem(ClipboardPasteboardReaderTests.photosCopy(naming: derivative)))
+        pair.poll()
+        try await pair.settle()
+        #expect(readOutcomes(pair, .guest) == [.offered(skipped: 1)])
+
+        wire.deliverNext(toward: .host)
+        try await pair.settle()
+        let jpeg = NSPasteboard.PasteboardType("public.jpeg")
+        let tiff = NSPasteboard.PasteboardType("public.tiff")
+        let promised = pair.hostPasteboard.promisedTypes
+        #expect(promised.contains(jpeg) && promised.contains(tiff))
+        #expect(!promised.contains(.fileURL))
+        let board = pair.hostPasteboard
+        #expect(await offCooperativePool { board.invokeProvider(forType: jpeg) } == Data("jpeg".utf8))
+        #expect(await offCooperativePool { board.invokeProvider(forType: tiff) } == Data("tiff".utf8))
+    }
+
+    @Test(
+        "A copy holding nothing a pasteboard carries offers nothing, told apart from an empty clipboard, and a request for it is nothing to copy"
+    )
+    func uncarriableCopyIsToldApart() async throws {
+        let pair = ClipboardEndPair(staging: staging.root, gate: .everyCopy)
+        let wire = try #require(pair.wire)
+        // A Finder node, which names a file on this machine, is never offered.
+        let node = NSPasteboard.PasteboardType("com.apple.finder.node")
+        pair.guestPasteboard.setItem([(type: node, data: Data("node".utf8))])
+        pair.poll()
+        try await pair.settle()
+        #expect(readOutcomes(pair, .guest) == [.nothingCarriable])
+        #expect(wire.opened(.guest).isEmpty)
+
+        pair.setGate(.onCommand, on: .host)
+        pair.setGate(.onCommand, on: .guest)
+        pair.host.requestOffer()
+        try await pair.settle()
+        wire.deliverNext(toward: .guest)
+        try await pair.settle()
+        while wire.deliverNext(toward: .host) != nil { try await pair.settle() }
+        #expect(readOutcomes(pair, .guest) == [.nothingCarriable, .nothingCarriable])
+        #expect(pair.events[.host]?.last == .requestRefused(.nothingToCopy))
+
+        pair.guestPasteboard.clearContents()
+        pair.host.requestOffer()
+        try await pair.settle()
+        wire.deliverNext(toward: .guest)
+        try await pair.settle()
+        #expect(readOutcomes(pair, .guest).last == .nothingToCopy)
+    }
 }

@@ -109,11 +109,6 @@ package struct ClipboardTransferWording: Equatable {
                 headline: "Clipboard not pasted into \(vm).", message: "Clipboard transfer failed on the guest side",
                 menuLine: "Clipboard: paste into the guest failed")
 
-        // No path of the host's raises these.
-        case (.clipboardChanged, _), (.partsGone, _), (.disconnectedCopyRetracted, _), (.disconnectedFilesRetracted, _),
-            (.withdrawnCopyRetracted, _), (.withdrawnFilesRetracted, _):
-            return nil
-
         case (.filesLeftOut(let count, let limitBytes), .copy):
             return ClipboardTransferWording(
                 headline: "Clipboard copied from \(vm) without its files.",
@@ -259,7 +254,7 @@ package struct ClipboardTransferWording: Equatable {
         switch gesture {
         case .preview: return "Clipboard preview from \(vm) failed."
         case .copy: return "Clipboard not copied from \(vm)."
-        case .forward, .send: return "Clipboard not copied to \(vm)."
+        case .forward: return "Clipboard not copied to \(vm)."
         case .drop: return "Files not copied to \(vm)."
         case .dragOut: return "Files not copied from \(vm)."
         case .peerPaste: return "Clipboard not pasted into \(vm)."
@@ -305,9 +300,8 @@ package struct ClipboardTransferWording: Equatable {
         case .tooLarge:
             message = "The drag holds more items than can be dragged out of the VM at once."
             menuLine = "Drag: too many items to drag out at once"
-        case .disconnectedCopyRetracted, .disconnectedFilesRetracted, .withdrawnCopyRetracted,
-            .withdrawnFilesRetracted, .transferFailed, .itemsSkipped, .itemsUnreadable, .sendFailed, .dropStopped,
-            .clipboardChanged, .nothingToCopy, .filesLeftOut, .partsGone:
+        case .transferFailed, .itemsSkipped, .itemsUnreadable, .sendFailed, .dropStopped, .nothingToCopy,
+            .filesLeftOut:
             message = "The transfer from the VM failed, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"
         }
@@ -320,7 +314,7 @@ package struct ClipboardTransferWording: Equatable {
         switch gesture {
         case .drop: "the drop"
         case .dragOut: "the drag"
-        case .copy, .forward, .send: "the copy"
+        case .copy, .forward: "the copy"
         case .paste, .peerPaste, .preview: "the paste"
         }
     }
@@ -350,7 +344,7 @@ extension ClipboardTransferGesture {
     /// them — rather than in the VM.
     fileprivate var readsOnThisMac: Bool {
         switch self {
-        case .drop, .forward, .send, .peerPaste: true
+        case .drop, .forward, .peerPaste: true
         case .paste, .preview, .copy, .dragOut: false
         }
     }

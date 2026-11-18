@@ -110,7 +110,7 @@ final class ClipboardEndPair {
                 side == .host ? host?.pullEnded(id, result) : guest?.pullEnded(id, result)
             })
         self.wire = wire
-        host.setLink(wire.link(.host))
+        host.setLink(wire.hostLink)
         guest.setLink(wire.link(.guest))
     }
 
@@ -164,7 +164,7 @@ final class ClipboardEndPair {
         // A cut connection's events reach no end: each left it when the connection did.
         guard wire === self.wire else { return }
         switch side {
-        case .host: host.handle(event, on: wire.link(.host))
+        case .host: host.handle(event, on: wire.hostLink)
         case .guest: guest.handle(event, on: wire.link(.guest))
         }
     }

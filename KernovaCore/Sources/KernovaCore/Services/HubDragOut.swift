@@ -169,8 +169,8 @@ package final class HubDragOut {
             offerEnded(token)
         case .pullEnded(_, let id, let result):
             pullEnded(id, result)
-        case .offerEnded(_, .local, _, _), .serveEnded:
-            // The host offers no drag.
+        case .offerEnded(_, .local, _, _), .serveEnded, .offerRequested, .requestEnded:
+            // The host offers no drag, and a request is CLIPBOARD's.
             break
         }
     }

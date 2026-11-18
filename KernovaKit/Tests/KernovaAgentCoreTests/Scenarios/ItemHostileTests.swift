@@ -216,7 +216,9 @@ extension HostileRows {
                     WireFrames.open(2, .clipboardOfferRequest, body: HostileItems.header(count: 1)),
                 ], preamble: true)
         } expect: { run in
-            expectThat(!HostileItems.offerReceived(run), "the request was received")
+            expectThat(
+                !run.itemOutputs.contains { if case .event(.offerRequested) = $0 { true } else { false } },
+                "the request was received")
         },
         HostileRow(
             name: "a DRAG_TAKE whose token is not 16 bytes → RESET MALFORMED_MESSAGE", local: .peer, items: true,

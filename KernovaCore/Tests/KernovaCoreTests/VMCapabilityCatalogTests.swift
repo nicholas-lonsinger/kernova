@@ -120,7 +120,9 @@ struct VMCapabilityCatalogTests {
         // The clipboard commands name one only while an agent carries the clipboard.
         #expect(VMCapability.copyGuestClipboardToMac.request(on: instance) == nil)
         #expect(VMCapability.copyMacClipboardToGuest.request(on: instance) == nil)
-        Self.carryClipboard(on: instance, powerIgnoringApps: .agent(.systemPeer))
+        instance.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), powerIgnoringApps: .agent(.systemPeer)))
+        instance.hubClipboard.setConsolePeer(PeerHandle(rawValue: 1))
         for capability in VMCapability.allCases {
             let request = capability.request(on: instance)
             switch capability {
@@ -284,20 +286,6 @@ struct VMCapabilityCatalogTests {
             #expect(!harness.catalog.isApplicable(.start, to: instance), "\(phase)")
             #expect(harness.catalog.isApplicable(.resume, to: instance), "\(phase)")
         }
-    }
-
-    // MARK: - Guest-specific capabilities
-
-    /// Has a console peer carry `instance`'s clipboard through its hub.
-    private static func carryClipboard(
-        on instance: VMInstance, powerIgnoringApps: PowerProvision = .absent(.noAgent)
-    ) {
-        let peer = PeerHandle(rawValue: 1)
-        instance.publishAgentHubSnapshotForTesting(
-            AgentHubSnapshot(
-                peers: [], features: FeatureStatus.merge([]), powerIgnoringApps: powerIgnoringApps,
-                consolePeers: [.clipboard: peer]))
-        instance.hubClipboard.setConsolePeer(peer)
     }
 
     // MARK: - Reveal surface

@@ -28,6 +28,12 @@ package final class SimItemSide {
     package private(set) var offersReceived: [(time: SimTime, header: ItemSetHeaderValue)] = []
     package private(set) var offersEnded:
         [(time: SimTime, feature: FeatureID, origin: ItemOfferOrigin, token: Data, closure: StreamClosure)] = []
+    /// Peer: every request the host made that it offer its clipboard.
+    package private(set) var requestsReceived: [(time: SimTime, token: Data)] = []
+    /// Every request that the peer offer its clipboard that ended, the host's own (`.local`) or the host's to
+    /// this side (`.remote`).
+    package private(set) var requestsEnded:
+        [(time: SimTime, origin: ItemOfferOrigin, token: Data, closure: StreamClosure)] = []
     /// Peer: how its owner ends each take, after 20 µs; nil leaves takes unanswered.
     package var takeAnswer: DragTakeAnswer? = .caught(sizes: nil)
     /// Peer: the items its owner's first `TARGETED` lists, just before it ends a take `CAUGHT`; nil sends none.
@@ -139,9 +145,14 @@ package final class SimItemSide {
             }
         case .event(let event):
             switch event {
-            case .offerReceived(let header) where header.isOfferRequest:
-                offersReceived.append((world.now, header))
-                answer(header.token, link: link, side: side, world: world)
+            case .offerRequested(let token):
+                requestsReceived.append((world.now, token))
+                answer(token, link: link, side: side, world: world)
+            case .requestEnded(let origin, let token, let closure):
+                requestsEnded.append((world.now, origin, token, closure))
+                if origin == .local {
+                    answered(token, in: &answeredOffers, "request", link: link, side: side, world: world)
+                }
             case .offerReceived(let header):
                 offersReceived.append((world.now, header))
                 // The owner reads each item as the offer arrives.

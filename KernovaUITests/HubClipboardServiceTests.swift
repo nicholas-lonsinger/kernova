@@ -456,7 +456,7 @@ struct HubClipboardServiceTests {
         let (instance, pasteboard) = try await connected(probe, passthrough: false)
         let request = try await askForGuestClipboard(instance, probe)
         probe.deliver(
-            .items(.offerEnded(.clipboard, .local, token: request, .resetByPeer(WireError(code)))), fromConnection: 0)
+            .items(.requestEnded(.local, token: request, .resetByPeer(WireError(code)))), fromConnection: 0)
         #expect(try await reported(instance, .copy) == failure)
         #expect(pasteboard.prepareCount == 0)
     }
@@ -521,7 +521,7 @@ struct HubClipboardServiceTests {
         let macHoldsB = pasteboard.changeCount
         let request = try await askForGuestClipboard(instance, probe)
         probe.deliver(
-            .items(.offerEnded(.clipboard, .local, token: request, .resetByPeer(WireError(.clipboardNothingToCopy)))),
+            .items(.requestEnded(.local, token: request, .resetByPeer(WireError(.clipboardNothingToCopy)))),
             fromConnection: 0)
         #expect(try await reported(instance, .copy) == .nothingToCopy)
         #expect(pasteboard.changeCount == macHoldsB)

@@ -8,11 +8,15 @@ import KernovaWire
 
 /// Every open offer on one connection, this side's and the far side's, of whichever feature's offer kind, and
 /// the item-set message stream that carries each: an `ItemSetHeader` OPEN, one `Item` MESSAGE per item, then
-/// the opener's END. The host's clipboard offer request rides one too, of no items, and is held as an offer of
-/// CLIPBOARD's that no pull can name an item of. An offer is in
-/// the registry exactly while its stream is open; the opener's RESET withdraws it, and the receiver's END or
-/// RESET releases it. This side's tokens and the far side's are separate namespaces: a pull of this side's
-/// offer is looked up among this side's, and one this side opens among the far side's.
+/// the opener's END. An offer is in the registry exactly while its stream is open; the opener's RESET withdraws
+/// it, and the receiver's END or RESET releases it. This side's tokens and the far side's are separate
+/// namespaces: a pull of this side's offer is looked up among this side's, and one this side opens among the far
+/// side's.
+///
+/// The host's requests that the peer offer its clipboard ride the same stream grammar, of no items, on
+/// CLIPBOARD_OFFER_REQUEST, and are held apart from the offers: no pull or read finds one, and a request's
+/// events are its own (``ItemTransferEvent/offerRequested(token:)``,
+/// ``ItemTransferEvent/requestEnded(_:token:_:)``). A token names at most one offer or request of a side.
 ///
 /// The far side's items are held as their encoded bytes, each an exact-size copy, and decoded one at a time
 /// when a pull or the owner names it, so what they hold is what is charged: an offer's OPEN reserves
@@ -27,7 +31,6 @@ package struct ItemOfferRegistry: Sendable {
 
     struct Local: Sendable {
         var stream: StreamID
-        var kind: StreamKind
         var feature: FeatureID
         var offer: ItemOffer
         var encoded: [Data]
@@ -45,8 +48,18 @@ package struct ItemOfferRegistry: Sendable {
         var complete = false
     }
 
+    /// A request that the peer offer its clipboard: the host's own, or the host's to this side.
+    struct Request: Sendable {
+        var stream: StreamID
+        var token: Data
+        /// The far side's: its opener's END arrived.
+        var complete = false
+    }
+
     private var local: [Local] = []
     private var remote: [Remote] = []
+    private var localRequests: [Request] = []
+    private var remoteRequests: [Request] = []
     private var remoteCharged = 0
 
     package init() {}
@@ -59,9 +72,9 @@ package struct ItemOfferRegistry: Sendable {
     /// The tokens of this side's open offers.
     package var localTokens: [Data] { local.map(\.offer.token) }
 
-    /// The tokens of this side's open offers on `kind`, its copies (``ItemOffer/copy``) left out.
-    package func localTokens(on kind: StreamKind) -> [Data] {
-        local.filter { $0.kind == kind && $0.offer.copy == .notACopy }.map(\.offer.token)
+    /// The tokens of this side's open offers of `feature`.
+    package func localTokens(of feature: FeatureID) -> [Data] {
+        local.filter { $0.feature == feature }.map(\.offer.token)
     }
 
     /// The feature of this side's open offer of `token`; nil when none is open.
@@ -179,8 +192,8 @@ package struct ItemOfferRegistry: Sendable {
             let feature = descriptor.feature
         else { return WireError(.unsupportedKind, debugDetail: "\(kind) is no item-set offer kind") }
         if let refusal = connection.openRefusal(kind) { return refusal }
-        guard offer.token.count == 16, !local.contains(where: { $0.offer.token == offer.token }) else {
-            return WireError(.internal, debugDetail: "an offer token is 16 bytes no open offer holds")
+        guard isFreshLocalToken(offer.token) else {
+            return WireError(.internal, debugDetail: "an offer token is 16 bytes no open offer or request holds")
         }
         guard offer.items.allSatisfy(Self.isNamedByContract) else {
             return WireError(.internal, debugDetail: "a representation's name breaks Representation.name's contract")
@@ -191,8 +204,6 @@ package struct ItemOfferRegistry: Sendable {
         header.count = UInt32(clamping: offer.items.count)
         header.token = offer.token
         header.after = offer.after
-        header.copy = offer.copy.wire
-        header.leftOut = UInt32(clamping: offer.leftOut)
         header.request = offer.request
         let body = header.encoded
         if let oversize = (encoded + [body]).first(where: { $0.count > WireConstants.maxControlPayload }) {
@@ -201,23 +212,54 @@ package struct ItemOfferRegistry: Sendable {
         }
         let stream = connection.open(kind, body: body)
         guard stream != .session else { return WireError(.internal) }
-        local.append(Local(stream: stream, kind: kind, feature: feature, offer: offer, encoded: encoded))
+        local.append(Local(stream: stream, feature: feature, offer: offer, encoded: encoded))
         pump(stream, &connection)
         return nil
     }
 
-    /// Resets this side's offer of `token` with `code`.
-    mutating func withdraw(_ token: Data, code: ErrorCode, connection: inout Connection) {
-        guard let entry = local.first(where: { $0.offer.token == token }), connection.canReset(entry.stream) else {
-            return
+    /// Host: opens a CLIPBOARD_OFFER_REQUEST of `token`, asking the peer to offer its clipboard, and ENDs it at
+    /// once; nil when opened.
+    mutating func request(_ token: Data, connection: inout Connection) -> WireError? {
+        if let refusal = connection.openRefusal(.clipboardOfferRequest) { return refusal }
+        guard isFreshLocalToken(token) else {
+            return WireError(.internal, debugDetail: "a request token is 16 bytes no open offer or request holds")
         }
-        connection.reset(entry.stream, WireError(code))
+        var header = Kernova_V2_ItemSetHeader()
+        header.token = token
+        let stream = connection.open(.clipboardOfferRequest, body: header.encoded)
+        guard stream != .session else { return WireError(.internal) }
+        localRequests.append(Request(stream: stream, token: token))
+        if connection.canQueue(on: stream) { connection.end(stream, body: Data()) }
+        return nil
     }
 
-    /// Ends the far side's offer of `token` from this side: END with `endBody` once the set is whole, RESET
-    /// CANCELLED before.
+    /// Whether `token` is 16 bytes no open offer or request of this side holds.
+    private func isFreshLocalToken(_ token: Data) -> Bool {
+        token.count == 16 && !local.contains { $0.offer.token == token }
+            && !localRequests.contains { $0.token == token }
+    }
+
+    /// The stream of this side's offer or request of `token`.
+    private func localStream(_ token: Data) -> StreamID? {
+        local.first { $0.offer.token == token }?.stream ?? localRequests.first { $0.token == token }?.stream
+    }
+
+    /// The stream of the far side's offer or request of `token`, and whether its opener's END arrived.
+    private func remoteStream(_ token: Data) -> (stream: StreamID, complete: Bool)? {
+        if let entry = remote.first(where: { $0.header.token == token }) { return (entry.stream, entry.complete) }
+        return remoteRequests.first { $0.token == token }.map { ($0.stream, $0.complete) }
+    }
+
+    /// Resets this side's offer or request of `token` with `code`.
+    mutating func withdraw(_ token: Data, code: ErrorCode, connection: inout Connection) {
+        guard let stream = localStream(token), connection.canReset(stream) else { return }
+        connection.reset(stream, WireError(code))
+    }
+
+    /// Ends the far side's offer or request of `token` from this side: END with `endBody` once it is whole,
+    /// RESET CANCELLED before.
     mutating func release(_ token: Data, endBody: Data, connection: inout Connection) {
-        guard let entry = remote.first(where: { $0.header.token == token }) else { return }
+        guard let entry = remoteStream(token) else { return }
         if entry.complete, connection.canQueue(on: entry.stream) {
             connection.end(entry.stream, body: endBody)
         } else if connection.canReset(entry.stream) {
@@ -225,12 +267,10 @@ package struct ItemOfferRegistry: Sendable {
         }
     }
 
-    /// Resets the far side's offer of `token` with `error`.
+    /// Resets the far side's offer or request of `token` with `error`.
     mutating func refuse(_ token: Data, _ error: WireError, connection: inout Connection) {
-        guard let entry = remote.first(where: { $0.header.token == token }), connection.canReset(entry.stream) else {
-            return
-        }
-        connection.reset(entry.stream, error)
+        guard let stream = remoteStream(token)?.stream, connection.canReset(stream) else { return }
+        connection.reset(stream, error)
     }
 
     private mutating func pump(_ stream: StreamID, _ connection: inout Connection) {
@@ -256,7 +296,10 @@ package struct ItemOfferRegistry: Sendable {
         case .message(let stream, let message):
             item(stream, message, &connection)
         case .remoteEnded(let stream, _):
-            if let index = remote.firstIndex(where: { $0.stream == stream }) {
+            if let index = remoteRequests.firstIndex(where: { $0.stream == stream }) {
+                remoteRequests[index].complete = true
+                events.append(.event(.offerRequested(token: remoteRequests[index].token)))
+            } else if let index = remote.firstIndex(where: { $0.stream == stream }) {
                 guard remote[index].items.count == remote[index].header.count else {
                     return refuse(
                         stream, .streamProtocolError, "END after \(remote[index].items.count) items", &connection)
@@ -272,7 +315,13 @@ package struct ItemOfferRegistry: Sendable {
         case .writable(let stream):
             pump(stream, &connection)
         case .streamClosed(let stream, let closure):
-            if let index = local.firstIndex(where: { $0.stream == stream }) {
+            if let index = localRequests.firstIndex(where: { $0.stream == stream }) {
+                let request = localRequests.remove(at: index)
+                events.append(.event(.requestEnded(.local, token: request.token, closure)))
+            } else if let index = remoteRequests.firstIndex(where: { $0.stream == stream }) {
+                let request = remoteRequests.remove(at: index)
+                events.append(.event(.requestEnded(.remote, token: request.token, closure)))
+            } else if let index = local.firstIndex(where: { $0.stream == stream }) {
                 let entry = local.remove(at: index)
                 events.append(.event(.offerEnded(entry.feature, .local, token: entry.offer.token, closure)))
             } else if let index = remote.firstIndex(where: { $0.stream == stream }) {
@@ -289,18 +338,20 @@ package struct ItemOfferRegistry: Sendable {
     private mutating func received(_ stream: StreamID, _ body: Data, _ connection: inout Connection) {
         // The connection admits only a kind the table lists, and routes only an item-set offer kind here.
         guard let descriptor = connection.descriptor(of: stream), let feature = descriptor.feature else { return }
-        let header = ItemSetHeaderValue(
-            (try? Kernova_V2_ItemSetHeader(serializedBytes: body)) ?? Kernova_V2_ItemSetHeader(),
-            kind: descriptor.kind, feature: feature)
-        guard !remote.contains(where: { $0.header.token == header.token }) else {
+        let wire = (try? Kernova_V2_ItemSetHeader(serializedBytes: body)) ?? Kernova_V2_ItemSetHeader()
+        guard remoteStream(wire.token) == nil else {
             return refuse(stream, .streamProtocolError, "a token the far side already offers", &connection)
         }
+        guard descriptor.kind != .clipboardOfferRequest else {
+            guard wire.count == 0 else {
+                return refuse(stream, .malformedMessage, "a CLIPBOARD_OFFER_REQUEST that lists items", &connection)
+            }
+            return remoteRequests.append(Request(stream: stream, token: wire.token))
+        }
+        let header = ItemSetHeaderValue(wire, feature: feature)
         // A drag's items come with its take (`carry`), never on its offer.
         guard feature != .drag || header.count == 0 else {
             return refuse(stream, .malformedMessage, "a DRAG_OFFER that lists items", &connection)
-        }
-        guard !header.isOfferRequest || header.count == 0 else {
-            return refuse(stream, .malformedMessage, "a CLIPBOARD_OFFER_REQUEST that lists items", &connection)
         }
         // The header's claim is reserved whole, so no count can outrun the budget.
         guard header.count <= (Self.remoteItemByteLimit - remoteCharged) / Self.remoteItemOverhead else {

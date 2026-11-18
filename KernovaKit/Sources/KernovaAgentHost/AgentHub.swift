@@ -312,17 +312,18 @@ public final class AgentHub: Sendable {
 
     /// Asks the peer the snapshot's `consolePeers` names for CLIPBOARD now to offer its clipboard, by a request
     /// of `token` (``ItemCommand/requestClipboardOffer(_:token:)``), and calls `completion` once with that peer,
-    /// whose `.items` events then carry the request's one `.offerEnded` and the offer answering it, or why it was
-    /// not opened, as ``offerItems(_:feature:_:)`` says. Once that peer is no longer CLIPBOARD's console peer,
-    /// the hub withdraws the request, and its `.offerEnded` follows.
+    /// whose `.items` events then carry the request's one `.requestEnded` and the offer answering it, or why it
+    /// was not opened, as ``offerItems(_:feature:_:)`` says. Once that peer is no longer CLIPBOARD's console
+    /// peer, the hub withdraws the request, and its `.requestEnded` follows.
     public func requestClipboardOffer(
         _ token: Data, _ completion: @escaping @Sendable (Result<PeerHandle, WireError>) -> Void
     ) {
         openOnConsolePeer(of: .clipboard, { .requestClipboardOffer($0, token: token) }, completion)
     }
 
-    /// Sends the command `command` builds, which opens an offer of `feature`'s and is answered `.offered`, to
-    /// `feature`'s console peer now, and calls `completion` once with that peer or why it was not opened.
+    /// Sends the command `command` builds, which opens an offer or request of `feature`'s and is answered
+    /// `.offered`, to `feature`'s console peer now, and calls `completion` once with that peer or why it was not
+    /// opened.
     private func openOnConsolePeer(
         of feature: FeatureID, _ command: @escaping @Sendable (ItemRequestID) -> ItemCommand,
         _ completion: @escaping @Sendable (Result<PeerHandle, WireError>) -> Void
@@ -340,7 +341,8 @@ public final class AgentHub: Sendable {
         }
     }
 
-    /// Withdraws the offer of `token` made to `peer`, RESET with `code`; its `.offerEnded` follows.
+    /// Withdraws the offer or request of `token` made to `peer`, RESET with `code`; its `.offerEnded` or
+    /// `.requestEnded` follows.
     public func withdrawOffer(_ token: Data, code: ErrorCode = .cancelled, from peer: PeerHandle) {
         queue.async { [self] in send(.withdraw(token: token, code: code), to: peer) }
     }

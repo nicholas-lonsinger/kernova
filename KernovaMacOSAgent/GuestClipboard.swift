@@ -114,7 +114,7 @@ final class GuestClipboard {
             activity = .offeredToHost
         case .readEnded(_, .offered(let skipped)):
             notice(.copyPartlyCarried(skipped: skipped))
-        case .readEnded(_, .unreadable):
+        case .readEnded(_, .unreadable), .readEnded(_, .nothingCarriable):
             notice(.copyCarriedNothing)
         case .published(.written):
             activity = .offeredFromHost
@@ -132,8 +132,7 @@ final class GuestClipboard {
         case .landed:
             activity = .receivedFromHost
         case .retracted(let retraction, let ending):
-            let line = ClipboardRetractionLog.line(retraction, of: .clipboard, on: .guest, because: .ended(ending))
-            guard let line else { return }
+            guard let line = ClipboardRetractionLog.line(retraction, on: .guest, because: ending) else { return }
             logger.log(.notice, "\(line, privacy: .public)")
         case .readBegan, .readEnded(_, .nothingToCopy), .readEnded(_, .heldByFarSide), .readEnded(_, .superseded),
             .notAdmitted, .published(.nothingToWrite), .requestRefused, .pullFailed:
@@ -154,10 +153,6 @@ struct AgentClipboardLink: ClipboardItemLink {
 
     func offerItems(_ offer: ItemOffer, _ completion: @escaping @Sendable (WireError?) -> Void) {
         calls.offerItems(offer, feature: .clipboard, completion)
-    }
-
-    func requestOffer(_ token: Data, _ completion: @escaping @Sendable (WireError?) -> Void) {
-        completion(WireError(.unsupportedKind, debugDetail: "only the host asks for the far side's clipboard"))
     }
 
     func withdrawOffer(_ token: Data, code: ErrorCode) { calls.withdrawOffer(token, code: code) }

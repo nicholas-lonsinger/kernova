@@ -27,20 +27,21 @@ public enum ItemCommand: Sendable, Equatable {
     /// the host, or DRAG from a peer; answered `.offered`, refused `UNSUPPORTED_KIND` for a kind this side
     /// does not open.
     case offer(ItemRequestID, ItemOffer, feature: FeatureID)
-    /// Host: ask the peer to offer its clipboard, by a request of `token`, 16 bytes no open offer of this side
-    /// holds, which withdraws no clipboard offer; answered `.offered`, refused `UNSUPPORTED_KIND` from a peer.
-    /// The peer answers with a clipboard offer naming `token` in ``ItemOffer/request``; the request's one
-    /// `.offerEnded(.clipboard, .local, token:)` closes `.completed` once the peer released it, or
+    /// Host: ask the peer to offer its clipboard, by a request of `token`, 16 bytes no open offer or request of
+    /// this side holds, which withdraws no clipboard offer; answered `.offered`, refused `UNSUPPORTED_KIND`
+    /// from a peer. The peer answers with a clipboard offer naming `token` in ``ItemOffer/request``; the
+    /// request's one `.requestEnded(.local, token:)` closes `.completed` once the peer released it, or
     /// `.resetByPeer` with why it offers nothing. Withdrawing it calls it off.
     case requestClipboardOffer(ItemRequestID, token: Data)
-    /// Withdraw this side's offer of `token`, RESET with `code`; its `.offerEnded` follows.
+    /// Withdraw this side's offer or request of `token`, RESET with `code`; its `.offerEnded` or
+    /// `.requestEnded` follows.
     case withdraw(token: Data, code: ErrorCode)
-    /// Release the far side's offer of `token`: this side pulls nothing more of it. Once the offer is whole
-    /// the release is END with `endBody`, its kind's acceptor END body. Releasing a taken drag offer completes
-    /// the drag.
+    /// Release the far side's offer of `token`: this side pulls nothing more of it — or a peer's answered
+    /// request. Once the offer is whole the release is END with `endBody`, its kind's acceptor END body.
+    /// Releasing a taken drag offer completes the drag.
     case release(token: Data, endBody: Data = Data())
-    /// Refuse the far side's offer of `token`: RESET with `error`, so its opener hears why this side pulls
-    /// nothing of it.
+    /// Refuse the far side's offer or request of `token`: RESET with `error`, so its opener hears why this side
+    /// pulls nothing of it, or offers nothing for it.
     case refuse(token: Data, WireError)
     /// Pull one representation of the far side's open offer, landing it as the order says; answered `.pulled`
     /// when the pull opens — while every stream slot is held, once one frees for it — or cannot.

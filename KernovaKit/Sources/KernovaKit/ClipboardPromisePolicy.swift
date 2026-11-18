@@ -7,7 +7,7 @@ import KernovaWire
 ///
 /// Every rule here reads offer metadata only — no byte of the offer has crossed
 /// when they are applied.
-public enum ClipboardPromisePolicy {
+enum ClipboardPromisePolicy {
     /// Whether an offered representation is kept: published to the pasteboard,
     /// and reachable by a pull.
     ///
@@ -17,7 +17,7 @@ public enum ClipboardPromisePolicy {
     /// estimate of 0 means unknown. A FILE or FOLDER is always kept: the offer
     /// registry admits no item whose name breaks `Representation.name`'s
     /// contract.
-    public static func keeps(_ representation: Representation) -> Bool {
+    static func keeps(_ representation: Representation) -> Bool {
         switch representation.storage {
         case .inline:
             guard let uti = representation.type.appleUTI else { return false }
@@ -31,15 +31,15 @@ public enum ClipboardPromisePolicy {
 
     /// One pasteboard type a published item promises, and the representation
     /// that serves it.
-    public struct PromisedType: Equatable, Sendable {
+    struct PromisedType: Equatable, Sendable {
         /// The pasteboard type: the representation's UTI, or `public.file-url`.
-        public let pasteboardType: String
+        let pasteboardType: String
         /// Index into the item's representations.
-        public let representation: Int
+        let representation: Int
 
         /// Whether the type is `public.file-url`, served by landing a FILE or
         /// FOLDER and handing over its URL.
-        public var isFileURL: Bool { pasteboardType == ClipboardPasteboardPublisher.ItemSpec.fileURLType }
+        var isFileURL: Bool { pasteboardType == ClipboardPasteboardPublisher.ItemSpec.fileURLType }
     }
 
     /// The pasteboard types `item` promises, in its order of preference.
@@ -47,7 +47,7 @@ public enum ClipboardPromisePolicy {
     /// Each type is served by the first kept representation that maps to it, so
     /// an item's best representation of a type wins. `servingFileURLs` false
     /// withholds `public.file-url`, leaving the item's inline types.
-    public static func promisedTypes(for item: OfferedItem, servingFileURLs: Bool = true) -> [PromisedType] {
+    static func promisedTypes(for item: OfferedItem, servingFileURLs: Bool = true) -> [PromisedType] {
         var types: [PromisedType] = []
         var seen: Set<String> = []
         for (index, representation) in item.representations.enumerated() where keeps(representation) {
@@ -90,17 +90,15 @@ public enum ClipboardPromisePolicy {
     static func pasteBudget(_ items: [OfferedItem], limit: Int) -> PasteBudget {
         var total: UInt64 = 0
         for item in items {
-            // A reference names the receiver's own offer: nothing of it crosses the wire.
-            for promised in promisedTypes(for: item)
-            where promised.isFileURL && !item.representations[promised.representation].hasReference {
+            for promised in promisedTypes(for: item) where promised.isFileURL {
                 total = total.saturatingAdding(item.representations[promised.representation].sizeEstimate)
             }
         }
         return PasteBudget(total: total, limit: limit)
     }
 
-    /// How a copy is written within the paste ceiling, decided before anything of it is written.
-    public enum CopyPlan: Equatable, Sendable {
+    /// How a peer's offer is written within the paste ceiling, decided before anything of it is written.
+    enum WritePlan: Equatable, Sendable {
         /// Whole: its files fit.
         case whole
         /// Without its `files` file representations, which do not fit; the rest is written.
@@ -109,20 +107,14 @@ public enum ClipboardPromisePolicy {
         case tooLarge
 
         /// Whether the write serves `public.file-url`.
-        public var servesFileURLs: Bool { self == .whole }
+        var servesFileURLs: Bool { self == .whole }
     }
 
-    /// How `items` are written as a copy whose files may land at most `room` bytes more: what is left of the
-    /// copy's budget once its INLINE representations landed.
-    public static func copyPlan(_ items: [OfferedItem], room: UInt64) -> CopyPlan {
-        let files = fileCount(items)
-        guard files > 0, pasteBudget(items, limit: Int(clamping: room)).exceeds else { return .whole }
+    /// How `items` are written when their files may land at most `limit` bytes.
+    static func writePlan(_ items: [OfferedItem], limit: Int) -> WritePlan {
+        let files = items.reduce(0) { $0 + promisedTypes(for: $1).filter(\.isFileURL).count }
+        guard files > 0, pasteBudget(items, limit: max(limit, 0)).exceeds else { return .whole }
         let remains = items.contains { !promisedTypes(for: $0, servingFileURLs: false).isEmpty }
         return remains ? .withoutFiles(count: files) : .tooLarge
-    }
-
-    /// How many representations of `items` are served as `public.file-url`.
-    public static func fileCount(_ items: [OfferedItem]) -> Int {
-        items.reduce(0) { $0 + promisedTypes(for: $1).filter(\.isFileURL).count }
     }
 }

@@ -4,81 +4,30 @@ import KernovaLogging
 import KernovaSynchronization
 import KernovaWire
 
-/// One connection of one clipboard exchange, from the exchange's link being set until it is set again: what a
-/// write serving the far side's offer arrived on, so a snapshot names by reference only what the destination of
-/// its copy can fill.
-public struct ClipboardConnectionID: Hashable, Sendable {
-    // periphery:ignore - the identity the synthesized Equatable and Hashable compare
-    private let raw = UUID()
-
-    /// A connection no other names.
-    public init() {}
-}
-
-/// What one pasteboard write of this process was made from. A snapshot of the pasteboard holding the write is
-/// built from it, never read back through the write's own promises: a promise fired in-process holds the reading
-/// thread for as long as its pull takes. What the write holds only as the far side's promise is named by
-/// reference to the far side's offer when the snapshot's copy goes over the connection that offer arrived on
-/// (``serving``), and otherwise pulled through the part's puller.
+/// What one pasteboard write of this process was made from: the far side's offer it promises. An offer of the
+/// pasteboard holding the write is built from it, never read back through the write's own promises: a promise
+/// fired in-process holds the reading thread for as long as its pull takes.
 public struct ClipboardWriteSource: Sendable {
-    /// The far side's offer or copy a write serves, and the connection it arrived on.
-    public struct Serving: Sendable, Equatable {
-        /// The offer's 16-byte token.
-        public let token: Data
-        /// The connection the offer arrived on.
-        public let connection: ClipboardConnectionID
+    /// The 16-byte token of the far side's offer the write serves, whose end retracts it.
+    public let offer: Data
+    /// The offer's items, as the far side sent them.
+    public let items: [OfferedItem]
+    /// The offer marked its content concealed.
+    public let concealed: Bool
+    /// False when the write left `public.file-url` off every item.
+    public let servingFileURLs: Bool
+    /// Pulls what the write promises.
+    public let puller: any ClipboardItemPulling
 
-        /// The offer `token`, which arrived on `connection`.
-        public init(token: Data, connection: ClipboardConnectionID) {
-            self.token = token
-            self.connection = connection
-        }
-    }
-
-    /// What this side holds already of one representation a write placed.
-    public enum Held: Sendable, Equatable {
-        case bytes(Data)
-        case file(URL)
-    }
-
-    /// One offer's items, as the write placed them.
-    public struct Part: Sendable {
-        /// The items, as the offer sent them.
-        public let items: [OfferedItem]
-        /// The offer marked its content concealed.
-        public let concealed: Bool
-        /// False when the write left `public.file-url` off every item.
-        public let servingFileURLs: Bool
-        /// What this side holds already of representation `representation` of item `item`; nil for one the write
-        /// holds only as the far side's promise.
-        public let held: @Sendable (_ item: Int, _ representation: Int) -> Held?
-        /// Pulls what the write holds only as the far side's promise; nil for a part holding everything.
-        public let puller: (any ClipboardItemPulling)?
-
-        /// A part of `items`, its representations held as `held` says and the rest the far side's promise,
-        /// pulled through `puller`.
-        public init(
-            items: [OfferedItem], concealed: Bool, servingFileURLs: Bool, puller: (any ClipboardItemPulling)?,
-            held: @escaping @Sendable (_ item: Int, _ representation: Int) -> Held? = { _, _ in nil }
-        ) {
-            self.items = items
-            self.concealed = concealed
-            self.servingFileURLs = servingFileURLs
-            self.puller = puller
-            self.held = held
-        }
-    }
-
-    /// The far side's offer or copy the write serves, whose promises back what no part holds, and the
-    /// connection that made it; nil for one serving nothing of the far side's.
-    public let serving: Serving?
-    /// What the write placed, offer by offer.
-    public let parts: [Part]
-
-    /// A write of `parts`, serving `serving`.
-    public init(serving: Serving?, parts: [Part]) {
-        self.serving = serving
-        self.parts = parts
+    /// A write of the far side's offer `offer` of `items`, promised through `puller`.
+    public init(
+        offer: Data, items: [OfferedItem], concealed: Bool, servingFileURLs: Bool, puller: any ClipboardItemPulling
+    ) {
+        self.offer = offer
+        self.items = items
+        self.concealed = concealed
+        self.servingFileURLs = servingFileURLs
+        self.puller = puller
     }
 }
 
@@ -98,10 +47,10 @@ public struct ClipboardWriteSource: Sendable {
 /// none (docs/research/2026-11-04-pasteboard-replacement-finish-waits-for-next-use.md).
 @MainActor
 final class ClipboardStandingWrite {
-    /// The far side's offer or copy the write serves, which a retraction names.
+    /// The far side's offer the write serves, which a retraction names; nil for a retraction's own write.
     let servingOffer: Data?
-    /// Whether the end of the offer or copy the write serves withdraws from it: an item promises a type, which
-    /// that end can serve no more, or is marked concealed, which lives only while the far side still holds it.
+    /// Whether the end of the offer the write serves withdraws from it: an item promises a type, which that end
+    /// can serve no more, or is marked concealed, which lives only while the far side still holds it.
     let withdrawable: Bool
     /// The types each item was written with as data.
     let written: [[NSPasteboard.PasteboardType]]
@@ -127,7 +76,7 @@ final class ClipboardStandingWrite {
         let marker = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
         let promises = promised.contains { !$0.isEmpty }
         withdrawable = promises || written.contains { $0.contains(marker) }
-        servingOffer = source?.serving?.token
+        servingOffer = source?.offer
         self.source = promises ? source : nil
         self.publisher = publisher
         self.written = written
@@ -230,8 +179,8 @@ final class ClipboardReadPromises: Sendable {
 }
 
 /// The latest write this process made to each pasteboard, whichever publisher made it, and — while it stands, for
-/// one that promised something — what it was made from: every publisher of one process records here, so a
-/// snapshot of one VM's pasteboard never reads another VM's promise either, and a staged file's removal reaches
+/// one that promised something — what it was made from: every publisher of one process records here, so a read
+/// of one VM's write never fires that VM's promise in another's offer, and a staged file's removal reaches
 /// whichever write names it.
 @MainActor
 public final class ClipboardWriteLedger {

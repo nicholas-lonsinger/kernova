@@ -151,17 +151,17 @@ struct ItemMachines: Sendable {
         clipboard.requestOffer(token, items: &transfer, connection: &connection)
     }
 
-    /// Withdraws this side's offer of `token`, RESET with `code`.
+    /// Withdraws this side's offer or request of `token`, RESET with `code`.
     mutating func withdraw(_ token: Data, code: ErrorCode, connection: inout Connection) {
         transfer.withdraw(token, code: code, connection: &connection)
     }
 
-    /// Releases the far side's offer of `token`, END carrying `endBody` once it is whole.
+    /// Releases the far side's offer or request of `token`, END carrying `endBody` once it is whole.
     mutating func release(_ token: Data, endBody: Data, connection: inout Connection) {
         transfer.release(token, endBody: endBody, connection: &connection)
     }
 
-    /// Refuses the far side's offer of `token` with `error`.
+    /// Refuses the far side's offer or request of `token` with `error`.
     mutating func refuse(_ token: Data, _ error: WireError, connection: inout Connection) {
         transfer.refuse(token, error, connection: &connection)
     }

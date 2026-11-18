@@ -146,21 +146,24 @@ enum ItemFeatureScenarios {
         expect: { world in
             let host = items(world, .host)
             let local = host?.offersEnded.filter { $0.origin == .local } ?? []
+            let request = host?.requestsEnded.filter { $0.origin == .local } ?? []
             let answers = items(world, .peer)?.requestAnswers ?? []
             let received = host?.offersReceived.map(\.header).filter { !$0.request.isEmpty } ?? []
-            let requests = items(world, .peer)?.offersReceived.map(\.header).filter(\.isOfferRequest) ?? []
+            let requests = items(world, .peer)?.requestsReceived.map(\.token) ?? []
+            let offeredRequest = items(world, .peer)?.offersReceived.contains { $0.header.token == requestToken }
             return expectThat(host?.offerRefusals.isEmpty == true, "the host's offers and request opened")
                 + expectThat(
-                    local.map(\.token) == [SimItems.token(2), requestToken]
+                    local.map(\.token) == [SimItems.token(2)]
                         && local.first?.closure == .resetLocally(WireError(.itemOfferReplaced))
                         && local.allSatisfy { $0.feature == .clipboard },
                     "the host's next clipboard offer withdrew only its previous one: \(local)")
                 + expectThat(
-                    local.last.map { if case .completed = $0.closure { true } else { false } } == true,
-                    "the peer released the request: \(local)")
+                    request.map(\.token) == [requestToken]
+                        && request.allSatisfy { if case .completed = $0.closure { true } else { false } },
+                    "the peer released the request: \(request)")
                 + expectThat(
-                    requests.map(\.token) == [requestToken] && requests.allSatisfy { $0.count == 0 },
-                    "the peer heard the request once, of no items: \(requests)")
+                    requests == [requestToken] && offeredRequest == false,
+                    "the peer heard the request once, and never as an offer: \(requests)")
                 + expectThat(
                     answers.count == 1
                         && received.map(\.token) == answers.map(\.token)
@@ -184,7 +187,7 @@ enum ItemFeatureScenarios {
             }
         },
         expect: { world in
-            let local = items(world, .host)?.offersEnded.filter { $0.origin == .local } ?? []
+            let local = items(world, .host)?.requestsEnded.filter { $0.origin == .local } ?? []
             return expectThat(
                 local.map(\.token) == [requestToken]
                     && local.map(\.closure) == [.resetByPeer(WireError(.clipboardNothingToCopy))],

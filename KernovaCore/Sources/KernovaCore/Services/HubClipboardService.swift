@@ -123,8 +123,7 @@ final class HubClipboardService {
 
     private func heard(_ event: ClipboardEndEvent) {
         if case .retracted(let retraction, let ending) = event,
-            let line = ClipboardRetractionLog.line(
-                retraction, of: .clipboard, on: .host(vm: label()), because: .ended(ending))
+            let line = ClipboardRetractionLog.line(retraction, on: .host(vm: label()), because: ending)
         {
             Self.logger.log(.notice, "\(line, privacy: .public)")
         }
@@ -141,8 +140,8 @@ final class HubClipboardService {
 
     /// What `event` reports to the VM's transfer report, or nil when it reports nothing. The Mac's clipboard is
     /// sent to the guest as `.forward` whether a copy or Copy to Guest offered it; the guest's arrives as `.copy`
-    /// whether passthrough or Copy to Mac brought it. A read that finds the Mac's clipboard empty says so only to
-    /// the command that asked for it; a retraction is logged, never reported.
+    /// whether passthrough or Copy to Mac brought it. A read that finds nothing on the Mac's clipboard a
+    /// pasteboard carries says so only to the command that asked for it; a retraction is logged, never reported.
     static func refusal(for event: ClipboardEndEvent)
         -> (gesture: ClipboardTransferGesture, failure: ClipboardTransferFailure)?
     {
@@ -151,7 +150,7 @@ final class HubClipboardService {
             (.forward, .itemsSkipped(count: skipped))
         case .readEnded(_, .unreadable):
             (.forward, .itemsUnreadable)
-        case .readEnded(.command, .nothingToCopy):
+        case .readEnded(.command, .nothingToCopy), .readEnded(.command, .nothingCarriable):
             (.forward, .nothingToCopy)
         case .published(.writtenWithoutFiles(let count, let limitBytes)):
             (.copy, .filesLeftOut(count: count, limitBytes: limitBytes))
@@ -174,7 +173,7 @@ final class HubClipboardService {
 }
 
 /// CLIPBOARD's calls through the hub to one peer.
-struct HubClipboardLink: ClipboardItemLink {
+struct HubClipboardLink: ClipboardHostItemLink {
     let hub: AgentHub
     let peer: PeerHandle
     let sink: ItemSinkAdapter<POSIXTreeFileSystem>

@@ -54,10 +54,6 @@ public final class ClipboardOfferSource {
         case promise(Int)
         /// A file a promise called in before the offer was read lands.
         case landing(Task<URL, any Error>)
-        /// Bytes a copy served once, let go: its receiver pulls each representation once.
-        case spent
-        /// The receiver's own: what this side held only as its promise, which it fills itself.
-        case reference
         /// Another connection's representation, which a write of this process holds only as that connection's
         /// promise: pulled through `puller` when pulled, for as long as that offer lasts.
         case upstream(any ClipboardItemPulling, item: Int, representation: Int)
@@ -68,34 +64,25 @@ public final class ClipboardOfferSource {
     /// The content is confidential: `org.nspasteboard.ConcealedType`.
     public let concealed: Bool
 
-    private var origins: [[Origin]]
+    private let origins: [[Origin]]
     private let pasteboard: (any ClipboardReadPasteboard)?
     /// The pasteboard change the offer was read at.
-    let changeCount: Int
+    private let changeCount: Int
     private let promises: [any FilePromiseReceiving]
     private let promiseDestination: @MainActor () throws -> URL
     private var calledIn: [Int: Task<URL, any Error>] = [:]
-    /// The staging this offer's files live in, which lives as long as the offer.
-    private let leases: [ClipboardStagingLease]
     /// The pasteboard the offer was read from, and its change then, whether or not it serves from it.
     private let readFrom: (pasteboard: any ClipboardReadPasteboard, changeCount: Int)?
-    /// Why a copy sent of this source is owed a withdrawal, once it is.
-    private var owed: Withdrawal?
-    /// Hears the first reason a copy sent of this source is owed a withdrawal.
-    private var onOwed: (@MainActor (Withdrawal) -> Void)?
     /// Watches the pasteboard the source was read from while anything waits for it to move on.
     private var movedOnWatch: ClipboardPasteboardWatch.Observation?
     /// Hear the pasteboard the source was read from move on from it (``whenMovedOn(_:)``).
     private var onMovedOn: [@MainActor () -> Void] = []
-    /// The items, by index, the read left a file out of.
-    let incompleteItems: Set<Int>
 
     init(
         items: [OfferedItem], origins: [[Origin]], concealed: Bool,
         pasteboard: (any ClipboardReadPasteboard)?, changeCount: Int,
         promises: [any FilePromiseReceiving], promiseDestination: @escaping @MainActor () throws -> URL,
-        leases: [ClipboardStagingLease] = [], readFrom: (any ClipboardReadPasteboard, Int)? = nil,
-        incompleteItems: Set<Int> = []
+        readFrom: (any ClipboardReadPasteboard, Int)? = nil
     ) {
         self.items = items
         self.origins = origins
@@ -104,41 +91,13 @@ public final class ClipboardOfferSource {
         self.changeCount = changeCount
         self.promises = promises
         self.promiseDestination = promiseDestination
-        self.leases = leases
         self.readFrom = readFrom ?? pasteboard.map { ($0, changeCount) }
-        self.incompleteItems = incompleteItems
     }
 
     /// Whether the pasteboard this offer was read from still holds what it was read from: nothing has changed
     /// it since.
-    public var standsOnItsPasteboard: Bool {
+    private var standsOnItsPasteboard: Bool {
         readFrom.map { $0.pasteboard.changeCount == $0.changeCount } ?? false
-    }
-
-    /// Why the far side's write of a copy of this snapshot is owed a withdrawal (``whenWithdrawalOwed(_:)``).
-    public enum Withdrawal: Sendable, Equatable {
-        /// An offer one of the snapshot's files is served from ended: those files can be served no more.
-        case upstreamEnded
-        /// The snapshot is concealed, and the pasteboard it was read from moved on: the source no longer holds it.
-        case movedOn
-    }
-
-    /// Runs `handler` once, at the first reason the far side's write of a copy of this snapshot is owed a
-    /// withdrawal, at once when one has come already. A snapshot with neither reason never runs it. A concealed
-    /// snapshot's pasteboard moving on is one (``whenMovedOn(_:)``).
-    public func whenWithdrawalOwed(_ handler: @escaping @MainActor (Withdrawal) -> Void) {
-        if let owed { return handler(owed) }
-        onOwed = handler
-        guard concealed else { return }
-        whenMovedOn { [weak self] in self?.owe(.movedOn) }
-    }
-
-    private func owe(_ withdrawal: Withdrawal) {
-        guard owed == nil else { return }
-        owed = withdrawal
-        let handler = onOwed
-        onOwed = nil
-        handler?(withdrawal)
     }
 
     /// Runs `handler` once, at the first poll of the pasteboard this source was read from to find it no longer
@@ -160,246 +119,32 @@ public final class ClipboardOfferSource {
         }
     }
 
-    /// Whether `url` is a file of this offer's own staging, which goes when the offer does.
-    public func owns(_ url: URL) -> Bool {
-        leases.contains { $0.holds(url) }
-    }
-
-    /// The bytes of the file at `url`, read downloading nothing: nil for a file a File Provider evicted.
-    public static let contentsDownloadingNothing: @Sendable (URL) -> Data? = { url in
-        DatalessMaterialization.off.during { try? Data(contentsOf: url) }
-    }
-
-    /// This offer as a snapshot of the pasteboard now, independent of what it holds later: every INLINE
-    /// representation's bytes read now and held in memory, each sized by what was read, every FILE and FOLDER
-    /// kept as the reference it is, read when pulled, and every file promise called in now, where the source's
-    /// `promiseDestination` puts it, and kept as the file it landed. The snapshot holds `lease`, the staging
-    /// those files land in, for as long as it lives.
-    ///
-    /// A representation whose bytes can no longer be read, or whose promise lands nothing, is left out, and an
-    /// item left with none is dropped: an image file's INLINE bytes are read downloading nothing
-    /// (``DatalessMaterialization/off``, or `contentsOf`), so a dataless one crosses as its file alone, which
-    /// leaves nothing out. Nil when the pasteboard moved on from what was offered, or nothing remains.
-    ///
-    /// - Returns: the snapshot, and how many of the offer's items it does not carry whole: those the read left a
-    ///   file out of, and those it left a representation of out, or dropped.
-    ///
-    /// - Throws: ``ClipboardSnapshotTooLarge`` once the INLINE bytes read come to more than `inlineCeiling`, or an
-    ///   image file's size would take them there, reading nothing more.
-    public func snapshot(
-        inlineCeiling: Int, holding lease: ClipboardStagingLease,
-        contentsOf: @escaping @Sendable (URL) -> Data? = ClipboardOfferSource.contentsDownloadingNothing
-    ) async throws(ClipboardSnapshotTooLarge) -> (ClipboardOfferSource, leftOut: Int)? {
-        var tally = ClipboardSnapshotTooLarge.Tally(ceiling: inlineCeiling)
-        var frozenItems: [OfferedItem] = []
-        var frozenOrigins: [[Origin]] = []
-        var incomplete = incompleteItems
-        for (index, item) in items.enumerated() {
-            var frozen = OfferedItem()
-            var itemOrigins: [Origin] = []
-            for (position, representation) in item.representations.enumerated() {
-                var kept = representation
-                let held: Origin?
-                switch origins[index][position] {
-                case .pasteboard(let pasteboardItem, let type):
-                    guard let pasteboard, pasteboard.changeCount == changeCount else { return nil }
-                    let pasteboardItems = pasteboard.items
-                    held =
-                        pasteboardItems.indices.contains(pasteboardItem)
-                        ? pasteboardItems[pasteboardItem].data(forType: NSPasteboard.PasteboardType(type)).map(
-                            Origin.bytes)
-                        : nil
-                case .fileContents(let url):
-                    let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
-                    try tally.check(fits: UInt64(max(size, 0)))
-                    held = await Task.detached { contentsOf(url) }.value.map(Origin.bytes)
-                case .promise(let promise):
-                    held = await Self.landed(callIn(promise), as: &kept)
-                case .landing(let file):
-                    held = await Self.landed(file, as: &kept)
-                case .bytes, .file, .folder, .spent, .reference, .upstream:
-                    held = origins[index][position]
-                }
-                guard let held else {
-                    if case .fileContents = origins[index][position] {} else { incomplete.insert(index) }
-                    continue
-                }
-                if case .bytes(let data) = held {
-                    switch origins[index][position] {
-                    case .pasteboard, .fileContents: try tally.add(UInt64(data.count))
-                    default: break
-                    }
-                    kept.sizeEstimate = UInt64(data.count)
-                }
-                frozen.representations.append(kept)
-                itemOrigins.append(held)
-            }
-            guard !frozen.representations.isEmpty else { continue }
-            frozenItems.append(frozen)
-            frozenOrigins.append(itemOrigins)
-        }
-        if let pasteboard, pasteboard.changeCount != changeCount { return nil }
-        guard !frozenItems.isEmpty else { return nil }
-        let snapshot = ClipboardOfferSource(
-            items: frozenItems, origins: frozenOrigins, concealed: concealed, pasteboard: nil, changeCount: 0,
-            promises: [], promiseDestination: { throw ClipboardServeError.unavailable },
-            leases: leases + [lease], readFrom: readFrom)
-        return (snapshot, incomplete.count)
-    }
-
-    /// The file or folder `landing` lands, once it has, `kept` taking what landed: its storage, its size, and
-    /// its name when it is one path component. Nil when it lands nothing.
-    private static func landed(_ landing: Task<URL, any Error>, as kept: inout Representation) async -> Origin? {
-        guard let url = try? await value(of: landing),
-            let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
-        else { return nil }
-        let isFolder = values.isDirectory == true
-        kept.storage = isFolder ? .folder : .file
-        kept.sizeEstimate = UInt64(
-            max(
-                isFolder
-                    ? await Task.detached { ClipboardDirectory.estimatedByteCount(at: url) }.value
-                    : values.fileSize ?? 0, 0))
-        let name = Data(url.lastPathComponent.utf8)
-        if PathComponent.isValid(name) { kept.name = name }
-        kept.promised = false
-        return isFolder ? .folder(url) : .file(url)
-    }
-
-    /// Lets go of representation `representation` of item `item` once a copy served its bytes: the receiver
-    /// pulls each once, so the copy holds no bytes for the rest of its life.
-    public func spend(item: Int, representation: Int) {
-        guard origins.indices.contains(item), origins[item].indices.contains(representation),
-            case .bytes = origins[item][representation]
-        else { return }
-        origins[item][representation] = .spent
-    }
-
-    /// A snapshot of what a write of this process placed, built from what it was made from, so nothing the
-    /// pasteboard does later reaches it: what `source` holds, as data, and what it holds only as the far side's
-    /// promise named by reference to the far side's offer (``Origin/reference``), which the far side fills itself,
-    /// when the snapshot's copy goes over `destination`, the connection that offer arrived on. Otherwise that
-    /// promise is the write's own source's: an INLINE representation is pulled through the part's puller now
-    /// and held as data, and a FILE or FOLDER kept as a placeholder pulled through it when pulled
-    /// (``Origin/upstream``), for as long as that offer lasts (``whenWithdrawalOwed(_:)``). Only the
-    /// representations the write placed are kept; one that cannot be pulled is left out, and an item left with
-    /// none is dropped. Nil when nothing remains. `pasteboard` holds the write now.
-    ///
-    /// - Returns: the snapshot, and how many of the write's items it does not carry whole: those it left a
-    ///   representation of out, or dropped.
-    static func snapshot(
-        of source: ClipboardWriteSource, on pasteboard: any ClipboardReadPasteboard,
-        copyingTo destination: ClipboardConnectionID, inlineCeiling: Int
-    ) async throws(ClipboardSnapshotTooLarge) -> (ClipboardOfferSource, lost: Int)? {
-        let readFrom = (pasteboard: pasteboard, changeCount: pasteboard.changeCount)
-        let referenced = source.serving.flatMap { $0.connection == destination ? $0.token : nil }
-        var tally = ClipboardSnapshotTooLarge.Tally(ceiling: inlineCeiling)
-        var frozenItems: [OfferedItem] = []
-        var frozenOrigins: [[Origin]] = []
-        var upstreams: [any ClipboardItemPulling] = []
-        var lost = 0
-        for part in source.parts {
-            var servesUpstream = false
-            for (index, item) in part.items.enumerated() {
-                var frozen = OfferedItem()
-                var itemOrigins: [Origin] = []
-                var whole = true
-                for promised in ClipboardPromisePolicy.promisedTypes(for: item, servingFileURLs: part.servingFileURLs) {
-                    var kept = item.representations[promised.representation]
-                    kept.promised = false
-                    let origin: Origin
-                    switch part.held(index, promised.representation) {
-                    case .bytes(let data):
-                        try tally.add(UInt64(data.count))
-                        kept.sizeEstimate = UInt64(data.count)
-                        origin = .bytes(data)
-                    case .file(let url):
-                        origin = kept.storage == .folder ? .folder(url) : .file(url)
-                    case nil:
-                        if let offer = referenced {
-                            var reference = RepresentationReference()
-                            reference.offer = offer
-                            reference.item = UInt32(index)
-                            reference.representation = UInt32(promised.representation)
-                            kept.reference = reference
-                            kept.sizeEstimate = 0
-                            origin = .reference
-                            break
-                        }
-                        guard let puller = part.puller else {
-                            whole = false
-                            continue
-                        }
-                        guard kept.storage == .inline else {
-                            kept.promised = true
-                            servesUpstream = true
-                            origin = .upstream(puller, item: index, representation: promised.representation)
-                            break
-                        }
-                        let bytes = await withCheckedContinuation { continuation in
-                            puller.pullBytes(item: index, representation: promised.representation) {
-                                continuation.resume(returning: $0)
-                            }
-                        }
-                        guard let bytes else {
-                            whole = false
-                            continue
-                        }
-                        try tally.add(UInt64(bytes.count))
-                        kept.sizeEstimate = UInt64(bytes.count)
-                        origin = .bytes(bytes)
-                    }
-                    frozen.representations.append(kept)
-                    itemOrigins.append(origin)
-                }
-                if !whole { lost += 1 }
-                guard !frozen.representations.isEmpty else { continue }
-                frozenItems.append(frozen)
-                frozenOrigins.append(itemOrigins)
-            }
-            if servesUpstream, let puller = part.puller { upstreams.append(puller) }
-        }
-        guard !frozenItems.isEmpty else { return nil }
-        let snapshot = ClipboardOfferSource(
-            items: frozenItems, origins: frozenOrigins, concealed: source.parts.contains(where: \.concealed),
-            pasteboard: nil, changeCount: 0, promises: [],
-            promiseDestination: { throw ClipboardServeError.unavailable }, readFrom: readFrom)
-        for upstream in upstreams {
-            upstream.whenEnded { [weak snapshot] in MainActorBridge.async { snapshot?.owe(.upstreamEnded) } }
-        }
-        return (snapshot, lost)
-    }
-
     /// An offer of what a write of another publisher of this process placed, built from what it was made from:
     /// the pasteboard holding it is never read, since each read of a promise fires its provider in this process.
-    /// Every representation the write placed is offered promised and pulled through its part's puller when pulled
-    /// (``Origin/upstream``), for as long as that offer lasts; one naming the far side's own offer by reference is
-    /// left out, since no puller serves it. Nil when nothing remains. `pasteboard` holds the write now.
+    /// Every representation the write placed is offered promised and pulled through its puller when pulled
+    /// (``Origin/upstream``), for as long as that offer lasts. Nil when nothing remains. `pasteboard` holds the
+    /// write now.
     static func offer(
         of source: ClipboardWriteSource, on pasteboard: any ClipboardReadPasteboard
     ) -> ClipboardOfferSource? {
         var items: [OfferedItem] = []
         var origins: [[Origin]] = []
-        for part in source.parts {
-            guard let puller = part.puller else { continue }
-            for (index, item) in part.items.enumerated() {
-                var offered = OfferedItem()
-                var itemOrigins: [Origin] = []
-                for promised in ClipboardPromisePolicy.promisedTypes(for: item, servingFileURLs: part.servingFileURLs)
-                where !item.representations[promised.representation].hasReference {
-                    var representation = item.representations[promised.representation]
-                    representation.promised = true
-                    offered.representations.append(representation)
-                    itemOrigins.append(.upstream(puller, item: index, representation: promised.representation))
-                }
-                guard !offered.representations.isEmpty else { continue }
-                items.append(offered)
-                origins.append(itemOrigins)
+        for (index, item) in source.items.enumerated() {
+            var offered = OfferedItem()
+            var itemOrigins: [Origin] = []
+            for promised in ClipboardPromisePolicy.promisedTypes(for: item, servingFileURLs: source.servingFileURLs) {
+                var representation = item.representations[promised.representation]
+                representation.promised = true
+                offered.representations.append(representation)
+                itemOrigins.append(.upstream(source.puller, item: index, representation: promised.representation))
             }
+            guard !offered.representations.isEmpty else { continue }
+            items.append(offered)
+            origins.append(itemOrigins)
         }
         guard !items.isEmpty else { return nil }
         return ClipboardOfferSource(
-            items: items, origins: origins, concealed: source.parts.contains(where: \.concealed), pasteboard: nil,
+            items: items, origins: origins, concealed: source.concealed, pasteboard: nil,
             changeCount: pasteboard.changeCount, promises: [],
             promiseDestination: { throw ClipboardServeError.unavailable },
             readFrom: (pasteboard, pasteboard.changeCount))
@@ -407,8 +152,8 @@ public final class ClipboardOfferSource {
 
     /// Serves one representation for a pull, reading its bytes now.
     ///
-    /// A pasteboard type is read only while the pasteboard still holds the
-    /// snapshot that was offered. A drop's promise was called in before its
+    /// A pasteboard type is read only while the pasteboard still holds what
+    /// was offered. A drop's promise was called in before its
     /// offer was read, and a clipboard's is called in on its first pull, into
     /// a fresh directory from the reader's `promiseDestination`; every pull of
     /// a promised file serves what its call-in wrote, waiting for it as long as
@@ -465,8 +210,6 @@ public final class ClipboardOfferSource {
             }
             guard let landed else { throw .unavailable }
             return try Self.served(landed, as: storage)
-        case .spent, .reference:
-            throw .unavailable
         }
     }
 
@@ -536,35 +279,6 @@ public final class ClipboardOfferSource {
         case .file where values.isRegularFile == true: return .file(url)
         case .folder where values.isDirectory == true: return .folder(url)
         default: throw .readFailed
-        }
-    }
-}
-
-/// A snapshot's INLINE bytes came to more than the paste ceiling, so nothing of it is copied.
-public struct ClipboardSnapshotTooLarge: Error, Equatable, Sendable {
-    /// The ceiling the bytes came to more than.
-    public let limitBytes: Int
-
-    /// The INLINE bytes a snapshot read so far, against its ceiling.
-    struct Tally {
-        let ceiling: Int
-        private var total: UInt64 = 0
-
-        init(ceiling: Int) {
-            self.ceiling = ceiling
-        }
-
-        /// Counts `bytes` more, throwing once the total is over the ceiling.
-        mutating func add(_ bytes: UInt64) throws(ClipboardSnapshotTooLarge) {
-            try check(fits: bytes)
-            total = total.saturatingAdding(bytes)
-        }
-
-        /// Throws when `bytes` more would take the total over the ceiling, counting nothing.
-        func check(fits bytes: UInt64) throws(ClipboardSnapshotTooLarge) {
-            guard total.saturatingAdding(bytes) <= UInt64(max(ceiling, 0)) else {
-                throw ClipboardSnapshotTooLarge(limitBytes: ceiling)
-            }
         }
     }
 }

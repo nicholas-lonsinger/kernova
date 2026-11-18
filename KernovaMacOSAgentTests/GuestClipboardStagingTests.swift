@@ -94,41 +94,6 @@ struct GuestClipboardStagingTests {
         RecordingLink(items: [Self.textItem, Self.fileItem], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
     }
 
-    /// Has the host send three offers of text, a paste of each failing its one pull: each takes a staging
-    /// generation of its own, the third evicting the oldest. Returns the guest pasteboard's change count once the
-    /// last is written.
-    private func failThreeOffers(_ clipboard: GuestClipboard, _ pasteboard: FakePasteboard) async throws -> Int {
-        let link = RecordingLink(items: [Self.textItem], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
-        clipboard.setLink(link)
-        for attempt in 0..<3 {
-            let token = Data(repeating: UInt8(0x40 + attempt), count: 16)
-            let before = pasteboard.changeCount
-            clipboard.end.handle(
-                .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: token, concealed: false, count: 1)),
-                on: link)
-            try await pasteboard.changed.wait { pasteboard.changeCount != before }
-            let fired = Task.detached { pasteboard.invokeProvider(forType: Self.text) }
-            try await link.changed.wait { link.opened.count == attempt + 1 }
-            clipboard.end.pullEnded(link.pulls[attempt].id, .failed(WireError(.readFailed)))
-            #expect(await fired.value == nil)
-        }
-        return pasteboard.changeCount
-    }
-
-    @Test("A guest pasteboard that moved on is left alone when the staging a kept file named is evicted")
-    func movedOnPasteboardOutlivesTheEviction() async throws {
-        let staging = TestStagingRoot(retirement: ClipboardStagingRetirement())
-        let pasteboard = FakePasteboard(pollsOnlyWhenTold: true)
-        let clipboard = GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root)
-        let file = try await keepPastedFile(clipboard, pasteboard, pastedLink())
-
-        // The host's next offers move the pasteboard on from the kept file.
-        let movedOn = try await failThreeOffers(clipboard, pasteboard)
-        try await staging.removals.wait { !FileManager.default.fileExists(atPath: file.path) }
-        #expect(pasteboard.changeCount == movedOn)
-        #expect(pasteboard.promisedTypes == [Self.text])
-    }
-
     @Test(
         "The agent ending withdraws its kept pasted file whole, its name too, and leaves the file for the next launch")
     func agentEndingWithdrawsTheKeptFile() async throws {

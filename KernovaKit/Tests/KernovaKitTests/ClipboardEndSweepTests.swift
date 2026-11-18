@@ -204,7 +204,7 @@ struct ClipboardEndSweepTests {
             guard let wire = pair.wire else { return nil }
             // A side's own withdrawal takes effect on its side at once, so what it offers is checked at every step.
             for side in Side.allCases {
-                for (token, open) in wire.open(side) where !open.header.isOfferRequest {
+                for token in wire.open(side).keys {
                     guard let offer = model.offers[token] else { return "\(side) holds an offer the model never saw" }
                     guard offer.openedAt == model.resets[side] else {
                         return "\(side)'s offer of \(offer.name) outlived a reset of \(side)"
@@ -228,8 +228,8 @@ struct ClipboardEndSweepTests {
                 return "\(side) offered \(name), which is not its user's copy on its pasteboard"
             }
             if !offer.request.isEmpty {
-                guard side == .guest, case .opened(let header, _)? = delivered, header.isOfferRequest,
-                    header.token == offer.request, gate == .onCommand
+                guard side == .guest, case .requested(let token)? = delivered, token == offer.request,
+                    gate == .onCommand
                 else { return "\(side) answered a request no admitted trigger asked it to" }
                 return nil
             }
@@ -245,11 +245,11 @@ struct ClipboardEndSweepTests {
         /// With nothing in flight: every open offer is written on the far side, every write is of an open offer,
         /// and no request is left open.
         private func checkQuiescent(_ wire: ClipboardWire) -> String? {
+            guard wire.openRequests.isEmpty else {
+                return "the host's request is still open with nothing in flight to answer it"
+            }
             for side in Side.allCases {
-                for (token, open) in wire.open(side) {
-                    guard !open.header.isOfferRequest else {
-                        return "the host's request is still open with nothing in flight to answer it"
-                    }
+                for token in wire.open(side).keys {
                     guard let offer = model.offers[token] else { return "\(side) holds an offer the model never saw" }
                     if model.dirty[side.far] != true, pair.holding(side.far) != .write(offer.name) {
                         return
@@ -328,7 +328,7 @@ struct ClipboardEndSweepTests {
         /// `message` reaches `side`.
         mutating func delivered(_ message: ClipboardWire.Message, toward side: Side) {
             switch message {
-            case .opened(let header, _) where header.isOfferRequest:
+            case .requested:
                 break
             case .opened(let header, _):
                 // A guest takes every host offer: the host offers on command only by its user's command. The host

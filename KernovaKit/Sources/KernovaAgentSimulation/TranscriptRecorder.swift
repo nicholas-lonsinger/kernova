@@ -954,10 +954,13 @@ package enum TranscriptEvents {
         return switch event {
         case .offerReceived(let header):
             "\(prefix) offerReceived feature=\(header.feature.rawValue) token=\(FrozenFields.hex(header.token)) items=\(header.count)"
-                + (header.isOfferRequest ? " offerRequest" : "")
                 + (header.request.isEmpty ? "" : " request=\(FrozenFields.hex(header.request))")
         case .offerEnded(let feature, let origin, let token, let closure):
             "\(prefix) offerEnded feature=\(feature.rawValue) \(origin == .local ? "local" : "remote") token=\(FrozenFields.hex(token)) \(describe(closure))"
+        case .offerRequested(let token):
+            "\(prefix) offerRequested token=\(FrozenFields.hex(token))"
+        case .requestEnded(let origin, let token, let closure):
+            "\(prefix) requestEnded \(origin == .local ? "local" : "remote") token=\(FrozenFields.hex(token)) \(describe(closure))"
         case .pullEnded(let feature, let id, let result):
             "\(prefix) pullEnded feature=\(feature.rawValue) id=\(id.stream.rawValue) \(describe(result))"
         case .serveEnded(let feature, let id, let result):

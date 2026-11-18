@@ -12,8 +12,8 @@ t=2      p>h     00000001 01 00 00000003 08ac02
 t=500    in      host requestOffer token=05050505050505050505050505050505
 t=500    h>p     00000002 01 00 00000017 08ef071212221005050505050505050505050505050505
 t=500    h>p     00000002 02 00 00000000
-t=501    ev      peer item offerReceived feature=10 token=05050505050505050505050505050505 items=0 offerRequest
+t=501    ev      peer item offerRequested token=05050505050505050505050505050505
 t=600    in      peer refuse token=05050505050505050505050505050505 code=1009
-t=600    ev      peer item offerEnded feature=10 remote token=05050505050505050505050505050505 resetLocally code=1009
+t=600    ev      peer item requestEnded remote token=05050505050505050505050505050505 resetLocally code=1009
 t=600    p>h     00000002 03 00 00000003 08f107
-t=601    ev      host item offerEnded feature=10 local token=05050505050505050505050505050505 resetByPeer code=1009
+t=601    ev      host item requestEnded local token=05050505050505050505050505050505 resetByPeer code=1009

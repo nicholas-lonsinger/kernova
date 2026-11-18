@@ -301,11 +301,11 @@ struct AgentHubItemTests {
         #expect(opened == .success(handle))
         var events = peer.events.waiter()
         guard
-            case .items(.offerReceived(let asked)) = await events.next(where: {
-                if case .items(.offerReceived) = $0 { true } else { false }
+            case .items(.offerRequested(let asked)) = await events.next(where: {
+                if case .items(.offerRequested) = $0 { true } else { false }
             })
         else { Issue.record("no request received"); return }
-        #expect(asked.isOfferRequest && asked.token == request && asked.count == 0 && asked.feature == .clipboard)
+        #expect(asked == request)
 
         var answer = Self.offer
         answer.request = request
@@ -316,11 +316,11 @@ struct AgentHubItemTests {
         guard case .event(.items(handle, .offerReceived(let header))) = received else {
             Issue.record("received \(received)"); return
         }
-        #expect(header.token == Self.token && header.request == request && !header.isOfferRequest)
+        #expect(header.token == Self.token && header.request == request)
         let ended = await log.next {
-            if case .event(.items(_, .offerEnded(_, .local, request, _))) = $0 { true } else { false }
+            if case .event(.items(_, .requestEnded(.local, request, _))) = $0 { true } else { false }
         }
-        guard case .event(.items(handle, .offerEnded(.clipboard, .local, request, .completed))) = ended else {
+        guard case .event(.items(handle, .requestEnded(.local, request, .completed))) = ended else {
             Issue.record("ended \(ended)"); return
         }
         harness.hub.close()

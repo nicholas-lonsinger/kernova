@@ -53,10 +53,6 @@ final class RecordingLink: ClipboardItemLink {
         completion(nil)
     }
 
-    func requestOffer(_ token: Data, _ completion: @escaping @Sendable (WireError?) -> Void) {
-        completion(WireError(.unsupportedKind))
-    }
-
     func withdrawOffer(_ token: Data, code: ErrorCode) {
         calls.withLock { calls in
             calls.withdrawals.append(token)

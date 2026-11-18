@@ -362,14 +362,9 @@ struct ClipboardTransferReporterTests {
             ClipboardTransferFinish(gesture: .copy, outcome: .failed(failure), peerName: "macOS TEST").logLine
         }
         #expect(line(.itemsSkipped(count: 1)) == "copy from 'macOS TEST' was partial: itemsSkipped(count: 1)")
-        #expect(line(.partsGone) == "copy from 'macOS TEST' was partial: partsGone")
-        #expect(line(.itemsUnreadable) == "copy from 'macOS TEST' failed: itemsUnreadable")
-        // A link's end that took back only part of a copy, and one that took back all of it.
         #expect(
-            line(.disconnectedFilesRetracted) == "copy from 'macOS TEST' was partial: disconnectedFilesRetracted")
-        #expect(line(.disconnectedCopyRetracted) == "copy from 'macOS TEST' failed: disconnectedCopyRetracted")
-        // The same, the guest having withdrawn the copy.
-        #expect(line(.withdrawnFilesRetracted) == "copy from 'macOS TEST' was partial: withdrawnFilesRetracted")
-        #expect(line(.withdrawnCopyRetracted) == "copy from 'macOS TEST' failed: withdrawnCopyRetracted")
+            line(.filesLeftOut(count: 1, limitBytes: 9))
+                == "copy from 'macOS TEST' was partial: filesLeftOut(count: 1, limitBytes: 9)")
+        #expect(line(.itemsUnreadable) == "copy from 'macOS TEST' failed: itemsUnreadable")
     }
 }

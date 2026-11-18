@@ -79,10 +79,7 @@ struct GuestClipboardTests {
 
     /// The host asks for the guest's clipboard by a request of `token`.
     private func request(_ token: Data, _ rig: Rig, _ link: RecordingLink) {
-        rig.clipboard.end.handle(
-            .offerReceived(
-                ItemSetHeaderValue(feature: .clipboard, token: token, concealed: false, count: 0, isOfferRequest: true)),
-            on: link)
+        rig.clipboard.end.handle(.offerRequested(token: token), on: link)
     }
 
     /// The types each of `link`'s offers carries, in order.
@@ -226,6 +223,20 @@ struct GuestClipboardTests {
         try await rig.noticed.wait { rig.notices == 2 }
         #expect(rig.clipboard.activity == .copyCarriedNothing)
         #expect(link.offers.count == 2)
+    }
+
+    @Test("A copy of nothing a pasteboard carries says nothing in it crossed")
+    func uncarriableCopyIsShown() async throws {
+        let rig = rig()
+        let link = RecordingLink()
+        openGate(rig, link)
+        // A Finder node, which names a file on this machine, is never offered.
+        let node = NSPasteboard.PasteboardType("com.apple.finder.node")
+        #expect(rig.pasteboard.setItem([(type: node, data: Data("node".utf8))]))
+        poll(rig)
+        try await rig.noticed.wait { rig.notices == 1 }
+        #expect(rig.clipboard.activity == .copyCarriedNothing)
+        #expect(link.offers.isEmpty)
     }
 
     @Test(

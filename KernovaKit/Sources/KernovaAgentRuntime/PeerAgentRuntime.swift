@@ -170,14 +170,14 @@ public final class PeerAgentRuntime: Sendable {
         send(.withdraw(token: token, code: code))
     }
 
-    /// Releases the host's offer of `token`: this side pulls nothing more of it. Once the offer is whole the
-    /// release is END with `endBody`, its kind's acceptor END body.
+    /// Releases the host's offer of `token`: this side pulls nothing more of it — or the host's request of `token`,
+    /// answered. Once the offer is whole the release is END with `endBody`, its kind's acceptor END body.
     public func releaseOffer(_ token: Data, endBody: Data = Data()) {
         send(.release(token: token, endBody: endBody))
     }
 
-    /// Refuses the host's offer of `token` with `error`: this side pulls nothing of it, and the host's
-    /// `.offerEnded` closes `.resetByPeer(error)`.
+    /// Refuses the host's offer or request of `token` with `error`: this side pulls nothing of it, or offers
+    /// nothing for it, and the host's `.offerEnded` or `.requestEnded` closes `.resetByPeer(error)`.
     public func refuseOffer(_ token: Data, _ error: WireError) {
         send(.refuse(token: token, error))
     }

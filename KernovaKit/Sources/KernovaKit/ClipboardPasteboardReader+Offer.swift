@@ -100,75 +100,6 @@ extension ClipboardPasteboardReader {
         }
     }
 
-    /// What a pasteboard holds as a snapshot.
-    public enum SnapshotOutcome {
-        /// The pasteboard holds no item, or a marker suppressed it, or none of its items is offerable: nothing
-        /// to copy.
-        case nothing
-        /// The snapshot, with `lost` counting the pasteboard's items it does not carry whole: a file, or another
-        /// representation it could not read or pull, left out, or the item dropped.
-        case snapshot(ClipboardOfferSource, lost: Int)
-        /// The pasteboard held items naming files, none of them could be read, and nothing else of them is left:
-        /// nothing to copy.
-        case unreadable
-        /// The pasteboard changed while it was read, twice.
-        case changed
-        /// What is not a file or folder came to more than the ceiling: nothing is copied.
-        case tooLarge(limitBytes: Int)
-    }
-
-    /// A snapshot of `pasteboard` now: every representation that is not a file or folder read whole, so nothing
-    /// the pasteboard holds later reaches it, and each file kept as the reference it is. A pasteboard that
-    /// changed while it was read is read once more.
-    ///
-    /// A pasteboard holding a write of this process (`ledger`) is never read: it is snapshotted from what the
-    /// write was made from (``ClipboardWriteSource``). What it holds only as the far side's promise is named by
-    /// reference when the write serves an offer that arrived on `destination`, the connection the snapshot's copy
-    /// goes over; otherwise it is the write's own source's, what is not a file pulled through it now and each file
-    /// pulled through it when pulled, while that offer lasts. Any other pasteboard is read as
-    /// ``readOffer(from:publisher:promises:promiseDestination:sizeOf:)`` reads it, its file promises called in now into a
-    /// ``ClipboardFileStaging/lease()`` of `staging` the snapshot holds, so they live as long as it does. No more
-    /// than `ceiling` bytes of what is not a file are read; an image file's bytes are read through `contentsOf`,
-    /// and count only when it reads them.
-    public static func readSnapshot(
-        from pasteboard: any ClipboardReadPasteboard,
-        ceiling: Int = ClipboardPasteLimit.defaultBytes,
-        ledger: ClipboardWriteLedger = .shared,
-        staging: ClipboardFileStaging,
-        copyingTo destination: ClipboardConnectionID,
-        sizeOf: (@Sendable (URL) -> Int)? = { ClipboardDirectory.estimatedByteCount(at: $0) },
-        contentsOf: @escaping @Sendable (URL) -> Data? = ClipboardOfferSource.contentsDownloadingNothing
-    ) async -> SnapshotOutcome {
-        do throws(ClipboardSnapshotTooLarge) {
-            for _ in 0..<2 {
-                if let written = ledger.standingWrite(on: pasteboard) {
-                    guard
-                        let (snapshot, lost) = try await ClipboardOfferSource.snapshot(
-                            of: written.source, on: pasteboard, copyingTo: destination, inlineCeiling: ceiling)
-                    else { return .nothing }
-                    return .snapshot(snapshot, lost: lost)
-                }
-                let lease = staging.lease()
-                let read = await Self.read(
-                    pasteboard, promises: pasteboard.filePromiseReceivers, calledIn: [], rule: .clipboard,
-                    sizeOf: sizeOf
-                ) { try lease.reserveScratchDirectory() }
-                if case .nothingOfferable(let lost) = read, lost > 0 { return .unreadable }
-                guard case .offer(let source, let lost) = read else { return .nothing }
-                if let (snapshot, leftOut) = try await source.snapshot(
-                    inlineCeiling: ceiling, holding: lease, contentsOf: contentsOf)
-                {
-                    // `lost` counts the items the read left a file out of, which `leftOut` counts too.
-                    return .snapshot(snapshot, lost: lost - source.incompleteItems.count + leftOut)
-                }
-                guard pasteboard.changeCount != source.changeCount else { return .nothing }
-            }
-            return .changed
-        } catch {
-            return .tooLarge(limitBytes: error.limitBytes)
-        }
-    }
-
     /// Reads what a drop of `pasteboard` offers: one item per file or folder a pasteboard item names on disk,
     /// and one per file a pasteboard item's file promise names, each a single FILE or FOLDER representation,
     /// reading no content.
@@ -257,13 +188,12 @@ extension ClipboardPasteboardReader {
         }.value
         var items: [OfferedItem] = []
         var origins: [[ClipboardOfferSource.Origin]] = []
-        var incomplete: Set<Int> = []
         for entry in resolved {
             guard let entry else {
                 lost += 1
                 continue
             }
-            if entry.fileLeftOut { incomplete.insert(items.count) }
+            if entry.fileLeftOut { lost += 1 }
             items.append(entry.item)
             origins.append(entry.origins)
         }
@@ -271,8 +201,8 @@ extension ClipboardPasteboardReader {
         let source = ClipboardOfferSource(
             items: items, origins: origins, concealed: markers.concealed,
             pasteboard: pasteboard, changeCount: changeCount, promises: promises,
-            promiseDestination: promiseDestination, incompleteItems: incomplete)
-        return .offer(source, lost: lost + incomplete.count)
+            promiseDestination: promiseDestination)
+        return .offer(source, lost: lost)
     }
 
     /// The types of an item, of `types`, offered INLINE: every type but a marker, a file reference — a file

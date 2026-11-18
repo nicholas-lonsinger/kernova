@@ -11,22 +11,34 @@ public enum ClipboardOfferGate: Sendable, Equatable {
     case onCommand
 }
 
-/// Which end a ``ClipboardEnd`` is, fixed by its type.
+/// Which end a ``ClipboardEnd`` is, and the link a connection gives it, fixed by its type.
 public protocol ClipboardEndRole {
+    /// The calls of the connection this end runs over.
+    associatedtype Link: Sendable
     /// The end its exchange is.
     static var side: ClipboardItemExchange.Side { get }
+    /// `link`'s item calls, the ones every end makes.
+    static func itemCalls(_ link: Link) -> any ClipboardItemLink
 }
 
 /// The host's end, whose user's commands offer the Mac's clipboard and ask for the guest's.
 public enum ClipboardHost: ClipboardEndRole {
+    /// A link that can ask the guest for its clipboard.
+    public typealias Link = any ClipboardHostItemLink
     /// ``ClipboardItemExchange/Side/host``.
     public static var side: ClipboardItemExchange.Side { .host }
+    /// `link` itself.
+    public static func itemCalls(_ link: any ClipboardHostItemLink) -> any ClipboardItemLink { link }
 }
 
 /// A guest agent's end, which has no command of its own: it answers the host's request for its clipboard.
 public enum ClipboardGuest: ClipboardEndRole {
+    /// A link of the item calls alone.
+    public typealias Link = any ClipboardItemLink
     /// ``ClipboardItemExchange/Side/guest``.
     public static var side: ClipboardItemExchange.Side { .guest }
+    /// `link` itself.
+    public static func itemCalls(_ link: any ClipboardItemLink) -> any ClipboardItemLink { link }
 }
 
 /// What started a read of a side's pasteboard to offer it.
@@ -43,8 +55,11 @@ public enum ClipboardOfferTrigger: Sendable, Equatable {
 public enum ClipboardReadOutcome: Sendable, Equatable {
     /// It is offered, but for `skipped` of its items, each naming a file that is gone or could not be read.
     case offered(skipped: Int)
-    /// The pasteboard is empty, marked transient or auto-generated, or holds nothing a pasteboard carries.
+    /// The pasteboard is empty, or marked transient or auto-generated.
     case nothingToCopy
+    /// The pasteboard holds items, none of them anything a pasteboard carries, and none naming a file that is
+    /// gone or could not be read.
+    case nothingCarriable
     /// The pasteboard's items name files, none of which could be read, and hold nothing else.
     case unreadable
     /// The pasteboard holds this end's write of the far side's offer, which the far side holds already.
