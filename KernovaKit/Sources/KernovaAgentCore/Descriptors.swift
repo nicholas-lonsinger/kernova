@@ -25,10 +25,13 @@ package enum StreamDirection: Sendable, Equatable {
 }
 
 /// Which machine of an endpoint serves a kind. Every item-set offer kind, whichever feature's, belongs to
-/// the offer registry the item-transfer machine keeps; the simulation's bulk kinds to its test sink.
+/// the offer registry the item-transfer machine keeps.
 package enum KindOwner: Sendable, Equatable {
     case power, update, logs, itemTransfer, itemOffer, dragTake
+    #if DEBUG
+    /// The simulation's bulk kinds, served by an endpoint's test sink.
     case testBulk
+    #endif
 }
 
 /// One row of the static kind table.
@@ -118,17 +121,6 @@ package struct StreamKindDescriptor: Sendable {
             kind: kind, feature: feature, owner: .itemOffer, openerRole: openerRole, openerToAcceptor: .messages,
             acceptorToOpener: .nothing, maxPerConnection: nil, isValidOpenBody: ItemOfferRegistry.isValidHeader)
     }
-
-    /// The simulation's bulk kinds: 9000 opened by a peer, 9001 by the
-    /// host, each carrying raw DATA from acceptor to opener, any number at once.
-    package static let testBulk: [StreamKindDescriptor] = [
-        StreamKindDescriptor(
-            kind: .testBulkByPeer, feature: nil, owner: .testBulk, openerRole: .peer, openerToAcceptor: .nothing,
-            acceptorToOpener: .rawData, maxPerConnection: nil, isValidOpenBody: { _ in true }),
-        StreamKindDescriptor(
-            kind: .testBulkByHost, feature: nil, owner: .testBulk, openerRole: .host, openerToAcceptor: .nothing,
-            acceptorToOpener: .rawData, maxPerConnection: nil, isValidOpenBody: { _ in true }),
-    ]
 
     /// What this side sends on a stream of the kind, given whether it opened it.
     func sending(asOpener: Bool) -> StreamDirection {

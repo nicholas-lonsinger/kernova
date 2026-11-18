@@ -340,7 +340,7 @@ package final class PropertyChecker {
 
     /// Property 12 after a drain of `side`.
     func clipboardOffers(_ link: SimLink, _ side: SimSide) {
-        let offers = side == .host ? link.host?.itemOffers : link.peer?.itemOffers
+        let offers = side == .host ? link.host?.itemOffersForTesting : link.peer?.itemOffersForTesting
         let open = offers?.localTokens(of: .clipboard).count ?? 0
         if open > 1 { fail("property 12: link \(link.id) \(side) holds \(open) clipboard offers of its own") }
     }

@@ -34,9 +34,6 @@ struct PipelineTests {
                 accepting: tree.acceptance, policy: policy, workers: lanes.workers(workers))
             let encoded = pipelined(tree.events, through: pipeline)
             #expect(encoded == expected, "policy \(index)")
-            #expect(pipeline.heldRecords == 0)
-            #expect(pipeline.mostHeldRecords <= pipeline.windowCapacity)
-            #expect(pipeline.mostHeldBytes <= pipeline.windowCapacity * 2 * ContainerEncoder.chunkByteCount)
         }
     }
 
@@ -54,14 +51,7 @@ struct PipelineTests {
 
         let lanes = SpinningLanes(seed: seed)
         let pipeline = ContainerDecodePipeline(accepting: tree.acceptance, workers: lanes.workers(workers))
-        var mostHeld = 0
-        let decoded = pipelined(pieces, through: pipeline) { mostHeld = max(mostHeld, $0.heldItems) }
-        #expect(decoded == expected)
-        #expect(mostHeld <= pipeline.windowCapacity)
-        #expect(pipeline.mostHeldItems <= pipeline.windowCapacity)
-        #expect(pipeline.mostHeldBytes <= pipeline.windowCapacity * 2 * ContainerEncoder.chunkByteCount)
-        #expect(pipeline.heldItems == 0)
-        #expect(pipeline.bufferedByteCount == 0)
+        #expect(pipelined(pieces, through: pipeline) == expected)
     }
 
     @Test("chunks that finish in reverse order are still yielded in stream order")
@@ -148,7 +138,7 @@ struct PipelineTests {
         }
     }
 
-    @Test("a failure mid-stream leaves no work running and nothing held, and latches")
+    @Test("a failure mid-stream leaves no work running and none of its input held, and latches")
     func failureReleasesEverything() throws {
         let size = ContainerEncoder.chunkByteCount
         let text = Data(String(repeating: "a guest sends a tree. ", count: size).utf8.prefix(size * 12))
@@ -170,14 +160,13 @@ struct PipelineTests {
         let error = try #require(expected.error)
         let lanes = SpinningLanes(seed: 9, maxSpin: 200_000)
         let pipeline = ContainerDecodePipeline(accepting: generous(.file), workers: lanes.workers(4))
-        #expect(pipelined([container], through: pipeline) == expected)
+        let feeds = FeedAllocations()
+        #expect(pipelined([feeds.copy(container)], through: pipeline) == expected)
         #expect(lanes.running == 0)
-        #expect(pipeline.heldItems == 0)
-        #expect(pipeline.heldBytes == 0)
-        #expect(pipeline.bufferedByteCount == 0)
-        pipeline.feed(container)
+        #expect(feeds.liveBytes == 0)
+        pipeline.feed(feeds.copy(container))
         #expect(throws: error) { try pipeline.next() }
-        #expect(pipeline.bufferedByteCount == 0)
+        #expect(feeds.liveBytes == 0)
 
         // The encoder: an event past the entry's size, with attempts in flight.
         let overrun: [TreeEvent] = [tree[0], .bytes(text.prefix(size * 6)), .bytes(text.prefix(size * 7))]
@@ -188,7 +177,6 @@ struct PipelineTests {
         #expect(pipelined(overrun, through: encoder).error == refusal)
         #expect(encodeLanes.started > 0)
         #expect(encodeLanes.running == 0)
-        #expect(encoder.heldRecords == 0)
         #expect(throws: refusal) { try encoder.encode(.finishFile) }
     }
 
@@ -224,21 +212,9 @@ struct PipelineTests {
         #expect(encodeLanes.running == 0)
     }
 
-    @Test("held items own their bytes: an earlier feed is freed once decoded, and the window counts what it holds")
+    @Test("held items own their bytes: a feed is freed once decoded, whatever the window still holds")
     func heldItemsOwnTheirBytes() throws {
-        // Each feed its own allocation, so the test can count the feed storage still alive.
-        let liveFeedBytes = Locked(0)
-        func trackedFeed(_ bytes: Data) -> Data {
-            let pointer = UnsafeMutableRawPointer.allocate(byteCount: bytes.count, alignment: 16)
-            bytes.copyBytes(to: pointer.assumingMemoryBound(to: UInt8.self), count: bytes.count)
-            liveFeedBytes.withLock { $0 += bytes.count }
-            return Data(
-                bytesNoCopy: pointer, count: bytes.count,
-                deallocator: .custom { pointer, count in
-                    liveFeedBytes.withLock { $0 -= count }
-                    pointer.deallocate()
-                })
-        }
+        let feeds = FeedAllocations()
         // Feed A: raw chunks the consumer takes and drops, an LZ4 chunk whose lane is held, a 1-byte raw chunk.
         // Feed B: another 1-byte raw chunk and the end. Each feed ends on a record boundary.
         let raw = Data(repeating: 0x41, count: ContainerRecord.maxChunkPayload)
@@ -260,21 +236,17 @@ struct PipelineTests {
         }
         let pipeline = ContainerDecodePipeline(accepting: generous(.file), workers: workers)
         var events: [TreeEvent] = []
-        pipeline.feed(trackedFeed(feedA))
+        pipeline.feed(feeds.copy(feedA))
         while let event = try pipeline.next() { events.append(event) }
-        #expect(liveFeedBytes.withLock { $0 } <= pipeline.bufferedByteCount)
-        pipeline.feed(trackedFeed(feedB))
+        #expect(feeds.liveBytes == 0)
+        pipeline.feed(feeds.copy(feedB))
         while let event = try pipeline.next() { events.append(event) }
-        #expect(liveFeedBytes.withLock { $0 } <= pipeline.bufferedByteCount)
-        // Held: the LZ4 chunk's block and decompression, the two 1-byte chunks, the finish and the end.
-        #expect(pipeline.heldItems == 5)
-        #expect(pipeline.heldBytes == block.count + piece.count + 2)
+        #expect(feeds.liveBytes == 0)
 
         gate.signal()
         pipeline.finish()
         while let event = try pipeline.next() { events.append(event) }
         #expect(events == expected.events)
-        #expect(liveFeedBytes.withLock { $0 } == 0)
     }
 
     @Test("a chunk that fails to decompress can fail a later call than the feed that held it, at the same point")

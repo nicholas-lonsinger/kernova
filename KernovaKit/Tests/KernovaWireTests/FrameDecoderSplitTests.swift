@@ -61,7 +61,7 @@ struct FrameDecoderSplitTests {
         var violations = 0
         for offset in 0..<(bytes.count - 1) {
             decoder.append(bytes[offset...offset])
-            let held = decoder.bufferedByteCount
+            let held = decoder.bufferedByteCountForTesting
             let expected: Int
             if offset < WireConstants.preamble.count {
                 expected = (offset + 1) % WireConstants.preamble.count
@@ -76,7 +76,7 @@ struct FrameDecoderSplitTests {
         #expect(try decoder.nextFrame() == nil)
         decoder.append(bytes.suffix(1))
         #expect(try decoder.nextFrame() == frame)
-        #expect(decoder.bufferedByteCount == 0)
+        #expect(decoder.bufferedByteCountForTesting == 0)
     }
 
     /// Whether `payload`'s bytes lie inside `chunk`'s storage.

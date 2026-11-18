@@ -67,11 +67,4 @@ public struct CoreDuration: Comparable, Hashable, Sendable {
     public static func < (lhs: CoreDuration, rhs: CoreDuration) -> Bool {
         lhs.nanoseconds < rhs.nanoseconds
     }
-
-    /// The sum of two spans, saturating.
-    public static func + (lhs: CoreDuration, rhs: CoreDuration) -> CoreDuration {
-        let (sum, overflow) = lhs.nanoseconds.addingReportingOverflow(rhs.nanoseconds)
-        guard overflow else { return CoreDuration(nanoseconds: sum) }
-        return CoreDuration(nanoseconds: rhs.nanoseconds > 0 ? .max : .min)
-    }
 }

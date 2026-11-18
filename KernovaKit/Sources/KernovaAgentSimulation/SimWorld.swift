@@ -49,15 +49,15 @@ package final class SimLink {
 
     package func footprint(_ side: SimSide) -> MemoryFootprint? {
         switch side {
-        case .host: host?.connection.footprint
-        case .peer: peer?.connection.footprint
+        case .host: host?.connection.footprintForTesting
+        case .peer: peer?.connection.footprintForTesting
         }
     }
 
     func pendingEventCount(_ side: SimSide) -> Int {
         switch side {
-        case .host: host?.pendingEventCount ?? 0
-        case .peer: peer?.pendingEventCount ?? 0
+        case .host: host?.pendingEventCountForTesting ?? 0
+        case .peer: peer?.pendingEventCountForTesting ?? 0
         }
     }
 
@@ -353,9 +353,13 @@ package final class SimWorld {
         }
         switch side {
         case .host:
-            if let trace = link.host?.takeTrace() { checker.trace(trace, link: link, side: .host, world: self) }
+            if let trace = link.host?.takeTraceForTesting() {
+                checker.trace(trace, link: link, side: .host, world: self)
+            }
         case .peer:
-            if let trace = link.peer?.takeTrace() { checker.trace(trace, link: link, side: .peer, world: self) }
+            if let trace = link.peer?.takeTraceForTesting() {
+                checker.trace(trace, link: link, side: .peer, world: self)
+            }
         }
     }
 
@@ -401,8 +405,7 @@ package final class SimWorld {
                 link.peer?.pollTransmit(maxBytes: WireConstants.maxRawDataPayload + WireConstants.headerByteCount)
             }
         guard let transmit else { return }
-        var bytes = Data(capacity: transmit.byteCount)
-        for chunk in transmit.chunks { bytes.append(chunk) }
+        let bytes = transmit.chunks.reduce(into: Data()) { $0.append($1) }
         transcript.add(UInt64(link.id) << 1 | (side == .host ? 0 : 1))
         transcript.add(now)
         transcript.add(UInt64(bytes.count))

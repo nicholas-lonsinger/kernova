@@ -51,6 +51,28 @@ final class SpinningLanes: Sendable {
     }
 }
 
+/// Copies of bytes, each in an allocation of its own that counts while it is alive, so a test can tell which feeds
+/// something still holds.
+final class FeedAllocations: Sendable {
+    private let live = Locked(0)
+
+    /// The bytes of the copies still alive.
+    var liveBytes: Int { live.withLock { $0 } }
+
+    /// `bytes` in an allocation of its own.
+    func copy(_ bytes: Data) -> Data {
+        let pointer = UnsafeMutableRawPointer.allocate(byteCount: bytes.count, alignment: 16)
+        bytes.copyBytes(to: pointer.assumingMemoryBound(to: UInt8.self), count: bytes.count)
+        live.withLock { $0 += bytes.count }
+        return Data(
+            bytesNoCopy: pointer, count: bytes.count,
+            deallocator: .custom { [live] pointer, count in
+                live.withLock { $0 -= count }
+                pointer.deallocate()
+            })
+    }
+}
+
 /// A value from `steps` rounds of arithmetic, taking time without sleeping.
 func spin(_ steps: Int) -> UInt64 {
     var value: UInt64 = 0x9E37_79B9_7F4A_7C15
@@ -276,26 +298,16 @@ func sequentiallyDecoded(_ pieces: [Data], accepting acceptance: ContainerAccept
     return result
 }
 
-/// `pieces` decoded by `pipeline`, fed one at a time and drained after each, then finished and drained. `observe`
-/// runs after every call.
-func pipelined(
-    _ pieces: [Data], through pipeline: ContainerDecodePipeline, observe: (ContainerDecodePipeline) -> Void = { _ in }
-) -> Decoded {
+/// `pieces` decoded by `pipeline`, fed one at a time and drained after each, then finished and drained.
+func pipelined(_ pieces: [Data], through pipeline: ContainerDecodePipeline) -> Decoded {
     var result = Decoded()
     do {
         for piece in pieces {
             pipeline.feed(piece)
-            while let event = try pipeline.next() {
-                result.events.append(event)
-                observe(pipeline)
-            }
-            observe(pipeline)
+            while let event = try pipeline.next() { result.events.append(event) }
         }
         pipeline.finish()
-        while let event = try pipeline.next() {
-            result.events.append(event)
-            observe(pipeline)
-        }
+        while let event = try pipeline.next() { result.events.append(event) }
     } catch {
         result.error = error
     }

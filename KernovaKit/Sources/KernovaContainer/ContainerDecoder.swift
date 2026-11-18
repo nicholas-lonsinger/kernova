@@ -67,8 +67,10 @@ public struct ContainerDecoder {
         grammar = ContainerGrammar(acceptance: acceptance)
     }
 
+    #if DEBUG
     /// The input bytes held and not yet decoded.
-    public var bufferedByteCount: Int { buffer.count }
+    package var bufferedByteCountForTesting: Int { buffer.count }
+    #endif
 
     /// Takes the container's next bytes.
     ///

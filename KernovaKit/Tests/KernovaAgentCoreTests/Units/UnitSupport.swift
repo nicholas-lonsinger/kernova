@@ -160,6 +160,21 @@ enum Unit {
     }
 }
 
+/// A bare connection driven as an endpoint drives it, with no machine to route its events to.
+extension Connection {
+    /// Bytes as the transport delivered them, at any split: every whole frame in them handled, then the turn ended.
+    mutating func receive(_ bytes: Data, now: CoreInstant) {
+        ingest(bytes, now: now)
+        while processNextFrame() {}
+        finishReceive()
+    }
+
+    /// The next event, in the order they happened.
+    mutating func pollEvent() -> ConnectionEvent? {
+        pollRoutedEvent()?.event
+    }
+}
+
 /// One `Connection` under test against a raw far side: frames go in as bytes,
 /// what it writes is decoded back into frames.
 struct Wire {
@@ -178,7 +193,7 @@ struct Wire {
         var configuration = ConnectionConfiguration(
             claim: PeerClaim(role: .host), adverts: Unit.hostAdverts(), sessionToken: Data(repeating: 9, count: 16),
             hostPolicy: PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]), policy: policy)
-        configuration.assertsOnMisuse = false
+        configuration.assertsOnMisuseForTesting = false
         configure(&configuration)
         return Wire(configuration)
     }
@@ -193,7 +208,7 @@ struct Wire {
                 payloadHash: Data(repeating: 0xA1, count: 32), instanceID: Data(repeating: 2, count: 16)),
             initialState: PeerSessionState(console: .on, sessionID: "c1"), adverts: Unit.peerAdverts(),
             policy: policy)
-        configuration.assertsOnMisuse = false
+        configuration.assertsOnMisuseForTesting = false
         configure(&configuration)
         return Wire(configuration)
     }
@@ -295,8 +310,8 @@ struct Pair {
 
     /// The conservation sum for the direction `sender` → `receiver`.
     static func conserved(sender: Connection, receiver: Connection) -> Int {
-        let send = sender.footprint
-        let receive = receiver.footprint
+        let send = sender.footprintForTesting
+        let receive = receiver.footprintForTesting
         return send.connectionSendCredit + send.queuedRawBytes + receive.heldRawBytes
             + receive.unreturnedConnectionCredit
     }

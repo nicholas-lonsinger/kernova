@@ -58,7 +58,7 @@ extension CoreUnits {
             pair.host.connection.send(data: mebibyte, on: stream)
             pair.host.connection.send(data: mebibyte, on: stream)
             pair.hostToPeer()
-            #expect(pair.peer.connection.footprint.heldRawBytes == 2 << 20)
+            #expect(pair.peer.connection.footprintForTesting.heldRawBytes == 2 << 20)
             pair.host.connection.send(data: mebibyte, on: stream)
             let inFlight = pair.takeHostBytes()
             pair.host.connection.send(data: Data(repeating: 8, count: 1 << 19), on: stream)
@@ -69,8 +69,8 @@ extension CoreUnits {
             let total = Limits.initialConnectionWindow
             #expect(Pair.conserved(sender: pair.host.connection, receiver: pair.peer.connection) == total)
             #expect(Pair.conserved(sender: pair.peer.connection, receiver: pair.host.connection) == total)
-            #expect(pair.host.connection.footprint.queuedRawBytes == 0)
-            #expect(pair.peer.connection.footprint.heldRawBytes == 0)
+            #expect(pair.host.connection.footprintForTesting.queuedRawBytes == 0)
+            #expect(pair.peer.connection.footprintForTesting.heldRawBytes == 0)
         }
 
         @Test("Connection credit is conserved after a local close with raw DATA held and queued")
@@ -83,7 +83,7 @@ extension CoreUnits {
             pair.hostToPeer()
             pair.host.connection.send(data: mebibyte, on: stream)
             pair.host.connection.close(.shuttingDown, retryAfter: nil, now: pair.host.now)
-            #expect(pair.host.connection.footprint.queuedRawBytes == 0)
+            #expect(pair.host.connection.footprintForTesting.queuedRawBytes == 0)
             pair.settle()
             let total = Limits.initialConnectionWindow
             #expect(Pair.conserved(sender: pair.host.connection, receiver: pair.peer.connection) == total)
@@ -102,11 +102,13 @@ extension CoreUnits {
                 pair.hostToPeer()
             }
             pair.peer.connection.consumed(3 << 20, on: stream)
-            #expect(pair.peer.connection.footprint.unreturnedConnectionCredit == 3 << 20)
+            #expect(pair.peer.connection.footprintForTesting.unreturnedConnectionCredit == 3 << 20)
             pair.peer.connection.consumed(1 << 20, on: stream)
             pair.settle()
-            #expect(pair.peer.connection.footprint.unreturnedConnectionCredit == 0)
-            #expect(pair.host.connection.footprint.connectionSendCredit == Limits.initialConnectionWindow - (1 << 20))
+            #expect(pair.peer.connection.footprintForTesting.unreturnedConnectionCredit == 0)
+            #expect(
+                pair.host.connection.footprintForTesting.connectionSendCredit == Limits.initialConnectionWindow
+                    - (1 << 20))
             #expect(
                 Pair.conserved(sender: pair.host.connection, receiver: pair.peer.connection)
                     == Limits.initialConnectionWindow)
@@ -143,7 +145,7 @@ extension CoreUnits {
             #expect(returned.count == 1)
             #expect(
                 wire.connection.nextDeadline
-                    == Unit.at(0).advanced(by: .milliseconds(62) + CoreDuration(nanoseconds: 500_000)))
+                    == Unit.at(0).advanced(by: CoreDuration(nanoseconds: 62_500_000)))
             let end = Unit.at(1_000)
             while wire.now < end {
                 let next = min(wire.connection.nextDeadline ?? end, end)

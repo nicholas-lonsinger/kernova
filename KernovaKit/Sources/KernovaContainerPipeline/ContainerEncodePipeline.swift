@@ -45,16 +45,6 @@ public final class ContainerEncodePipeline {
         window = OrderedWindow(capacity: 2 * max(1, workers.count), workers: workers)
     }
 
-    /// The records held in the window.
-    package var heldRecords: Int { window.count }
-    /// The most records the window held at once.
-    package var mostHeldRecords: Int { window.mostHeld }
-    /// The most chunk bytes the window held at once: each record's payload, and for an attempt in flight its
-    /// chunk and as much again for its block.
-    package var mostHeldBytes: Int { window.mostHeldBytes }
-    /// The records the window holds at most.
-    package var windowCapacity: Int { window.capacity }
-
     /// Takes the tree's next event and returns the records now written, in order: those whose turn has come and
     /// whose attempts are done. `.end` returns every record still held, so the container is whole once it
     /// returns.
@@ -77,11 +67,11 @@ public final class ContainerEncodePipeline {
             let evicted: Written?
             switch record {
             case .lz4Candidate(let chunk, let entry) where writer.mayTry(candidateOf: entry):
-                evicted = window.append(bytes: 2 * chunk.count) {
+                evicted = window.append {
                     Written(record: record, attempt: .attempted(ContainerRecordWriter.lz4Payload(for: chunk)))
                 }
-            case .lz4Candidate(let chunk, _), .final(_, let chunk):
-                evicted = window.append(Written(record: record, attempt: .notAttempted), bytes: chunk.count)
+            case .lz4Candidate, .final:
+                evicted = window.append(Written(record: record, attempt: .notAttempted))
             }
             if let evicted { writer.write(evicted.record, attempt: evicted.attempt, to: &output) }
         }

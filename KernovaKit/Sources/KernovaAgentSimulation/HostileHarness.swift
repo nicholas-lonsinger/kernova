@@ -149,8 +149,8 @@ package final class HostileRun {
     ) {
         rng = SplitMix64(seed: seed)
         let configure: @Sendable (inout ConnectionConfiguration) -> Void = { connection in
-            connection.recordsTrace = true
-            connection.assertsOnMisuse = false
+            connection.recordsTraceForTesting = true
+            connection.assertsOnMisuseForTesting = false
             if testKinds { connection.addTestKinds() }
             tweak(&connection)
         }
@@ -160,7 +160,7 @@ package final class HostileRun {
             var configuration = HostConfiguration(
                 claim: PeerClaim(role: .host), sessionToken: Data(repeating: 9, count: 16),
                 policy: items ? SimItems.policy(policy) : policy, bundles: bundles)
-            configuration.tweak = configure
+            configuration.tweakForTesting = configure
             if items { configuration.items = SimItems.served }
             host = HostEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: now)
         case .peer:
@@ -170,7 +170,7 @@ package final class HostileRun {
                 claim: spec.claim, state: spec.state, power: spec.power.offer, logs: .available(NoParams()),
                 update: .available(UpdateOffer(formats: [.executable])))
             configuration.powerLedger = powerLedger
-            configuration.tweak = configure
+            configuration.tweakForTesting = configure
             if items { configuration.items = SimItems.served }
             peer = PeerEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: now)
         }
@@ -185,7 +185,9 @@ package final class HostileRun {
         return nil
     }
 
-    package var connectionFootprint: MemoryFootprint? { host?.connection.footprint ?? peer?.connection.footprint }
+    package var connectionFootprint: MemoryFootprint? {
+        host?.connection.footprintForTesting ?? peer?.connection.footprintForTesting
+    }
 
     /// The code of the local side's RESET(0), when it closed.
     package var localCloseCode: ErrorCode? {
@@ -360,8 +362,8 @@ package final class HostileRun {
                 }
             }
         }
-        trace += host?.takeTrace() ?? []
-        trace += peer?.takeTrace() ?? []
+        trace += host?.takeTraceForTesting() ?? []
+        trace += peer?.takeTraceForTesting() ?? []
     }
 
     /// Records an item effect and answers it at once from the item source or sink.

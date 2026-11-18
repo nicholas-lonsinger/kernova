@@ -18,8 +18,10 @@ struct OutputQueue<Output: Sendable, Slot: Hashable & Sendable>: Sendable {
         outputs.append(output)
     }
 
+    #if DEBUG
     /// Outputs not yet polled.
-    var count: Int { outputs.count - head }
+    var countForTesting: Int { outputs.count - head }
+    #endif
 
     /// Takes the oldest output.
     mutating func poll() -> Output? {

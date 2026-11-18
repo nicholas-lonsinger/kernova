@@ -77,9 +77,9 @@ package final class SimPeerProcess {
         let version = spec.protocolVersion
         let testKinds = world.options.testKinds
         let hostile = world.options.hostile
-        configuration.tweak = { connection in
-            connection.recordsTrace = true
-            connection.assertsOnMisuse = !hostile
+        configuration.tweakForTesting = { connection in
+            connection.recordsTraceForTesting = true
+            connection.assertsOnMisuseForTesting = !hostile
             connection.protocolVersion = version
             if testKinds { connection.addTestKinds() }
         }

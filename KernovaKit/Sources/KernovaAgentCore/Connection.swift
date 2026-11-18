@@ -7,9 +7,9 @@ import Foundation
 import KernovaWire
 
 /// One connection's frames, streams, credit, Hello, liveness and close, with no
-/// I/O: bytes go in through `receive`, frames come out through `pollTransmit`,
-/// everything else through `pollEvent`. Kind-aware only through its
-/// configuration's kind table.
+/// I/O: bytes go in through `ingest` and `processNextFrame`, frames come out
+/// through `pollTransmit`, everything else through `pollRoutedEvent`.
+/// Kind-aware only through its configuration's kind table.
 package struct Connection: Sendable {
     // MARK: Configuration
 
@@ -104,7 +104,9 @@ package struct Connection: Sendable {
     var diagnosticWindowStart: CoreInstant?
     var diagnosticCount = 0
     var diagnosticsSuppressed = 0
-    package var trace: [ConnectionTrace] = []
+    #if DEBUG
+    var trace: [ConnectionTrace] = []
+    #endif
 
     /// Creates a connection that has just connected, its preamble and Hello queued.
     package init(_ configuration: ConnectionConfiguration, now: CoreInstant) {
@@ -113,7 +115,10 @@ package struct Connection: Sendable {
         clock = JudgedClock(now: now, suspendedStep: configuration.policy.suspendedStep)
         nextPingAt = now.advanced(by: configuration.policy.pingInterval)
         lastHeard = now
-        nextLocalID = configuration.firstLocalStreamID ?? (configuration.claim.role == .host ? 2 : 1)
+        nextLocalID = configuration.claim.role == .host ? 2 : 1
+        #if DEBUG
+        if let first = configuration.firstLocalStreamIDForTesting { nextLocalID = first }
+        #endif
         openBucket = TokenBucket(
             capacity: configuration.policy.openBucketCapacity,
             perSecond: configuration.policy.openBucketRefillPerSecond, now: now)
@@ -129,13 +134,6 @@ package struct Connection: Sendable {
     }
 
     // MARK: - Inputs
-
-    /// Bytes as the transport delivered them, at any split.
-    package mutating func receive(_ bytes: Data, now: CoreInstant) {
-        ingest(bytes, now: now)
-        while processNextFrame() {}
-        finishReceive()
-    }
 
     /// Advances the clocks and buffers bytes without processing them;
     /// `processNextFrame` handles one frame and `finishReceive` ends the turn.
@@ -321,29 +319,9 @@ package struct Connection: Sendable {
         }
     }
 
-    /// The connection's memory and credit now.
-    package var footprint: MemoryFootprint {
-        var control = sessionQueue.count + (pendingConnectionWindow > 0 ? 1 : 0) + (pingPending ? 1 : 0)
-        var maxMessages = 0
-        for record in streams {
-            control += (record.pendingReset != nil ? 1 : 0) + (record.pendingWindow > 0 ? 1 : 0)
-            maxMessages = max(maxMessages, record.unsentMessages)
-        }
-        return MemoryFootprint(
-            heldRawBytes: connectionHeldRaw, decoderBufferedBytes: decoder.bufferedByteCount,
-            queuedRawBytes: queuedRawTotal, maxQueuedMessagesPerStream: maxMessages, controlFrames: control,
-            pendingEvents: events.count - eventHead, streamRecords: streams.count,
-            connectionSendCredit: connectionSendCredit, connectionReceiveRemaining: connectionReceiveRemaining,
-            unreturnedConnectionCredit: connectionUnreturned + pendingConnectionWindow)
-    }
-
     // MARK: - Outputs
 
-    /// The next event, in the order they happened.
-    package mutating func pollEvent() -> ConnectionEvent? {
-        pollRoutedEvent()?.event
-    }
-
+    /// The next event, in the order they happened, with the machine that owns its stream.
     package mutating func pollRoutedEvent() -> RoutedEvent? {
         guard eventHead < events.count else { return nil }
         let event = events[eventHead]
@@ -353,12 +331,6 @@ package struct Connection: Sendable {
             eventHead = 0
         }
         return event
-    }
-
-    /// Takes the trace the simulation reads, emptying it.
-    package mutating func takeTrace() -> [ConnectionTrace] {
-        defer { trace.removeAll(keepingCapacity: true) }
-        return trace
     }
 
     // MARK: - Internals shared by the extensions
@@ -454,9 +426,9 @@ package struct Connection: Sendable {
     }
 
     mutating func emit(_ event: ConnectionEvent, owner: KindOwner? = nil) {
-        if configuration.recordsTrace {
-            trace.append(.event(event))
-        }
+        #if DEBUG
+        appendTrace(.event(event))
+        #endif
         if case .closed(let closure) = event { self.closure = closure }
         events.append(RoutedEvent(event: event, owner: owner))
     }
@@ -485,9 +457,11 @@ package struct Connection: Sendable {
 
     /// A command the core's state forbids: a bug in a core machine.
     mutating func misuse(_ what: String) {
-        if configuration.assertsOnMisuse {
+        #if DEBUG
+        if configuration.assertsOnMisuseForTesting {
             assertionFailure("Connection misuse: \(what)")
         }
+        #endif
         diagnose(.localFault("misuse: \(what)"))
         fatal(.internal, what)
     }

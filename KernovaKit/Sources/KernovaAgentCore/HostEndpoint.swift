@@ -20,7 +20,10 @@ public struct HostConfiguration: Sendable {
     public var receiverPolicy: ReceiverPolicy = .production
     /// What this side serves of item transfer, clipboard, drop and drag.
     public var items = ItemFeatureAvailability.notImplemented
-    package var tweak: @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
+    #if DEBUG
+    /// Changes the connection's configuration once the endpoint has built it.
+    package var tweakForTesting: @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
+    #endif
 
     /// Creates a configuration.
     public init(claim: PeerClaim, sessionToken: Data, policy: PolicySnapshot, bundles: [BundledPayload]) {
@@ -100,7 +103,9 @@ public struct HostEndpoint: Sendable {
     private var logs = LogReceiver()
     private var update: UpdateServer
     private var items: ItemMachines
+    #if DEBUG
     package var testSink = TestBulkSink()
+    #endif
     /// The connection this endpoint runs.
     public let generation: ConnectionGeneration
     private var events = OutputQueue<HostEvent, HostEventSlot>()
@@ -118,7 +123,9 @@ public struct HostEndpoint: Sendable {
             hostPolicy: configuration.policy, hostBundles: configuration.bundles, policy: configuration.receiverPolicy)
         connectionConfiguration.adverts =
             [(.power, power.localAdvert), (.update, update.localAdvert), (.logs, logs.localAdvert)] + items.adverts
-        configuration.tweak(&connectionConfiguration)
+        #if DEBUG
+        configuration.tweakForTesting(&connectionConfiguration)
+        #endif
         connection = Connection(connectionConfiguration, now: now)
     }
 
@@ -211,21 +218,6 @@ public struct HostEndpoint: Sendable {
         route()
     }
 
-    /// Opens a bulk test stream.
-    package mutating func openTestBulk(_ kind: StreamKind, consumes: Bool, now: CoreInstant) -> StreamID? {
-        connection.tick(now)
-        route()
-        let stream = testSink.open(kind, consumes: consumes, connection: &connection)
-        route()
-        return stream
-    }
-
-    package mutating func setTestConsumes(_ consumes: Bool, on stream: StreamID, now: CoreInstant) {
-        connection.tick(now)
-        testSink.setConsumes(consumes, on: stream, connection: &connection)
-        route()
-    }
-
     // MARK: Items
 
     /// The item source's answer or the item sink's report; one naming another generation is dropped.
@@ -235,8 +227,6 @@ public struct HostEndpoint: Sendable {
         items.handle(input, connection: &connection)
         route()
     }
-
-    package var itemOffers: ItemOfferRegistry { items.transfer.offers }
 
     // MARK: Outputs
 
@@ -252,17 +242,41 @@ public struct HostEndpoint: Sendable {
         events.poll()
     }
 
-    /// Events not yet polled.
-    package var pendingEventCount: Int { events.count }
-
     /// The next ask of the payload source or an item adapter.
     public mutating func pollEffect() -> HostEffect? {
         effects.poll()
     }
 
-    package mutating func takeTrace() -> [ConnectionTrace] {
-        connection.takeTrace()
+    #if DEBUG
+    // MARK: Testing
+
+    /// Opens a bulk test stream.
+    package mutating func openTestBulk(_ kind: StreamKind, consumes: Bool, now: CoreInstant) -> StreamID? {
+        connection.tick(now)
+        route()
+        let stream = testSink.open(kind, consumes: consumes, connection: &connection)
+        route()
+        return stream
     }
+
+    /// Starts or stops consuming on the bulk test stream `stream`.
+    package mutating func setTestConsumes(_ consumes: Bool, on stream: StreamID, now: CoreInstant) {
+        connection.tick(now)
+        testSink.setConsumes(consumes, on: stream, connection: &connection)
+        route()
+    }
+
+    /// The item offers both sides hold open.
+    package var itemOffersForTesting: ItemOfferRegistry { items.transfer.offers }
+
+    /// Events not yet polled.
+    package var pendingEventCountForTesting: Int { events.countForTesting }
+
+    /// Takes the connection's trace, emptying it.
+    package mutating func takeTraceForTesting() -> [ConnectionTrace] {
+        connection.takeTraceForTesting()
+    }
+    #endif
 
     // MARK: Routing
 
@@ -333,7 +347,9 @@ public struct HostEndpoint: Sendable {
         case .update: update.handle(event, connection: &connection)
         case .logs: logs.handle(event, connection: &connection)
         case .itemTransfer, .itemOffer, .dragTake: items.deliver(event, to: owner, connection: &connection)
+        #if DEBUG
         case .testBulk: testSink.handle(event, connection: &connection)
+        #endif
         }
     }
 

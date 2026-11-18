@@ -28,9 +28,11 @@ package struct ConnectionConfiguration: Sendable {
     /// The kinds this connection serves.
     package var kinds: [StreamKindDescriptor]
     package var protocolVersion: UInt32 = Limits.protocolVersion
-    package var assertsOnMisuse = true
-    package var recordsTrace = false
-    package var firstLocalStreamID: UInt64?
+    #if DEBUG
+    package var assertsOnMisuseForTesting = true
+    package var recordsTraceForTesting = false
+    package var firstLocalStreamIDForTesting: UInt64?
+    #endif
 
     /// Creates a configuration over the production kinds.
     package init(
@@ -46,11 +48,6 @@ package struct ConnectionConfiguration: Sendable {
         self.hostBundles = hostBundles
         self.policy = policy
         self.kinds = StreamKindDescriptor.production
-    }
-
-    /// The production kinds plus the simulation's bulk kinds.
-    package mutating func addTestKinds() {
-        kinds += StreamKindDescriptor.testBulk
     }
 }
 
@@ -125,34 +122,6 @@ public struct Transmit: Sendable, Equatable {
     public var chunks: [Data]
     /// It holds the connection's RESET(0); nothing follows.
     public var isFinal: Bool
-
-    /// The total byte count.
-    public var byteCount: Int { chunks.reduce(0) { $0 + $1.count } }
-}
-
-/// A connection's current memory and credit, for the simulation's bounds and
-/// conservation checks.
-public struct MemoryFootprint: Sendable, Equatable {
-    /// Raw DATA delivered to machines and not yet consumed.
-    public var heldRawBytes: Int
-    /// Bytes the decoder holds.
-    public var decoderBufferedBytes: Int
-    /// Raw DATA queued and not yet handed out.
-    public var queuedRawBytes: Int
-    /// The most MESSAGE frames queued on any one stream.
-    public var maxQueuedMessagesPerStream: Int
-    /// Pending control frames: session snapshots, WINDOWs, PING, stream RESETs.
-    public var controlFrames: Int
-    /// Events not yet polled.
-    public var pendingEvents: Int
-    /// Streams in the table, refused ones awaiting their RESET included.
-    public var streamRecords: Int
-    /// Credit this side may still spend sending raw DATA.
-    public var connectionSendCredit: Int
-    /// Raw DATA the far side may still send this side.
-    public var connectionReceiveRemaining: Int
-    /// Connection credit owed back to the far side, a queued WINDOW included.
-    public var unreturnedConnectionCredit: Int
 }
 
 /// The phases of one stream, from this side.
@@ -165,11 +134,4 @@ package enum StreamPhase: Sendable, Equatable {
     case remoteEnded
     /// Terminal.
     case closed
-}
-
-/// What the simulation reads of a connection beside its events.
-package enum ConnectionTrace: Sendable, Equatable {
-    case localOpened(StreamID, StreamKind)
-    case sent(StreamID, isMessage: Bool, Data)
-    case event(ConnectionEvent)
 }

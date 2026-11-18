@@ -64,9 +64,6 @@ public final class GuestStreamAcceptor: Sendable {
         for stream in streams { stream.shutdown() }
     }
 
-    /// The slots taken: streams being built or not yet released.
-    public var liveConnectionCount: Int { state.withLock { $0.slots.count } }
-
     /// Decides one connection a guest opened, answering whether it was accepted, on the thread the
     /// transport accepts on.
     ///

@@ -27,7 +27,10 @@ public struct PeerConfiguration: Sendable {
     /// What this side serves of item transfer, clipboard, drop and drag. A system peer advertises the last
     /// three absent `NOT_SERVED_BY_ROLE` whatever this says.
     public var items = ItemFeatureAvailability.notImplemented
-    package var tweak: @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
+    #if DEBUG
+    /// Changes the connection's configuration once the endpoint has built it.
+    package var tweakForTesting: @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
+    #endif
 
     /// Creates a configuration.
     public init(
@@ -107,7 +110,9 @@ public struct PeerEndpoint: Sendable {
     private var logs: LogForwarder
     private var update: UpdateClient
     private var items: ItemMachines
+    #if DEBUG
     package var testSink = TestBulkSink()
+    #endif
     /// The connection this endpoint runs.
     public let generation: ConnectionGeneration
     private var effects = OutputQueue<PeerEffect, NoSlot>()
@@ -129,7 +134,9 @@ public struct PeerEndpoint: Sendable {
             policy: configuration.receiverPolicy)
         connectionConfiguration.adverts =
             [(.power, power.localAdvert), (.update, update.localAdvert), (.logs, logs.localAdvert)] + items.adverts
-        configuration.tweak(&connectionConfiguration)
+        #if DEBUG
+        configuration.tweakForTesting(&connectionConfiguration)
+        #endif
         connection = Connection(connectionConfiguration, now: now)
     }
 
@@ -213,31 +220,6 @@ public struct PeerEndpoint: Sendable {
         route()
     }
 
-    /// Opens a bulk test stream.
-    package mutating func openTestBulk(_ kind: StreamKind, consumes: Bool, now: CoreInstant) -> StreamID? {
-        connection.tick(now)
-        route()
-        let stream = testSink.open(kind, consumes: consumes, connection: &connection)
-        route()
-        return stream
-    }
-
-    package mutating func resetTestStream(_ stream: StreamID, now: CoreInstant) {
-        connection.tick(now)
-        testSink.reset(stream, connection: &connection)
-        route()
-    }
-
-    package mutating func setTestConsumes(_ consumes: Bool, on stream: StreamID, now: CoreInstant) {
-        connection.tick(now)
-        testSink.setConsumes(consumes, on: stream, connection: &connection)
-        route()
-    }
-
-    // MARK: Items
-
-    package var itemOffers: ItemOfferRegistry { items.transfer.offers }
-
     // MARK: Outputs
 
     /// The next frames to write.
@@ -257,12 +239,43 @@ public struct PeerEndpoint: Sendable {
         events.poll()
     }
 
-    /// Events not yet polled.
-    package var pendingEventCount: Int { events.count }
+    #if DEBUG
+    // MARK: Testing
 
-    package mutating func takeTrace() -> [ConnectionTrace] {
-        connection.takeTrace()
+    /// Opens a bulk test stream.
+    package mutating func openTestBulk(_ kind: StreamKind, consumes: Bool, now: CoreInstant) -> StreamID? {
+        connection.tick(now)
+        route()
+        let stream = testSink.open(kind, consumes: consumes, connection: &connection)
+        route()
+        return stream
     }
+
+    /// Resets the bulk test stream `stream` with CANCELLED.
+    package mutating func resetTestStream(_ stream: StreamID, now: CoreInstant) {
+        connection.tick(now)
+        testSink.reset(stream, connection: &connection)
+        route()
+    }
+
+    /// Starts or stops consuming on the bulk test stream `stream`.
+    package mutating func setTestConsumes(_ consumes: Bool, on stream: StreamID, now: CoreInstant) {
+        connection.tick(now)
+        testSink.setConsumes(consumes, on: stream, connection: &connection)
+        route()
+    }
+
+    /// The item offers both sides hold open.
+    package var itemOffersForTesting: ItemOfferRegistry { items.transfer.offers }
+
+    /// Events not yet polled.
+    package var pendingEventCountForTesting: Int { events.countForTesting }
+
+    /// Takes the connection's trace, emptying it.
+    package mutating func takeTraceForTesting() -> [ConnectionTrace] {
+        connection.takeTraceForTesting()
+    }
+    #endif
 
     // MARK: Routing
 
@@ -358,7 +371,9 @@ public struct PeerEndpoint: Sendable {
         case .update: update.handle(event, connection: &connection)
         case .logs: logs.handle(event, connection: &connection)
         case .itemTransfer, .itemOffer, .dragTake: items.deliver(event, to: owner, connection: &connection)
+        #if DEBUG
         case .testBulk: testSink.handle(event, connection: &connection)
+        #endif
         }
     }
 

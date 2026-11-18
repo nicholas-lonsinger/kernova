@@ -6,6 +6,34 @@ import Foundation
 
 import KernovaWire
 
+#if DEBUG
+extension StreamKind {
+    /// The simulation's raw-DATA kind a peer opens.
+    package static let testBulkByPeer = StreamKind.UNRECOGNIZED(9000)
+    /// The simulation's raw-DATA kind the host opens.
+    package static let testBulkByHost = StreamKind.UNRECOGNIZED(9001)
+}
+
+extension StreamKindDescriptor {
+    /// The simulation's bulk kinds: 9000 opened by a peer, 9001 by the
+    /// host, each carrying raw DATA from acceptor to opener, any number at once.
+    package static let testBulk: [StreamKindDescriptor] = [
+        StreamKindDescriptor(
+            kind: .testBulkByPeer, feature: nil, owner: .testBulk, openerRole: .peer, openerToAcceptor: .nothing,
+            acceptorToOpener: .rawData, maxPerConnection: nil, isValidOpenBody: { _ in true }),
+        StreamKindDescriptor(
+            kind: .testBulkByHost, feature: nil, owner: .testBulk, openerRole: .host, openerToAcceptor: .nothing,
+            acceptorToOpener: .rawData, maxPerConnection: nil, isValidOpenBody: { _ in true }),
+    ]
+}
+
+extension ConnectionConfiguration {
+    /// The production kinds plus the simulation's bulk kinds.
+    package mutating func addTestKinds() {
+        kinds += StreamKindDescriptor.testBulk
+    }
+}
+
 /// The simulation's machine for the bulk test kinds: the acceptor sends
 /// a configured number of raw bytes as credit allows, then END; the opener
 /// consumes them, or holds them unconsumed while stalled, and ENDs back.
@@ -96,3 +124,4 @@ package struct TestBulkSink: Sendable {
         }
     }
 }
+#endif

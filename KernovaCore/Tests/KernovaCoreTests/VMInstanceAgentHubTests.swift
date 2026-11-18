@@ -170,7 +170,7 @@ struct VMInstanceAgentHubTests {
         instance.startAgentAbsenceWatch()
         try await instance.agentAbsenceTimerForTesting?.joined()
         #expect(instance.warnedMissingAgents.map(\.scope) == [.system])
-        defer { instance.cancelAgentAbsenceWatchdog() }
+        defer { instance.sessionContext?.cancelAgentAbsenceWatchdog() }
 
         instance.agentAbsenceGrace = .seconds(60)
         var erin = Self.peer(4, standing: .current)
@@ -344,7 +344,7 @@ struct VMInstanceAgentHubTests {
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [bobAway, aliceAway]))
         let context = try #require(instance.sessionContext)
         #expect(context.agentAbsenceTimerDeadline == bobAway.since + grace)
-        defer { instance.cancelAgentAbsenceWatchdog() }
+        defer { instance.sessionContext?.cancelAgentAbsenceWatchdog() }
 
         try await instance.agentAbsenceTimerForTesting?.joined()
         #expect(instance.agentHubSnapshot.away == [aliceAway])
@@ -374,7 +374,7 @@ struct VMInstanceAgentHubTests {
         let left = Self.away(system, order: 1)
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [left]))
         #expect(context.agentAbsenceTimerDeadline == floor + grace)
-        defer { instance.cancelAgentAbsenceWatchdog() }
+        defer { instance.sessionContext?.cancelAgentAbsenceWatchdog() }
 
         // A pause cancels the timer: the guest is no longer running.
         let sessionID = try #require(instance.liveSessionID)

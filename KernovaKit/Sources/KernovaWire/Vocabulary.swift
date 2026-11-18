@@ -36,10 +36,3 @@ public typealias EntryHeader = Kernova_V2_EntryHeader
 
 /// The counts a transfer container states last.
 public typealias EndRecord = Kernova_V2_EndRecord
-
-extension StreamKind {
-    /// The simulation's raw-DATA kind a peer opens.
-    package static let testBulkByPeer = StreamKind.UNRECOGNIZED(9000)
-    /// The simulation's raw-DATA kind the host opens.
-    package static let testBulkByHost = StreamKind.UNRECOGNIZED(9001)
-}

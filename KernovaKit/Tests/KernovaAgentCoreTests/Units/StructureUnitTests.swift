@@ -37,7 +37,7 @@ extension CoreUnits {
             #expect(wire.connection.remoteSlotsCounted == 1)
             wire.feed([WireFrames.reset(1, code: ErrorCode.cancelled.rawValue)])
             #expect(wire.connection.remoteSlotsCounted == 0)
-            #expect(wire.connection.footprint.streamRecords == 0)
+            #expect(wire.connection.footprintForTesting.streamRecords == 0)
 
             wire.feed([WireFrames.open(3, .logForward, body: Kernova_V2_LogOpen()), Unit.end(3)])
             wire.connection.end(StreamID(rawValue: 3), body: Data())
