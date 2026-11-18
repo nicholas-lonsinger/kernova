@@ -330,7 +330,7 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
     }
 
     /// The far side's offer stopped being this end's clipboard: a write of it the pasteboard still holds is
-    /// retracted — every promise when the far side's clipboard moved on, and what no paste had when the link or
+    /// retracted — every promise when the far side withdrew it, and what no paste had when the link or
     /// the setting ended it, since the far side may hold it still. This side's own copy replacing it replaced the
     /// write already.
     private func remoteEnded(_ remote: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {

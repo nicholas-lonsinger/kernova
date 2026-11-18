@@ -96,7 +96,7 @@ public enum ClipboardWithdrawal: Equatable, Sendable {
     /// Each promised type no reader has had, while what a paste had stays as data: the offer's carriage ended —
     /// the link ended, or the clipboard setting changed — and the far side may hold it still.
     case unread
-    /// Every promise, read or not: the far side's clipboard moved on, and nothing of what it promised stays.
+    /// Every promise, read or not: the far side withdrew its offer, and nothing of what it promised stays.
     case everyPromise
 }
 

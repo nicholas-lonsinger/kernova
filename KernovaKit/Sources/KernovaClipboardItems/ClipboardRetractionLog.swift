@@ -31,7 +31,7 @@ public enum ClipboardRetractionLog {
             switch ending {
             case .linkLost: "clipboard sharing with \(far) stopped"
             case .settingChanged: "the clipboard setting changed"
-            case .byFarSide: "\(far)'s clipboard moved on"
+            case .byFarSide: "\(far) withdrew its offer"
             case .superseded: "a copy of this side's replaced it"
             }
         return "Retracted \(taken) from the \(board) pasteboard\(peer)\(kept): \(why)"

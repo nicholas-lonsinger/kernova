@@ -891,7 +891,8 @@ message EndRecord {
 // is still open, so an offer that arrives while the receiver's own is open
 // crossed it: the host releases the peer's unread, and the peer takes the
 // host's. A side withdraws its offer RESET(CANCELLED) once its clipboard moves
-// on from it, which the receiver reads as it reads ITEM_OFFER_REPLACED;
+// on from it or as it offers anew, which the receiver reads as it reads
+// ITEM_OFFER_REPLACED;
 // DISABLED_BY_POLICY once the clipboard setting changes; and
 // CAPABILITY_WITHDRAWN once it may no longer offer.
 // DROP: the host offers what was dropped onto the VM. DRAG: the peer offers a

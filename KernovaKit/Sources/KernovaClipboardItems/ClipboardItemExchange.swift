@@ -65,7 +65,7 @@ public final class ClipboardItemExchange {
 
     /// How the far side's offer stopped being this end's clipboard.
     public enum RemoteEnding: Sendable, Equatable {
-        /// The far side withdrew it: its clipboard moved on.
+        /// The far side withdrew it — its clipboard moved on, or it offered anew; the withdrawal does not say which.
         case byFarSide
         /// This side made a copy of its own.
         case superseded
@@ -302,8 +302,8 @@ public final class ClipboardItemExchange {
     }
 
     /// Withdraws this side's offer, sent or open, RESET with `code`: `CANCELLED` when this end's clipboard moved
-    /// on, `DISABLED_BY_POLICY` when the clipboard setting changed, `CAPABILITY_WITHDRAWN` when this side can no
-    /// longer offer for another reason (``ending(_:)`` reads each); no newer one follows. The far side's offer, if
+    /// on or this side offers anew, `DISABLED_BY_POLICY` when the clipboard setting changed, `CAPABILITY_WITHDRAWN`
+    /// when this side can no longer offer for another reason (``ending(_:)`` reads each). The far side's offer, if
     /// it is this end's clipboard, stays so.
     func withdrawLocal(_ code: ErrorCode = .cancelled) {
         switch local {
