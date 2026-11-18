@@ -2107,12 +2107,6 @@ public nonisolated struct Kernova_V2_ItemSetHeader: Sendable {
   /// 16 random bytes naming this offer; a pull quotes it.
   public var token: Data = Data()
 
-  /// CLIPBOARD_OFFER_BY_PEER only: the token of the last
-  /// CLIPBOARD_OFFER_BY_HOST the peer received on this connection, empty when
-  /// none. The host takes the offer only when it has sent no newer one: when
-  /// it sent none, or this names its last. Empty on every other kind.
-  public var after: Data = Data()
-
   /// CLIPBOARD_OFFER_BY_PEER only: the token of the host's
   /// CLIPBOARD_OFFER_REQUEST this offer answers; empty when it answers none.
   /// Empty on every other kind.
@@ -4356,7 +4350,7 @@ nonisolated extension Kernova_V2_Item: SwiftProtobuf.Message, SwiftProtobuf._Mes
 
 nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ItemSetHeader"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}concealed\0\u{2}\u{2}count\0\u{1}token\0\u{1}after\0\u{2}\u{3}request\0\u{b}copy\0\u{b}left_out\0\u{c}\u{6}\u{1}\u{c}\u{7}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}concealed\0\u{2}\u{2}count\0\u{1}token\0\u{2}\u{4}request\0\u{b}after\0\u{b}copy\0\u{b}left_out\0\u{c}\u{5}\u{1}\u{c}\u{6}\u{1}\u{c}\u{7}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4367,7 +4361,6 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
       case 1: try { try decoder.decodeSingularBoolField(value: &self.concealed) }()
       case 3: try { try decoder.decodeSingularUInt32Field(value: &self.count) }()
       case 4: try { try decoder.decodeSingularBytesField(value: &self.token) }()
-      case 5: try { try decoder.decodeSingularBytesField(value: &self.after) }()
       case 8: try { try decoder.decodeSingularBytesField(value: &self.request) }()
       default: break
       }
@@ -4384,9 +4377,6 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
     if !self.token.isEmpty {
       try visitor.visitSingularBytesField(value: self.token, fieldNumber: 4)
     }
-    if !self.after.isEmpty {
-      try visitor.visitSingularBytesField(value: self.after, fieldNumber: 5)
-    }
     if !self.request.isEmpty {
       try visitor.visitSingularBytesField(value: self.request, fieldNumber: 8)
     }
@@ -4397,7 +4387,6 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
     if lhs.concealed != rhs.concealed {return false}
     if lhs.count != rhs.count {return false}
     if lhs.token != rhs.token {return false}
-    if lhs.after != rhs.after {return false}
     if lhs.request != rhs.request {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true

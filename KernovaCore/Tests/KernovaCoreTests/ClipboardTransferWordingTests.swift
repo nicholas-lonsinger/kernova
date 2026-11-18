@@ -27,7 +27,6 @@ struct ClipboardTransferWordingTests {
     private var everyArm: [(ClipboardTransferFailure, ClipboardTransferGesture)] {
         [
             (.diskFull(needed: 4096, available: 1024), .paste),
-            (.diskFull(needed: nil, available: nil), .preview),
             (.tooLarge(limitBytes: limit), .copy),
             (.tooLarge(limitBytes: limit), .peerPaste),
             (.peerReported(.pasteFailed), .peerPaste),
@@ -41,10 +40,8 @@ struct ClipboardTransferWordingTests {
             (.interrupted(fileCount: 1), .drop),
             (.interrupted(fileCount: 3), .drop),
             (.timedOut, .paste),
-            (.timedOut, .preview),
             (.timedOut, .drop),
             (.transferFailed, .paste),
-            (.transferFailed, .preview),
             (.transferFailed, .copy),
             (.stagingFailed, .paste),
             (.itemsSkipped(count: 2), .forward),
@@ -66,7 +63,6 @@ struct ClipboardTransferWordingTests {
             (.sourceUnreadable, .dragOut),
             (.tooLarge(limitBytes: 65_536), .dragOut),
             (.sourceUnreadable, .paste),
-            (.sourceUnreadable, .preview),
             (.sourceUnreadable, .drop),
         ]
     }
@@ -95,9 +91,6 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.sendFailed, .drop)).headline
                 == "Files not copied to \(quotedVM).")
-        #expect(
-            try #require(wording(.transferFailed, .preview)).headline
-                == "Clipboard preview from \(quotedVM) failed.")
     }
 
     @Test("every arm names the VM in its headline")
@@ -139,18 +132,6 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.interrupted(fileCount: nil), .paste)).message
                 .hasPrefix("Clipboard sharing with the VM stopped"))
-    }
-
-    @Test("a failed preview never claims a paste happened")
-    func previewNeverSpeaksOfAPaste() throws {
-        for failure in [
-            ClipboardTransferFailure.timedOut, .transferFailed, .sourceUnreadable,
-        ] {
-            let copy = try #require(wording(failure, .preview))
-            #expect(copy.message == "The preview from the guest couldn't be loaded.", "\(failure)")
-            #expect(!copy.message.contains("paste"), "\(failure)")
-            #expect(!copy.menuLine.contains("paste"), "\(failure)")
-        }
     }
 
     @Test("an interrupted drop counts the files it was carrying, and names only the connection ending")
@@ -235,7 +216,6 @@ struct ClipboardTransferWordingTests {
             (.timedOut, .paste, "Clipboard: paste from the guest timed out"),
             (.transferFailed, .paste, "Clipboard: paste from the guest failed"),
             (.diskFull(needed: 1, available: 0), .paste, "Clipboard: paste from the guest failed"),
-            (.transferFailed, .preview, "Clipboard: preview from the guest failed"),
             (.itemsSkipped(count: 1), .forward, "Clipboard: some files weren't forwarded"),
             (.itemsUnreadable, .forward, "Clipboard: the copy couldn't be read"),
             (.itemsUnreadable, .copy, "Clipboard: the guest's copy couldn't be read"),

@@ -23,7 +23,7 @@ public enum ClipboardProgressFormat {
             switch gesture {
             case .peerPaste: return "Pasting into “\(peerName)”…"
             case .dragOut: return "Copying to “\(peerName)”…"
-            case .paste, .preview, .copy, .forward, .drop: return "Sending to “\(peerName)”…"
+            case .paste, .copy, .forward, .drop: return "Sending to “\(peerName)”…"
             }
         }
     }

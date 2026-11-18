@@ -55,7 +55,7 @@ package struct ClipboardTransferWording: Equatable {
             return ClipboardTransferWording(
                 headline: headline(for: gesture, vm: vm),
                 message: detail.isEmpty ? base : "\(base) (\(detail))",
-                menuLine: inboundFailureLine(for: gesture))
+                menuLine: "Clipboard: paste from the guest failed")
 
         case (.tooLarge(let limitBytes), .copy):
             return ClipboardTransferWording(
@@ -160,23 +160,11 @@ package struct ClipboardTransferWording: Equatable {
                 message: "The VM stopped taking the files, so the drop was called off.",
                 menuLine: "Drop: the VM stopped taking the files")
 
-        case (.timedOut, .preview):
-            return ClipboardTransferWording(
-                headline: "Clipboard preview from \(vm) failed.",
-                message: "The preview from the guest couldn't be loaded.",
-                menuLine: "Clipboard: preview from the guest failed")
-
         case (.timedOut, _):
             return ClipboardTransferWording(
                 headline: "Clipboard not pasted from \(vm).",
                 message: "The transfer from the guest timed out, so the paste didn't finish.",
                 menuLine: "Clipboard: paste from the guest timed out")
-
-        case (.transferFailed, .preview), (.stagingFailed, .preview), (.sourceUnreadable, .preview):
-            return ClipboardTransferWording(
-                headline: "Clipboard preview from \(vm) failed.",
-                message: "The preview from the guest couldn't be loaded.",
-                menuLine: "Clipboard: preview from the guest failed")
 
         case (.transferFailed, .copy):
             return ClipboardTransferWording(
@@ -252,7 +240,6 @@ package struct ClipboardTransferWording: Equatable {
     /// asked for the bytes.
     private static func headline(for gesture: ClipboardTransferGesture, vm: String) -> String {
         switch gesture {
-        case .preview: return "Clipboard preview from \(vm) failed."
         case .copy: return "Clipboard not copied from \(vm)."
         case .forward: return "Clipboard not copied to \(vm)."
         case .drop: return "Files not copied to \(vm)."
@@ -315,7 +302,7 @@ package struct ClipboardTransferWording: Equatable {
         case .drop: "the drop"
         case .dragOut: "the drag"
         case .copy, .forward: "the copy"
-        case .paste, .peerPaste, .preview: "the paste"
+        case .paste, .peerPaste: "the paste"
         }
     }
 
@@ -330,12 +317,6 @@ package struct ClipboardTransferWording: Equatable {
         .joined(separator: ", ")
     }
 
-    /// The dropdown line for a failure pulling bytes from the guest.
-    private static func inboundFailureLine(for gesture: ClipboardTransferGesture) -> String {
-        gesture == .preview
-            ? "Clipboard: preview from the guest failed" : "Clipboard: paste from the guest failed"
-    }
-
     private static func quoted(_ name: String) -> String { "\u{201C}\(name)\u{201D}" }
 }
 
@@ -345,7 +326,7 @@ extension ClipboardTransferGesture {
     fileprivate var readsOnThisMac: Bool {
         switch self {
         case .drop, .forward, .peerPaste: true
-        case .paste, .preview, .copy, .dragOut: false
+        case .paste, .copy, .dragOut: false
         }
     }
 }

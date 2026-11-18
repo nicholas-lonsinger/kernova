@@ -30,21 +30,15 @@ public struct ItemOffer: Sendable, Equatable {
     public var concealed: Bool
     /// The items, in the order they are sent.
     public var items: [OfferedItem]
-    /// A peer's CLIPBOARD offer: the token of the last host clipboard offer it received on the connection,
-    /// empty when none (`ItemSetHeader.after`). Empty on every other offer.
-    public var after: Data
     /// A peer's CLIPBOARD offer: the token of the host's request it answers (``ItemTransferEvent/offerRequested(token:)``),
     /// empty when none (`ItemSetHeader.request`). Empty on every other offer.
     public var request: Data
 
     /// Creates an offer.
-    public init(
-        token: Data, concealed: Bool = false, items: [OfferedItem], after: Data = Data(), request: Data = Data()
-    ) {
+    public init(token: Data, concealed: Bool = false, items: [OfferedItem], request: Data = Data()) {
         self.token = token
         self.concealed = concealed
         self.items = items
-        self.after = after
         self.request = request
     }
 }
@@ -59,27 +53,22 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
     public var concealed: Bool
     /// The items the offer sends.
     public var count: Int
-    /// ``ItemOffer/after``, as the OPEN carried it.
-    public var after: Data
     /// ``ItemOffer/request``, as the OPEN carried it.
     public var request: Data
 
     /// A header announcing `count` items of `feature`'s offer `token`.
-    public init(
-        feature: FeatureID, token: Data, concealed: Bool, count: Int, after: Data = Data(), request: Data = Data()
-    ) {
+    public init(feature: FeatureID, token: Data, concealed: Bool, count: Int, request: Data = Data()) {
         self.feature = feature
         self.token = token
         self.concealed = concealed
         self.count = count
-        self.after = after
         self.request = request
     }
 
     init(_ header: Kernova_V2_ItemSetHeader, feature: FeatureID) {
         self.init(
             feature: feature, token: header.token, concealed: header.concealed, count: Int(header.count),
-            after: header.after, request: header.request)
+            request: header.request)
     }
 }
 

@@ -11,11 +11,14 @@ import KernovaSynchronization
 ///
 /// One directory per offer generation; the newest ``maxGenerations`` are kept,
 /// so a pasteboard URL a newer offer replaced survives while Finder copies it
-/// out, and the generation past them deletes the oldest. A generation's
-/// directories are made only by pulls of its offer, which run only while this
-/// side's write of that offer stands, and every later offer's write replaces
-/// what an earlier one left on the pasteboard, a pasted file kept included: so
-/// no write of this side names a file of the generation an eviction deletes.
+/// out, and the generation past them deletes the oldest, retracting nothing
+/// from the pasteboard. An eviction deletes no file a write of this side names,
+/// or an offer can still serve: a far-side offer's pulls land in its own
+/// generation only while this side's write of it stands, and every later
+/// offer's write replaces what an earlier one left, a pasted file kept
+/// included; this side's own offer calls its promises in to a generation of
+/// its own, which only the far side's pulls of that offer read, and only while
+/// it is this side's one open offer.
 ///
 /// Each instance owns a private root (the label plus a per-instance component)
 /// under its process's ``ProcessStagingRoot``. What it keeps stays for as long

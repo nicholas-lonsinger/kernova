@@ -135,6 +135,49 @@ struct ClipboardEndTests {
         #expect(pair.holding(.host) == .write("guest"))
     }
 
+    @Test(
+        "Copy to Mac takes the guest's answer after a Copy to Guest the Mac's clipboard moved on from while it opened, which the guest took"
+    )
+    func copyToMacAfterACopyToGuestWithdrawnWhileItOpened() async throws {
+        let pair = ClipboardEndPair(staging: staging.root, gate: .onCommand, holdsSteps: true)
+        let wire = try #require(pair.wire)
+        func step(_ act: () -> Void) async throws {
+            act()
+            try await pair.settle()
+            while pair.landRead(on: .host) || pair.landRead(on: .guest) { try await pair.settle() }
+        }
+        func answer(_ side: ClipboardWire.Side) async throws {
+            while !wire.unansweredOpens(side).isEmpty { try await step { wire.answerOldestOpen(of: side) } }
+        }
+        func deliver(toward side: ClipboardWire.Side) async throws {
+            while !wire.queue(toward: side).isEmpty { try await step { wire.deliverNext(toward: side) } }
+        }
+
+        // A Copy to Guest the guest takes.
+        pair.copy("first", on: .host)
+        try await step { pair.host.offerOnCommand() }
+        try await answer(.host)
+        try await deliver(toward: .guest)
+        #expect(pair.holding(.guest) == .write("first"))
+
+        // Another, which the Mac's clipboard moves on from while it opens; the guest takes it, then its withdrawal.
+        try await step { pair.host.offerOnCommand() }
+        pair.copy("second", on: .host)
+        try await step { pair.poll() }
+        try await deliver(toward: .guest)
+        #expect(pair.holding(.guest) == .write("first"))
+        try await answer(.host)
+        try await deliver(toward: .guest)
+        #expect(pair.holding(.guest) == .nothing)
+
+        pair.copy("guest", on: .guest)
+        try await step { pair.host.requestOffer() }
+        try await deliver(toward: .guest)
+        try await answer(.guest)
+        try await deliver(toward: .host)
+        #expect(pair.holding(.host) == .write("guest"))
+    }
+
     // MARK: - The poll
 
     @Test("A copied zero-byte file is offered like any other, with nothing left out")
@@ -286,6 +329,39 @@ struct ClipboardEndTests {
         let pasted = await offCooperativePool { board.invokeProvider(forType: type) }
         #expect(pasted == Data("words".utf8))
         #expect(wire.pulls(.host) == 1)
+    }
+
+    @Test("Every promise of a copy holding more than staging keeps generations stays called in while its offer serves")
+    func everyPromiseOfOneOfferStays() async throws {
+        let pair = ClipboardEndPair(staging: staging.root, gate: .everyCopy)
+        let receivers = (0...ClipboardFileStaging.maxGenerations).map { index in
+            FakeFilePromiseReceiver(
+                name: "\(index).png", fileType: "public.png", contents: .file(Data("\(index)".utf8)))
+        }
+        pair.hostPasteboard.setFilePromises(receivers)
+        pair.poll()
+        try await pair.settle()
+        let offer = try #require(pair.wire?.opened(.host).last)
+        try #require(offer.items.count == receivers.count)
+
+        var served: [String] = []
+        let host = pair.host
+        for item in offer.items.indices {
+            var pull = PullRequest()
+            pull.token = offer.token
+            pull.item = UInt32(item)
+            let request = pull
+            let id = ItemPullID(
+                generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: UInt32(2 * item + 2)))
+            guard case .success(.tree(let path)) = await offCooperativePool({ host.content(id, request) }) else {
+                Issue.record("item \(item) was not served")
+                return
+            }
+            served.append(path)
+        }
+        for (index, path) in served.enumerated() {
+            #expect(FileManager.default.contents(atPath: path) == Data("\(index)".utf8), "item \(index)")
+        }
     }
 
     // MARK: - What a copy carries

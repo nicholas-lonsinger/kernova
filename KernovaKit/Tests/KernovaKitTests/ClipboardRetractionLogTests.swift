@@ -36,7 +36,7 @@ struct ClipboardRetractionLogTests {
             line(.host(vm: "V"), .settingChanged)
                 == "Retracted the guest's clipboard from the host pasteboard for 'V': the clipboard setting changed")
         #expect(
-            line(.host(vm: "V"), .byFarSide(hasSuccessor: false))
+            line(.host(vm: "V"), .byFarSide)
                 == "Retracted the guest's clipboard from the host pasteboard for 'V': the guest's clipboard moved on")
         #expect(
             line(.guest, .linkLost)
@@ -45,7 +45,7 @@ struct ClipboardRetractionLogTests {
             line(.guest, .settingChanged)
                 == "Retracted the Mac's clipboard from the guest pasteboard: the clipboard setting changed")
         #expect(
-            line(.guest, .byFarSide(hasSuccessor: true))
+            line(.guest, .byFarSide)
                 == "Retracted the Mac's clipboard from the guest pasteboard: the Mac's clipboard moved on")
     }
 }

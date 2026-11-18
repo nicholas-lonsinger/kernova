@@ -196,6 +196,19 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         return true
     }
 
+    /// Places one item per receiver of `receivers`, each carrying its file promise and nothing else, `receivers`
+    /// those every later read of the pasteboard's promises yields.
+    @MainActor
+    @discardableResult
+    public func setFilePromises(_ receivers: [any FilePromiseReceiving]) -> Bool {
+        let promise = NSFilePromiseReceiver.readableDraggedTypes.map {
+            (type: NSPasteboard.PasteboardType($0), data: Data())
+        }
+        setItems(receivers.map { _ in promise })
+        promiseReceivers = receivers
+        return true
+    }
+
     /// Places one item of `representations` beside `receiver`'s file promise, `receiver` the receiver every
     /// later read of the pasteboard's promises yields.
     @MainActor
@@ -222,8 +235,49 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
             state.resolved.removeAll()
         }
     }
+
+    // MARK: - Reads a clipboard end makes to offer it
+
+    /// Whether each read a clipboard end makes of this pasteboard to offer it waits, once it has read it, until
+    /// ``landOldestRead()`` lets it land. Off, every read lands as soon as it has read.
+    @MainActor public var holdsReads = false
+    /// Hears each read reaching its landing, held or not, and each held read landing, as ``changed`` does.
+    @MainActor public var readsChanged: (@MainActor () -> Void)?
+    /// How many reads reached their landing, held or not.
+    @MainActor public private(set) var readsReachedLanding = 0
+    /// Whether every read let land has landed: its end has run its landing, which follows in the same main-actor
+    /// turn as ``readsChanged`` hears it.
+    @MainActor public var landingsDone: Bool { landing == 0 }
+    @MainActor private var heldReads: [CheckedContinuation<Void, Never>] = []
+    @MainActor private var landing = 0
+
+    /// How many reads wait to land.
+    @MainActor public var heldReadCount: Int { heldReads.count }
+
+    /// Lets the oldest read waiting to land land; false when none waits.
+    @MainActor @discardableResult
+    public func landOldestRead() -> Bool {
+        guard !heldReads.isEmpty else { return false }
+        landing += 1
+        heldReads.removeFirst().resume()
+        return true
+    }
 }
 
 #if DEBUG
 extension FakePasteboard: ClipboardTestPolledPasteboard {}
+
+extension FakePasteboard: ClipboardTestHeldReadPasteboard {
+    /// Counts the read, and while ``holdsReads`` waits for ``landOldestRead()`` to let it land.
+    @MainActor public func readMayLandForTesting() async {
+        readsReachedLanding += 1
+        readsChanged?()
+        changed.notify()
+        guard holdsReads else { return }
+        await withCheckedContinuation { heldReads.append($0) }
+        landing -= 1
+        readsChanged?()
+        changed.notify()
+    }
+}
 #endif

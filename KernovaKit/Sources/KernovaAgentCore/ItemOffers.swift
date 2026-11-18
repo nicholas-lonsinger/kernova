@@ -94,6 +94,11 @@ package struct ItemOfferRegistry: Sendable {
     /// The tokens of the far side's open offers.
     package var remoteTokens: [Data] { remote.map(\.header.token) }
 
+    /// The tokens of the far side's open offers of `feature`, whole or still arriving.
+    func remoteTokens(of feature: FeatureID) -> [Data] {
+        remote.filter { $0.header.feature == feature }.map(\.header.token)
+    }
+
     #if DEBUG
     /// What the far side's open offers hold against `remoteItemByteLimit`, and the bytes their items hold.
     package var remoteHoldingForTesting: (charged: Int, itemBytes: Int, items: Int) {
@@ -203,7 +208,6 @@ package struct ItemOfferRegistry: Sendable {
         header.concealed = offer.concealed
         header.count = UInt32(clamping: offer.items.count)
         header.token = offer.token
-        header.after = offer.after
         header.request = offer.request
         let body = header.encoded
         if let oversize = (encoded + [body]).first(where: { $0.count > WireConstants.maxControlPayload }) {

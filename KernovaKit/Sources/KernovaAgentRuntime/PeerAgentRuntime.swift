@@ -153,10 +153,11 @@ public final class PeerAgentRuntime: Sendable {
 
     // MARK: Items
 
-    /// Offers `offer` on `feature` — CLIPBOARD, withdrawing the previous clipboard offer, or DRAG — to the host,
-    /// and calls `completion` once, on the runtime's queue, with nil once it opened, whose `.items` events then
-    /// follow, or why it did not. Each item call's answer, like each event, reaches the runtime's queue in the
-    /// order the connection emitted them; with no connection, or once it ends, a call is answered as ended.
+    /// Offers `offer` on `feature` — CLIPBOARD, first releasing the host's clipboard offers and withdrawing the
+    /// previous one of its own, or DRAG — to the host, and calls `completion` once, on the runtime's queue, with
+    /// nil once it opened, whose `.items` events then follow, or why it did not. Each item call's answer, like each
+    /// event, reaches the runtime's queue in the order the connection emitted them; with no connection, or once it
+    /// ends, a call is answered as ended.
     public func offerItems(
         _ offer: ItemOffer, feature: FeatureID, _ completion: @escaping @Sendable (WireError?) -> Void
     ) {

@@ -109,6 +109,47 @@ struct AgentHubItemTests {
         try await close([off], harness)
     }
 
+    @Test(
+        "An offer or request bound to a peer that is not the feature's console peer is refused FEATURE_UNAVAILABLE, and sent nowhere"
+    )
+    func boundOpenRefusedOffTheConsolePeer() async {
+        let harness = await harness()
+        let (onEvents, offEvents) = (Recorder<PeerEvent>(), Recorder<PeerEvent>())
+        let on = runtime(harness, events: onEvents)
+        let off = runtime(harness, claim: Self.offConsole, state: Self.offState, events: offEvents)
+        let ready = await harness.snapshot { $0.peers.count == 2 && $0.consolePeers.count == 3 }
+        guard let console = ready.peers.first(where: { $0.sessionID == "1" })?.handle,
+            let other = ready.peers.first(where: { $0.sessionID == "2" })?.handle
+        else { Issue.record("not both sessions"); return }
+
+        let offered = await withCheckedContinuation { continuation in
+            harness.hub.offerItems(Self.offer, feature: .clipboard, on: other) { continuation.resume(returning: $0) }
+        }
+        let requested = await withCheckedContinuation { continuation in
+            harness.hub.requestClipboardOffer(SimItems.token(2), on: other) { continuation.resume(returning: $0) }
+        }
+        for result in [offered, requested] {
+            guard case .failure(let refusal) = result else {
+                Issue.record("opened on \(result)"); continue
+            }
+            #expect(refusal.code == .featureUnavailable)
+        }
+        await harness.settled()
+        #expect(
+            !(onEvents.elements + offEvents.elements).contains { event in
+                switch event {
+                case .items(.offerReceived), .items(.offerRequested): true
+                default: false
+                }
+            })
+
+        let bound = await withCheckedContinuation { continuation in
+            harness.hub.offerItems(Self.offer, feature: .clipboard, on: console) { continuation.resume(returning: $0) }
+        }
+        #expect(bound == .success(console))
+        await close([on, off], harness)
+    }
+
     @Test("The snapshot's console peer for each feature follows the console from one session to another")
     func consolePeerFollowsConsole() async throws {
         let harness = try await harness()

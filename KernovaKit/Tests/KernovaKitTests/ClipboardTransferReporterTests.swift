@@ -128,17 +128,17 @@ struct ClipboardTransferReporterTests {
     func refusalOutlivesAConcurrentOperation() {
         let clock = GatedEngineClock()
         let reporter = makeReporter(clock: clock)
-        let preview = makeOperation(reporter, gesture: .preview)
+        let fetch = makeOperation(reporter, gesture: .paste)
         let since = Date(timeIntervalSince1970: 100)
 
-        // A preview is on screen...
-        reporter.publish(from: preview, .running(snapshot(bytes: 10), since: since))
+        // A paste is on screen...
+        reporter.publish(from: fetch, .running(snapshot(bytes: 10), since: since))
         guard case .running = reporter.report else {
-            Issue.record("expected the preview's readout")
+            Issue.record("expected the paste's readout")
             return
         }
 
-        // ...when a paste fire fails underneath it. The refusal shows at once, so
+        // ...when another paste fire fails underneath it. The refusal shows at once, so
         // the notice popover, the dropdown line and the window banner all fire.
         let refusal = finish(.diskFull(needed: 4096, available: 0), at: since.addingTimeInterval(1))
         reporter.finish(refusal)
@@ -146,7 +146,7 @@ struct ClipboardTransferReporterTests {
 
         // The running operation's next emission takes the bar back; the refusal
         // stands underneath rather than being dropped.
-        reporter.publish(from: preview, .running(snapshot(bytes: 20), since: since))
+        reporter.publish(from: fetch, .running(snapshot(bytes: 20), since: since))
         guard case .running = reporter.report else {
             Issue.record("the running operation must take the readout back")
             return
@@ -155,10 +155,10 @@ struct ClipboardTransferReporterTests {
         // Running to the end says nothing about the paste that failed alongside,
         // so the completion must not clear it.
         reporter.publish(
-            from: preview,
+            from: fetch,
             .finished(
                 ClipboardTransferFinish(
-                    gesture: .preview, outcome: .completed(final: snapshot(bytes: 100)),
+                    gesture: .paste, outcome: .completed(final: snapshot(bytes: 100)),
                     peerName: "macOS TEST")))
         #expect(reporter.report == .finished(refusal))
         // No dwell retires it either: a refusal stands until something displaces
@@ -322,16 +322,16 @@ struct ClipboardTransferReporterTests {
 
     // MARK: - Ranking
 
-    @Test("a preview fetch started during a drop leaves the drop on the readout")
-    func aDropOutranksAPreviewStartedUnderIt() {
+    @Test("a paste started during a drop leaves the drop on the readout")
+    func aDropOutranksAPasteStartedUnderIt() {
         let clock = GatedEngineClock()
         let reporter = makeReporter(clock: clock)
         let drop = makeOperation(reporter, gesture: .drop)
-        let preview = makeOperation(reporter, gesture: .preview)
+        let fetch = makeOperation(reporter, gesture: .paste)
 
         reporter.publish(from: drop, .running(snapshot(bytes: 1, gesture: .drop), since: Date()))
         reporter.publish(
-            from: preview, .running(snapshot(bytes: 2, gesture: .preview), since: Date()))
+            from: fetch, .running(snapshot(bytes: 2, gesture: .paste), since: Date()))
 
         #expect(runningSnapshot(reporter)?.gesture == .drop)
         // The fetch the ranking hides is still counted, so the queue reads as a

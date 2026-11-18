@@ -550,25 +550,6 @@ struct GuestClipboardTests {
 
     // MARK: - One current clipboard
 
-    @Test("A guest offer names the last host offer the guest received on its connection")
-    func offerNamesTheLastHostOffer() async throws {
-        let rig = rig()
-        let link = RecordingLink(items: [Self.textItem()])
-        openGate(rig, link)
-        try await receiveHostOffer(rig, link)
-
-        copy("copied in the guest", rig)
-        try await link.changed.wait { link.offers.count == 1 }
-        #expect(link.offers[0].after == Self.hostToken)
-
-        // A new connection has received nothing yet.
-        rig.clipboard.setLink(nil)
-        rig.clipboard.setLink(link)
-        copy("copied on the new connection", rig)
-        try await link.changed.wait { link.offers.count == 2 }
-        #expect(link.offers[1].after.isEmpty)
-    }
-
     @Test("Publishing the host's offer withdraws the guest's own: one current clipboard")
     func publishingWithdrawsTheGuestsOffer() async throws {
         let rig = rig()

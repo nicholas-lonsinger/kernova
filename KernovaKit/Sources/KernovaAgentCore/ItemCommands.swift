@@ -23,9 +23,9 @@ public struct ItemRequestID: Hashable, Sendable {
 /// stream slot when the connection ends, is never answered; one answered while the connection is closing
 /// follows `.closed`.
 public enum ItemCommand: Sendable, Equatable {
-    /// Offer on `feature`'s offer kind: CLIPBOARD, withdrawing this side's previous clipboard offer, DROP from
-    /// the host, or DRAG from a peer; answered `.offered`, refused `UNSUPPORTED_KIND` for a kind this side
-    /// does not open.
+    /// Offer on `feature`'s offer kind: CLIPBOARD, first releasing every clipboard offer of the far side's and
+    /// withdrawing this side's previous one, DROP from the host, or DRAG from a peer; answered `.offered`, refused
+    /// `UNSUPPORTED_KIND` for a kind this side does not open.
     case offer(ItemRequestID, ItemOffer, feature: FeatureID)
     /// Host: ask the peer to offer its clipboard, by a request of `token`, 16 bytes no open offer or request of
     /// this side holds, which withdraws no clipboard offer; answered `.offered`, refused `UNSUPPORTED_KIND`

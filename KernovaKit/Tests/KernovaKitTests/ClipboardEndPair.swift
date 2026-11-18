@@ -11,7 +11,8 @@ import KernovaWire
 
 /// A host's ``ClipboardEnd`` and a guest's over two fake pasteboards their test alone polls, joined by a
 /// ``ClipboardWire`` whose messages cross only when the test delivers them: everything either end does runs as the
-/// test steps it, and ``settle()`` waits until what a step set off has run.
+/// test steps it, and ``settle()`` waits until what a step set off has run. A pair that holds its steps also
+/// lands each read of a pasteboard and answers each offer's open only when the test says so.
 @MainActor
 final class ClipboardEndPair {
     typealias Side = ClipboardWire.Side
@@ -45,17 +46,21 @@ final class ClipboardEndPair {
     private(set) var wire: ClipboardWire?
     /// Every event each end emitted, in order.
     private(set) var events: [Side: [ClipboardEndEvent]] = [.host: [], .guest: []]
-    private var reading = 0
+    /// How many reads of its pasteboard each end began.
+    private var readsBegun: [Side: Int] = [.host: 0, .guest: 0]
+    private let holdsSteps: Bool
 
     private static let typePrefix = "com.kernova.test.copy."
     private static let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "ClipboardEndPair")
 
     /// Two ends under `gate`, each allowed to offer, under `pasteCeiling`, over a fresh connection that comes up
-    /// once each side `copied` names holds that copy.
+    /// once each side `copied` names holds that copy; holding each read's landing and each open's answer for the
+    /// test when `holdsSteps`.
     init(
         staging: ProcessStagingRoot, gate: ClipboardOfferGate, copied: [Side: String] = [:],
-        pasteCeiling: @escaping @Sendable () -> Int = { ClipboardPasteLimit.defaultBytes }
+        holdsSteps: Bool = false, pasteCeiling: @escaping @Sendable () -> Int = { ClipboardPasteLimit.defaultBytes }
     ) {
+        self.holdsSteps = holdsSteps
         host = ClipboardEnd(
             pasteboard: hostPasteboard, gate: gate, stagingLabel: "pair-host", stagingRoot: staging,
             pasteCeiling: pasteCeiling, providerRegistry: LazyClipboardProviderRegistry(),
@@ -64,6 +69,10 @@ final class ClipboardEndPair {
             pasteboard: guestPasteboard, gate: gate, stagingLabel: "pair-guest", stagingRoot: staging,
             pasteCeiling: pasteCeiling, providerRegistry: LazyClipboardProviderRegistry(),
             ledger: ClipboardWriteLedger(), logger: Self.logger)
+        for board in [hostPasteboard, guestPasteboard] {
+            board.holdsReads = holdsSteps
+            board.readsChanged = { [work] in work.changed.notify() }
+        }
         host.onEvent = { [weak self] in self?.heard($0, from: .host) }
         guest.onEvent = { [weak self] in self?.heard($0, from: .guest) }
         host.setMayOffer(true)
@@ -94,12 +103,34 @@ final class ClipboardEndPair {
         }
     }
 
+    /// Whether the guest may offer: its session owns the console.
+    func setGuestMayOffer(_ mayOffer: Bool) {
+        guest.setMayOffer(mayOffer)
+    }
+
+    /// The oldest read of `side`'s pasteboard waiting to land lands; false when none waits.
+    @discardableResult
+    func landRead(on side: Side) -> Bool {
+        pasteboard(side).landOldestRead()
+    }
+
+    /// How many reads of `side`'s pasteboard wait to land.
+    func heldReads(on side: Side) -> Int { pasteboard(side).heldReadCount }
+
+    /// `side` pastes its pasteboard's first promised type, the bytes it gets back; nil when it holds no promise, or
+    /// the paste got nothing.
+    func paste(on side: Side) async -> Data? {
+        let board = pasteboard(side)
+        guard let type = board.promisedTypes.first else { return nil }
+        return await offCooperativePool { board.invokeProvider(forType: type) }
+    }
+
     /// A fresh connection carries the clipboard on both ends.
     func linkUp() {
         let host = host
         let guest = guest
         let wire = ClipboardWire(
-            work: work,
+            work: work, holdsOpens: holdsSteps,
             deliver: { [weak self] side, event, wire in self?.hand(event, to: side, from: wire) },
             // Weak: each end holds the wire through its link.
             content: { [weak host, weak guest] side, id, request in
@@ -122,10 +153,16 @@ final class ClipboardEndPair {
         guest.setLink(nil)
     }
 
-    /// Suspends until nothing a step set off is still to run: no read of either pasteboard in flight, and no
-    /// event or completion the wire handed an end still queued.
+    /// Suspends until nothing a step set off is still to run: no read of either pasteboard in flight but one waiting
+    /// to land, and no event or completion the wire handed an end still queued.
     func settle() async throws {
-        try await work.changed.wait { self.reading == 0 && self.work.isIdle }
+        try await work.changed.wait {
+            self.work.isIdle
+                && Side.allCases.allSatisfy { side in
+                    let board = self.pasteboard(side)
+                    return board.readsReachedLanding == self.readsBegun[side] && board.landingsDone
+                }
+        }
     }
 
     // MARK: What the test sees
@@ -152,11 +189,7 @@ final class ClipboardEndPair {
 
     private func heard(_ event: ClipboardEndEvent, from side: Side) {
         events[side, default: []].append(event)
-        switch event {
-        case .readBegan: reading += 1
-        case .readEnded: reading -= 1
-        default: break
-        }
+        if case .readBegan = event { readsBegun[side, default: 0] += 1 }
         work.changed.notify()
     }
 

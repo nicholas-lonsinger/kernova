@@ -172,20 +172,20 @@ final class HubClipboardService {
     }
 }
 
-/// CLIPBOARD's calls through the hub to one peer.
+/// CLIPBOARD's calls through the hub to one peer: each opens only while that peer is CLIPBOARD's console peer.
 struct HubClipboardLink: ClipboardHostItemLink {
     let hub: AgentHub
     let peer: PeerHandle
     let sink: ItemSinkAdapter<POSIXTreeFileSystem>
 
     func offerItems(_ offer: ItemOffer, _ completion: @escaping @Sendable (WireError?) -> Void) {
-        hub.offerItems(offer, feature: .clipboard) { result in
+        hub.offerItems(offer, feature: .clipboard, on: peer) { result in
             if case .failure(let refusal) = result { completion(refusal) } else { completion(nil) }
         }
     }
 
     func requestOffer(_ token: Data, _ completion: @escaping @Sendable (WireError?) -> Void) {
-        hub.requestClipboardOffer(token) { result in
+        hub.requestClipboardOffer(token, on: peer) { result in
             if case .failure(let refusal) = result { completion(refusal) } else { completion(nil) }
         }
     }

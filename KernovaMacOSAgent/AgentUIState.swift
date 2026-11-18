@@ -17,8 +17,9 @@ enum ClipboardActivity: Equatable, Sendable {
     case offeredFromHost
     /// The host pulled the guest's clipboard bytes (an outbound stream started).
     ///
-    /// Any host fetch counts — a clipboard-window preview as well as a paste;
-    /// the guest can't tell them apart.
+    /// The host pulls when anything on the Mac reads what the guest's offer
+    /// promised there — a paste, or another app reading the clipboard — and the
+    /// guest can't tell which.
     case sentToHost
     /// An inbound paste from the host was materialized on the guest pasteboard.
     case receivedFromHost

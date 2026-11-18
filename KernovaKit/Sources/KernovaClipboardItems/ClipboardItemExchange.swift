@@ -17,7 +17,9 @@ import KernovaWire
 ///   connection carries only a copy made after it came up, never a source held from before.
 /// - The far side's offer arrives as ``ClipboardRemoteOffer``, its items read whole, for the end to publish.
 ///   Taking it withdraws this side's offer.
-/// - Offers made before either side saw the other's cross; the host's wins (``side``).
+/// - Offers made before either side saw the other's cross: the connection releases every far-side offer before
+///   it opens one of this side's, so a far-side offer arriving while this side's is sent or open crossed it. The
+///   host's wins (``side``).
 /// - The far side's offer is taken only as this end's gate admits it (``gate``): every one while this end offers at
 ///   every copy; while it offers on command, only the answer to the request it has open and — at a guest — the
 ///   host's own commands. Changing the gate ends every offer and request of either side's that this end sent or
@@ -33,10 +35,10 @@ import KernovaWire
 public final class ClipboardItemExchange {
     /// Which end an exchange is: the one end of a crossing whose copy wins.
     public enum Side: Sendable {
-        /// The host's: a guest offer made before the guest saw the host's latest is refused unread, since the
-        /// host's copy is already on its way to the guest.
+        /// The host's: a guest offer that crossed the host's is refused unread, since the host's copy is already on
+        /// its way to the guest.
         case host
-        /// A guest agent's: each offer names the last host offer it received (``ItemOffer/after``).
+        /// A guest agent's: it takes a host offer that crossed its own.
         case guest
 
         /// Whether, while this end offers on command, it takes a far-side offer answering no request of its own:
@@ -63,8 +65,8 @@ public final class ClipboardItemExchange {
 
     /// How the far side's offer stopped being this end's clipboard.
     public enum RemoteEnding: Sendable, Equatable {
-        /// The far side withdrew it: `hasSuccessor` when its next offer follows.
-        case byFarSide(hasSuccessor: Bool)
+        /// The far side withdrew it: its clipboard moved on.
+        case byFarSide
         /// This side made a copy of its own.
         case superseded
         /// The clipboard setting changed — this end's gate (``setGate(_:)``), or the far side's, which withdraws
@@ -123,13 +125,27 @@ public final class ClipboardItemExchange {
     private var openLocal: (token: Data, source: ClipboardOfferSource)? {
         if case .open(let token, let source) = local { (token, source) } else { nil }
     }
-    /// The host: the request this end has open on `link` (``requestOffer(on:)``), until a far-side offer answers
-    /// it.
-    private var request: Data?
+    /// The host: this end's request on `link` (``requestOffer(on:)``), whose answer this end takes, until the
+    /// answer arrives or the request ends unanswered.
+    private var request: Request?
+
+    /// The host's request, as far as the far side has answered it.
+    private enum Request {
+        /// Asked, with no answer yet.
+        case asked(Data)
+        /// The far side released it, which it does once the offer answering it opened. That offer is taken whole
+        /// only once its items have all crossed, which may be after the release.
+        case answered(Data)
+
+        var token: Data {
+            switch self {
+            case .asked(let token), .answered(let token): token
+            }
+        }
+    }
+
     /// A guest: the host's requests on `link` still to be answered.
     private var requests: Set<Data> = []
-    /// The host: the last offer the connection opened on `link`. A guest: the last host offer received on it.
-    private var lastLinkToken: Data?
     /// The tokens of the far side's offers whose items are still being read.
     private var reading: Set<Data> = []
     private var nextGeneration: UInt64 = 1
@@ -157,7 +173,8 @@ public final class ClipboardItemExchange {
 
     /// Runs over `link` from now on, or over nothing; this sends nothing. Every offer and request the connection
     /// before carried ends here: the far side's offer as `.linkLost`, its pulls cancelled; this side's, whose
-    /// ends follow as events; and a request of either side's.
+    /// ends follow as events; and a request of either side's, this end's refused if the far side had not answered
+    /// it.
     func setLink(_ link: (any ClipboardItemLink)?) {
         self.link = link
         local = .none
@@ -165,14 +182,15 @@ public final class ClipboardItemExchange {
         requests.removeAll()
         let unanswered = request
         request = nil
-        lastLinkToken = nil
         reading.removeAll()
         if let remote {
             self.remote = nil
             remote.close()
             onRemoteOfferEnded?(remote, .linkLost)
         }
-        if unanswered != nil { onRequestRefused?(.failed(WireError(.cancelled, debugDetail: "the connection left"))) }
+        if case .asked = unanswered {
+            onRequestRefused?(.failed(WireError(.cancelled, debugDetail: "the connection left")))
+        }
     }
 
     // MARK: The gate
@@ -186,10 +204,8 @@ public final class ClipboardItemExchange {
         withdrawLocal(.disabledByPolicy)
         for token in reading { link?.releaseOffer(token) }
         reading.removeAll()
-        if let request {
-            self.request = nil
-            link?.withdrawOffer(request, code: .disabledByPolicy)
-        }
+        if case .asked(let token) = request { link?.withdrawOffer(token, code: .disabledByPolicy) }
+        request = nil
         for token in requests { link?.refuseOffer(token, WireError(.disabledByPolicy)) }
         requests.removeAll()
         guard let remote else { return }
@@ -199,10 +215,10 @@ public final class ClipboardItemExchange {
     }
 
     /// Whether this end takes the far side's offer `header` under its gate: one answering a request only while
-    /// it is the request this end has open, whatever the gate; any other while this end offers at every copy,
-    /// or — while it offers on command — when it takes the far side's commands (``Side/takesFarSideCommands``).
+    /// it is this end's request, whatever the gate; any other while this end offers at every copy, or — while it
+    /// offers on command — when it takes the far side's commands (``Side/takesFarSideCommands``).
     private func admits(_ header: ItemSetHeaderValue) -> Bool {
-        guard header.request.isEmpty else { return header.request == request }
+        guard header.request.isEmpty else { return header.request == request?.token }
         switch gate {
         case .everyCopy: return true
         case .onCommand: return side.takesFarSideCommands
@@ -212,10 +228,10 @@ public final class ClipboardItemExchange {
     // MARK: This side's offer
 
     /// Makes `source`, which holds at least one item, this end's clipboard and offers it on the connection,
-    /// replacing this side's offer before it (`ITEM_OFFER_REPLACED`) and ending the far side's, answering the
-    /// host's `request` when one is named, which is released once the offer opens. The offer is withdrawn once
-    /// the pasteboard it was read from moves on from it. False when nothing was sent: `request` was answered or
-    /// ended already, or no connection carries the clipboard.
+    /// withdrawing this side's offer before it and ending the far side's, answering the host's `request` when one
+    /// is named, which is released once the offer opens. The offer is withdrawn once the pasteboard it was read
+    /// from moves on from it. False when nothing was sent: `request` was answered or ended already, or no
+    /// connection carries the clipboard.
     @discardableResult
     func offer(_ source: ClipboardOfferSource, answering request: OfferRequest?) -> Bool {
         if let request, requests.remove(request.token) == nil { return false }
@@ -228,8 +244,7 @@ public final class ClipboardItemExchange {
         let token = Self.freshToken()
         local = .opening(token: token, source: source)
         let offer = ItemOffer(
-            token: token, concealed: source.concealed, items: source.items, after: after,
-            request: request?.token ?? Data())
+            token: token, concealed: source.concealed, items: source.items, request: request?.token ?? Data())
         send(offer, on: link) { [weak self] opened in
             self?.answered(token, opened: opened)
             guard let request else { return }
@@ -258,9 +273,6 @@ public final class ClipboardItemExchange {
         }
     }
 
-    /// The `after` this side's next offer carries: a guest's names the last host offer it received.
-    private var after: Data { side == .guest ? lastLinkToken ?? Data() : Data() }
-
     /// The connection answered this side's offer `token`: it is this end's clipboard now, unless something
     /// withdrew or replaced it while it opened, when it is withdrawn at once.
     private func answered(_ token: Data, opened: Bool) {
@@ -274,7 +286,6 @@ public final class ClipboardItemExchange {
             return
         }
         local = .open(token: token, source: source)
-        if side == .host { lastLinkToken = token }
     }
 
     /// Sends `offer` on `link`, hearing on the main actor whether it opened.
@@ -315,27 +326,24 @@ public final class ClipboardItemExchange {
         onRemoteOfferEnded?(remote, ending)
     }
 
-    /// The host: whether the guest made `header`'s offer before it received this side's latest — sent, or still
-    /// opening — or while this side holds a copy it has yet to offer.
-    private func crosses(_ header: ItemSetHeaderValue) -> Bool {
-        let opening: Data? = if case .opening(let token, _) = local { token } else { nil }
-        if let sent = opening ?? lastLinkToken, header.after != sent { return true }
+    /// The host: whether the guest made the offer arriving now before it saw one of this side's still on the
+    /// connection — sent, open, or withdrawn while it opened, each of which the guest's connection releases before
+    /// it opens an offer of its own — or while this side holds a copy it has yet to offer.
+    private var crossed: Bool {
+        guard case .none = local, abandoned.isEmpty else { return true }
         return holdsUnsentCopy()
     }
 
     // MARK: Requests
 
     /// The host: asks the far side, over `link` — the one this end runs over — to offer its clipboard as it
-    /// stands now, by a request this end holds open until an offer answering it arrives, which this end takes
-    /// whatever its gate, or the far side refuses it (``onRequestRefused``). A request made while one is open
+    /// stands now, by a request whose answer this end takes whatever its gate, unless it crossed an offer of this
+    /// side's (``Side/host``), or the far side refuses it (``onRequestRefused``). A request made while one is open
     /// replaces it.
     func requestOffer(on link: any ClipboardHostItemLink) {
-        if let open = request {
-            request = nil
-            link.withdrawOffer(open, code: .itemOfferReplaced)
-        }
+        if case .asked(let open) = request { link.withdrawOffer(open, code: .itemOfferReplaced) }
         let token = Self.freshToken()
-        request = token
+        request = .asked(token)
         let logger = logger
         link.requestOffer(token) { [weak self] refusal in
             guard let refusal else { return logger.log(.notice, "Asked the far side for its clipboard") }
@@ -347,9 +355,22 @@ public final class ClipboardItemExchange {
         }
     }
 
-    /// The host's request `token` ended, the far side or the connection refusing it with `error`.
+    /// The host's request `token` ended as `closure` says: released once the far side's answer opened, or refused.
+    private func requestEnded(_ token: Data, _ closure: StreamClosure) {
+        switch closure {
+        case .completed:
+            guard case .asked(let asked) = request, asked == token else { return }
+            request = .answered(token)
+        case .resetByPeer(let error):
+            requestEnded(token, refusedWith: error)
+        default:
+            requestEnded(token, refusedWith: WireError(.cancelled, debugDetail: "the request ended unanswered"))
+        }
+    }
+
+    /// The host's request `token` ended unanswered, the far side or the connection refusing it with `error`.
     private func requestEnded(_ token: Data, refusedWith error: WireError) {
-        guard request == token else { return }
+        guard case .asked(let asked) = request, asked == token else { return }
         request = nil
         guard let refusal = Self.refusal(error) else {
             return logger.log(.notice, "The far side's clipboard holds only what this side's holds already")
@@ -442,11 +463,7 @@ public final class ClipboardItemExchange {
         case .offerRequested(let token):
             receivedRequest(token, on: link)
         case .requestEnded(.local, let token, let closure):
-            guard case .resetByPeer(let error) = closure else {
-                return requestEnded(
-                    token, refusedWith: WireError(.cancelled, debugDetail: "the request ended unanswered"))
-            }
-            requestEnded(token, refusedWith: error)
+            requestEnded(token, closure)
         case .requestEnded(.remote, let token, _):
             requests.remove(token)
         case .offerReceived(let header):
@@ -468,15 +485,14 @@ public final class ClipboardItemExchange {
     }
 
     /// How a far-side offer that ended with `closure` stopped being this end's clipboard, the same at both ends.
-    /// Only the far side withdrawing it is `.byFarSide`: RESET `CANCELLED`, or `ITEM_OFFER_REPLACED` when its next
-    /// offer follows. `DISABLED_BY_POLICY` is the clipboard setting changing. Every other end,
-    /// `CAPABILITY_WITHDRAWN` from a side the feature stopped being usable on included, is the link ending: the far
-    /// side's clipboard may hold it still.
+    /// Only the far side withdrawing it is `.byFarSide`: RESET `CANCELLED`, or `ITEM_OFFER_REPLACED` from the far
+    /// side's connection opening its next offer while that one was still open. `DISABLED_BY_POLICY` is the
+    /// clipboard setting changing. Every other end, `CAPABILITY_WITHDRAWN` from a side the feature stopped being
+    /// usable on included, is the link ending: the far side's clipboard may hold it still.
     static func ending(_ closure: StreamClosure) -> RemoteEnding {
         guard case .resetByPeer(let error) = closure else { return .linkLost }
         switch error.code {
-        case .cancelled: return .byFarSide(hasSuccessor: false)
-        case .itemOfferReplaced: return .byFarSide(hasSuccessor: true)
+        case .cancelled, .itemOfferReplaced: return .byFarSide
         case .disabledByPolicy: return .settingChanged
         default: return .linkLost
         }
@@ -504,16 +520,11 @@ public final class ClipboardItemExchange {
         }
         // The far side answered this end's request: nothing else answers it.
         if !header.request.isEmpty { request = nil }
-        switch side {
-        case .guest:
-            lastLinkToken = header.token
-        case .host:
-            guard !crosses(header) else {
-                logger.log(.notice, "Refused a guest clipboard offer that crossed the host's newer copy")
-                link.releaseOffer(header.token)
-                onCrossingRefused?()
-                return
-            }
+        if side == .host, crossed {
+            logger.log(.notice, "Refused a guest clipboard offer that crossed the host's newer copy")
+            link.releaseOffer(header.token)
+            onCrossingRefused?()
+            return
         }
         if let remote {
             // The far side replaced its offer: its RESET comes first, so this is only a connection's offer.

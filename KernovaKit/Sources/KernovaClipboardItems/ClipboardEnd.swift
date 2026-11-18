@@ -23,7 +23,8 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
     private let pasteboard: any ClipboardPasteboard
     private let publisher: ClipboardPasteboardPublisher
     private let exchange: ClipboardItemExchange
-    /// Where a file promise copied here is called in when the far side pulls an offer of it.
+    /// Where a file promise copied here is called in when the far side pulls an offer of it: each read's in a
+    /// generation of its own, so every promise one offer called in stays while that offer can serve it.
     private let promiseStaging: ClipboardFileStaging
     private var nextPromiseGeneration: UInt64 = 1
     private let pasteCeiling: @Sendable () -> Int
@@ -240,13 +241,16 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
         let pasteboard = pasteboard
         let publisher = publisher
         let promises = pasteboard.filePromiseReceivers
+        let promiseStaging = promiseStaging
+        let promiseGeneration = nextPromiseGeneration
+        nextPromiseGeneration += 1
         Task { @MainActor [weak self] in
             let outcome = await ClipboardPasteboardReader.readOffer(
                 from: pasteboard, publisher: publisher, promises: promises,
-                promiseDestination: { [weak self] in
-                    guard let self else { throw ClipboardServeError.unavailable }
-                    return try self.reservePromiseDirectory()
-                })
+                promiseDestination: { try promiseStaging.reserveScratchDirectory(generation: promiseGeneration) })
+            #if DEBUG
+            if let held = pasteboard as? any ClipboardTestHeldReadPasteboard { await held.readMayLandForTesting() }
+            #endif
             self?.landed(outcome, of: id)
         }
     }
@@ -290,13 +294,6 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
         self.read = nil
         if case .request(let request) = read.trigger { exchange.refuseRequest(request, error) }
         emit(.readEnded(read.trigger.reported, .superseded))
-    }
-
-    /// A directory of its own to call one copied file promise in to.
-    private func reservePromiseDirectory() throws -> URL {
-        let generation = nextPromiseGeneration
-        nextPromiseGeneration += 1
-        return try promiseStaging.reserveScratchDirectory(generation: generation)
     }
 
     // MARK: The far side's offer
@@ -362,8 +359,9 @@ extension ClipboardEnd where Role == ClipboardHost {
         readAndOffer(.command)
     }
 
-    /// "Copy to Mac": asks the guest to offer its clipboard as it stands now; its offer answering the request is
-    /// taken whatever the gate, and a refusal, or no connection to ask over, is heard as
+    /// "Copy to Mac": asks the guest to offer its clipboard as it stands now. Its offer answering the request is
+    /// taken unless a later request replaced this one, or the Mac's clipboard was offered after the guest made
+    /// its answer — the two crossed, and the Mac's wins; a refusal, or no connection to ask over, is heard as
     /// ``ClipboardEndEvent/requestRefused(_:)``.
     public func requestOffer() {
         guard let link else {

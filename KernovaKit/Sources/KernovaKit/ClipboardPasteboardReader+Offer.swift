@@ -312,3 +312,13 @@ extension ClipboardPasteboardReader {
             size: 0, name: name, promised: true)
     }
 }
+
+#if DEBUG
+/// A pasteboard whose test decides when each read a clipboard end makes of it to offer it lands: the read waits in
+/// ``readMayLandForTesting()`` once it has read the pasteboard, so what happens between a read's start and its end
+/// rests on the test's steps alone.
+public protocol ClipboardTestHeldReadPasteboard: AnyObject {
+    /// Returns once the test lets the read that has just read this pasteboard land.
+    @MainActor func readMayLandForTesting() async
+}
+#endif

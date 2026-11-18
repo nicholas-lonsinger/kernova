@@ -12,7 +12,8 @@ import KernovaWire
 /// each side holds at most one clipboard offer of its own.
 enum ItemFeatureScenarios {
     static let all: [Scenario] = [
-        clipboardReplaces, replacedMidPull, wrongRoleOffers, offerRequestAnswered, offerRequestRefused, dragTaken,
+        clipboardReplaces, clipboardReleasesFarSide, replacedMidPull, wrongRoleOffers, offerRequestAnswered,
+        offerRequestRefused, dragTaken,
         dragRefused, dragTakenOnce, dragWithdrawnWhileAsked, dragHandshake, dragStepsAtOnce, dragCalledOff,
         systemPeerServesNone, policyOff,
     ]
@@ -37,11 +38,11 @@ enum ItemFeatureScenarios {
         options: options,
         script: { world in
             world.addPeer(.session())
-            for (tag, side) in [(UInt8(1), SimSide.peer), (2, .host)] {
-                world.at(in: .ms(500) ... .ms(600)) { world in
+            for (tag, side, at) in [(UInt8(1), SimSide.peer, SimTime.ms(500)), (2, .host, .ms(1_500))] {
+                world.at(in: at...at + .ms(100)) { world in
                     world.offerItems(SimItems.offer(tag, [[file]]), from: side)
                 }
-                world.at(in: .ms(700) ... .ms(800)) { world in
+                world.at(in: at + .ms(200)...at + .ms(300)) { world in
                     world.offerItems(SimItems.offer(tag + 10, [[file]]), from: side)
                 }
             }
@@ -52,10 +53,11 @@ enum ItemFeatureScenarios {
                 let far: SimSide = side == .host ? .peer : .host
                 failures += expectThat(
                     items(world, side)?.offerRefusals.isEmpty == true, "\(side)'s offers opened")
-                let local = items(world, side)?.offersEnded.filter { $0.origin == .local } ?? []
+                let local =
+                    items(world, side)?.offersEnded.filter { $0.origin == .local && $0.token == SimItems.token(first) }
+                    ?? []
                 failures += expectThat(
-                    local.map(\.token) == [SimItems.token(first)]
-                        && local.map(\.closure) == [.resetLocally(WireError(.itemOfferReplaced))]
+                    local.map(\.closure) == [.resetLocally(WireError(.itemOfferReplaced))]
                         && local.allSatisfy { $0.feature == .clipboard },
                     "\(side) withdrew its first clipboard offer: \(local)")
                 let received = items(world, far)?.offersReceived.map(\.header) ?? []
@@ -64,11 +66,45 @@ enum ItemFeatureScenarios {
                         \.feature)
                         == [.clipboard, .clipboard],
                     "\(far) received both clipboard offers: \(received)")
-                let remote = items(world, far)?.offersEnded.filter { $0.origin == .remote } ?? []
+                let remote =
+                    items(world, far)?.offersEnded.filter { $0.origin == .remote && $0.token == SimItems.token(first) }
+                    ?? []
                 failures += expectThat(
-                    remote.map(\.token) == [SimItems.token(first)]
-                        && remote.map(\.closure) == [.resetByPeer(WireError(.itemOfferReplaced))],
+                    remote.map(\.closure) == [.resetByPeer(WireError(.itemOfferReplaced))],
                     "\(far) saw the first withdrawn: \(remote)")
+            }
+            return failures
+        })
+
+    static let clipboardReleasesFarSide = Scenario(
+        name:
+            "clipboard: a side's clipboard offer first releases every clipboard offer of the far side's it holds, so the far side hears its own end before the new offer",
+        seeds: 20, end: .sec(3), options: options,
+        script: { world in
+            world.addPeer(.session())
+            world.at(in: .ms(500) ... .ms(600)) { world in world.offerItems(SimItems.offer(1, [[file]]), from: .peer) }
+            world.at(in: .ms(1_000) ... .ms(1_100)) { world in
+                world.offerItems(SimItems.offer(2, [[file]]), from: .host)
+            }
+            world.at(in: .ms(1_500) ... .ms(1_600)) { world in
+                world.offerItems(SimItems.offer(3, [[file]]), from: .peer)
+            }
+        },
+        expect: { world in
+            var failures: [String] = []
+            for (side, held, next) in [(SimSide.peer, UInt8(1), UInt8(2)), (.host, 2, 3)] {
+                let far: SimSide = side == .host ? .peer : .host
+                let ended = items(world, side)?.offersEnded.first {
+                    $0.origin == .local && $0.token == SimItems.token(held)
+                }
+                let arrived = items(world, side)?.offersReceived.first { $0.header.token == SimItems.token(next) }
+                failures += expectThat(
+                    ended.map { if case .completed = $0.closure { true } else { false } } == true,
+                    "\(far)'s offer released \(side)'s: \(String(describing: ended))")
+                failures += expectThat(
+                    (ended?.time).flatMap { time in arrived.map { time <= $0.time } } == true,
+                    "\(side) heard its offer end before \(far)'s arrived: \(String(describing: ended)), \(String(describing: arrived))"
+                )
             }
             return failures
         })
@@ -129,7 +165,7 @@ enum ItemFeatureScenarios {
 
     static let offerRequestAnswered = Scenario(
         name:
-            "clipboard: the host's request withdraws no clipboard offer and its next clipboard offer leaves it open; the peer answers with an ordinary clipboard offer naming it, then releases it",
+            "clipboard: the host's request withdraws no clipboard offer and its next clipboard offer leaves it open; the peer answers with an ordinary clipboard offer naming it, releasing the host's offer it holds, then releases the request",
         seeds: 20, end: .sec(3), options: options,
         script: { world in
             world.addPeer(.session())
@@ -146,6 +182,9 @@ enum ItemFeatureScenarios {
         expect: { world in
             let host = items(world, .host)
             let local = host?.offersEnded.filter { $0.origin == .local } ?? []
+            let completed = { (closure: StreamClosure) -> Bool in
+                if case .completed = closure { true } else { false }
+            }
             let request = host?.requestsEnded.filter { $0.origin == .local } ?? []
             let answers = items(world, .peer)?.requestAnswers ?? []
             let received = host?.offersReceived.map(\.header).filter { !$0.request.isEmpty } ?? []
@@ -153,8 +192,13 @@ enum ItemFeatureScenarios {
             let offeredRequest = items(world, .peer)?.offersReceived.contains { $0.header.token == requestToken }
             return expectThat(host?.offerRefusals.isEmpty == true, "the host's offers and request opened")
                 + expectThat(
-                    local.map(\.token) == [SimItems.token(2)]
+                    local.first?.token == SimItems.token(2)
                         && local.first?.closure == .resetLocally(WireError(.itemOfferReplaced))
+                        // The answer releases the host's next offer when it arrived first.
+                        && local.dropFirst().allSatisfy {
+                            $0.token == SimItems.token(3)
+                                && (completed($0.closure) || $0.closure == .resetByPeer(WireError(.cancelled)))
+                        }
                         && local.allSatisfy { $0.feature == .clipboard },
                     "the host's next clipboard offer withdrew only its previous one: \(local)")
                 + expectThat(
@@ -170,8 +214,8 @@ enum ItemFeatureScenarios {
                         && received.allSatisfy { $0.request == requestToken && $0.feature == .clipboard },
                     "the host received the answer naming its request: \(received)")
                 + expectThat(
-                    ends(world, .host, .remote) == [.resetByPeer(WireError(.itemOfferReplaced))],
-                    "the answer withdrew the peer's previous clipboard offer: \(ends(world, .host, .remote))")
+                    ends(world, .host, .remote).count == 1 && ends(world, .host, .remote).allSatisfy(completed),
+                    "the host's next clipboard offer released the peer's: \(ends(world, .host, .remote))")
         })
 
     static let offerRequestRefused = Scenario(

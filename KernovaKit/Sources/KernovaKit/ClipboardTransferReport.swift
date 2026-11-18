@@ -8,8 +8,6 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     /// The peer's user pasted and this side serves the pull. The app pasted into
     /// sits blocked until the bytes land.
     case peerPaste
-    /// This side's clipboard window is filling in a preview of the peer's offer.
-    case preview
     /// The guest's clipboard written to the Mac's, whether passthrough or
     /// Copy Guest Clipboard to Mac brought it.
     case copy
@@ -43,12 +41,12 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     /// The order ``isAwaited`` implies, with the paste that holds an app ahead
     /// of the drop or drag whose files have not landed yet: a drop started
     /// mid-paste never takes the bar off the transfer someone is sitting in
-    /// front of, and a preview fetch never takes it off either.
+    /// front of.
     public var readoutRank: Int {
         switch self {
         case .peerPaste: 2
         case .drop, .dragOut: 1
-        case .paste, .preview, .copy, .forward: 0
+        case .paste, .copy, .forward: 0
         }
     }
 }

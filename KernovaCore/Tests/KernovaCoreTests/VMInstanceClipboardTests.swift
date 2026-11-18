@@ -1,7 +1,6 @@
 import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
-import KernovaClipboardItems
 import KernovaCommandModel
 import KernovaKit
 import KernovaTestSupport
@@ -11,8 +10,7 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// Which guests share a VM's clipboard, when its commands are offered, what its clipboard's events report, and the
-/// policy its agent hears.
+/// Which guests share a VM's clipboard, when its commands are offered, and the policy its agent hears.
 @MainActor
 @Suite("VM clipboard", .caseScoped)
 struct VMInstanceClipboardTests {
@@ -42,48 +40,6 @@ struct VMInstanceClipboardTests {
 
         instance.hubClipboard.setConsolePeer(nil)
         #expect(Self.commandsNamed(on: instance) == [false, false])
-    }
-
-    @Test("Each of the clipboard's events reports what passthrough and the commands report, or nothing")
-    func eventsReport() {
-        let expected: [(ClipboardEndEvent, ClipboardTransferGesture?, ClipboardTransferFailure?)] = [
-            (.readBegan(.copy), nil, nil),
-            (.readEnded(.copy, .offered(skipped: 0)), nil, nil),
-            (.readEnded(.copy, .offered(skipped: 2)), .forward, .itemsSkipped(count: 2)),
-            (.readEnded(.copy, .nothingToCopy), nil, nil),
-            (.readEnded(.copy, .nothingCarriable), nil, nil),
-            (.readEnded(.copy, .unreadable), .forward, .itemsUnreadable),
-            (.readEnded(.copy, .heldByFarSide), nil, nil),
-            (.readEnded(.copy, .superseded), nil, nil),
-            (.readEnded(.command, .offered(skipped: 0)), nil, nil),
-            (.readEnded(.command, .offered(skipped: 1)), .forward, .itemsSkipped(count: 1)),
-            (.readEnded(.command, .nothingToCopy), .forward, .nothingToCopy),
-            (.readEnded(.command, .nothingCarriable), .forward, .nothingToCopy),
-            (.readEnded(.command, .unreadable), .forward, .itemsUnreadable),
-            (.readEnded(.command, .heldByFarSide), nil, nil),
-            (.readEnded(.command, .superseded), nil, nil),
-            (.notAdmitted(.command), nil, nil),
-            (.published(.written), nil, nil),
-            (.published(.nothingToWrite), nil, nil),
-            (.published(.writtenWithoutFiles(count: 2, limitBytes: 9)), .copy, .filesLeftOut(count: 2, limitBytes: 9)),
-            (.published(.tooLarge(limitBytes: 9)), .copy, .tooLarge(limitBytes: 9)),
-            (.published(.writeFailed), .copy, .transferFailed),
-            (.retracted(.cleared, .byFarSide(hasSuccessor: false)), nil, nil),
-            (.retracted(.keptPart, .linkLost), nil, nil),
-            (.retracted(.cleared, .settingChanged), nil, nil),
-            (.requestRefused(.nothingToCopy), .copy, .nothingToCopy),
-            (.requestRefused(.unreadable), .copy, .itemsUnreadable),
-            (.requestRefused(.failed(WireError(.cancelled))), .copy, .transferFailed),
-            (.served, nil, nil),
-            (.landed, nil, nil),
-            (.pullFailed(WireError(.tooLarge)), nil, nil),
-            (.pasteRefused, .paste, .transferFailed),
-        ]
-        for (event, gesture, failure) in expected {
-            let refusal = HubClipboardService.refusal(for: event)
-            #expect(refusal?.gesture == gesture, "\(event)")
-            #expect(refusal?.failure == failure, "\(event)")
-        }
     }
 
     @Test("Only a macOS guest shares the clipboard: a Linux guest's stored flags offer and send nothing")
