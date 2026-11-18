@@ -647,10 +647,6 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         return .vmnet(VmnetNetworkSelection(kind: kind, membership: networkMembership).network(of: id))
     }
 
-    /// Whether this VM's device joins a network of its own — what every
-    /// surface reports as isolated.
-    var joinsOwnNetwork: Bool { joinedNetwork?.isOwn ?? false }
-
     /// The membership this VM's device joins its network with, `nil` where no
     /// app-managed network is joined (no device, or Bridged).
     var effectiveNetworkMembership: VMNetworkMembership? {

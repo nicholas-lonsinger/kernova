@@ -126,11 +126,6 @@ package final class VMLibraryViewModel {
     @discardableResult
     package func startLibrary() async -> Set<UUID> { await library.startLibrary() }
 
-    @discardableResult
-    func loadVMs() async -> Set<UUID> { await library.loadVMs() }
-
-    func reconcileWithDisk() { library.reconcileWithDisk() }
-
     /// Abandons what a quit cannot wait out: the arrivals still writing
     /// (``VMLibrary/abandonArrivalsForTermination()``) and every VM's
     /// transfers (``VMInstance/abandonTransfersForTermination()``).

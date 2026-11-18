@@ -161,7 +161,7 @@ struct RemindersSettingsViewControllerTests {
     private func info(about row: String, in controller: RemindersSettingsViewController) throws
         -> [InfoPopoverParagraph]
     {
-        try #require(infoButton(about: row, in: controller.view)).paragraphs
+        try #require(infoButton(about: row, in: controller.view)).paragraphsForTesting
     }
 
     @Test("The quit reminder's info opens with the title and text the reminder shows")

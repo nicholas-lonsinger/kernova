@@ -39,7 +39,7 @@ struct ItemTransferSchemaTests {
         #expect(ErrorCode.itemContainerMalformed.rawValue == 1002)
         #expect(ErrorCode.itemUnpackRefused.rawValue == 1003)
         #expect(ErrorCode.itemDecmpfsRefused.rawValue == 1004)
-        #expect(Codec.lz4.rawValue == 1)
+        #expect(Kernova_V2_Codec.lz4.rawValue == 1)
         #expect(Kernova_V2_Representation.Storage.inline.rawValue == 1)
         #expect(Kernova_V2_Representation.Storage.file.rawValue == 2)
         #expect(Kernova_V2_Representation.Storage.folder.rawValue == 3)
@@ -185,49 +185,11 @@ struct ItemTransferSchemaTests {
     }
 }
 
-@Suite("Choosing a representation for a destination")
-struct RepresentationChoiceTests {
-    private static func descriptor(_ mime: String, _ native: String...) -> TypeDescriptor {
-        var type = TypeDescriptor()
-        type.mime = mime
-        type.native = native
-        return type
-    }
-
-    private static func item(_ types: (TypeDescriptor, Kernova_V2_Representation.Storage)...) -> Kernova_V2_Item {
-        var item = Kernova_V2_Item()
-        item.representations = types.map { type, storage in
-            var representation = Kernova_V2_Representation()
-            representation.type = type
-            representation.storage = storage
-            return representation
-        }
-        return item
-    }
-
-    private static let uti = NativeTypeNamespace.appleUTI
-    private static let cf = NativeTypeNamespace.windowsClipboardFormat
-
+@Suite("Native type namespaces")
+struct NativeTypeNamespaceTests {
     @Test("A namespace prefixes its names")
     func qualifiedNames() {
-        #expect(Self.uti.qualified("public.png") == "apple-uti/public.png")
-        #expect(Self.cf.qualified("PNG") == "win-cf/PNG")
-    }
-
-    @Test("An empty MIME type matches nothing")
-    func emptyMIMEMatchesNothing() {
-        let item = Self.item((Self.descriptor("", Self.cf.qualified("PNG")), .inline))
-        #expect(item.representationIndex(accepting: [Self.descriptor("", Self.uti.qualified("public.png"))]) == nil)
-    }
-
-    @Test("A representation of unrecognized storage is never chosen")
-    func unrecognizedStorageSkipped() {
-        let item = Self.item(
-            (Self.descriptor("image/png"), .unspecified),
-            (Self.descriptor("image/png"), .UNRECOGNIZED(9)),
-            (Self.descriptor("image/png"), .folder))
-        #expect(item.representationIndex(accepting: [Self.descriptor("image/png")]) == 2)
-        let unoffered = Self.item((Self.descriptor("image/png"), .unspecified))
-        #expect(unoffered.representationIndex(accepting: [Self.descriptor("image/png")]) == nil)
+        #expect(NativeTypeNamespace.appleUTI.qualified("public.png") == "apple-uti/public.png")
+        #expect(NativeTypeNamespace.windowsClipboardFormat.qualified("PNG") == "win-cf/PNG")
     }
 }

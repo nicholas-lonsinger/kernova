@@ -37,10 +37,6 @@ struct LogindPeerStateTests {
             }
         }
 
-        deinit {
-            watcher.cancel()
-        }
-
         /// The next state delivered.
         func next() throws -> PeerSessionState? {
             try inbox.next().get()
@@ -289,7 +285,7 @@ struct LogindPeerStateTests {
         let watcher = try LogindPeerStateWatcher.systemPeer(logind, on: DispatchQueue(label: "test")) {
             inbox.put($0)
         }
-        defer { watcher.cancel() }
+        defer { withExtendedLifetime(watcher) {} }
         #expect(try inbox.next().get() == PeerSessionState(console: .off))
     }
 }

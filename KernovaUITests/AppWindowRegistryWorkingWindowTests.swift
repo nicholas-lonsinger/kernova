@@ -16,11 +16,13 @@ struct AppWindowRegistryWorkingWindowTests {
     private struct Fixture {
         let viewModel: VMLibraryViewModel
         let registry: AppWindowRegistry
+        let focus: RecordingSessionFocus
     }
 
     private func makeFixture() -> Fixture {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        return Fixture(viewModel: viewModel, registry: makeWindowRegistry(viewModel))
+        let focus = RecordingSessionFocus()
+        return Fixture(viewModel: viewModel, registry: makeWindowRegistry(viewModel, focus: focus), focus: focus)
     }
 
     /// The library window, shown for `registry`.
@@ -37,7 +39,7 @@ struct AppWindowRegistryWorkingWindowTests {
         let instance = VMInstanceFixture.make(name: "Status VM", guestOS: .macOS, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting().hasAgentTransport = true
         fixture.registry.showGuestAgentStatus(for: instance)
-        let status = try #require(fixture.registry.guestAgentStatusWindow(for: instance.instanceID))
+        let status = try #require(fixture.focus.presentedKeyAndFront.last)
         let sheet = makeTestWindow(styleMask: [.titled])
         status.beginSheet(sheet)
         #expect(sheet.sheetParent === status)

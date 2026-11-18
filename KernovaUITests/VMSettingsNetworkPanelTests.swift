@@ -157,7 +157,7 @@ struct VMSettingsNetworkPanelTests {
                 "---", "None",
                 "---", Self.editNamedNetworks,
             ])
-        #expect(item(.hostOnly, in: popUp)?.isEnabled == true)
+        #expect(item(.vmnet(.hostOnly, .common), in: popUp)?.isEnabled == true)
     }
 
     // MARK: - Networks of a mode
@@ -212,7 +212,7 @@ struct VMSettingsNetworkPanelTests {
         let popUp = try #require(settingsNetworkModePopUp(in: vc.view))
         let kind = try #require(VmnetNetworkKind(mode: mode))
         let isolated = NetworkModeChoice.vmnet(kind, .isolated)
-        let otherMode: NetworkModeChoice = mode == .nat ? .hostOnly : .nat
+        let otherMode: NetworkModeChoice = mode == .nat ? .vmnet(.hostOnly, .common) : .nat
 
         #expect(popUp.isEnabled == (mode == .nat))
         #expect(item(isolated, in: popUp)?.isEnabled == (mode == .nat))
@@ -303,7 +303,7 @@ struct VMSettingsNetworkPanelTests {
         for entitled in [true, false] {
             let (vc, _) = makeNetworkController(entitled: entitled)
             let button = try #require(infoButton(about: "Mode", in: vc.view))
-            let text = paragraphText(button.paragraphs)
+            let text = paragraphText(button.paragraphsForTesting)
             #expect(text.contains { $0.hasPrefix("Isolated:") } == entitled)
             #expect(text.contains { $0.hasPrefix("Named Networks:") } == entitled)
         }
@@ -333,7 +333,7 @@ struct VMSettingsNetworkPanelTests {
     func unentitledModeInfoDescribesOnlyNAT() throws {
         let (vc, _) = makeNetworkController(entitled: false)
         let button = try #require(infoButton(about: "Mode", in: vc.view))
-        let text = paragraphText(button.paragraphs)
+        let text = paragraphText(button.paragraphsForTesting)
         #expect(text.contains { $0.hasPrefix("NAT:") })
         #expect(!text.contains { $0.hasPrefix("Host Only:") })
         #expect(!text.contains { $0.contains("Bridged") })
@@ -342,7 +342,7 @@ struct VMSettingsNetworkPanelTests {
     /// The NAT paragraph's reach clause, as the Mode info button would show it now.
     private func natReachText(in vc: VMSettingsViewController) throws -> String {
         let button = try #require(infoButton(about: "Mode", in: vc.view))
-        return try #require(paragraphText(button.paragraphs).first { $0.hasPrefix("NAT:") })
+        return try #require(paragraphText(button.paragraphsForTesting).first { $0.hasPrefix("NAT:") })
     }
 
     @Test("The Mode info points at the IP address row only while it shows the NAT address")
@@ -530,8 +530,8 @@ struct VMSettingsNetworkPanelTests {
 
         #expect(instance.configuration.networkMode == .hostOnly)
         #expect(closedTitle(popUp) == "Host Only \u{2013} Common")
-        #expect(popUp.selectedItem === item(.hostOnly, in: popUp))
-        #expect(item(.hostOnly, in: popUp)?.state == .on)
+        #expect(popUp.selectedItem === item(.vmnet(.hostOnly, .common), in: popUp))
+        #expect(item(.vmnet(.hostOnly, .common), in: popUp)?.state == .on)
         #expect(item(.nat, in: popUp)?.state == .off)
         // The offer could not be shown here, so the refusal it stood for is.
         try await waitForChange { presenter.errorTitle != nil }
@@ -589,7 +589,7 @@ struct VMSettingsNetworkPanelTests {
         #expect(popUp.isEnabled)
         #expect(popUp.menu?.items.first { $0.title == "None" }?.isEnabled == false)
         #expect(item(.nat, in: popUp)?.isEnabled == true)
-        #expect(item(.hostOnly, in: popUp)?.isEnabled == true)
+        #expect(item(.vmnet(.hostOnly, .common), in: popUp)?.isEnabled == true)
         #expect(popUp.menu?.items.first { $0.title == "Wi-Fi (en0)" }?.isEnabled == true)
     }
 

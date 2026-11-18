@@ -40,8 +40,9 @@ struct VMBundleMachineFilesTests {
         var disks = [StorageDisk(path: "Disk.asif", isInternal: true)]
         if let additionalDiskID {
             try FileManager.default.createDirectory(
-                at: layout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
-            try Data("extra-disk".utf8).write(to: layout.additionalDiskURL(id: additionalDiskID))
+                at: layout.bundleURL.appendingPathComponent("AdditionalDisks"), withIntermediateDirectories: true)
+            try Data("extra-disk".utf8).write(
+                to: layout.bundleURL.appendingPathComponent("AdditionalDisks/\(additionalDiskID.uuidString).asif"))
             disks.append(
                 StorageDisk(
                     id: additionalDiskID,
@@ -205,7 +206,7 @@ struct VMBundleMachineFilesTests {
 
         // A destination directory that refuses the rename: the commit is renames
         // only, so this is the failure a full volume produces there.
-        let locked = fixture.layout.additionalDisksDirectoryURL.path(percentEncoded: false)
+        let locked = fixture.bundleURL.appendingPathComponent("AdditionalDisks").path(percentEncoded: false)
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: locked)
         defer {
             try? FileManager.default.setAttributes(
@@ -407,8 +408,8 @@ struct VMBundleMachineFilesTests {
 
         #expect(
             !FileManager.default.fileExists(
-                atPath: fixture.layout.snapshotLayout(id: snapshotID).hostStateURL
-                    .path(percentEncoded: false)))
+                atPath: fixture.layout.snapshotDirectoryURL(id: snapshotID)
+                    .appendingPathComponent("host-state.json").path(percentEncoded: false)))
         // A change that moves nothing answers what the file holds.
         #expect(try files.update(.hostState) { _ in } == edited)
     }
@@ -506,7 +507,9 @@ struct VMBundleMachineFilesTests {
             bundleURL: fixture.bundleURL, id: id, sizeInGB: 64, diskImages: diskImages)
 
         #expect(relativePath == VMBundleLayout.additionalDiskRelativePath(id: id))
-        #expect(diskImages.lastCreatedDiskImageURL == fixture.layout.additionalDiskURL(id: id))
+        #expect(
+            diskImages.lastCreatedDiskImageURL
+                == fixture.bundleURL.appendingPathComponent("AdditionalDisks/\(id.uuidString).asif"))
         #expect(diskImages.lastCreatedSizeInGB == 64)
     }
 }

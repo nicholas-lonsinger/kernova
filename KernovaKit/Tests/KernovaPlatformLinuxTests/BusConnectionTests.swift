@@ -118,15 +118,15 @@ struct BusConnectionTests {
         var takeover = DBusMessage.signal(
             path: DBusBus.path, interface: DBusBus.interface, member: "NameOwnerChanged",
             body: [.string(Self.serviceName), .string(service.uniqueName), .string(impostor.uniqueName)])
-        try impostor.send(takeover)
+        try impostor.sendForTesting(takeover)
         takeover.header.destination = client.uniqueName
-        try impostor.send(takeover)
+        try impostor.sendForTesting(takeover)
         var forged = Self.tick("forged unicast")
         forged.header.destination = client.uniqueName
-        try impostor.send(forged)
-        try impostor.send(Self.tick("forged broadcast"))
+        try impostor.sendForTesting(forged)
+        try impostor.sendForTesting(Self.tick("forged broadcast"))
         try sync(impostor)
-        try service.send(Self.tick("real"))
+        try service.sendForTesting(Self.tick("real"))
         #expect(try inbox.next() == "real")
         #expect(inbox.isEmpty)
         #expect(
@@ -139,11 +139,11 @@ struct BusConnectionTests {
         // cannot receive it.
         subscription.cancel()
         try sync(client)
-        try service.send(Self.tick("after cancel"))
+        try service.sendForTesting(Self.tick("after cancel"))
         try sync(service)
         let after = BlockingInbox<String>()
         let second = try client.subscribe(Self.tickRule, handler: Self.collect(into: after))
-        try service.send(Self.tick("second"))
+        try service.sendForTesting(Self.tick("second"))
         #expect(try after.next() == "second")
         #expect(inbox.isEmpty)
         second.cancel()
@@ -156,9 +156,9 @@ struct BusConnectionTests {
         let inbox = BlockingInbox<String>()
         let subscription = try client.subscribe(Self.tickRule, handler: Self.collect(into: inbox))
         let service = try bus.connect(onMethodCall: Self.service)
-        try service.send(Self.tick("before"))
+        try service.sendForTesting(Self.tick("before"))
         try requestName(Self.serviceName, on: service)
-        try service.send(Self.tick("after"))
+        try service.sendForTesting(Self.tick("after"))
         #expect(try inbox.next() == "after")
         #expect(inbox.isEmpty)
         subscription.cancel()
@@ -167,8 +167,8 @@ struct BusConnectionTests {
     @Test("A subscription follows the name to its next owner")
     func ownerChange() throws {
         let bus = try PrivateBus()
-        let first = try bus.connect(onMethodCall: Self.service)
-        try requestName(Self.serviceName, on: first)
+        var first: DBusBusConnection? = try bus.connect(onMethodCall: Self.service)
+        try requestName(Self.serviceName, on: try #require(first))
         let client = try bus.connect()
         let inbox = BlockingInbox<String>()
         let subscription = try client.subscribe(Self.tickRule) { signal in
@@ -176,13 +176,14 @@ struct BusConnectionTests {
                 inbox.put(label)
             }
         }
-        try first.send(Self.tick("first"))
+        try #require(first).sendForTesting(Self.tick("first"))
         #expect(try inbox.next() == "first")
 
-        first.close()
+        // Its last reference gone, the first owner's connection ends.
+        first = nil
         let next = try bus.connect(onMethodCall: Self.service)
         try requestName(Self.serviceName, on: next)
-        try next.send(Self.tick("next"))
+        try next.sendForTesting(Self.tick("next"))
         #expect(try inbox.next() == "next")
         subscription.cancel()
     }
@@ -226,26 +227,6 @@ struct BusConnectionTests {
             }
         }.start()
         return outcome
-    }
-
-    @Test("Closing fails a call in progress, and every later one")
-    func closeDuringCall() throws {
-        let bus = try PrivateBus()
-        let arrived = BlockingInbox<String>()
-        let release = BlockingInbox<String>()
-        let service = try bus.connect(onMethodCall: Self.stalling(arrived: arrived, release: release))
-        defer { release.put("go") }
-        try requestName(Self.serviceName, on: service)
-        let client = try bus.connect()
-        let outcome = Self.callElsewhere(client, Self.serviceCall("Hang"))
-        #expect(try arrived.next() == "arrived")
-        client.close()
-        #expect(try outcome.next() == .disconnected(.closed))
-        #expect(throws: DBusCallError.disconnected(.closed)) {
-            try client.call(
-                .methodCall(
-                    destination: DBusBus.name, path: DBusBus.path, interface: DBusBus.interface, member: "GetId"))
-        }
     }
 
     @Test("A bus that goes away fails the call in progress with the end of the stream")

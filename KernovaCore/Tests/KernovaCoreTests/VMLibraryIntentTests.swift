@@ -42,13 +42,18 @@ struct VMLibraryIntentTests {
 
     // MARK: - Clone Outcome
 
-    @Test("Every clone outcome, and following the preference, is offered, named, and maps back")
-    func cloneOutcomesMirrorEveryOutcome() {
-        for outcome in CloneOutcome.allCases.map(Optional.some) + [nil] {
-            let offered = VMCloneOutcome(outcome)
-            #expect(offered.outcome == outcome)
-            #expect(VMCloneOutcome.caseDisplayRepresentations[offered] != nil)
-        }
+    @Test(
+        "Every clone outcome, and following the preference, is offered under its name, and asks for what its name says")
+    func cloneOutcomesMirrorEveryOutcome() throws {
+        let named = try Dictionary(
+            uniqueKeysWithValues: VMCloneOutcome.allCases.map { offered in
+                let representation = try #require(VMCloneOutcome.caseDisplayRepresentations[offered])
+                return (String(localized: representation.title), offered.outcome)
+            })
+        let expected: [String: CloneOutcome?] = [
+            "Follow Kernova Setting": nil, "New Machine": .newMachine, "Exact Copy": .exactCopy,
+        ]
+        #expect(named == expected)
     }
 
     // MARK: - Library Verbs

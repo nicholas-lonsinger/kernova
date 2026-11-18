@@ -204,8 +204,6 @@ final class AppWindowRegistry {
         shown(controller.window)
     }
 
-    func guestAgentStatusWindow(for vmID: UUID) -> NSWindow? { guestAgentStatusWindows[vmID]?.window }
-
     // MARK: - Working Window
 
     /// The VM `window` shows: a display or guest-agent status

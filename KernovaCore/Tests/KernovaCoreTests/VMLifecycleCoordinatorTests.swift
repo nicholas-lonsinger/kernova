@@ -1101,7 +1101,7 @@ struct VMLifecycleCoordinatorTests {
             for: sessionID
         )
         // Force stop and restart: the pass acting for `sessionID` is overtaken.
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
         instance.beginSessionContextForTesting()
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         let attachesBefore = removableMediaService.attachCallCount

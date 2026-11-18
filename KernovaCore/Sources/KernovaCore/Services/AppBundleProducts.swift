@@ -48,6 +48,7 @@ package struct AppBundleProducts: Sendable {
         self.resources = bundle
     }
 
+    #if DEBUG
     /// The products of the bundle at `bundleURL`, with the versions and agents
     /// given rather than read from it.
     package init(
@@ -62,6 +63,7 @@ package struct AppBundleProducts: Sendable {
         self.resources = resources
         self.displayName = Self.displayName(of: resources, at: bundleURL)
     }
+    #endif
 
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "AppBundleProducts")
 

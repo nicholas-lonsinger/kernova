@@ -34,8 +34,8 @@ package final class VMCommandSocketListener {
     private let queue = DispatchSerialQueue(label: "app.kernova.command-socket")
 
     private var listener: UnixSocketListener?
-    /// Every live client, held for its I/O lifetime: ``stop()`` is what closes
-    /// them, and a connection nothing retains stops reading.
+    /// Every live client, held for its I/O lifetime: a connection nothing
+    /// retains stops reading.
     private var connections: [ObjectIdentifier: VMCommandConnection] = [:]
 
     #if DEBUG
@@ -139,14 +139,18 @@ package final class VMCommandSocketListener {
             "Listening for VM commands at \(socketPath, privacy: .public)")
     }
 
-    /// Unbinds the socket and closes every live connection.
-    func stop() {
+    #if DEBUG
+    /// Unbinds the socket and closes every live connection — a test's
+    /// teardown. A connection closes its descriptor only by cancelling its
+    /// read source, so releasing the listener would leave one open.
+    func stopForTesting() {
         listener?.stop()
         listener = nil
         let live = connections.values
         connections.removeAll()
         for connection in live { connection.close() }
     }
+    #endif
 
     // MARK: - Connections
 

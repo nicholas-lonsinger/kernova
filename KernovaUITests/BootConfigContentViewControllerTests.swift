@@ -22,7 +22,7 @@ struct BootConfigContentViewControllerTests {
                 $0.button.toolTip == "About Boot Configuration"
             })
         #expect(
-            info.paragraphs == [
+            info.paragraphsForTesting == [
                 .body(
                     "Choose a Distribution… and Image URL… download their image when you first "
                         + "start the virtual machine.")

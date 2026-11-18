@@ -248,7 +248,7 @@ struct VMRemovableMediaReconcilerTests {
 
         // A force stop lands under the suspended attach: no successor session
         // can come up while the pass still holds the VM.
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
         #expect(
             instance.activity.decide(.start(recovery: false), posture: .commit)
                 == .refuse(.busy(.reconcilingMedia)))
@@ -279,7 +279,7 @@ struct VMRemovableMediaReconcilerTests {
         // an error the user caused and a rollback would describe live media
         // that no longer exists.
         mock.attachError = RemovableMediaDeviceError.diskImageNotFound("/tmp/A.iso")
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
 
         mock.resumeSuspended()
         try await mock.operationCompleted.wait { mock.completedOperationCount == 1 }

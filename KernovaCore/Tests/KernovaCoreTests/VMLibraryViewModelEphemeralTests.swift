@@ -109,7 +109,7 @@ struct VMLibraryViewModelEphemeralTests {
             bundleProducts: .testing
         )
         viewModel.presenter = presenter
-        await viewModel.loadVMs()
+        await viewModel.library.loadVMs()
         let instance = try #require(
             viewModel.instances.first { $0.configuration.id == first.config.id })
         if !unsettled { instance.activity.placeForTesting(phase) }
@@ -152,7 +152,7 @@ struct VMLibraryViewModelEphemeralTests {
         let harness = try await makeHarness()
         harness.viewModel.beginTermination()
 
-        harness.instance.handleSessionEvent(.guestDidStop)
+        harness.instance.activity.handleSessionEvent(.guestDidStop)
 
         #expect(harness.viewModel.library.hasRevertInFlight)
         #expect(harness.viewModel.quitMustWaitOut)

@@ -59,14 +59,9 @@ public enum VMStatus: String, Sendable {
         words(for: VMStatus(rawValue: wireName), wireName: wireName, heldByAnotherCopy: heldByAnotherCopy).name
     }
 
-    /// The status as it reads after "is" in a sentence ("Tahoe is suspended."),
-    /// by the same rule as ``displayName(heldByAnotherCopy:)``.
-    public func phrase(heldByAnotherCopy: Bool) -> String {
-        Self.words(for: self, wireName: rawValue, heldByAnotherCopy: heldByAnotherCopy).phrase
-    }
-
-    /// A status read off the wire as it reads after "is" in a sentence, by the
-    /// same rule as ``displayName(forWireName:heldByAnotherCopy:)``.
+    /// A status read off the wire as it reads after "is" in a sentence
+    /// ("Tahoe is suspended."), by the same rule as
+    /// ``displayName(forWireName:heldByAnotherCopy:)``.
     public static func phrase(forWireName wireName: String, heldByAnotherCopy: Bool) -> String {
         words(for: VMStatus(rawValue: wireName), wireName: wireName, heldByAnotherCopy: heldByAnotherCopy).phrase
     }

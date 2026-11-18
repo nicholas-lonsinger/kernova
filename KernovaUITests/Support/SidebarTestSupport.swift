@@ -18,6 +18,13 @@ func renameEditor(of header: SidebarGroupHeaderCellView?) -> NSTextView? {
     header.flatMap { firstSubview(InlineEditableLabel.self, in: $0)?.currentEditor() as? NSTextView }
 }
 
+/// Whether the name in a sidebar row or header `cell` is open for renaming,
+/// `nil` when `cell` shows no editable name.
+@MainActor
+func isRenaming(_ cell: NSView?) -> Bool? {
+    cell.flatMap { firstSubview(InlineEditableLabel.self, in: $0)?.isEditing }
+}
+
 /// Types `text` over everything in `editor` and presses Return, as a user
 /// naming something in place does.
 @MainActor

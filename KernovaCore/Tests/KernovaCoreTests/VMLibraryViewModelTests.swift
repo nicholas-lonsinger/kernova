@@ -380,14 +380,11 @@ struct VMLibraryViewModelTests {
 
         let restart = Task { @MainActor in await viewModel.restart(instance) }
         try await virtService.stopRequested.wait { virtService.stopCallCount == 1 }
-        try await waitForChange {
-            !instance.activity.isRequestingStop && instance.activity.liveSessionContinues
-        }
+        try await waitForChange { !instance.activity.isRequestingStop }
 
         switch scenario {
         case .restartThenStop:
             await viewModel.stop(instance)
-            #expect(!instance.activity.liveSessionContinues)
             // The guest finally powers off.
             instance.activity.deliverSessionEvent(.guestDidStop, from: session)
         case .restartThenForceStop:
@@ -724,7 +721,8 @@ struct VMLibraryViewModelTests {
         #expect(presenter.stepRouteRequests.count == 1)
         #expect(request?.verbTitle == "Start")
         #expect(request?.instance === starting)
-        #expect(request?.requirement.routes.first?.steps.first?.vm.id == starting.id)
+        let step = request?.requirement.routes.first?.steps.first
+        #expect({ if case .setConfiguration(let vm, _)? = step { vm.id == starting.id } else { false } }())
         #expect(starting.configuration.macAddress != other.configuration.macAddress)
         #expect(virtService.startCallCount == 1)
         #expect(presenter.showError == false)
@@ -2340,7 +2338,7 @@ struct VMLibraryViewModelTests {
         storage.setConfiguration(config1, at: url1)
 
         let (viewModel, _, _, _, _) = makeViewModel(storageService: storage)
-        await viewModel.loadVMs()
+        await viewModel.library.loadVMs()
         #expect(viewModel.instances.count == 1)
 
         // Simulate a new VM appearing on disk
@@ -2355,7 +2353,7 @@ struct VMLibraryViewModelTests {
             .appendingPathComponent("\(config2.id.uuidString).kernova", isDirectory: true)
         storage.setConfiguration(config2, at: url2)
 
-        viewModel.reconcileWithDisk()
+        viewModel.library.reconcileWithDisk()
 
         #expect(viewModel.instances.count == 2)
         // Existing VM should stay first (it's in customOrder), Discovered appends at end

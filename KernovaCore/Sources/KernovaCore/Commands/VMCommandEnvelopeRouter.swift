@@ -61,19 +61,6 @@ package struct VMCommandEnvelopeRouter {
         }
     }
 
-    /// Answers one encoded request with one encoded response.
-    ///
-    /// The unary round trip, for a caller holding whole payloads rather than a
-    /// stream. A subscription goes through ``snapshotAndEvents()`` instead.
-    func handle(_ data: Data) async -> Data {
-        switch decode(data) {
-        case .failure(let refusal):
-            return encode(VMCommandResponse(result: .refused(refusal)))
-        case .success(let request):
-            return encode(await respond(to: request))
-        }
-    }
-
     // MARK: - Subscription
 
     /// The library as it stands, and every change from that instant on.

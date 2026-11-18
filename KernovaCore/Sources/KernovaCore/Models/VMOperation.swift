@@ -573,28 +573,6 @@ enum VMNonBringUpKind: Sendable, Equatable {
     case creatingRemovableMedia
     case copyingOut(VMCaptureMode)
 
-    /// `kind`, unless it is a bring-up.
-    init?(_ kind: VMOperationKind) {
-        switch kind {
-        case .bringUp: return nil
-        case .pausing: self = .pausing
-        case .resuming: self = .resuming
-        case .saving: self = .saving
-        case .capturingSnapshot(let mode): self = .capturingSnapshot(mode)
-        case .deletingSnapshot: self = .deletingSnapshot
-        case .attachingUSB(let registryID): self = .attachingUSB(registryID: registryID)
-        case .detachingUSB(let deviceID): self = .detachingUSB(deviceID: deviceID)
-        case .reconcilingMedia: self = .reconcilingMedia
-        case .forceStopping: self = .forceStopping
-        case .discardingSavedState: self = .discardingSavedState
-        case .deleting: self = .deleting
-        case .creatingStorageDisk: self = .creatingStorageDisk
-        case .removingStorageDisk: self = .removingStorageDisk
-        case .creatingRemovableMedia: self = .creatingRemovableMedia
-        case .copyingOut(let mode): self = .copyingOut(mode)
-        }
-    }
-
     var operationKind: VMOperationKind {
         switch self {
         case .pausing: .pausing
@@ -622,16 +600,6 @@ enum VMNonBringUpKind: Sendable, Equatable {
 enum VMNonStartBringUpKind: Sendable, Equatable {
     case settingUp(GuestSetupKind)
     case reverting(snapshotID: UUID, resumesAfter: Bool)
-
-    /// `kind`, unless it is a guest start.
-    init?(_ kind: VMBringUpKind) {
-        switch kind {
-        case .guestStart: return nil
-        case .settingUp(let setup): self = .settingUp(setup)
-        case .reverting(let snapshotID, let resumesAfter):
-            self = .reverting(snapshotID: snapshotID, resumesAfter: resumesAfter)
-        }
-    }
 
     var bringUpKind: VMBringUpKind {
         switch self {

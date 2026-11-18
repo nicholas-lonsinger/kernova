@@ -195,10 +195,6 @@ package final class VMIntentGateway {
         }
     }
 
-    func open(_ id: UUID) async throws {
-        try await perform(.open, on: id) { try self.commands.open(.id(id)) }
-    }
-
     /// Brings the VM in front of the user whatever state it is in — its display
     /// where there is one, else its row in the library.
     func reveal(_ id: UUID) async throws {

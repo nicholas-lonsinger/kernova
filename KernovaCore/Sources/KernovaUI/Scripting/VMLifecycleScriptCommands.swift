@@ -7,13 +7,14 @@ import KernovaLogging
 /// The dictionary's `VM stop method` enumeration, in Swift: how `stop` and
 /// `restart` take the guest down.
 ///
-/// The terms and codes here and the enumerators in `Kernova.sdef` are two
+/// The cases and codes here and the enumerators in `Kernova.sdef` are two
 /// halves of one thing, which is what `KernovaScriptingDefinitionTests` checks.
 enum VMScriptStopMethod: CaseIterable {
     case normal
     case anyway
     case force
 
+    // periphery:ignore - never called: an exhaustive switch, so a disposition added stops compiling here
     /// The way of stopping `disposition` names. Exhaustive, so a new
     /// disposition has to be given a term before it compiles.
     init(_ disposition: StopDisposition) {
@@ -31,16 +32,7 @@ enum VMScriptStopMethod: CaseIterable {
         self = match
     }
 
-    /// The term the dictionary names this method with.
-    var term: String {
-        switch self {
-        case .normal: "normal"
-        case .force: "force"
-        case .anyway: "anyway"
-        }
-    }
-
-    /// The Apple event code the dictionary gives that term.
+    /// The Apple event code the dictionary gives this case's term.
     var code: FourCharCode {
         switch self {
         case .normal: FourCharCode(scriptingCode: "KmNo")

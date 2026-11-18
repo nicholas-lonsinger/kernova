@@ -323,13 +323,6 @@ package final class VMActivity {
         return VMAdmissionRefusal(refusal: reason)
     }
 
-    /// Whether a boot is owed as the live session's continuation
-    /// (``follow(_:continuing:)``) — a Restart waiting on that session's end.
-    var liveSessionContinues: Bool {
-        guard let live = liveSessionID else { return false }
-        return continuations.contains { $0.session == live }
-    }
-
     #if DEBUG
     /// How many follow-ups are queued; tests only.
     var queuedFollowUpCountForTesting: Int { followUps.count }

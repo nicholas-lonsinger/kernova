@@ -69,9 +69,8 @@ public struct MacInstallLayout: Equatable, Sendable {
     public var rollbackLabel: String {
         scope == .system ? Self.systemLabel + ".rollback" : Self.bundleIdentifier + ".rollback"
     }
-    /// The job the rollback check kills to revert an update: the one that pulls and switches.
-    public var updatingLabel: String { Self.updatingLabel(scope) }
-    /// The job that pulls and switches `scope`'s updates: the system peer's, or the user's session peer's.
+    /// The job that pulls and switches `scope`'s updates, which the rollback check kills to revert one: the system
+    /// peer's, or the user's session peer's.
     public static func updatingLabel(_ scope: InstallScope) -> String {
         scope == .system ? systemLabel : bundleIdentifier
     }

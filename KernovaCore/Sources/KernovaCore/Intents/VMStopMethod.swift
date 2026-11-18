@@ -40,6 +40,7 @@ enum VMStopMethod: String, AppEnum {
         }
     }
 
+    // periphery:ignore - never called: an exhaustive switch, so a disposition added stops compiling here
     /// The method naming `disposition`.
     init(_ disposition: StopDisposition) {
         self =

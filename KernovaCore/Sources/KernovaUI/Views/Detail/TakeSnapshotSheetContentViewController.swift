@@ -31,11 +31,6 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     private lazy var captionLabel = GroupedFormStateNote { [unowned self] in captionText }
     private lazy var baselineLabel = GroupedFormStateNote { [unowned self] in baselineText }
 
-    /// The name the sheet would confirm with right now.
-    var enteredName: String { nameField.stringValue }
-    /// The note the sheet would confirm with right now.
-    var enteredNotes: String { notesEditor.text }
-
     private static let sheetWidth: CGFloat = 520
     private static let padding: CGFloat = 20
     private static let heroPointSize: CGFloat = 48

@@ -205,7 +205,7 @@ struct SidebarSmartGroupTests {
 
         try await waitUntil { viewModel.library.smartGroups?.count == 1 }
         let group = try #require(viewModel.library.smartGroups?.first)
-        #expect(viewModel.library.organization.sections?.map(\.id) == [.library, .smartGroup(group.id)])
+        #expect(viewModel.library.organization.state.listed?.sections.map(\.id) == [.library, .smartGroup(group.id)])
         // The sync the organization change queued, and any later one, keeps
         // the view where the new section put it.
         controller.viewDidAppear()
@@ -328,7 +328,7 @@ struct SidebarSmartGroupTests {
 
         let refusal = try #require(window.attachedSheet)
         #expect(viewModel.activeRename == nil)
-        #expect(sectionHeader(.smartGroup(linux.id), in: outline)?.isRenaming == false)
+        #expect(isRenaming(sectionHeader(.smartGroup(linux.id), in: outline)) == false)
         window.endSheet(refusal, returnCode: .alertFirstButtonReturn)
 
         try await waitUntil { renameEditor(of: sectionHeader(.smartGroup(linux.id), in: outline)) != nil }
@@ -470,7 +470,6 @@ struct SidebarSmartGroupTests {
         let pane = TagsSettingsViewController(viewModel: viewModel)
         pane.loadViewIfNeeded()
         pane.refreshContent()
-        #expect(pane.isUnreadable)
         #expect(pane.tags.isEmpty)
         func find<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
             ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { find(type, in: $0) }
@@ -479,6 +478,7 @@ struct SidebarSmartGroupTests {
         #expect(!addRemove.isEnabled(forSegment: 0))
         let check = try #require(
             find(NSButton.self, in: pane.view).first { $0.title == "Check Config Files\u{2026}" })
+        #expect(check.isHiddenOrHasHiddenAncestor == false)
         check.performClick(nil)
         #expect(checks == 1)
 

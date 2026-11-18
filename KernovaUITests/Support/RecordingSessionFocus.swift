@@ -62,6 +62,14 @@ final class RecordingSessionFocus: SessionFocus {
         gate.notify()
     }
 
+    /// The windows presented key and in front, in the order they were.
+    var presentedKeyAndFront: [NSWindow] {
+        requests.compactMap { request in
+            guard case .present(let window, .keyAndFront) = request else { return nil }
+            return window
+        }
+    }
+
     func setActivationPolicy(_ policy: NSApplication.ActivationPolicy) {
         guard policy != activationPolicy else { return }
         activationPolicy = policy

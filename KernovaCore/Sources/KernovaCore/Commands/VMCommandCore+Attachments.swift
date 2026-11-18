@@ -16,10 +16,14 @@ package struct PickedFile: Sendable, Hashable {
         (path, bookmark) = SecurityScopedBookmark.capture(url)
     }
 
+    #if DEBUG
+    /// A pick carrying the bookmark a test chooses: a real one needs a panel's
+    /// grant.
     init(path: String, bookmark: Data?) {
         self.path = path
         self.bookmark = bookmark
     }
+    #endif
 }
 
 /// What a guest-agent disk mount found in front of the guest.

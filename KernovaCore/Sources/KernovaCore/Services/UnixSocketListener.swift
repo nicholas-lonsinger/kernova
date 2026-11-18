@@ -22,12 +22,6 @@ final class UnixSocketListener: Sendable {
         case listen(errno: Int32)
     }
 
-    /// Filesystem path of the bound socket — `nil` until `start()` binds
-    /// successfully, and again after `stop()`.
-    var boundPath: String? {
-        state.withLock { $0.bound }
-    }
-
     private let path: String
     private let queue: DispatchQueue
     private let backlog: Int32
@@ -39,7 +33,8 @@ final class UnixSocketListener: Sendable {
         /// `-1` means inactive.
         var listenFd: Int32 = -1
         var listenSource: DispatchSourceRead?
-        var bound: String?
+        /// Whether `start()` bound the socket file that `stop()` unlinks.
+        var isBound = false
         var onAccept: (@Sendable (Int32) -> Void)?
     }
 
@@ -119,7 +114,7 @@ final class UnixSocketListener: Sendable {
         source.setCancelHandler { close(fd) }
         state.listenFd = fd
         state.listenSource = source
-        state.bound = path
+        state.isBound = true
         state.onAccept = onAccept
         source.resume()
     }
@@ -135,9 +130,9 @@ final class UnixSocketListener: Sendable {
             state.listenFd = -1
             state.onAccept = nil
 
-            if state.bound != nil {
+            if state.isBound {
                 unlink(path)
-                state.bound = nil
+                state.isBound = false
             }
         }
     }

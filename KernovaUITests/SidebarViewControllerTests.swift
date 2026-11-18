@@ -458,7 +458,7 @@ struct SidebarViewControllerTests {
         typeAndReturn("Renamed", in: editor)
 
         #expect(alpha.name == "Renamed")
-        #expect(!cell.isRenaming)
+        #expect(isRenaming(cell) == false)
         #expect(outline.window?.firstResponder === outline)
     }
 
@@ -478,7 +478,7 @@ struct SidebarViewControllerTests {
         cell.prepareForReuse()
 
         #expect(commits == 0)
-        #expect(!cell.isRenaming)
+        #expect(isRenaming(cell) == false)
         #expect(!label.isEditable)
     }
 
@@ -502,14 +502,14 @@ struct SidebarViewControllerTests {
         viewModel.renameVMInSidebar(alpha)
         // The rename reaches the row through the sidebar's own observation
         // loop, which offers no test-facing signal to await.
-        try await waitUntil { alphaCell()?.isRenaming == true }
+        try await waitUntil { isRenaming(alphaCell()) == true }
         let editing = try #require(alphaCell())
 
         viewModel.library.admitFixture(name: "Beta")
         try await waitUntil { outline.numberOfRows == 3 }
 
         #expect(alphaCell() === editing)
-        #expect(editing.isRenaming)
+        #expect(isRenaming(editing) == true)
         #expect(viewModel.activeRename == .sidebar(.entry(alpha.id)))
     }
 
@@ -529,7 +529,7 @@ struct SidebarViewControllerTests {
         viewModel.renameVMInSidebar(alpha)
         // The rename reaches the row through the sidebar's own observation
         // loop, which offers no test-facing signal to await.
-        try await waitUntil { alphaCell()?.isRenaming == true }
+        try await waitUntil { isRenaming(alphaCell()) == true }
         let label = try nameLabel(in: try #require(alphaCell()))
         let editor = try #require(label.currentEditor())
         editor.string = "Renamed"
@@ -541,7 +541,7 @@ struct SidebarViewControllerTests {
         try await waitUntil { rowNames(in: outline) == ["Beta", "Renamed"] }
         let moved = try #require(
             outline.view(atColumn: 0, row: 2, makeIfNecessary: true) as? SidebarVMRowCellView)
-        #expect(!moved.isRenaming)
+        #expect(isRenaming(moved) == false)
     }
 
     /// VM ▸ Rename names the VM of the key window, which can be one the
@@ -564,7 +564,7 @@ struct SidebarViewControllerTests {
         let node = try #require(controller.tree.row(for: .library(mac.id)))
         let row = outline.row(forItem: node)
         let cell = try #require(outline.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarVMRowCellView)
-        #expect(cell.isRenaming)
+        #expect(isRenaming(cell) == true)
         #expect(viewModel.activeRename == .sidebar(.entry(mac.id)))
     }
 
@@ -611,7 +611,7 @@ struct SidebarViewControllerTests {
         menu.performActionForItem(at: try #require(menu.items.firstIndex { $0.title == "Rename Folder" }))
 
         #expect(alpha.name == "Alpha 2")
-        #expect(try !cell(of: alpha).isRenaming)
+        #expect(try isRenaming(cell(of: alpha)) == false)
         #expect(viewModel.activeRename == .sidebar(.group(.folder, folder.id)))
         let header = try #require(sectionHeader(.folder(folder.id), in: outline))
         try #require(renameEditor(of: header)).string = "Clients 2"
@@ -620,8 +620,8 @@ struct SidebarViewControllerTests {
         controller.viewDidAppear()
 
         #expect(viewModel.library.folders?.map(\.name) == ["Clients 2"])
-        #expect(!header.isRenaming)
-        #expect(try cell(of: beta).isRenaming)
+        #expect(isRenaming(header) == false)
+        #expect(try isRenaming(cell(of: beta)) == true)
         #expect(viewModel.activeRename == .sidebar(.entry(beta.id)))
     }
 
@@ -642,7 +642,7 @@ struct SidebarViewControllerTests {
         let menu = try #require(controller.viewMenu(for: .folder(folder.id)))
         menu.performActionForItem(at: try #require(menu.items.firstIndex { $0.title == "Rename Folder" }))
         let header = try #require(sectionHeader(.folder(folder.id), in: outline))
-        try #require(header.isRenaming)
+        try #require(isRenaming(header) == true)
         #expect(rowView.rendersUnemphasized)
 
         typeAndReturn("Clients 2", in: try #require(renameEditor(of: header)))
@@ -678,7 +678,7 @@ struct SidebarViewControllerTests {
 
     private func isRenamingAnyRow(in outline: NSOutlineView) -> Bool {
         (0..<outline.numberOfRows).contains {
-            (outline.view(atColumn: 0, row: $0, makeIfNecessary: false) as? SidebarVMRowCellView)?.isRenaming == true
+            isRenaming(outline.view(atColumn: 0, row: $0, makeIfNecessary: false) as? SidebarVMRowCellView) == true
         }
     }
 

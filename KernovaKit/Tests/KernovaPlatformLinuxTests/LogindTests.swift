@@ -141,7 +141,7 @@ final class FakeLogind: Sendable {
     func emitChange(
         on path: DBusObjectPath, interface: String, changed: [(String, DBusValue)], invalidated: [String]
     ) throws {
-        try connection.send(
+        try connection.sendForTesting(
             .signal(
                 path: path, interface: "org.freedesktop.DBus.Properties", member: "PropertiesChanged",
                 body: [
@@ -166,7 +166,9 @@ struct LogindTests {
         #expect(session == FakeLogind.userSession)
         #expect(
             try logind.sessionProperties(session.path)
-                == LogindSessionProperties(id: "2", active: false, state: .online, sessionClass: .user, seat: "seat0"))
+                == LogindSessionProperties(
+                    id: "2", active: false, state: LogindSessionState(rawValue: "online"), sessionClass: .user,
+                    seat: "seat0"))
     }
 
     @Test("A user in no graphical session has no display session, and a user not logged in is an error")
@@ -197,7 +199,8 @@ struct LogindTests {
         #expect(
             try logind.sessionProperties(greeter.path)
                 == LogindSessionProperties(
-                    id: "c1", active: true, state: .active, sessionClass: .greeter, seat: "seat0"))
+                    id: "c1", active: true, state: LogindSessionState(rawValue: "active"),
+                    sessionClass: LogindSessionClass(rawValue: "greeter"), seat: "seat0"))
 
         fake.recorder.activeSession.withLock { $0 = FakeLogind.userSession }
         #expect(try logind.activeSession(onSeat: seat) == FakeLogind.userSession)

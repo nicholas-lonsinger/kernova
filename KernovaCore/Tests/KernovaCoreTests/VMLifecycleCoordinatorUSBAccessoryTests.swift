@@ -196,7 +196,7 @@ struct VMLifecycleCoordinatorUSBAccessoryTests {
         let attach = Task { try await coordinator.attachUSBAccessory(7, to: instance, for: sessionID) }
         try await service.attachStarted()
         // The guest goes away while VZ is capturing the device.
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
         service.resumeAttach()
         _ = try await attach.joinedResult()
 

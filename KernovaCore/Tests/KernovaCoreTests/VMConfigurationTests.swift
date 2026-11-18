@@ -460,7 +460,6 @@ struct VMConfigurationTests {
         var bridged = decoded
         bridged.networkMode = .bridged
         #expect(bridged.joinedNetwork == .bridged)
-        #expect(!bridged.joinsOwnNetwork)
     }
 
     @Test("A named network's membership persists as its identifier and joins that network in the VM's mode")

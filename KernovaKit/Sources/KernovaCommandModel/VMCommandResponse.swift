@@ -84,10 +84,4 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         /// event behind it is refused.
         case activate
     }
-
-    /// The refusal this response carries, or `nil` when the verb succeeded.
-    public var failure: CommandErrorDTO? {
-        guard case .failure(let error) = result else { return nil }
-        return error
-    }
 }

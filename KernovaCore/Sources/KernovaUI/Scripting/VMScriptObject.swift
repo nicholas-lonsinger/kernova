@@ -152,7 +152,7 @@ package final class VMScriptObject: NSObject {
 
 /// The dictionary's `VM state` enumeration, in Swift.
 ///
-/// The terms and codes here and the enumerators in `Kernova.sdef` are two
+/// The cases and codes here and the enumerators in `Kernova.sdef` are two
 /// halves of one thing, which is what `KernovaScriptingDefinitionTests` checks.
 enum VMScriptState: CaseIterable {
     case stopped
@@ -203,27 +203,7 @@ enum VMScriptState: CaseIterable {
         }
     }
 
-    /// The term the dictionary names this state with.
-    var term: String {
-        switch self {
-        case .stopped: "stopped"
-        case .starting: "starting"
-        case .running: "running"
-        case .paused: "paused"
-        case .suspended: "suspended"
-        case .saving: "saving"
-        case .snapshotting: "snapshotting"
-        case .cloning: "cloning"
-        case .restoring: "restoring"
-        case .installing: "installing"
-        case .forceStopping: "force stopping"
-        case .initialBoot: "initial boot"
-        case .failed: "failed"
-        case .preparing: "preparing"
-        }
-    }
-
-    /// The Apple event code the dictionary gives that term.
+    /// The Apple event code the dictionary gives this case's term.
     var code: FourCharCode {
         switch self {
         case .stopped: FourCharCode(scriptingCode: "KsSt")

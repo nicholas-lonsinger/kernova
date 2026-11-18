@@ -90,7 +90,7 @@ struct VMOrganizationDirectoryTests {
         let directory = VMOrganizationDirectory(fileURL: fileURL)
         let id = try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000001"))
         #expect(
-            directory.sections?.map(\.id) == [
+            directory.state.listed?.sections.map(\.id) == [
                 .folder(try #require(UUID(uuidString: "6F1D7E2C-0000-4000-8000-000000000002"))), .library,
                 .smartGroup(id),
             ])
@@ -177,13 +177,13 @@ struct VMOrganizationDirectoryTests {
     @Test("Smart groups, folders and the library share one order, kept across a reread")
     func interleavedOrderRoundTrip() throws {
         let directory = VMOrganizationDirectory(fileURL: fileURL)
-        #expect(directory.sections == [.library])
+        #expect(directory.state.listed?.sections == [.library])
         let macs = try directory.createSmartGroup(named: "Macs", filter: VMLibraryFilter(guestOSes: [.macOS]))
         let clients = try directory.createFolder(named: "Clients")
         let running = try directory.createSmartGroup(named: "Running", filter: VMLibraryFilter(states: [.running]))
         // Each new section goes after every other, the library included.
         #expect(
-            directory.sections?.map(\.id) == [
+            directory.state.listed?.sections.map(\.id) == [
                 .library, .smartGroup(macs.id), .folder(clients.id), .smartGroup(running.id),
             ])
 
@@ -192,9 +192,9 @@ struct VMOrganizationDirectoryTests {
         try directory.moveSection(.smartGroup(running.id), before: .smartGroup(macs.id))
 
         let reread = VMOrganizationDirectory(fileURL: fileURL)
-        #expect(reread.sections == directory.sections)
+        #expect(reread.state.listed?.sections == directory.state.listed?.sections)
         let order: [SidebarSectionID] = [.folder(clients.id), .smartGroup(running.id), .smartGroup(macs.id), .library]
-        #expect(reread.sections?.map(\.id) == order)
+        #expect(reread.state.listed?.sections.map(\.id) == order)
         #expect(reread.smartGroups?.map(\.id) == [running.id, macs.id])
         #expect(reread.folders?.map(\.id) == [clients.id])
         #expect(try parsed(Data(contentsOf: fileURL))["sectionOrder"] as? [String] == order.map(\.rawValue))

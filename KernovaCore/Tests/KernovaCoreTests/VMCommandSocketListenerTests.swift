@@ -116,7 +116,7 @@ struct VMCommandSocketListenerTests {
     func connectionCountRisesAndFalls() async throws {
         let harness = try makeHarness()
         harness.listener.start()
-        defer { harness.listener.stop() }
+        defer { harness.listener.stopForTesting() }
 
         let client = try TestCommandClient(connectingTo: harness.path)
         try client.send(VMCommandRequest(verb: .list()))
@@ -138,7 +138,7 @@ struct VMCommandSocketListenerTests {
         // yet, and the VMs appear only once it is.
         let harness = try makeHarness(libraryHasLanded: false)
         harness.listener.start()
-        defer { harness.listener.stop() }
+        defer { harness.listener.stopForTesting() }
 
         let client = try TestCommandClient(connectingTo: harness.path)
         defer { client.close() }
@@ -166,7 +166,7 @@ struct VMCommandSocketListenerTests {
         authority.whilePanelStands = { ActivationRequester.requestActivation() }
         authority.error = CommandError.operationFailed(verb: .importVM, message: "Not given permission.")
         harness.listener.start()
-        defer { harness.listener.stop() }
+        defer { harness.listener.stopForTesting() }
 
         let client = try TestCommandClient(connectingTo: harness.path)
         defer { client.close() }
@@ -175,7 +175,8 @@ struct VMCommandSocketListenerTests {
             VMCommandRequest(verb: .importVM(path: "/Users/somebody/Desktop/Alpha.kernova", waitForOutcome: false)))
 
         #expect(try await client.nextResponse()?.result == .activate)
-        #expect(try await client.nextResponse()?.failure != nil)
+        let refusal = try await client.nextResponse()
+        #expect({ if case .failure? = refusal?.result { true } else { false } }())
         #expect(harness.preparationCount.value == 1)
     }
 
@@ -201,7 +202,7 @@ struct VMCommandSocketListenerTests {
     func refusedPeerIsToldWhichRefusal(_ c: (refusal: PeerRefusal, sentence: String)) async throws {
         let harness = try makeHarness(authorization: .refused(c.refusal))
         harness.listener.start()
-        defer { harness.listener.stop() }
+        defer { harness.listener.stopForTesting() }
 
         let client = try TestCommandClient(connectingTo: harness.path)
         defer { client.close() }
@@ -220,7 +221,7 @@ struct VMCommandSocketListenerTests {
     func undecodableBytesAreRefused() async throws {
         let harness = try makeHarness()
         harness.listener.start()
-        defer { harness.listener.stop() }
+        defer { harness.listener.stopForTesting() }
 
         let client = try TestCommandClient(connectingTo: harness.path)
         defer { client.close() }
@@ -243,7 +244,7 @@ struct VMCommandSocketListenerTests {
         let alpha = harness.wired.register(name: "Alpha")
         let library = harness.wired.core.list(.all)
         harness.listener.start()
-        defer { harness.listener.stop() }
+        defer { harness.listener.stopForTesting() }
 
         let client = try TestCommandClient(connectingTo: harness.path)
         defer { client.close() }

@@ -70,7 +70,7 @@ struct VMSessionContextTests {
         instance.beginSessionContextForTesting(bootedIntoRecovery: true)
         #expect(instance.sessionContext != nil)
 
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
 
         #expect(instance.sessionContext == nil)
         #expect(instance.session == nil)
@@ -79,7 +79,6 @@ struct VMSessionContextTests {
         #expect(instance.networkAttachmentPending == false)
         #expect(instance.liveRemovableMedia.isEmpty)
         #expect(instance.liveUSBAccessories.isEmpty)
-        #expect(instance.bootedIntoRecovery == false)
         #expect(instance.agentExpectedButMissing == false)
     }
 
@@ -107,7 +106,7 @@ struct VMSessionContextTests {
         let (library, instance) = try await libraryVMHoldingAccessory(1)
         #expect(library.accessoryHolders.holder(of: 1) === instance)
 
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
 
         #expect(library.accessoryHolders.heldRegistryIDs.isEmpty)
         #expect(instance.liveUSBAccessories.isEmpty)
@@ -120,7 +119,7 @@ struct VMSessionContextTests {
         let sessionID = try #require(instance.liveSessionID)
 
         let fired = observationFires(reading: { _ = instance.liveUSBAccessories }) {
-            instance.deliverSessionEvent(
+            instance.activity.deliverSessionEvent(
                 .usbPassthroughDeviceDidDisconnect(deviceID), from: sessionID)
         }
 
@@ -208,7 +207,7 @@ struct VMSessionContextTests {
         instance.recordAttachedMedia(carried, for: sessionA)
 
         // Force stop, then a restart whose cold boot re-registers the same item.
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
         let coldBooted = RemovableMediaDeviceInfo(id: carried.id, path: "/tmp/carried.iso", readOnly: true)
         try await instance.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) { context in
             instance.beginSessionContext(context)

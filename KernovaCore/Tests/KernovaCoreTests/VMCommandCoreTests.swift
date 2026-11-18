@@ -259,7 +259,7 @@ struct VMCommandCoreTests {
         let error = try await #require(throws: CommandError.self) {
             try await harness.core.start(.id(instance.id), recovery: true, consent: .none)
         }
-        #expect(error.isBusy)
+        #expect({ if case .busy = error { true } else { false } }())
 
         harness.virtualization.resumeSuspended()
         try await first.joined()
@@ -1001,7 +1001,7 @@ struct VMCommandCoreTests {
             try await harness.core.delete(
                 .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
         }
-        #expect(error.isBusy)
+        #expect({ if case .busy = error { true } else { false } }())
         #expect(harness.storage.deleteVMBundleCallCount == 0)
 
         harness.virtualization.resumeSuspended()
@@ -1532,7 +1532,7 @@ struct VMCommandCoreTests {
         #expect(instance.agentPresentation?.status == .waiting)
 
         var events = VMLibraryEventReader(harness.core.events())
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
         #expect(instance.agentPresentation?.status == nil)
 
         while let event = try await events.next() {

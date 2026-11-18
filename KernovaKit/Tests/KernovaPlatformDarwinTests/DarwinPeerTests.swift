@@ -126,8 +126,10 @@ struct BlockingConnectTests {
         }
         #expect(gate.admit("control") == false)
         gate.markParkReturned("control")
-        #expect(gate.parkedCount("control") == BlockingConnectGate.maxParkedAttempts - 1)
         #expect(gate.admit("control"))
+        // One park more reaches the cap again: exactly one was discharged.
+        gate.markParked("control")
+        #expect(gate.admit("control") == false)
 
         let other = clock.gate()
         for _ in 0..<(BlockingConnectGate.maxParkedAttempts + 8) { other.markParked("c") }
@@ -150,8 +152,16 @@ struct BlockingConnectTests {
         }
         gate.markParked("control")
         gate.revertPark("control")
-        #expect(gate.parkedCount("control") == BlockingConnectGate.maxParkedAttempts)
         #expect(gate.admit("control"))
+        // Read the count back through admission, which a new park re-arms: two
+        // discharged and one parked leave one under the cap, and one more
+        // reaches it.
+        gate.markParkReturned("control")
+        gate.markParkReturned("control")
+        gate.markParked("control")
+        #expect(gate.admit("control"))
+        gate.markParked("control")
+        #expect(gate.admit("control") == false)
     }
 
     @Test("A connect the kernel answers inside the deadline completes; one it never answers is abandoned")
@@ -173,7 +183,12 @@ struct BlockingConnectTests {
                 waits.run { try Backstop("the test's release of the connect").wait(for: release) }
                 return 0
             } == .abandoned)
-        #expect(gate.parkedCount("t") == 1)
+        // The abandoned attempt is the one park: the cap is one park short of
+        // the rest, and reached with one more.
+        for _ in 0..<(BlockingConnectGate.maxParkedAttempts - 2) { gate.markParked("t") }
+        #expect(gate.admit("t"))
+        gate.markParked("t")
+        #expect(gate.admit("t") == false)
         release.signal()
     }
 
@@ -198,8 +213,13 @@ struct BlockingConnectTests {
         #expect(
             DarwinVsockConnect.boundedBlockingConnect(fd: -1, label: "t", port: 1, gate: gate) { ECONNREFUSED }
                 == .failed(errno: ECONNREFUSED))
-        #expect(gate.parkedCount("t") == BlockingConnectGate.maxParkedAttempts)
         #expect(gate.admit("t"))
+        // The parks are still outstanding: one discharged and one parked
+        // leaves the count where it was, which a new park's rationing reads as
+        // at the cap.
+        gate.markParkReturned("t")
+        gate.markParked("t")
+        #expect(gate.admit("t") == false)
     }
 
     @Test("POLLHUP with SO_ERROR 0 completes a non-blocking connect; POLLNVAL stays fatal")

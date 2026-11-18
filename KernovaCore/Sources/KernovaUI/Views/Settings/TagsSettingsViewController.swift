@@ -20,8 +20,6 @@ final class TagsSettingsViewController: NSViewController, SettingsPaneContent {
 
     /// The tags the table shows, in the library's order.
     private(set) var tags: [VMTag] = []
-    /// Whether the last read found the tags unreadable.
-    var isUnreadable: Bool { editor.isUnreadable }
 
     private lazy var editor = SettingsNamedListEditor(
         noun: "Tag",

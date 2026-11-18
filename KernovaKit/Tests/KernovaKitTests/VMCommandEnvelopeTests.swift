@@ -277,7 +277,6 @@ struct VMCommandEnvelopeTests {
             let response = VMCommandResponse(result: .failure(failure))
             let decoded = try roundTrip(response)
             #expect(decoded == response)
-            #expect(decoded.failure == failure)
         }
     }
 

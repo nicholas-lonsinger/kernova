@@ -122,13 +122,13 @@ struct VMSettingsViewControllerTests {
         vc.showCategory(.sharing)
 
         let info = try #require(infoButton(about: EphemeralModeCopy.settingsBannerLead, in: vc.view))
-        #expect(info.paragraphs.first?.text.contains("\u{201C}Clean install\u{201D}") == true)
-        #expect(info.paragraphs.last == .body("Show install reminder stays as you set it."))
+        #expect(info.paragraphsForTesting.first?.text.contains("\u{201C}Clean install\u{201D}") == true)
+        #expect(info.paragraphsForTesting.last == .body("Show install reminder stays as you set it."))
 
         vc.showCategory(.network)
         let networkInfo = try #require(
             infoButton(about: EphemeralModeCopy.settingsBannerLead, in: vc.view))
-        #expect(networkInfo.paragraphs.count == 1)
+        #expect(networkInfo.paragraphsForTesting.count == 1)
     }
 
     // MARK: - App activation

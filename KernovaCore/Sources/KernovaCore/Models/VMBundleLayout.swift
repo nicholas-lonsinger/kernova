@@ -38,11 +38,6 @@ package struct VMBundleLayout: Sendable {
         bundleURL.appendingPathComponent(Self.configRelativePath)
     }
 
-    /// The serialized ``VMHostState``, absent until something first writes it.
-    var hostStateURL: URL {
-        bundleURL.appendingPathComponent(Self.hostStateRelativePath)
-    }
-
     package var diskImageURL: URL {
         bundleURL.appendingPathComponent("Disk.asif")
     }
@@ -94,29 +89,15 @@ package struct VMBundleLayout: Sendable {
         bundleURL.appendingPathComponent("serial.log.1")
     }
 
-    /// The USB accessories this VM takes back automatically
-    /// (``USBAccessoryPairingSet``).
-    var usbPairingsURL: URL {
-        bundleURL.appendingPathComponent(Self.usbPairingsRelativePath)
-    }
-
     /// The directory holding the in-bundle disks other than the main disk,
     /// relative to the bundle root.
     static let additionalDisksRelativePath = "AdditionalDisks"
-
-    var additionalDisksDirectoryURL: URL {
-        bundleURL.appendingPathComponent(Self.additionalDisksRelativePath)
-    }
 
     /// The in-bundle disk `id` names, relative to the bundle root — the path
     /// its ``StorageDisk`` entry carries, so the entry travels with the bundle
     /// on clone or move.
     package static func additionalDiskRelativePath(id: UUID) -> String {
         "\(additionalDisksRelativePath)/\(id.uuidString).asif"
-    }
-
-    func additionalDiskURL(id: UUID) -> URL {
-        bundleURL.appendingPathComponent(Self.additionalDiskRelativePath(id: id))
     }
 
     var hasSaveFile: Bool {
@@ -162,10 +143,6 @@ package struct VMBundleLayout: Sendable {
 
     var snapshotsDirectoryURL: URL {
         bundleURL.appendingPathComponent("Snapshots", isDirectory: true)
-    }
-
-    var snapshotManifestURL: URL {
-        bundleURL.appendingPathComponent(Self.snapshotManifestRelativePath)
     }
 
     /// Where a revert clones the snapshot's files before swapping them into the

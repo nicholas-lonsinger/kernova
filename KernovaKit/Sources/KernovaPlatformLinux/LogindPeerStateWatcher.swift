@@ -31,13 +31,11 @@ public final class LogindPeerStateWatcher: Sendable {
     }
 
     private struct State: Sendable {
-        var fixed: DBusSubscription?
         /// The session the last read named, and its subscription.
         var session: (path: DBusObjectPath, subscription: DBusSubscription)?
         /// What was delivered last; nil before the first delivery.
         var delivered: PeerSessionState??
         var refreshQueued = false
-        var isCancelled = false
     }
 
     /// Follows the session peer's state for `uid`: its user's display session's `Id`, the console ON
@@ -87,29 +85,14 @@ public final class LogindPeerStateWatcher: Sendable {
         self.deliver = deliver
     }
 
-    /// Stops following: nothing is delivered once it returns on `queue`, or once a delivery in flight
-    /// there finishes.
-    public func cancel() {
-        let subscriptions = state.withLock { state in
-            defer {
-                state.isCancelled = true
-                state.fixed = nil
-                state.session = nil
-            }
-            return [state.fixed, state.session?.subscription].compactMap { $0 }
-        }
-        for subscription in subscriptions { subscription.cancel() }
-    }
-
-    /// Subscribes to the fixed object, before the first read, so no change falls between the two.
+    /// Subscribes to the fixed object, before the first read, so no change falls between the two. The
+    /// subscription lasts as long as the connection.
     private func start() throws(DBusServiceError) {
-        let fixed: DBusSubscription?
         switch source {
-        case .user(let user): fixed = try logind.observeUser(user) { [weak self] _ in self?.queueRefresh() }
-        case .seat(let seat): fixed = try logind.observeSeat(seat) { [weak self] _ in self?.queueRefresh() }
-        case .noSeat: fixed = nil
+        case .user(let user): _ = try logind.observeUser(user) { [weak self] _ in self?.queueRefresh() }
+        case .seat(let seat): _ = try logind.observeSeat(seat) { [weak self] _ in self?.queueRefresh() }
+        case .noSeat: break
         }
-        state.withLock { $0.fixed = fixed }
         queueRefresh()
     }
 
@@ -129,7 +112,6 @@ public final class LogindPeerStateWatcher: Sendable {
         state.withLock { $0.refreshQueued = false }
         do throws(DBusServiceError) {
             while true {
-                guard !state.withLock(\.isCancelled) else { return }
                 let reading = try read()
                 let watched = state.withLock { $0.session?.path }
                 if reading.session == watched { return deliverIfChanged(.success(reading.state)) }
@@ -149,16 +131,11 @@ public final class LogindPeerStateWatcher: Sendable {
         old?.cancel()
         guard let path else { return }
         let subscription = try logind.observeSession(path) { [weak self] _ in self?.queueRefresh() }
-        let cancelled = state.withLock { state in
-            if !state.isCancelled { state.session = (path, subscription) }
-            return state.isCancelled
-        }
-        if cancelled { subscription.cancel() }
+        state.withLock { $0.session = (path, subscription) }
     }
 
     private func deliverIfChanged(_ result: Result<PeerSessionState?, DBusServiceError>) {
         let changed = state.withLock { state -> Bool in
-            guard !state.isCancelled else { return false }
             guard case .success(let peerState) = result else { return true }
             guard state.delivered != .some(peerState) else { return false }
             state.delivered = .some(peerState)

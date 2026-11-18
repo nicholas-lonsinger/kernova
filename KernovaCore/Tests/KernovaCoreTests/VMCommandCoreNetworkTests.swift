@@ -89,7 +89,12 @@ struct VMCommandCoreNetworkTests {
                 == "\u{201C}Member\u{201D} is set to join \u{201C}Lab\u{201D}. Move it to another network first, then delete \u{201C}Lab\u{201D}."
         )
         #expect(requirement.routes.map(\.title) == ["Move to a Network of Its Own"])
-        #expect(requirement.routes.flatMap(\.steps).map(\.vm.id) == [member.instanceID])
+        #expect(
+            requirement.routes.flatMap(\.steps) == [
+                .setConfiguration(
+                    vm: harness.core.summary(member),
+                    assignments: [ConfigurationEntry(key: "network.membership", value: "isolated")])
+            ])
     }
 
     @Test("A member that cannot move refuses the delete with its own refusal, offering no route")

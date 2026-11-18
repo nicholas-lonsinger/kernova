@@ -109,7 +109,6 @@ struct NetworksSettingsViewControllerTests {
 
         let pane = makePane(viewModel)
 
-        #expect(pane.isUnreadable)
         #expect(pane.networks.isEmpty)
         func find<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
             ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { find(type, in: $0) }

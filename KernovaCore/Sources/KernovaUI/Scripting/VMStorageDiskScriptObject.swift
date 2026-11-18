@@ -105,15 +105,7 @@ enum VMScriptStorageDiskKind: CaseIterable {
         self.init(kind)
     }
 
-    /// The term the dictionary names this kind with.
-    var term: String {
-        switch self {
-        case .virtio: "virtio"
-        case .usbMassStorage: "USB mass storage"
-        }
-    }
-
-    /// The Apple event code the dictionary gives that term.
+    /// The Apple event code the dictionary gives this case's term.
     var code: FourCharCode {
         switch self {
         case .virtio: FourCharCode(scriptingCode: "KdVi")
