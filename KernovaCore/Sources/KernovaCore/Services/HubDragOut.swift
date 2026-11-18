@@ -60,6 +60,7 @@ package final class HubDragOut {
     @ObservationIgnored private let peerName: @MainActor () -> String
     @ObservationIgnored private let progressRevealDelay: TimeInterval
     @ObservationIgnored private let clock: any EngineClock
+    @ObservationIgnored private let naming: GuestDragDelivery.Deadline?
 
     /// Every take still running, each with its offer's token: held by the
     /// take, since a guest may offer a token again while a take of it runs.
@@ -75,17 +76,20 @@ package final class HubDragOut {
 
     /// An owner landing its pulls through `sink`, reporting them to `reporter`
     /// under the name `peerName` gives, each readout revealed once it has run
-    /// `progressRevealDelay`; every timer a take runs is on `clock`.
+    /// `progressRevealDelay`; every timer a take runs is on `clock`, its
+    /// delivery's naming deadline `naming` when given (`GuestDragTake`).
     package init(
         sink: ItemSinkAdapter<POSIXTreeFileSystem>, reporter: ClipboardTransferReporter,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         clock: any EngineClock = makePlatformEngineClock(),
+        naming: GuestDragDelivery.Deadline? = nil,
         peerName: @escaping @MainActor () -> String
     ) {
         self.sink = sink
         self.reporter = reporter
         self.progressRevealDelay = progressRevealDelay
         self.clock = clock
+        self.naming = naming
         self.peerName = peerName
     }
 
@@ -131,7 +135,8 @@ package final class HubDragOut {
         let transport = Transport(owner: self, hub: hub, peer: offer.peer, token: offer.token)
         let take = GuestDragTake(
             transport: transport, display: display, reporter: reporter,
-            peerName: peerName(), progressRevealDelay: progressRevealDelay, clock: clock, holds: holds,
+            peerName: peerName(), progressRevealDelay: progressRevealDelay, clock: clock, naming: naming,
+            holds: holds,
             onFinished: { [weak self] finished in self?.takes.removeAll { $0.take === finished } },
             onHostSessionBegan: { [weak self] began in self?.hostSessionBegan(began) })
         takes.append((offer.token, take))
@@ -331,7 +336,7 @@ package final class HubDragOut {
     /// queue as the take reports.
     private final class Deliveries: Sendable {
         private struct Entry: Sendable {
-            /// The drag's items, once the take's first `TARGETED` listed them.
+            /// The drag's items, once the take listed them.
             var items: [DraggedOutItem] = []
             var delivery: GuestDragDelivery
         }
@@ -347,10 +352,8 @@ package final class HubDragOut {
         /// ending, which settles its delivery.
         func hear(_ event: DragTakeEvent) {
             switch event {
-            case .report(let id, .targeted(let items)):
-                entries.withLock { entries in
-                    if entries[id]?.items.isEmpty == true { entries[id]?.items = DraggedOutItem.carried(items) }
-                }
+            case .report(let id, .listed(let items)):
+                entries.withLock { $0[id]?.items = DraggedOutItem.carried(items) }
             case .report(let id, .delivering), .report(let id, .deliverRefused):
                 entries.withLock { $0[id] }?.delivery.peerAnswered()
             case .report(let id, .named(let names)):

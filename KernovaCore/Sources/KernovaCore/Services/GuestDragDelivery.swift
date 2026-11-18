@@ -12,8 +12,8 @@ import KernovaKit
 /// everything it waits for arrives here without it. The ask waits only for
 /// the names, never for the sizes the delivery settles with after.
 ///
-/// The names are owed within ``namingDeadline`` of the first ask; past it the
-/// delivery settles as ``Outcome/expired(after:)``.
+/// The names are owed within the delivery's ``Deadline`` of the first ask;
+/// past it the delivery settles as ``Outcome/expired(after:)``.
 package final class GuestDragDelivery: @unchecked Sendable {
     /// What the drag's delivery left the host to pull.
     package enum Outcome: Equatable, Sendable {
@@ -22,15 +22,27 @@ package final class GuestDragDelivery: @unchecked Sendable {
         case delivered([DraggedOutItem])
         /// No delivery: the taken offer carries the drag as offered.
         case undelivered
-        /// Nothing named the promises within ``GuestDragDelivery/namingDeadline``
-        /// of the first ask, `after` that many seconds: nothing is delivered,
-        /// and the take is owed its end.
+        /// Nothing named the promises within the naming deadline of the first
+        /// ask, `after` that many seconds: nothing is delivered, and the take
+        /// is owed its end.
         case expired(after: TimeInterval)
     }
 
     /// How long the drag's promises may go unnamed once a destination first
-    /// asks a name: Finder abandons a pasteboard promise it has waited 60 s
-    /// for (docs/research/2026-07-27-pasteboard-promise-deadlines.md).
+    /// asks a name, on the clock that times it.
+    package struct Deadline: Sendable {
+        package var seconds: TimeInterval
+        package var clock: any EngineClock
+
+        package init(seconds: TimeInterval, clock: any EngineClock) {
+            self.seconds = seconds
+            self.clock = clock
+        }
+    }
+
+    /// The production naming deadline's length: Finder abandons a pasteboard
+    /// promise it has waited 60 s for
+    /// (docs/research/2026-07-27-pasteboard-promise-deadlines.md).
     package static let namingDeadline: TimeInterval = 60
 
     /// What a name ask learns.
@@ -50,17 +62,17 @@ package final class GuestDragDelivery: @unchecked Sendable {
     private var names: [DraggedOutItem]?
     private var outcome: Outcome?
     private var onSettled: (@Sendable () -> Void)?
-    private let clock: any EngineClock
-    /// When a destination first asked a name, from which ``namingDeadline``
-    /// runs for every waiter.
+    private let deadline: Deadline
+    /// When a destination first asked a name, from which the deadline runs
+    /// for every waiter.
     private var firstAsk: EngineInstant?
-    /// What settles the delivery as expired at ``namingDeadline``, until
-    /// something names the promises first.
-    private var deadline: Task<Void, Never>?
+    /// What settles the delivery as expired at the deadline, until something
+    /// names the promises first.
+    private var expiry: Task<Void, Never>?
 
-    /// A delivery whose naming deadline runs on `clock`.
-    package init(clock: any EngineClock = makePlatformEngineClock()) {
-        self.clock = clock
+    /// A delivery whose promises are owed their names within `deadline`.
+    package init(deadline: Deadline) {
+        self.deadline = deadline
     }
 
     /// Calls `body` once the delivery settles, or now when it has; once.
@@ -130,7 +142,7 @@ package final class GuestDragDelivery: @unchecked Sendable {
     private func expire() {
         condition.lock()
         guard names == nil, outcome == nil, let firstAsk else { return condition.unlock() }
-        let body = settleLocked(.expired(after: firstAsk.seconds(to: clock.now)))
+        let body = settleLocked(.expired(after: firstAsk.seconds(to: deadline.clock.now)))
         condition.unlock()
         body?()
     }
@@ -147,8 +159,8 @@ package final class GuestDragDelivery: @unchecked Sendable {
     }
 
     private func stopDeadline() {
-        deadline?.cancel()
-        deadline = nil
+        expiry?.cancel()
+        expiry = nil
     }
 
     /// Blocks the calling thread until something names the drag's promises,
@@ -158,15 +170,15 @@ package final class GuestDragDelivery: @unchecked Sendable {
     /// guest answers the ask before anything names them: a waiter on the main
     /// thread is the one that can inject the release the naming waits for.
     ///
-    /// The wait ends at ``namingDeadline`` after the first ask, shared by every
+    /// The wait ends at the deadline after the first ask, shared by every
     /// waiter, with ``Naming/unnamed`` and the delivery settled as
     /// ``Outcome/expired(after:)``, unless the names or the take's end settle
     /// it first.
     package func waitForNames(releasing release: (() -> Void)?) -> Naming {
         condition.lock()
         if currentNaming == nil, firstAsk == nil {
-            firstAsk = clock.now
-            deadline = clock.schedule(after: Self.namingDeadline) { [weak self] in self?.expire() }
+            firstAsk = deadline.clock.now
+            expiry = deadline.clock.schedule(after: deadline.seconds) { [weak self] in self?.expire() }
         }
         while currentNaming == nil {
             if answered, !answerTaken, let release {

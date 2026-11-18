@@ -74,8 +74,9 @@ struct GuestDragTakeTests {
         private(set) var pulls: [Pull] = []
         /// How many times the take released its offer.
         private(set) var releases = 0
-        /// What the guest's first `TARGETED` lists.
+        /// What the guest lists before its first `TARGETED`.
         var listed: [OfferedItem] = []
+        private var hasListed = false
         nonisolated let delivering = DispatchSemaphore(value: 0)
         let changed = AsyncGate()
 
@@ -108,9 +109,14 @@ struct GuestDragTakeTests {
             releases += 1
         }
 
-        /// The guest's catcher is the drag's target, listing ``listed``.
+        /// The guest's catcher is the drag's target, the take having listed
+        /// ``listed`` before its first.
         func target() {
-            report(.targeted(listed))
+            if !hasListed {
+                hasListed = true
+                report(.listed(listed))
+            }
+            report(.targeted)
         }
 
         /// The guest's delivering drop named the promises: `items`, as the
@@ -160,9 +166,13 @@ struct GuestDragTakeTests {
     private let transport = FakeTransport()
     private let running = RunningFlag()
     private let finished = FinishedFlag()
-    /// The clock the delivery's naming deadline runs on: it fires only when a
-    /// test releases it.
+    /// The clock each readout's timers, and the deadline tests' naming
+    /// deadline, run on: none fires until a test releases it.
     private let clock = GatedEngineClock()
+    /// The naming deadline a take's delivery runs unless its test is about
+    /// the deadline: a name ask on the main thread holds it at most this long.
+    nonisolated private static let heldNaming = GuestDragDelivery.Deadline(
+        seconds: mainThreadHoldCap, clock: makePlatformEngineClock())
 
     private static let delivery = DragDelivery(names: [:], sizes: [:])
 
@@ -192,14 +202,15 @@ struct GuestDragTakeTests {
 
     private func makeTake(
         items: [DraggedOutItem] = [Self.file], reporter: ClipboardTransferReporter = ClipboardTransferReporter(),
-        revealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay
+        revealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
+        naming: GuestDragDelivery.Deadline = Self.heldNaming
     ) -> GuestDragTake {
         let running = running
         let finished = finished
         transport.listed = Self.offered(items)
         let take = GuestDragTake(
             transport: transport, display: display,
-            reporter: reporter, peerName: "Test VM", progressRevealDelay: revealDelay, clock: clock,
+            reporter: reporter, peerName: "Test VM", progressRevealDelay: revealDelay, clock: clock, naming: naming,
             holds: { running.isRunning },
             onFinished: { _ in finished.count += 1 }, onHostSessionBegan: { _ in })
         take.begin()
@@ -207,8 +218,10 @@ struct GuestDragTakeTests {
     }
 
     /// A take whose guest catcher is the drag's target.
-    private func readyTake(items: [DraggedOutItem] = [Self.file]) throws -> GuestDragTake {
-        let take = makeTake(items: items)
+    private func readyTake(
+        items: [DraggedOutItem] = [Self.file], naming: GuestDragDelivery.Deadline = Self.heldNaming
+    ) throws -> GuestDragTake {
+        let take = makeTake(items: items, naming: naming)
         transport.report(.armed)
         transport.target()
         try #require(take.phase == .ready)
@@ -216,8 +229,10 @@ struct GuestDragTakeTests {
     }
 
     /// A take a Mac session carries off the display, the catcher its target.
-    private func carriedTake(items: [DraggedOutItem] = [Self.file]) throws -> GuestDragTake {
-        let take = try readyTake(items: items)
+    private func carriedTake(
+        items: [DraggedOutItem] = [Self.file], naming: GuestDragDelivery.Deadline = Self.heldNaming
+    ) throws -> GuestDragTake {
+        let take = try readyTake(items: items, naming: naming)
         take.withheldDrag()
         try #require(take.phase == .carried(.outside(targeted: true)))
         return take
@@ -311,13 +326,18 @@ struct GuestDragTakeTests {
     }
 
     @Test(
-        "a take the guest refused TOO_LARGE in place of its first TARGETED reports the drag out failed, then hands the press back"
-    )
-    func tooLargeRefusalIsReported() throws {
+        "a take ended TOO_LARGE in place of its listing reports the drag out failed, naming the limit, then hands the press back",
+        arguments: [
+            // The guest refused an item whose report is over one MESSAGE.
+            (DragTakeResult.refused(WireError(.tooLarge, limit: 65_536)), 65_536),
+            // The hub refused a listing past the 16 MiB it holds of the guest's offers.
+            (.closed(.resetLocally(WireError(.tooLarge, limit: 16_777_216))), 16_777_216),
+        ])
+    func tooLargeEndIsReported(ending: DragTakeResult, limit: Int) throws {
         let reporter = ClipboardTransferReporter()
         let take = makeTake(reporter: reporter)
         transport.report(.armed)
-        transport.end(.refused(WireError(.tooLarge, limit: 65_536)))
+        transport.end(ending)
 
         #expect(take.phase == .abandoned)
         #expect(display.calls.suffix(2) == [.returnToExit, .resumeTracking])
@@ -327,7 +347,7 @@ struct GuestDragTakeTests {
             return
         }
         #expect(finish.gesture == .dragOut)
-        #expect(finish.failure == .tooLarge(limitBytes: 65_536))
+        #expect(finish.failure == .tooLarge(limitBytes: limit))
     }
 
     // MARK: - Drag-back-in
@@ -504,16 +524,16 @@ struct GuestDragTakeTests {
 
     @Test("names that arrive before the naming deadline stop it: the delivery stands and the take goes on")
     func namesBeforeTheDeadlineStopIt() async throws {
-        let take = try carriedTake(items: [Self.promise])
+        let take = try carriedTake(items: [Self.promise], naming: gatedNaming)
         let transport = transport
         let display = display
         let delivery = try #require(transport.delivery)
         let waits = OffTaskWaits()
         let guest = Thread {
             waits.run {
-                try Backstop("the transport's delivery").wait(for: transport.delivering)
+                try Backstop("the transport's delivery", timeout: mainThreadHoldCap).wait(for: transport.delivering)
                 delivery.peerAnswered()
-                try Backstop("the display's release").wait(for: display.released)
+                try Backstop("the display's release", timeout: mainThreadHoldCap).wait(for: display.released)
             }
             delivery.settle(.delivered([Self.namedPromise]))
         }
@@ -530,13 +550,26 @@ struct GuestDragTakeTests {
 
     // MARK: - The naming deadline
 
-    /// Blocks the calling thread until the delivery's naming deadline is
-    /// armed on `clock`, then moves the clock on by `seconds` and lets the
-    /// deadline fire.
+    /// The production naming deadline on the suite's gated clock, for a test
+    /// whose subject is that deadline.
+    private var gatedNaming: GuestDragDelivery.Deadline {
+        GuestDragDelivery.Deadline(seconds: GuestDragDelivery.namingDeadline, clock: clock)
+    }
+
+    /// Blocks the calling thread until `delivery`'s naming deadline is armed
+    /// on `clock`, then moves the clock on by `seconds` and lets the deadline
+    /// fire. A deadline never armed within ``mainThreadHoldCap`` settles the
+    /// delivery instead, so a name ask holding the main thread ends.
     nonisolated static func expireDeadline(
-        on clock: GatedEngineClock, advancing seconds: TimeInterval, reportingTo waits: OffTaskWaits
+        of delivery: GuestDragDelivery, on clock: GatedEngineClock, advancing seconds: TimeInterval,
+        reportingTo waits: OffTaskWaits
     ) {
-        waits.run { try clock.sleepRequested.block(named: "the naming deadline's arming") { !clock.parked.isEmpty } }
+        let armed = waits.run {
+            try clock.sleepRequested.block(named: "the naming deadline's arming", timeout: mainThreadHoldCap) {
+                !clock.parked.isEmpty
+            }
+        }
+        guard armed else { return delivery.settle(.undelivered) }
         clock.advance(seconds: seconds)
         for sleep in clock.parked { clock.release(sleep) }
     }
@@ -545,7 +578,7 @@ struct GuestDragTakeTests {
         "names that never come end the wait at the deadline with the stand-in, call the take off, and fail its writes timed out",
         arguments: [true, false])
     func namesThatNeverComeExpire(guestAnswers: Bool) async throws {
-        let take = try carriedTake(items: [Self.promise])
+        let take = try carriedTake(items: [Self.promise], naming: gatedNaming)
         let transport = transport
         let display = display
         let clock = clock
@@ -555,13 +588,14 @@ struct GuestDragTakeTests {
         let waits = OffTaskWaits()
         let guest = Thread {
             waits.run {
-                try Backstop("the transport's delivery").wait(for: transport.delivering)
+                try Backstop("the transport's delivery", timeout: mainThreadHoldCap).wait(for: transport.delivering)
                 if guestAnswers {
                     delivery.peerAnswered()
-                    try Backstop("the display's release").wait(for: display.released)
+                    try Backstop("the display's release", timeout: mainThreadHoldCap).wait(for: display.released)
                 }
             }
-            Self.expireDeadline(on: clock, advancing: GuestDragDelivery.namingDeadline, reportingTo: waits)
+            Self.expireDeadline(
+                of: delivery, on: clock, advancing: GuestDragDelivery.namingDeadline, reportingTo: waits)
         }
         guest.start()
 
@@ -589,7 +623,7 @@ struct GuestDragTakeTests {
 
     @Test("every name ask of a take shares one deadline, measured from the first ask")
     func theDeadlineIsShared() async throws {
-        let take = try carriedTake(items: [Self.promise, Self.promise])
+        let take = try carriedTake(items: [Self.promise, Self.promise], naming: gatedNaming)
         let transport = transport
         let display = display
         let clock = clock
@@ -609,11 +643,12 @@ struct GuestDragTakeTests {
         let waits = OffTaskWaits()
         let guest = Thread {
             waits.run {
-                try Backstop("the transport's delivery").wait(for: transport.delivering)
+                try Backstop("the transport's delivery", timeout: mainThreadHoldCap).wait(for: transport.delivering)
                 delivery.peerAnswered()
-                try Backstop("the display's release").wait(for: display.released)
+                try Backstop("the display's release", timeout: mainThreadHoldCap).wait(for: display.released)
             }
-            Self.expireDeadline(on: clock, advancing: GuestDragDelivery.namingDeadline / 2, reportingTo: waits)
+            Self.expireDeadline(
+                of: delivery, on: clock, advancing: GuestDragDelivery.namingDeadline / 2, reportingTo: waits)
         }
         guest.start()
 
@@ -626,6 +661,23 @@ struct GuestDragTakeTests {
         #expect(delivery.settled == .expired(after: GuestDragDelivery.namingDeadline))
         #expect(display.calls.filter { $0 == .release }.count == 1)
         try await transport.changed.wait { transport.cancels == 1 }
+    }
+
+    @Test("an injected deadline on the platform clock ends a name ask nothing answers with the stand-in")
+    func anInjectedDeadlineEndsAnUnansweredAsk() async throws {
+        let take = try carriedTake(
+            items: [Self.promise], naming: GuestDragDelivery.Deadline(seconds: 0.05, clock: makePlatformEngineClock()))
+        let delivery = try #require(transport.delivery)
+
+        // Off the main thread, which the ask's start of the delivery hops to.
+        let name = try await offCooperativePool { take.filename(forItemAt: 0) }
+
+        #expect(name == "Untitled.jpeg")
+        guard case .expired? = delivery.settled else {
+            Issue.record("the delivery settled \(String(describing: delivery.settled))")
+            return
+        }
+        #expect(transport.controls == [.deliver])
     }
 
     @Test("a name asked while the catcher is not the target is the stand-in, and asks no delivery")

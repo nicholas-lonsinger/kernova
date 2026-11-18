@@ -211,7 +211,7 @@ struct HubDropServiceTests {
         probe.deliver(.itemReply(second, .offered(nil)), fromConnection: 0)
 
         probe.deliver(
-            .items(.offerEnded(.drop, .local, token: landed.token, .completed(remoteEndBody: Self.landed([0])))),
+            .items(.offerEnded(.drop, .local, token: landed.token, .completed(remoteEndBody: Self.landed(1)))),
             fromConnection: 0)
         // A later end, through the same queues, that does report: once it has, the first was handled.
         probe.deliver(
@@ -225,10 +225,58 @@ struct HubDropServiceTests {
 }
 
 extension HubDropServiceTests {
-    /// The peer's END body saying the items `items` landed.
-    fileprivate static func landed(_ items: [Int]) -> Data { DropLanded(items: items).endBody }
+    /// The peer's END body saying `count` items landed.
+    fileprivate static func landed(_ count: Int) -> Data { DropLanded(landed: count).endBody }
 
-    @Test("Every item the peer does not name as landed is reported skipped: one gone before the offer, too")
+    @Test("A release's count of what landed decides what the drop reports, worked by hand for every count")
+    func releaseCountDecidesTheReport() {
+        let unreadable = ClipboardTransferFailure.itemsUnreadable
+        let failed = ClipboardTransferFailure.peerReported(.dropFailed)
+        func skipped(_ count: Int) -> ClipboardTransferFailure { .itemsSkipped(count: count) }
+        // By landed count, 0 through one past the items.
+        let table: [(items: Int, lost: Int, reports: [ClipboardTransferFailure?])] = [
+            (0, 0, [unreadable, failed]),
+            (0, 1, [unreadable, failed]),
+            (0, 2, [unreadable, failed]),
+            (1, 0, [unreadable, nil, failed]),
+            (1, 1, [unreadable, skipped(1), failed]),
+            (1, 2, [unreadable, skipped(2), failed]),
+            (2, 0, [unreadable, skipped(1), nil, failed]),
+            (2, 1, [unreadable, skipped(2), skipped(1), failed]),
+            (2, 2, [unreadable, skipped(3), skipped(2), failed]),
+            (3, 0, [unreadable, skipped(2), skipped(1), nil, failed]),
+            (3, 1, [unreadable, skipped(3), skipped(2), skipped(1), failed]),
+            (3, 2, [unreadable, skipped(4), skipped(3), skipped(2), failed]),
+            (4, 0, [unreadable, skipped(3), skipped(2), skipped(1), nil, failed]),
+            (4, 1, [unreadable, skipped(4), skipped(3), skipped(2), skipped(1), failed]),
+            (4, 2, [unreadable, skipped(5), skipped(4), skipped(3), skipped(2), failed]),
+        ]
+        for row in table {
+            #expect(row.reports.count == row.items + 2)
+            for (landed, report) in row.reports.enumerated() {
+                #expect(
+                    HubDropService.failure(released: Self.landed(landed), items: row.items, lost: row.lost) == report,
+                    "\(row.items) item(s), \(row.lost) lost, \(landed) landed")
+            }
+        }
+        #expect(HubDropService.failure(released: Data([0xFF]), items: 1, lost: 0) == failed)
+    }
+
+    @Test("A drop the peer resets over its offer budget says it holds more items than the VM takes at once")
+    func overBudgetIsTooLarge() async throws {
+        let probe = AgentHubProbe()
+        let (instance, offer) = try await openDrop(probe)
+
+        probe.deliver(
+            .items(
+                .offerEnded(.drop, .local, token: offer.token, .resetByPeer(WireError(.tooLarge, limit: 16_777_216)))),
+            fromConnection: 0)
+
+        try await waitForChange { instance.clipboardTransferReport.failure != nil }
+        #expect(instance.clipboardTransferReport.failure == .tooLarge(limitBytes: 16_777_216))
+    }
+
+    @Test("Every item the peer does not count as landed is reported skipped: one gone before the offer, too")
     func unlandedItemsAreSkipped() async throws {
         let probe = AgentHubProbe()
         let instance = try await instance(probe)
@@ -241,7 +289,7 @@ extension HubDropServiceTests {
         #expect(offer.items.count == 1)
         probe.deliver(.itemReply(request, .offered(nil)), fromConnection: 0)
         probe.deliver(
-            .items(.offerEnded(.drop, .local, token: offer.token, .completed(remoteEndBody: Self.landed([0])))),
+            .items(.offerEnded(.drop, .local, token: offer.token, .completed(remoteEndBody: Self.landed(1)))),
             fromConnection: 0)
 
         try await waitForChange { instance.clipboardTransferReport.failure != nil }
@@ -254,7 +302,7 @@ extension HubDropServiceTests {
         let (instance, offer) = try await openDrop(probe)
 
         probe.deliver(
-            .items(.offerEnded(.drop, .local, token: offer.token, .completed(remoteEndBody: Self.landed([])))),
+            .items(.offerEnded(.drop, .local, token: offer.token, .completed(remoteEndBody: Self.landed(0)))),
             fromConnection: 0)
 
         try await waitForChange { instance.clipboardTransferReport.failure != nil }
@@ -277,7 +325,7 @@ extension HubDropServiceTests {
         let (request, landed) = probe.dropOffers[1]
         probe.deliver(.itemReply(request, .offered(nil)), fromConnection: 0)
         probe.deliver(
-            .items(.offerEnded(.drop, .local, token: landed.token, .completed(remoteEndBody: Self.landed([0])))),
+            .items(.offerEnded(.drop, .local, token: landed.token, .completed(remoteEndBody: Self.landed(1)))),
             fromConnection: 0)
 
         try await waitForChange { instance.clipboardTransferReport == .idle }
@@ -312,7 +360,7 @@ extension HubDropServiceTests {
         let staging = URL(filePath: path).deletingLastPathComponent()
 
         probe.deliver(
-            .items(.offerEnded(.drop, .local, token: offer.token, .completed(remoteEndBody: Self.landed([1])))),
+            .items(.offerEnded(.drop, .local, token: offer.token, .completed(remoteEndBody: Self.landed(1)))),
             fromConnection: 0)
         try await waitForChange { instance.clipboardTransferReport.failure == .itemsSkipped(count: 1) }
         // The first file is still owed, so its staging stays.

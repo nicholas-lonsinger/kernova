@@ -152,7 +152,7 @@ struct DropReceiverTests {
         #expect(bench.read("a.txt") == "old")
         #expect(bench.read("a 2.txt") == "new")
         #expect(bench.read("Album/p.jpg") == "photo")
-        #expect(try await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [0, 1]).endBody))
+        #expect(try await bench.offerEnd() == .completed(remoteEndBody: Data([0x10, 2])))
         try await bench.close()
     }
 
@@ -174,7 +174,7 @@ struct DropReceiverTests {
     }
 
     @Test(
-        "An item the host cannot serve is skipped, the rest of the drop lands, and the release names only what landed")
+        "An item the host cannot serve is skipped, the rest of the drop lands, and the release counts only what landed")
     func unservableItemIsSkipped() async throws {
         let bench = try await Bench()
         try bench.write("b", to: "b.txt")
@@ -183,7 +183,7 @@ struct DropReceiverTests {
 
         var landed = bench.landed.waiter()
         #expect(try await landed.next { _ in true } == ["b.txt"])
-        #expect(try await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [1]).endBody))
+        #expect(try await bench.offerEnd() == .completed(remoteEndBody: Data([0x10, 1])))
         try await bench.close()
     }
 
@@ -204,7 +204,7 @@ struct DropReceiverTests {
 
         var landed = bench.landed.waiter()
         #expect(try await landed.next { _ in true } == ["b.txt"])
-        #expect(try await bench.offerEnd() == .completed(remoteEndBody: DropLanded(items: [1]).endBody))
+        #expect(try await bench.offerEnd() == .completed(remoteEndBody: Data([0x10, 1])))
         #expect(bench.read("Album/p.jpg") == nil)
         try await bench.close()
     }

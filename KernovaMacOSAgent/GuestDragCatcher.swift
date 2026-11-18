@@ -16,12 +16,13 @@ import KernovaWire
 /// then — items no drag goes out with, a source that forbids a copy — is
 /// answered with no operation and refuses the take.
 ///
-/// The take's first `TARGETED` lists the drag's items as the surface, its
-/// destination, sees them: AppKit sends a destination `draggingEntered` only
-/// once the drag session is running, and a session's items are the ones it
-/// began with, so this view is the whole drag — where the watcher's read of
-/// the drag pasteboard, taken while the source may still be writing it, can
-/// be a part. A later showing takes only the same items.
+/// The take lists the drag's items, ahead of its first `TARGETED`, as the
+/// surface, its destination, sees them: AppKit sends a destination
+/// `draggingEntered` only once the drag session is running, and a session's
+/// items are the ones it began with, so this view is the whole drag — where
+/// the watcher's read of the drag pasteboard, taken while the source may
+/// still be writing it, can be a part. A later showing takes only the same
+/// items.
 ///
 /// A drop delivers the drag — the drag's owner calls its promises in and sizes
 /// its other items before the take ends — only once the host asked with
@@ -110,7 +111,7 @@ final class GuestDragCatcher {
     private var surface: (any GuestDragCatcherSurface)?
     private var take: Take?
 
-    /// Hears what a take carries once the take accepted it, before `TARGETED`
+    /// Hears what a take carries once the take accepted it, before the take
     /// lists it: the take's claim and what it carries.
     var onCarried: ((GuestDragWatcher.Claim, Carried) -> Void)?
 
@@ -182,9 +183,9 @@ final class GuestDragCatcher {
     }
 
     /// Take `id` is over without this side ending it: the host called it off,
-    /// its offer ended, the connection closed, or the drag held more items
-    /// than one take can list. Only a take this side ended
-    /// keeps the surface up, for the drop it must refuse.
+    /// its offer ended, the connection closed, or the drag held an item too
+    /// large for the take to list. Only a take this side ended keeps the
+    /// surface up, for the drop it must refuse.
     func cancelled(take id: DragTakeID) {
         guard let current = take, current.id == id, !current.ended else { return }
         finish()
@@ -271,6 +272,7 @@ final class GuestDragCatcher {
             let carried = Carried(items: items, offered: offered.map(\.item), sources: offered.map(\.source))
             take?.carried = carried
             onCarried?(current.claim, carried)
+            peer.answerTake(current.id, .report(.listed(carried.offered)))
             _ = surface?.show(items: items)
             Self.logger.log(.notice, "Catcher read the drag: \(items.count, privacy: .public) item(s)")
         }
@@ -278,12 +280,12 @@ final class GuestDragCatcher {
         return .copy
     }
 
-    /// Reports the current showing `TARGETED`, once, listing what take
-    /// `current` carries.
+    /// Reports the current showing `TARGETED`, once, after the take listed
+    /// what it carries.
     private func target(_ current: Take) {
-        guard let carried = current.carried, current.showing?.targeted == false else { return }
+        guard current.carried != nil, current.showing?.targeted == false else { return }
         take?.showing?.targeted = true
-        peer.answerTake(current.id, .report(.targeted(carried.offered)))
+        peer.answerTake(current.id, .report(.targeted))
         Self.logger.log(.notice, "Catcher is the drag's target")
     }
 

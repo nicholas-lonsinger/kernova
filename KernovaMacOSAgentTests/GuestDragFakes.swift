@@ -259,7 +259,8 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
     /// one representation's name and a refusal by its code alone.
     enum Answer: Equatable {
         case armed
-        case targeted([String])
+        case listed([String])
+        case targeted
         case delivering
         case deliverRefused
         case stoodDown
@@ -284,7 +285,8 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
             guard case .answered(let answered, let answer) = event, answered == id else { return nil }
             switch answer {
             case .report(.armed): return .armed
-            case .report(.targeted(let items)): return .targeted(items.map(Self.name))
+            case .report(.listed(let items)): return .listed(items.map(Self.name))
+            case .report(.targeted): return .targeted
             case .report(.delivering): return .delivering
             case .report(.deliverRefused): return .deliverRefused
             case .report(.stoodDown): return .stoodDown
@@ -296,10 +298,10 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
         }
     }
 
-    /// The items each `TARGETED` of take `id` listed, in order.
-    func targeted(_ id: DragTakeID) -> [[OfferedItem]] {
+    /// The items each listing of take `id` listed, in order.
+    func listed(_ id: DragTakeID) -> [[OfferedItem]] {
         events.compactMap { event in
-            guard case .answered(id, .report(.targeted(let items))) = event else { return nil }
+            guard case .answered(id, .report(.listed(let items))) = event else { return nil }
             return items
         }
     }

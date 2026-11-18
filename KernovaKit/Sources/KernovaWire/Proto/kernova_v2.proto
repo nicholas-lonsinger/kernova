@@ -897,9 +897,9 @@ message EndRecord {
 // CAPABILITY_WITHDRAWN once it may no longer offer.
 // DROP: the host offers what was dropped onto the VM. DRAG: the peer offers a
 // drag in progress in the guest as a DRAG_OFFER of no items, and the host
-// takes it with DRAG_TAKE, whose first TARGETED lists the drag's items: they
-// become the offer's items, which the host then pulls. A DRAG_OFFER whose
-// count is not 0 is reset MALFORMED_MESSAGE.
+// takes it with DRAG_TAKE, which lists the drag's items, one per MESSAGE,
+// before its first TARGETED: they become the offer's items, which the host
+// then pulls. A DRAG_OFFER whose count is not 0 is reset MALFORMED_MESSAGE.
 
 // FeatureAdvert.params for CLIPBOARD, both sides.
 message ClipboardCapability {
@@ -932,9 +932,11 @@ message DropPolicy {
 // The peer's END body on DROP_OFFER, sent once every item has landed or been
 // skipped. A RESET instead says why the drop stopped.
 message DropLanded {
-  // The index of each item the peer landed, ascending. An item not listed
-  // did not land.
-  repeated uint32 items = 1;
+  reserved 1;
+  reserved "items";
+  // How many of the offer's items the peer landed; it skipped the rest. A
+  // count over the offer's items reads as a body that does not decode.
+  uint32 landed = 2;
 }
 
 // FeatureAdvert.params for DRAG, both sides.
@@ -986,7 +988,17 @@ message DragCatcher {
 message DragDeliver {
 }
 
-// Peer -> host on DRAG_TAKE, one per MESSAGE frame.
+// Peer -> host on DRAG_TAKE, one per MESSAGE frame: a step, or one fact of
+// the drag's listing, naming or sizing.
+//
+// The peer lists the drag's items before the take's first STEP_TARGETED:
+// `item_count`, then that many `item`. After a delivering drop it sends one
+// `promise_name` per promised item of the taken offer, in its order, then
+// STEP_NAMED, then one `size` per item of the taken offer, in its order, then
+// its END CAUGHT. A report out of that order resets the take
+// STREAM_PROTOCOL_ERROR, and one whose content breaks its rule
+// MALFORMED_MESSAGE; a listing the host cannot hold resets it TOO_LARGE. A
+// report setting none is ignored.
 message DragTakeReport {
   enum Step {
     STEP_UNSPECIFIED = 0;      // fallback: ignored
@@ -995,54 +1007,59 @@ message DragTakeReport {
     // step about a showing since stood down from one about the latest.
     STEP_ARMED = 1;
     // The guest's drag manager entered the catcher with the taken drag and
-    // was answered copy: a release now drops on the catcher. The take's first
-    // TARGETED lists the drag's items in `items`, read off the drag as the
-    // catcher, its destination, sees it; a later one lists none.
+    // was answered copy: a release now drops on the catcher.
     STEP_TARGETED = 2;
     STEP_DELIVERING = 3;       // answers DragDeliver: the next drop delivers
     STEP_DELIVER_REFUSED = 4;  // answers DragDeliver: no drop delivers
     // Answers each DragCatcher that stands the catcher down, in order: the
     // catcher is down, so a release now drops where the pointer is.
     STEP_STOOD_DOWN = 5;
-    // The delivering drop called the drag's promises in: `promise_names`
-    // names each, once, before the END.
+    // The delivering drop called the drag's promises in, and the
+    // `promise_name`s before this named each, once: one per promised item,
+    // and no two alike, nor alike any other item's name, ignoring case. The
+    // taken offer serves each promise from then on.
     STEP_NAMED = 6;
   }
-  Step step = 1;
-  // With STEP_NAMED: the name each promise took once called in, one per
-  // promised item of the taken offer, in its order; each one path component
-  // (Representation.name's rule), and no two alike, nor alike any other
-  // item's name, ignoring case. The taken offer serves each promise from
-  // then on. A list breaking any of that resets the take
-  // MALFORMED_MESSAGE.
-  repeated bytes promise_names = 2;
-  // With the take's first STEP_TARGETED: the drag's items, each held to an
-  // offer Item's rules and carrying a FILE or FOLDER representation, their
-  // size estimates summing to at most 2^63-1. They become the taken
-  // DRAG_OFFER's items. A first TARGETED breaking that, or a later one listing
-  // any, resets the take MALFORMED_MESSAGE. A drag whose items do not fit one
-  // MESSAGE frame is not listed: the peer ENDs the take REFUSED TOO_LARGE.
-  repeated Item items = 3;
+  reserved 2, 3;
+  reserved "promise_names", "items";
+  oneof report {
+    Step step = 1;
+    // How many items the drag holds, at least 1.
+    uint32 item_count = 4;
+    // The drag's next item, read off the drag as the catcher, its
+    // destination, sees it: held to an offer Item's rules and carrying a
+    // FILE or FOLDER representation, the listing's size estimates summing to
+    // at most 2^63-1. It becomes the taken DRAG_OFFER's next item. An item
+    // whose report does not fit one MESSAGE frame is not listed: the peer
+    // ENDs the take REFUSED TOO_LARGE.
+    Item item = 5;
+    // The name the next promised item took once called in: one path
+    // component (Representation.name's rule).
+    bytes promise_name = 6;
+    // The next item's size estimate, under Representation.size_estimate's
+    // rule (0 when unknown), the sizes summing to at most 2^63-1.
+    uint64 size = 7;
+  }
 }
 
 // The peer's END body on DRAG_TAKE. A caught drag's offer stays open until
 // the host releases it.
+//
+// CAUGHT after STEP_NAMED and one `size` per item of the taken offer, so by a
+// delivering drop, delivered the drag; after STEP_NAMED with another count of
+// sizes, it reads as CAUGHT undelivered. CAUGHT with no STEP_NAMED delivered
+// nothing, and the taken offer carries the drag as offered.
 message DragTakeOutcome {
   enum Kind {
     KIND_UNSPECIFIED = 0;  // fallback: treated as KIND_REFUSED
     KIND_CAUGHT = 1;       // the drag ended on the catcher
-    KIND_REFUSED = 2;      // `error` says why: DRAG_NOT_CURRENT, DRAG_PRESS_OVER or TOO_LARGE
+    // `error` says why: DRAG_NOT_CURRENT, DRAG_PRESS_OVER, or TOO_LARGE for an
+    // item whose report does not fit one MESSAGE frame
+    KIND_REFUSED = 2;
     KIND_RETURNED = 3;     // the drag ended in the guest, its catcher stood down
   }
   Kind kind = 1;
   Error error = 2;
-  reserved 3;
-  reserved "reoffer";
-  // CAUGHT after STEP_NAMED, so by a delivering drop: each item's size
-  // estimate, one per item of the taken offer, promised ones included, in its
-  // order, under Representation.size_estimate's rule (0 when unknown), and
-  // summing to at most 2^63-1. A list breaking that reads as CAUGHT
-  // undelivered. CAUGHT with no STEP_NAMED delivered nothing, and the
-  // taken offer carries the drag as offered.
-  repeated uint64 sizes = 4;
+  reserved 3, 4;
+  reserved "reoffer", "sizes";
 }

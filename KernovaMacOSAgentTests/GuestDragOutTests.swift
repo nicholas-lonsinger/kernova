@@ -246,7 +246,7 @@ struct GuestDragOutTests {
     // MARK: - Answering a take
 
     @Test(
-        "a take arms the catcher and reports ARMED, then TARGETED listing the items the drag entered it with, read off their URLs alone"
+        "a take arms the catcher and reports ARMED, then lists the items the drag entered it with, read off their URLs alone, then TARGETED"
     )
     func aTakeIsTargetedAsTheDragEnters() throws {
         let notes = try folder("Notes.rtfd", files: ["TXT.rtf": "{\\rtf1}"])
@@ -262,8 +262,8 @@ struct GuestDragOutTests {
 
         #expect(rig.catcher.draggingEntered(dragged(urls)) == .copy)
 
-        #expect(rig.peer.answers(to: id) == [.armed, .targeted(names(urls))])
-        let listed = try #require(rig.peer.targeted(id).first).compactMap(\.representations.first)
+        #expect(rig.peer.answers(to: id) == [.armed, .listed(names(urls)), .targeted])
+        let listed = try #require(rig.peer.listed(id).first).compactMap(\.representations.first)
         #expect(listed.map(\.storage) == [.file, .file, .folder, .folder])
         #expect(
             listed.map(\.type.appleUTI) == [
@@ -339,7 +339,7 @@ struct GuestDragOutTests {
         let entered = try #require(GuestDraggedItems.items(on: rig.input.dragPasteboard))
         #expect(rig.enter(entered) == .copy)
 
-        #expect(rig.peer.answers(to: id) == [.armed, .targeted(names(urls))])
+        #expect(rig.peer.answers(to: id) == [.armed, .listed(names(urls)), .targeted])
         #expect(rig.surface.shownItems == items(urls))
         let served = rig.dragOut.served
         #expect(try await serve(served, request(try rig.token(), item: 2)) == .success(.tree(path: urls[2].path)))
@@ -399,7 +399,7 @@ struct GuestDragOutTests {
         rig.catcher.concludeDragOperation()
 
         #expect(
-            rig.peer.answers(to: takeID(1)) == [.armed, .targeted(names(urls)), .caught(sizes: nil)])
+            rig.peer.answers(to: takeID(1)) == [.armed, .listed(names(urls)), .targeted, .caught(sizes: nil)])
         #expect(!rig.surface.isShown)
         #expect(!rig.peer.events.contains(.withdrew(token: try rig.token())))
     }
@@ -412,7 +412,7 @@ struct GuestDragOutTests {
         rig.catcher.draggingExited()
         #expect(rig.enter(items(urls)) == .copy)
 
-        #expect(rig.peer.answers(to: takeID(1)) == [.armed, .targeted(names(urls))])
+        #expect(rig.peer.answers(to: takeID(1)) == [.armed, .listed(names(urls)), .targeted])
     }
 
     @Test(
@@ -439,7 +439,7 @@ struct GuestDragOutTests {
 
         #expect(!rig.surface.isShown)
         #expect(
-            rig.peer.answers(to: takeID(1)) == [.armed, .targeted(names(urls)), .refused(.dragNotCurrent)])
+            rig.peer.answers(to: takeID(1)) == [.armed, .listed(names(urls)), .targeted, .refused(.dragNotCurrent)])
     }
 
     // MARK: - Drag-back-in
@@ -458,7 +458,7 @@ struct GuestDragOutTests {
         #expect(!rig.catcher.performDragOperation())
         rig.releaseAndTick()
         #expect(
-            rig.peer.answers(to: takeID(1)) == [.armed, .targeted(names(urls)), .stoodDown, .returned])
+            rig.peer.answers(to: takeID(1)) == [.armed, .listed(names(urls)), .targeted, .stoodDown, .returned])
     }
 
     @Test("the drag ending with the catcher stood down ends the take RETURNED")
@@ -483,7 +483,7 @@ struct GuestDragOutTests {
 
         #expect(
             rig.peer.answers(to: takeID(1)) == [
-                .armed, .targeted(names(urls)), .stoodDown, .armed, .refused(.dragNotCurrent),
+                .armed, .listed(names(urls)), .targeted, .stoodDown, .armed, .refused(.dragNotCurrent),
             ])
         #expect(!rig.surface.isShown)
     }
@@ -513,7 +513,7 @@ struct GuestDragOutTests {
         #expect(!rig.surface.isShown)
         // Nothing is left armed for a late callback to answer.
         #expect(rig.catcher.draggingEntered(dragged(urls)) == [])
-        #expect(rig.peer.answers(to: takeID(1)) == (targeted ? [.armed, .targeted(names(urls))] : [.armed]))
+        #expect(rig.peer.answers(to: takeID(1)) == (targeted ? [.armed, .listed(names(urls)), .targeted] : [.armed]))
     }
 
     @Test("a cancel of a take this side refused after TARGETED leaves the surface up to refuse the drop")
@@ -539,7 +539,7 @@ struct GuestDragOutTests {
 
         #expect(!rig.surface.isShown)
         #expect(
-            rig.peer.answers(to: takeID(1)) == [.armed, .targeted(names(urls)), .refused(.dragPressOver)])
+            rig.peer.answers(to: takeID(1)) == [.armed, .listed(names(urls)), .targeted, .refused(.dragPressOver)])
     }
 
     @Test("a click on a catcher that outlived its drag takes it down, and the next take arms afresh")
@@ -554,14 +554,14 @@ struct GuestDragOutTests {
 
         #expect(!rig.surface.isShown)
         #expect(
-            rig.peer.answers(to: takeID(1)) == [.armed, .targeted(names(urls)), .refused(.dragPressOver)])
+            rig.peer.answers(to: takeID(1)) == [.armed, .listed(names(urls)), .targeted, .refused(.dragPressOver)])
         // The next press's take arms as the first did.
         let next = [try file("two.txt")]
         rig.pressAndDrag(next.map(fileItem))
         let id = try rig.take(2, offer: 1)
         #expect(rig.surface.isShown)
         #expect(rig.enter(items(next)) == .copy)
-        #expect(rig.peer.answers(to: id) == [.armed, .targeted(names(next))])
+        #expect(rig.peer.answers(to: id) == [.armed, .listed(names(next)), .targeted])
     }
 
     // MARK: - Delivering at the catch
@@ -611,7 +611,7 @@ struct GuestDragOutTests {
         rig.dragOut.control(takeID(1), .deliver)
 
         #expect(
-            rig.peer.answers(to: takeID(1)) == [.armed, .deliverRefused, .targeted(names(urls)), .delivering])
+            rig.peer.answers(to: takeID(1)) == [.armed, .deliverRefused, .listed(names(urls)), .targeted, .delivering])
     }
 
     @Test(
@@ -634,10 +634,11 @@ struct GuestDragOutTests {
         // A receiver naming several files goes out under its first.
         #expect(
             rig.peer.answers(to: takeID(1)) == [
-                .armed, .targeted(["img_0001.heic", "Untitled.heic", "Untitled.jpeg", "Untitled.jpeg"]), .delivering,
+                .armed, .listed(["img_0001.heic", "Untitled.heic", "Untitled.jpeg", "Untitled.jpeg"]), .targeted,
+                .delivering,
                 .named(["IMG_0001 2.HEIC", "IMG_0002.JPG", "img_0002 2.jpg"]), .caught(sizes: [5, 0, 0, 0]),
             ])
-        let listed = try #require(rig.peer.targeted(takeID(1)).first).compactMap(\.representations.first)
+        let listed = try #require(rig.peer.listed(takeID(1)).first).compactMap(\.representations.first)
         #expect(listed.map(\.promised) == [false, true, true, true])
         // The taken offer carries the drag on: offered once, never withdrawn,
         // even once the press ends.
@@ -659,7 +660,7 @@ struct GuestDragOutTests {
         try rig.take(1)
         drop(rig, [.file(note), .file(tree), .promise(uti: "public.heic"), .file(album)])
 
-        let listed = try #require(rig.peer.targeted(takeID(1)).first).compactMap(\.representations.first)
+        let listed = try #require(rig.peer.listed(takeID(1)).first).compactMap(\.representations.first)
         #expect(listed.map(\.storage) == [.file, .folder, .file, .folder])
         #expect(listed.map(\.sizeEstimate) == [0, 0, 0, 0])
         #expect(rig.input.sized == [[note, tree, album]])
@@ -702,7 +703,7 @@ struct GuestDragOutTests {
         rig.enter(items(urls))
         #expect(rig.catcher.draggingUpdated(dragged(urls)) == .copy)
         if delivering { rig.dragOut.control(takeID(1), .deliver) }
-        #expect(rig.peer.answers(to: takeID(1)).contains(.targeted(names(urls))))
+        #expect(rig.peer.answers(to: takeID(1)).contains(.listed(names(urls))))
         #expect(rig.input.sized.isEmpty, "a dragged file was read before the drop")
         #expect(rig.input.watchedFolder == nil)
 
