@@ -142,16 +142,6 @@ struct GuestDragOutTests {
         #expect(GuestDraggedItems.items(on: pasteboard) == [.promise(uti: "public.heic")])
     }
 
-    @Test("a drag the offer limit would cut short is not offered")
-    func overTheOfferLimitIsNotOffered() {
-        let limit = GuestDraggedItems.offerLimit
-        let files = (0..<limit).map { GuestDragItem.file(URL(fileURLWithPath: "/tmp/item-\($0)")) }
-
-        #expect(GuestDraggedItems.offerItems(files)?.count == limit)
-        // A promise counts toward the limit like a file.
-        #expect(GuestDraggedItems.offerItems(files + [.promise(uti: "public.heic")]) == nil)
-    }
-
     @Test("a drag pasteboard that is still empty is read again on the next tick")
     func anEmptyPasteboardIsReadAgain() throws {
         let rig = Rig()

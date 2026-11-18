@@ -193,10 +193,8 @@ struct DragDeliveryTests {
 
     // MARK: - The peer
 
-    @Test(
-        "the peer carries the drag on its take, its writer stalled: TARGETED's items, STEP_NAMED, then the CAUGHT END; it resets nothing, and only the host's release ends the taken offer"
-    )
-    func peerDeliversOnTheTake() throws {
+    /// A peer that offers the drag of ``token`` and was asked about the host's take of it, and the take.
+    static func asked() throws -> (HostileRun, DragTakeID) {
         let run = HostileRun(local: .peer, seed: 1, items: true)
         run.feed(
             [WireFrames.hello(role: .host, items: true), WireFrames.session { $0.policy = HostileItems.policy }],
@@ -208,6 +206,68 @@ struct DragDeliveryTests {
                 if case .dragTake(.requested(let id, _)) = event { return id }
                 return nil
             }.first)
+        return (run, id)
+    }
+
+    /// `count` plain files, each FILE representation holding only a 54-byte name: by hand, 2 + 54 bytes of
+    /// `name` and 2 of `storage` make a 58-byte Representation, a 60-byte Item, and 62 bytes per entry of the
+    /// report's `items`; with the report's 2-byte `step`, 1,057 of them list exactly 65,536 bytes.
+    static func fiftyFourByteNames(_ count: Int) -> [OfferedItem] {
+        (0..<count).map { index in
+            let digits = String(index)
+            var representation = Representation()
+            representation.storage = .file
+            representation.name = Data((String(repeating: "0", count: 54 - digits.count) + digits).utf8)
+            var item = OfferedItem()
+            item.representations = [representation]
+            return item
+        }
+    }
+
+    @Test("a first TARGETED listing exactly one MESSAGE's 65,536 bytes goes out whole")
+    func targetedFillingOneMessageGoesOut() throws {
+        let (run, id) = try Self.asked()
+        let items = Self.fiftyFourByteNames(1_057)
+
+        run.input(.dragTake(id, .report(.targeted(items))))
+
+        let onTake = run.written.filter { $0.streamID == id.stream }
+        let report = try #require(onTake.first { $0.type == .data })
+        #expect(report.payload.count == 65_536)
+        #expect(try Kernova_V2_DragTakeReport(serializedBytes: report.payload).items == items)
+        #expect(!onTake.contains { $0.type == .end || $0.type == .reset })
+    }
+
+    @Test(
+        "a first TARGETED listing more than one MESSAGE holds ends the take REFUSED TOO_LARGE, its owner hearing it cancelled, and lists nothing"
+    )
+    func targetedOverOneMessageRefusesTheTake() throws {
+        let (run, id) = try Self.asked()
+
+        run.input(.dragTake(id, .report(.targeted(Self.fiftyFourByteNames(1_058)))))
+        run.input(.dragTake(id, .caught(sizes: nil)))
+
+        let onTake = run.written.filter { $0.streamID == id.stream }
+        #expect(!onTake.contains { $0.type == .data }, "a report went out: \(onTake)")
+        let ends = onTake.filter { $0.type == .end }
+        #expect(ends.count == 1, "the take ended other than once: \(onTake)")
+        let outcome = try Kernova_V2_DragTakeOutcome(serializedBytes: try #require(ends.first).payload)
+        #expect(outcome.kind == .refused)
+        #expect(outcome.error.code == .tooLarge)
+        #expect(outcome.error.limit == 65_536)
+        #expect(
+            run.peerEvents.contains {
+                if case .dragTake(.cancelled(let cancelled)) = $0 { cancelled == id } else { false }
+            })
+        #expect(!run.written.contains { $0.type == .reset }, "the peer reset a stream: \(run.written)")
+        #expect(run.state == ConnectionState.established)
+    }
+
+    @Test(
+        "the peer carries the drag on its take, its writer stalled: TARGETED's items, STEP_NAMED, then the CAUGHT END; it resets nothing, and only the host's release ends the taken offer"
+    )
+    func peerDeliversOnTheTake() throws {
+        let (run, id) = try Self.asked()
         run.writerStalled = true
         run.input(.dragTake(id, .report(.targeted(Self.items(Self.drag)))))
         run.input(.dragTake(id, .report(.targeted(Self.items(Self.drag)))))

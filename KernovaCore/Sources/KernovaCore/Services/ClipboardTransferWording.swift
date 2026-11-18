@@ -349,7 +349,7 @@ package struct ClipboardTransferWording: Equatable {
     }
 
     /// The wording for files dragged out of the VM display that did not reach
-    /// where they were dropped on this Mac.
+    /// where they were dropped on this Mac, or that could not leave the guest.
     ///
     /// Says the drag did not finish rather than that nothing arrived: a
     /// destination asks for each item in turn, so the items before the failure
@@ -383,7 +383,10 @@ package struct ClipboardTransferWording: Equatable {
         case .sourceUnreadable:
             message = "The VM couldn't read one of the items, so the drag didn't finish."
             menuLine = "Drag: the VM couldn't read an item"
-        case .tooLarge, .disconnectedCopyRetracted, .disconnectedFilesRetracted, .withdrawnCopyRetracted,
+        case .tooLarge:
+            message = "The drag holds more items than can be dragged out of the VM at once."
+            menuLine = "Drag: too many items to drag out at once"
+        case .disconnectedCopyRetracted, .disconnectedFilesRetracted, .withdrawnCopyRetracted,
             .withdrawnFilesRetracted, .transferFailed, .itemsSkipped, .itemsUnreadable, .sendFailed, .dropStopped,
             .clipboardChanged, .nothingToCopy, .filesLeftOut, .partsGone:
             message = "The transfer from the VM failed, so the drag didn't finish."
