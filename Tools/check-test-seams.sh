@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A `…ForTesting` name says a declaration exists for tests alone; the
+# A name containing `ForTesting` says a declaration exists for tests alone; the
 # `#if DEBUG` around it is what makes that true. Ungated, it compiles, links,
 # and ships in a Release build, and nothing else in the toolchain objects — the
 # compiler only rejects an ungated *reference* to a gated declaration, never an
@@ -11,11 +11,12 @@
 # convention is scanned instead of skipped, so the gap is loud rather than
 # silent.
 #
-# The dead-code tool's `ungated-seams` parses each file as Swift. What counts
-# as a seam, and which `#if` gates one, is `DebugOnlyCode`'s (Tools/DeadCode):
-# the dead-code scan leaves debug-only code out of what only tests reach by the
-# same reading, so a seam this check passes is one the scan does not list.
-# `#if DEBUG` is the one spelling a seam is gated with.
+# The dead-code tool's `ungated-seams` parses as Swift each file whose text
+# contains `ForTesting`. What counts as a seam, and which `#if` gates one, is
+# `DebugOnlyCode`'s (Tools/DeadCode). The dead-code scan leaves debug-only code
+# out of what only tests reach by the same reading, so a seam this check passes
+# is never listed as reached only by tests; one that nothing uses is listed as
+# dead. `#if DEBUG` is the one spelling a seam is gated with.
 #
 # The second gate runs over the files the first one skips. AppKit writes a
 # window frame, a split position, and a toolbar configuration to
@@ -96,16 +97,17 @@ report() {
     printf '%s %s\n' "$(printf '%s\n' "$text" | wc -l | tr -d ' ')" "$summary" >&2
 }
 
-seam_tool=$(dead_code_swift build --quiet >&2 && dead_code_swift build --show-bin-path) || {
-    echo 'check-test-seams: the dead-code tool does not build, so no file was read' >&2
-    exit 1
-}
-seam_tool="$seam_tool/dead-code"
-findings=$(git ls-files '*.swift' \
-    | grep -vE "$test_paths" \
-    | tr '\n' '\0' \
-    | xargs -0 "$seam_tool" ungated-seams)
-scan_status=$?
+if seam_tool=$(dead_code_swift build --quiet >&2 && dead_code_swift build --show-bin-path); then
+    findings=$(git ls-files '*.swift' \
+        | grep -vE "$test_paths" \
+        | tr '\n' '\0' \
+        | xargs -0 "$seam_tool/dead-code" ungated-seams)
+    scan_status=$?
+else
+    echo 'check-test-seams: the dead-code tool does not build, so the seam gate read no file' >&2
+    findings=''
+    scan_status=1
+fi
 
 store_findings=$(git ls-files '*.swift' \
     | grep -E "$test_paths" \

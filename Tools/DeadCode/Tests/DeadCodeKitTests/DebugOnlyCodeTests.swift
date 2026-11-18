@@ -8,6 +8,8 @@ private func declarationIsDebugOnly(under condition: String) throws -> Bool {
 }
 
 @Suite struct DebugOnlyCodeTests {
+    /// `DEBUG`, an `&&` with such a side, or an `||` with two; a negation counts for nothing, so `!(!DEBUG)`, which
+    /// needs `DEBUG`, is not debug-only.
     @Test(arguments: [
         ("#if DEBUG", true),
         ("#if os(Linux) && DEBUG", true),
@@ -22,7 +24,7 @@ private func declarationIsDebugOnly(under condition: String) throws -> Bool {
         ("#if DEBUGGING", false),
         ("#if os(Linux)", false),
     ])
-    func aClauseIsDebugOnlyWhenItsConditionCannotHoldWithoutDEBUG(condition: String, debugOnly: Bool) throws {
+    func aClauseIsDebugOnlyWhenItsConditionHasTheRulesShape(condition: String, debugOnly: Bool) throws {
         #expect(try declarationIsDebugOnly(under: condition) == debugOnly)
     }
 
@@ -285,6 +287,8 @@ private indirect enum Condition: CustomStringConvertible, Sendable {
                 enum E { case caseForTesting }
                 let (tupleForTesting, other) = (0, 0)
                 struct Inner { static var innerForTesting: Int { 0 } }
+                var hookForTestingOnly = 0
+                var `escapedForTesting` = 0
             }
             #if DEBUG
             extension S { func wholeForTesting() {} }
@@ -295,18 +299,24 @@ private indirect enum Condition: CustomStringConvertible, Sendable {
             """
         let seams = try DebugOnlyCode(path: "S.swift", source: source).ungatedSeams
         #expect(
-            seams == [
-                .init(name: "shippedForTesting", line: 2),
-                .init(name: "elseForTesting", line: 6),
-                .init(name: "eitherForTesting", line: 9),
-                .init(name: "releaseForTesting", line: 12),
-                .init(name: "caseForTesting", line: 18),
-                .init(name: "tupleForTesting", line: 19),
-                .init(name: "innerForTesting", line: 20),
-                .init(name: "topLevelForTesting", line: 25),
-                .init(name: "AliasForTesting", line: 26),
-                .init(name: "ProtocolForTesting", line: 27),
-                .init(name: "requirementForTesting", line: 27),
+            seams.map { "\($0.line) \($0.name)" } == [
+                "2 shippedForTesting", "6 elseForTesting", "9 eitherForTesting", "12 releaseForTesting",
+                "18 caseForTesting", "19 tupleForTesting", "20 innerForTesting", "21 hookForTestingOnly",
+                "22 escapedForTesting", "27 topLevelForTesting", "28 AliasForTesting", "29 ProtocolForTesting",
+                "29 requirementForTesting",
+            ])
+        #expect(seams.first?.text == "var shippedForTesting = 0")
+        #expect(seams.first { $0.name == "escapedForTesting" }?.text == "var `escapedForTesting` = 0")
+    }
+
+    /// A line ends at `\r\n`, `\n` or a lone `\r`, as the compiler counts lines.
+    @Test(arguments: ["\r\n", "\n", "\r"])
+    func aSeamIsReportedWithItsLineWhateverEndsTheLines(end: String) throws {
+        let source = ["struct S {", "    // A comment.", "    var shippedForTesting = 0", "}", ""].joined(
+            separator: end)
+        #expect(
+            try DebugOnlyCode(path: "S.swift", source: source).ungatedSeams == [
+                .init(name: "shippedForTesting", line: 3, text: "var shippedForTesting = 0")
             ])
     }
 }

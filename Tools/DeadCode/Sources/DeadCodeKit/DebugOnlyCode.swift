@@ -1,22 +1,26 @@
 import SwiftParser
 import SwiftSyntax
 
-/// What only a build defining `DEBUG` compiles of one Swift source file: code a Debug build has and a Release build
-/// leaves out.
+/// One Swift source file, read for its debug-only code: code that cannot compile without `DEBUG`, so no Release build
+/// holds it.
 ///
-/// Code is debug-only when a `#if` or `#elseif` clause around it, at any depth, has a condition that cannot hold without
-/// `DEBUG`: `DEBUG` itself, an `&&` either side of which is such a condition, or an `||` both sides of which are, with
-/// parentheses grouping. A negation counts for nothing, nor does an `#else` clause: `#if !DEBUG`, `#if DEBUG || X`
-/// and the `#else` of any `#if` are not debug-only.
+/// The reading is conservative. Everything it calls debug-only needs `DEBUG`, but not all code that needs `DEBUG` is
+/// called debug-only. Code is debug-only when a `#if` or `#elseif` clause around it, at any depth, has a condition of
+/// this shape: `DEBUG` itself, an `&&` either side of which has this shape, or an `||` both sides of which do, with
+/// parentheses grouping. A negation counts for nothing, nor does an `#else` clause. So `#if !DEBUG`, `#if DEBUG || X`
+/// and the `#else` of any `#if` are not debug-only, even the `#else` of `#if !DEBUG`.
 package struct DebugOnlyCode {
-    /// A declaration named `…ForTesting`, which says it exists for tests alone.
+    /// A declaration whose name contains `ForTesting`, which says it exists for tests alone.
     package struct Seam: Equatable, Sendable {
         package var name: String
         package var line: Int
+        /// The line the name is on, without its indentation.
+        package var text: String
 
-        package init(name: String, line: Int) {
+        package init(name: String, line: Int, text: String) {
             self.name = name
             self.line = line
+            self.text = text
         }
     }
 
@@ -43,8 +47,11 @@ package struct DebugOnlyCode {
     package var ungatedSeams: [Seam] {
         let finder = SeamFinder(viewMode: .sourceAccurate)
         finder.walk(tree)
-        return finder.seams.filter { !Self.isDebugOnly(Syntax($0)) }.map { name in
-            Seam(name: name.text, line: converter.location(for: name.positionAfterSkippingLeadingTrivia).line)
+        // Lines as the converter counts them, which ends one at `\r\n`, `\n` or a lone `\r`.
+        let lines = converter.sourceLines
+        return finder.seams.filter { !Self.isDebugOnly(Syntax($0.token)) }.map { seam in
+            let line = converter.location(for: seam.token.positionAfterSkippingLeadingTrivia).line
+            return Seam(name: seam.name, line: line, text: lines[line - 1].trimmed)
         }
     }
 
@@ -82,9 +89,10 @@ package struct DebugOnlyCode {
     }
 }
 
-/// The name of every declaration named `…ForTesting` in a type's body or at file scope, in source order.
+/// Every declaration in a type's body or at file scope whose name, backticks aside, contains `ForTesting`, in source
+/// order.
 private final class SeamFinder: SyntaxVisitor {
-    private(set) var seams: [TokenSyntax] = []
+    private(set) var seams: [(token: TokenSyntax, name: String)] = []
 
     override func visit(_ node: FunctionDeclSyntax) -> SyntaxVisitorContinueKind { record([node.name], of: node) }
     override func visit(_ node: StructDeclSyntax) -> SyntaxVisitorContinueKind { record([node.name], of: node) }
@@ -104,7 +112,10 @@ private final class SeamFinder: SyntaxVisitor {
 
     private func record(_ names: [TokenSyntax], of declaration: some DeclSyntaxProtocol) -> SyntaxVisitorContinueKind {
         if Self.isMemberOrFileScope(Syntax(declaration)) {
-            seams += names.filter { $0.text.hasSuffix("ForTesting") }
+            for token in names {
+                let name = token.identifier?.name ?? token.text
+                if name.contains("ForTesting") { seams.append((token, name)) }
+            }
         }
         return .visitChildren
     }
@@ -128,6 +139,13 @@ private final class SeamFinder: SyntaxVisitor {
             }
         }
         return false
+    }
+}
+
+extension String {
+    /// This string without the whitespace and line terminators at either end.
+    fileprivate var trimmed: String {
+        String(drop(while: \.isWhitespace).reversed().drop(while: \.isWhitespace).reversed())
     }
 }
 

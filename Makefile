@@ -60,9 +60,12 @@ LOCKED_TWIN   = +@$(LOCKED) $(MAKE) --no-print-directory locked-$@
 SWIFT_FORMAT := xcrun swift-format
 
 # The fixture suites for the skill scripts, Tools/lib, the lint checks that
-# have one, and the dead-code scan's tool. Each drives its code through every verdict against recorded
-# fixtures — no Xcode, no network, seconds to run — which is what lets `lint`
-# gate them, and the pre-push hook with it.
+# have one, and the dead-code scan's tool. Each drives its code through every
+# verdict against recorded fixtures, with no Xcode and in seconds, which is
+# what lets `lint` gate them, and the pre-push hook with it. The dead-code
+# tool's swift-syntax is the one exception: SwiftPM clones it once per machine
+# into its cache under ~/Library/Caches, which git-isolation.sh's HOME does not
+# move, and each checkout builds it once, in about 15 s.
 FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
                  .agents/skills/make-verdict/tests/run.sh \
                  Tools/tests/worktrees.sh \

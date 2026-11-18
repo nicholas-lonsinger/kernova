@@ -17,7 +17,7 @@ let usage = """
                        [--json <file>] [--summary <file>]
           Combines platform bundles (macos, linux) and prints the report; a partial one opens with <text>.
       dead-code ungated-seams <file>...
-          Prints each declaration named …ForTesting in <file>s that a Release build compiles, as
+          Prints each declaration whose name contains ForTesting in <file>s that a Release build compiles, as
           `<file>:<line> — <line's text>`.
     """
 
@@ -218,9 +218,8 @@ func ungatedSeams(_ files: ArraySlice<String>) throws {
         let source = try String(contentsOfFile: file, encoding: .utf8)
         // A seam's name holds this text, so a file without it declares none; a debug build parses slowly.
         guard source.contains("ForTesting") else { continue }
-        let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
         for seam in try DebugOnlyCode(path: file, source: source).ungatedSeams {
-            print("\(file):\(seam.line) — \(lines[seam.line - 1].trimmingCharacters(in: .whitespacesAndNewlines))")
+            print("\(file):\(seam.line) — \(seam.text)")
         }
     }
 }
