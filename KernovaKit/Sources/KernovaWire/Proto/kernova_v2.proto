@@ -1053,7 +1053,8 @@ message DragTakeReport {
   // offer Item's rules and carrying a FILE or FOLDER representation, their
   // size estimates summing to at most 2^63-1. They become the taken
   // DRAG_OFFER's items. A first TARGETED breaking that, or a later one listing
-  // any, resets the take MALFORMED_MESSAGE.
+  // any, resets the take MALFORMED_MESSAGE. A drag whose items do not fit one
+  // MESSAGE frame is not listed: the peer ENDs the take REFUSED TOO_LARGE.
   repeated Item items = 3;
 }
 
@@ -1063,7 +1064,7 @@ message DragTakeOutcome {
   enum Kind {
     KIND_UNSPECIFIED = 0;  // fallback: treated as KIND_REFUSED
     KIND_CAUGHT = 1;       // the drag ended on the catcher
-    KIND_REFUSED = 2;      // `error` says why: DRAG_NOT_CURRENT or DRAG_PRESS_OVER
+    KIND_REFUSED = 2;      // `error` says why: DRAG_NOT_CURRENT, DRAG_PRESS_OVER or TOO_LARGE
     KIND_RETURNED = 3;     // the drag ended in the guest, its catcher stood down
   }
   Kind kind = 1;

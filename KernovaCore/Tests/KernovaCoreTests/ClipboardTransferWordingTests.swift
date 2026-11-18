@@ -69,6 +69,7 @@ struct ClipboardTransferWordingTests {
             (.peerReported(.pasteFailed), .dragOut),
             (.peerReported(.dragItemUnavailable), .dragOut),
             (.sourceUnreadable, .dragOut),
+            (.tooLarge(limitBytes: 65_536), .dragOut),
             (.sourceUnreadable, .paste),
             (.sourceUnreadable, .preview),
             (.sourceUnreadable, .drop),

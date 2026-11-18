@@ -298,7 +298,8 @@ struct GuestDragTakeTests {
 
     @Test("a refused take hands the press back, looking again for a drag, and injects no release")
     func refusedTakeHandsBack() {
-        let take = makeTake()
+        let reporter = ClipboardTransferReporter()
+        let take = makeTake(reporter: reporter)
         transport.end(.refused(WireError(.dragPressOver)))
 
         #expect(take.phase == .abandoned)
@@ -306,6 +307,27 @@ struct GuestDragTakeTests {
         #expect(transport.cancels == 0)
         #expect(transport.releases == 1)
         #expect(finished.count == 1)
+        #expect(reporter.report == .idle, "a refusal the drag's own course explains reported a failure")
+    }
+
+    @Test(
+        "a take the guest refused TOO_LARGE in place of its first TARGETED reports the drag out failed, then hands the press back"
+    )
+    func tooLargeRefusalIsReported() throws {
+        let reporter = ClipboardTransferReporter()
+        let take = makeTake(reporter: reporter)
+        transport.report(.armed)
+        transport.end(.refused(WireError(.tooLarge, limit: 65_536)))
+
+        #expect(take.phase == .abandoned)
+        #expect(display.calls.suffix(2) == [.returnToExit, .resumeTracking])
+        #expect(!display.calls.contains(.release))
+        guard case .finished(let finish) = reporter.report else {
+            Issue.record("nothing was reported: \(reporter.report)")
+            return
+        }
+        #expect(finish.gesture == .dragOut)
+        #expect(finish.failure == .tooLarge(limitBytes: 65_536))
     }
 
     // MARK: - Drag-back-in

@@ -36,8 +36,9 @@ public enum DragTakeReport: Sendable, Equatable {
     case armed
     /// The guest's drag manager entered the catcher with the taken drag, whose items are `items`, read off the
     /// drag as the catcher sees it: a release now drops on it. The take's first `TARGETED` lists them on the
-    /// wire, and they become the taken offer's items; the host reports the same list for every `TARGETED`,
-    /// once it passed ``DragItems/carried(_:)``, and resets the take `MALFORMED_MESSAGE` for any other.
+    /// wire, in one MESSAGE, and they become the taken offer's items; a listing over one MESSAGE refuses the
+    /// take `TOO_LARGE` instead. The host reports the same list for every `TARGETED`, once it passed
+    /// ``DragItems/carried(_:)``, and resets the take `MALFORMED_MESSAGE` for any other.
     case targeted([OfferedItem])
     /// Answers `.deliver`: the next drop on the catcher delivers the drag.
     case delivering
@@ -107,7 +108,8 @@ public enum DragTakeEvent: Sendable, Equatable {
     /// Peer: the host's word on a take this side has not ended.
     case control(DragTakeID, DragTakeControl)
     /// Peer: a take this side had not ended is over: the host called it off, its offer ended and it was refused,
-    /// or the connection ended. Once per asked take this side did not end.
+    /// its first `TARGETED` listed more than one MESSAGE holds and it was refused `TOO_LARGE`, or the
+    /// connection ended. Once per asked take this side did not end.
     case cancelled(DragTakeID)
     /// Host: a step of the peer's hand-off on a take `takeDrag` opened.
     case report(DragTakeID, DragTakeReport)
@@ -388,11 +390,21 @@ struct DragOffers: Sendable {
             case .named(let names):
                 report.promiseNames = names
             case .targeted(let offered) where asked[index].offered == nil:
+                report.items = offered
+                let listing = report.encoded
+                guard listing.count <= WireConstants.maxControlPayload else {
+                    let take = asked.remove(at: index)
+                    events.append(.cancelled(take.id))
+                    let detail = "the drag's \(offered.count) items list \(listing.count) bytes"
+                    let error = WireError(
+                        .tooLarge, limit: UInt64(WireConstants.maxControlPayload), debugDetail: detail)
+                    return refuse(take.id.stream, error, &connection)
+                }
                 guard items.carryLocal(asked[index].token, items: offered) else {
                     return connection.misuse("a TARGETED whose offer is no whole, empty drag offer")
                 }
                 asked[index].offered = offered
-                report.items = offered
+                return send(listing, on: id.stream, &connection)
             case .armed, .targeted, .delivering, .deliverRefused, .stoodDown:
                 break
             }
@@ -546,7 +558,7 @@ struct DragOffers: Sendable {
         guard items.offers.localFeature(token) == .drag, !taken.contains(token),
             !asked.contains(where: { $0.token == token })
         else {
-            return refuse(stream, &connection)
+            return refuse(stream, WireError(.dragNotCurrent), &connection)
         }
         asked.append(Take(id: id, token: token))
         events.append(.requested(id, token: token))
@@ -557,7 +569,7 @@ struct DragOffers: Sendable {
         let open = items.offers.localTokens
         taken.removeAll { !open.contains($0) }
         for take in asked where !open.contains(take.token) {
-            refuse(take.id.stream, &connection)
+            refuse(take.id.stream, WireError(.dragNotCurrent), &connection)
             events.append(.cancelled(take.id))
         }
         asked.removeAll { !open.contains($0.token) }
@@ -570,11 +582,11 @@ struct DragOffers: Sendable {
         return DragItems.carried(items)?.map(\.representation)
     }
 
-    /// ENDs a take REFUSED `DRAG_NOT_CURRENT`.
-    private mutating func refuse(_ stream: StreamID, _ connection: inout Connection) {
+    /// ENDs a take REFUSED with `error`.
+    private mutating func refuse(_ stream: StreamID, _ error: WireError, _ connection: inout Connection) {
         var outcome = Kernova_V2_DragTakeOutcome()
         outcome.kind = .refused
-        outcome.error = WireError(.dragNotCurrent).proto
+        outcome.error = error.proto
         end(stream, outcome.encoded, &connection)
     }
 

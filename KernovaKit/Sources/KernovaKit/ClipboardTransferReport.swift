@@ -64,7 +64,8 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// when it could be read.
     case diskFull(needed: UInt64?, available: Int64?)
     /// Over the transfer ceiling in force when the refusal was raised — the copy
-    /// budget under `.copy`, the peer's paste cap under `.peerPaste`.
+    /// budget under `.copy`, the peer's paste cap under `.peerPaste`, the most a
+    /// take lists of a drag's items under `.dragOut`.
     case tooLarge(limitBytes: Int)
     /// The peer reported a failure of its own.
     case peerReported(ClipboardErrorCode)

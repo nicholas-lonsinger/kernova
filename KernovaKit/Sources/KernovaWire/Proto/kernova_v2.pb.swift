@@ -2799,7 +2799,8 @@ public nonisolated struct Kernova_V2_DragTakeReport: Sendable {
   /// offer Item's rules and carrying a FILE or FOLDER representation, their
   /// size estimates summing to at most 2^63-1. They become the taken
   /// DRAG_OFFER's items. A first TARGETED breaking that, or a later one listing
-  /// any, resets the take MALFORMED_MESSAGE.
+  /// any, resets the take MALFORMED_MESSAGE. A drag whose items do not fit one
+  /// MESSAGE frame is not listed: the peer ENDs the take REFUSED TOO_LARGE.
   public var items: [Kernova_V2_Item] = []
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -2919,7 +2920,7 @@ public nonisolated struct Kernova_V2_DragTakeOutcome: Sendable {
     /// the drag ended on the catcher
     case caught // = 1
 
-    /// `error` says why: DRAG_NOT_CURRENT or DRAG_PRESS_OVER
+    /// `error` says why: DRAG_NOT_CURRENT, DRAG_PRESS_OVER or TOO_LARGE
     case refused // = 2
 
     /// the drag ended in the guest, its catcher stood down
