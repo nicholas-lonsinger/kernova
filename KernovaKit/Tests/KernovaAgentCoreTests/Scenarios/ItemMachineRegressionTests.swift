@@ -14,7 +14,7 @@ enum Regression {
     /// A host that read the far peer's Hello, recording no trace when `trace` is false.
     static func host(trace: Bool = true) -> HostileRun {
         let run = HostileRun(local: .host, seed: 1, items: true) { connection in
-            if !trace { connection.recordsTrace = false }
+            if !trace { connection.recordsTraceForTesting = false }
         }
         run.feed([HostileItems.peerHello], preamble: true)
         return run
@@ -90,7 +90,7 @@ struct ItemMachineRegressionTests {
         run.feed([Unit.end(1)])
         #expect(Regression.received(run).map(\.count) == [messages])
         // What the registry holds is the items' bytes, each charged with its overhead.
-        let holding = try #require(run.host?.itemOffers.remoteHolding)
+        let holding = try #require(run.host?.itemOffersForTesting.remoteHoldingForTesting)
         #expect(holding.itemBytes == messages * payload.count)
         #expect(holding.charged == holding.itemBytes + holding.items * Self.overhead)
         #expect(holding.charged <= Self.limit)

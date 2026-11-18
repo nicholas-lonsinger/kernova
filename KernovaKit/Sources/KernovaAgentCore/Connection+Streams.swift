@@ -28,7 +28,9 @@ extension Connection {
         raiseToBulkTarget(&record, viaQueue: true)
         record.wasWritable = sendPredicate(record)
         insert(record)
-        if configuration.recordsTrace { trace.append(.localOpened(id, kind)) }
+        #if DEBUG
+        appendTrace(.localOpened(id, kind))
+        #endif
         return id
     }
 
@@ -40,7 +42,9 @@ extension Connection {
         streams[index].sendWindow -= message.count
         streams[index].unsentMessages += 1
         streams[index].enqueue(.message(message))
-        if configuration.recordsTrace { trace.append(.sent(id, isMessage: true, message)) }
+        #if DEBUG
+        appendTrace(.sent(id, isMessage: true, message))
+        #endif
         refreshWritable(at: index)
     }
 
@@ -54,7 +58,9 @@ extension Connection {
         streams[index].enqueue(.data(data))
         connectionSendCredit -= data.count
         queuedRawTotal += data.count
-        if configuration.recordsTrace { trace.append(.sent(id, isMessage: false, data)) }
+        #if DEBUG
+        appendTrace(.sent(id, isMessage: false, data))
+        #endif
     }
 
     /// Reserves up to `maxBytes` of what `id` may send now, for one later `send(reserved:on:)`: no other

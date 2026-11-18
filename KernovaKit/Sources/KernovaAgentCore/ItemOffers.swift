@@ -79,13 +79,15 @@ package struct ItemOfferRegistry: Sendable {
     /// The tokens of the far side's open offers.
     package var remoteTokens: [Data] { remote.map(\.header.token) }
 
+    #if DEBUG
     /// What the far side's open offers hold against `remoteItemByteLimit`, and the bytes their items hold.
-    package var remoteHolding: (charged: Int, itemBytes: Int, items: Int) {
+    package var remoteHoldingForTesting: (charged: Int, itemBytes: Int, items: Int) {
         (
             remoteCharged, remote.reduce(0) { $0 + $1.items.reduce(0) { $0 + $1.count } },
             remote.reduce(0) { $0 + $1.header.count }
         )
     }
+    #endif
 
     /// Item `index` of the far side's open offer of `token`, decoded now; nil when none is held.
     func remoteItem(_ token: Data, _ index: Int) -> OfferedItem? {

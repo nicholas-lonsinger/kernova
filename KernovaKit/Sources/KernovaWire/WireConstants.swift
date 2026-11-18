@@ -27,10 +27,6 @@ public enum WireConstants {
     /// The largest a stream or connection window may reach, 2^31 − 1.
     public static let maxWindow: UInt32 = 2_147_483_647
 
-    // periphery:ignore - never read: the Swift mirror of kernova_v2.proto's frozen PING maximum
-    /// The longest a side may go without sending a PING: 5 s, in nanoseconds.
-    public static let maxPingIntervalNanoseconds: Int64 = 5_000_000_000
-
     /// The host's vsock port; the guest dials it at host CID 2.
     public static let vsockPort: UInt32 = 49160
 }

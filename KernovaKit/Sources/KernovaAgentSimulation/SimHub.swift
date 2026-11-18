@@ -72,9 +72,9 @@ package final class SimHub {
         if options.items { configuration.items = SimItems.served }
         let testKinds = options.testKinds
         let hostile = options.hostile
-        configuration.tweak = { connection in
-            connection.recordsTrace = true
-            connection.assertsOnMisuse = !hostile
+        configuration.tweakForTesting = { connection in
+            connection.recordsTraceForTesting = true
+            connection.assertsOnMisuseForTesting = !hostile
             if testKinds { connection.addTestKinds() }
         }
         var endpoint = HostEndpoint(configuration, generation: link.generation, now: world.localNow(.host))

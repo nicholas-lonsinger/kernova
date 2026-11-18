@@ -52,6 +52,14 @@ struct VMSessionStopCompletionTests {
     enum Arrival: CaseIterable, Sendable {
         case completionFirst
         case delegateFirst
+
+        /// `completion` and `delegate` in this order.
+        func ordered<Event>(completion: Event, delegate: Event) -> [Event] {
+            switch self {
+            case .completionFirst: [completion, delegate]
+            case .delegateFirst: [delegate, completion]
+            }
+        }
     }
 
     @Test(
@@ -72,8 +80,9 @@ struct VMSessionStopCompletionTests {
         // so the VM is in the error state.
         let completion = VMSession.stopCompletionEvent(Self.stoppedUnexpectedly, state: .error)
         let delegate = VMSessionEvent.didStopWithError(Self.stoppedUnexpectedly)
-        let events = arrival == .completionFirst ? [completion, delegate] : [delegate, completion]
-        for event in events { instance.activity.deliverSessionEvent(event, from: session) }
+        for event in arrival.ordered(completion: completion, delegate: delegate) {
+            instance.activity.deliverSessionEvent(event, from: session)
+        }
 
         try await stop.resolved()
         try await boot.outcome.resolved()

@@ -184,7 +184,7 @@ func decode(_ container: Data, accepting acceptance: ContainerAcceptance? = nil,
                 if case .bytes(let bytes) = event { result.largestEvent = max(result.largestEvent, bytes.count) }
                 result.events.append(event)
             }
-            result.largestResidue = max(result.largestResidue, decoder.bufferedByteCount)
+            result.largestResidue = max(result.largestResidue, decoder.bufferedByteCountForTesting)
         } catch {
             result.error = error
             return result

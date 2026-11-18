@@ -53,19 +53,6 @@ public final class ContainerDecodePipeline {
         window = OrderedWindow(capacity: 2 * max(1, workers.count), workers: workers)
     }
 
-    /// The input bytes held and not yet decoded.
-    public var bufferedByteCount: Int { decoder.bufferedByteCount }
-    /// The items held in the window.
-    package var heldItems: Int { window.count }
-    /// The bytes the window holds: each event's, and for a chunk in flight its block and its decompressed size.
-    package var heldBytes: Int { window.heldBytes }
-    /// The most items the window held at once.
-    package var mostHeldItems: Int { window.mostHeld }
-    /// The most bytes the window held at once.
-    package var mostHeldBytes: Int { window.mostHeldBytes }
-    /// The items the window holds at most.
-    package var windowCapacity: Int { window.capacity }
-
     /// Takes the container's next bytes.
     ///
     /// - Parameter bytes: The bytes following those fed before.
@@ -97,7 +84,7 @@ public final class ContainerDecodePipeline {
                     evicted = hold(item)
                 } catch {
                     decoderStopped = true
-                    evicted = window.append(.failure(error), bytes: 0)
+                    evicted = window.append(.failure(error))
                 }
                 if let evicted { return try delivered(evicted) }
                 continue
@@ -123,10 +110,9 @@ public final class ContainerDecodePipeline {
     private func hold(_ item: DecodedItem) -> Result<TreeEvent, ContainerError>? {
         switch item {
         case .event(let event):
-            let bytes = if case .bytes(let data) = event { data.count } else { 0 }
-            return window.append(.success(event), bytes: bytes)
+            return window.append(.success(event))
         case .lz4Chunk(let chunk):
-            return window.append(bytes: chunk.block.count + chunk.decompressedSize) {
+            return window.append {
                 Result { () throws(ContainerError) in .bytes(try chunk.decompressed()) }
             }
         }

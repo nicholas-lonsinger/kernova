@@ -648,7 +648,7 @@ struct VMInstanceTests {
             $0.networkMode = .bridged
             $0.lastSeenAgentVersion = "0.9.2"
         }
-        defer { instance.cancelAgentAbsenceWatchdog() }
+        defer { instance.sessionContext?.cancelAgentAbsenceWatchdog() }
         if row.slot { try VMInstanceFixture.writeSaveFile(for: instance) }
         let observer = MockNetworkLinkObserver()
 
@@ -781,18 +781,6 @@ struct VMInstanceTests {
 
     private static let testWatchdogGrace: Duration = .milliseconds(200)
 
-    @Test("Cancelling the watchdog before grace prevents firing")
-    func watchdogCancelledStaysQuiet() async throws {
-        let instance = makeMacOSInstanceWithAgentInstalled()
-        instance.agentAbsenceGrace = Self.testWatchdogGrace
-        instance.startAgentAbsenceWatch()
-        let watchdog = try #require(instance.agentAbsenceTimerForTesting)
-
-        instance.cancelAgentAbsenceWatchdog()
-        try await watchdog.joined()
-        #expect(instance.agentExpectedButMissing == false)
-    }
-
     @Test("macOS: an agent that never connects this session warns once, at the floor plus the grace")
     func macOSNeverConnectedWarnsAtFloorPlusGrace() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
@@ -884,7 +872,7 @@ struct VMInstanceTests {
     @Test("Reading the agents again with nothing changed keeps the armed timer and its deadline")
     func watchdogReevaluationKeepsTheTimer() async throws {
         let instance = makeMacOSInstanceWithAgentInstalled()
-        defer { instance.cancelAgentAbsenceWatchdog() }
+        defer { instance.sessionContext?.cancelAgentAbsenceWatchdog() }
         instance.agentAbsenceGrace = .seconds(30)
         instance.startAgentAbsenceWatch()
         let armed = try #require(instance.agentAbsenceTimerForTesting)

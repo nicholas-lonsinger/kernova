@@ -54,8 +54,8 @@ package enum TranscriptFixture {
             claim: PeerClaim(role: .host, versionLabel: "Kernova"), sessionToken: token,
             policy: items ? SimItems.policy(policy) : policy, bundles: bundles)
         let version = protocolVersion
-        configuration.tweak = { connection in
-            connection.recordsTrace = true
+        configuration.tweakForTesting = { connection in
+            connection.recordsTraceForTesting = true
             connection.protocolVersion = version
         }
         if items { configuration.items = SimItems.served }
@@ -127,8 +127,8 @@ package enum TranscriptFixture {
         }
         var tweaked = configuration
         let version = protocolVersion
-        tweaked.tweak = { connection in
-            connection.recordsTrace = true
+        tweaked.tweakForTesting = { connection in
+            connection.recordsTraceForTesting = true
             connection.protocolVersion = version
         }
         if items { tweaked.items = SimItems.served }

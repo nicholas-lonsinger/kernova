@@ -226,7 +226,7 @@ package struct DecodingItemSink {
             // Bytes for a pull it refused, delivered before the refusal reached the core.
             guard var pull = pulls[id] else { return nil }
             pull.decoder.feed(bytes)
-            maxBufferedBytes = max(maxBufferedBytes, pull.decoder.bufferedByteCount)
+            maxBufferedBytes = max(maxBufferedBytes, pull.decoder.bufferedByteCountForTesting)
             do {
                 try Self.drain(&pull)
             } catch {

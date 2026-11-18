@@ -889,7 +889,7 @@ struct VMActivityTests {
         // Ending the process from outside, as the instruction says, raises
         // `didStopWithError` — and, where the stop's completion runs at all,
         // that completion, which can land first.
-        if arrival == .completionThenDelegate {
+        if arrival.completionArrives {
             // The session ends with the completion: no live session is left
             // for a display to show, or for the delegate's event to end again.
             instance.activity.deliverSessionEvent(.stopDidComplete, from: session)
@@ -1029,6 +1029,14 @@ enum ProcessEndArrival: CaseIterable, Sendable {
     /// The stop's completion, reporting the session ended, then
     /// `didStopWithError`.
     case completionThenDelegate
+
+    /// Whether the stop's completion arrives, ahead of `didStopWithError`.
+    var completionArrives: Bool {
+        switch self {
+        case .delegateOnly: false
+        case .completionThenDelegate: true
+        }
+    }
 }
 
 /// The ways Virtualization can end a session a Force Stop is waiting on before

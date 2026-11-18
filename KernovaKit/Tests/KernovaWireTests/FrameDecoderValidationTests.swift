@@ -96,7 +96,7 @@ struct FrameDecoderValidationTests {
         decoder.append(WireConstants.preamble + rawHeader(type: 0x09, length: 0))
         #expect(throws: FrameError.unknownType(0x09)) { try decoder.nextFrame() }
         decoder.append(wireBytes([Frame(streamID: .session, type: .ping, payload: Data(count: 8))], preamble: false))
-        #expect(decoder.bufferedByteCount == 0)
+        #expect(decoder.bufferedByteCountForTesting == 0)
         #expect(throws: FrameError.unknownType(0x09)) { try decoder.nextFrame() }
     }
 

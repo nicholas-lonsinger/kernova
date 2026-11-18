@@ -266,7 +266,7 @@ enum HostileRows {
         },
         HostileRow(
             name: "stream ids exhausted", local: .peer, testKinds: true,
-            tweak: { $0.firstLocalStreamID = UInt64(UInt32.max) }, outcome: .fatal(.streamIdsExhausted)
+            tweak: { $0.firstLocalStreamIDForTesting = UInt64(UInt32.max) }, outcome: .fatal(.streamIdsExhausted)
         ) { run in
             run.feed(WireFrames.bytes([HostileRow.hostHello]))
             _ = run.openTestBulk(.testBulkByPeer, consumes: true)
@@ -508,7 +508,7 @@ struct HostileSuite {
     @Test("A misused core closes INTERNAL in release")
     func misuse() {
         var configuration = ConnectionConfiguration(claim: PeerClaim(role: .host), adverts: [])
-        configuration.assertsOnMisuse = false
+        configuration.assertsOnMisuseForTesting = false
         var connection = Connection(configuration, now: CoreInstant(nanoseconds: 0))
         connection.reset(StreamID(rawValue: 2), WireError(.cancelled))
         var closure: ConnectionClosure?

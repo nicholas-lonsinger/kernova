@@ -46,17 +46,11 @@ final class OrderedWindow<Value: Sendable> {
     let capacity: Int
     private let workers: ChunkWorkers
     /// A ring of `capacity` slots, the oldest at `head`.
-    private var slots: [(slot: Slot, bytes: Int)?]
+    private var slots: [Slot?]
     private var head = 0
     /// The values held.
-    private(set) var count = 0
+    private var count = 0
     private var nextLane = 0
-    /// The bytes the values held account for, as each was handed in.
-    private(set) var heldBytes = 0
-    /// The most values held at once so far.
-    private(set) var mostHeld = 0
-    /// The most bytes held at once so far.
-    private(set) var mostHeldBytes = 0
 
     /// A window of `capacity` values worked out on `workers`.
     init(capacity: Int, workers: ChunkWorkers) {
@@ -72,26 +66,22 @@ final class OrderedWindow<Value: Sendable> {
 
     /// Holds `value`, ready now, after the values held.
     ///
-    /// - Parameters:
-    ///   - value: The value.
-    ///   - bytes: The bytes it holds.
+    /// - Parameter value: The value.
     /// - Returns: The oldest value, waited for, when the window was full.
-    func append(_ value: Value, bytes: Int) -> Value? {
+    func append(_ value: Value) -> Value? {
         let evicted = count == capacity ? takeOldest() : nil
-        hold(.ready(value), bytes: bytes)
+        hold(.ready(value))
         return evicted
     }
 
     /// Holds the value `work` works out on the next lane, after the values held.
     ///
-    /// - Parameters:
-    ///   - bytes: The bytes the work holds at most: its input and its result.
-    ///   - work: The work, run once.
+    /// - Parameter work: The work, run once.
     /// - Returns: The oldest value, waited for, when the window was full.
-    func append(bytes: Int, working work: @escaping @Sendable () -> Value) -> Value? {
+    func append(working work: @escaping @Sendable () -> Value) -> Value? {
         let evicted = count == capacity ? takeOldest() : nil
         let pending = Pending<Value>()
-        hold(.working(pending), bytes: bytes)
+        hold(.working(pending))
         let lane = nextLane
         nextLane = (nextLane + 1) % max(1, workers.count)
         workers.run(onLane: lane) { pending.fulfill(work()) }
@@ -100,7 +90,7 @@ final class OrderedWindow<Value: Sendable> {
 
     /// The oldest value, when it is ready.
     func takeReady() -> Value? {
-        guard let (slot, _) = slots[head] else { return nil }
+        guard let slot = slots[head] else { return nil }
         switch slot {
         case .ready(let value):
             release()
@@ -114,7 +104,7 @@ final class OrderedWindow<Value: Sendable> {
 
     /// The oldest value, waited for; nil when none is held.
     func takeOldest() -> Value? {
-        guard let (slot, _) = slots[head] else { return nil }
+        guard let slot = slots[head] else { return nil }
         let value: Value
         switch slot {
         case .ready(let ready): value = ready
@@ -128,20 +118,15 @@ final class OrderedWindow<Value: Sendable> {
     func cancel() {
         for index in slots.indices { slots[index] = nil }
         count = 0
-        heldBytes = 0
         workers.drain()
     }
 
-    private func hold(_ slot: Slot, bytes: Int) {
-        slots[(head + count) % capacity] = (slot, bytes)
+    private func hold(_ slot: Slot) {
+        slots[(head + count) % capacity] = slot
         count += 1
-        heldBytes += bytes
-        mostHeld = max(mostHeld, count)
-        mostHeldBytes = max(mostHeldBytes, heldBytes)
     }
 
     private func release() {
-        heldBytes -= slots[head]?.bytes ?? 0
         slots[head] = nil
         head = (head + 1) % capacity
         count -= 1

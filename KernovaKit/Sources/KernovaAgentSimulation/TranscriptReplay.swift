@@ -350,8 +350,8 @@ package final class SoloReplay {
                 }
             }
         }
-        trace += host?.takeTrace() ?? []
-        trace += peer?.takeTrace() ?? []
+        trace += host?.takeTraceForTesting() ?? []
+        trace += peer?.takeTraceForTesting() ?? []
     }
 
     private func written(_ transmit: Transmit) {

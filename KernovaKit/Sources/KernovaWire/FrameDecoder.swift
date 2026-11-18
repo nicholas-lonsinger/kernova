@@ -40,12 +40,15 @@ public struct FrameDecoder: Sendable {
     /// Decoded frames; those before `readyHead` were returned and are released.
     private var ready: [Frame] = []
     private var readyHead = 0
-    private var readyPayloadByteCount = 0
     private var failure: FrameError?
 
+    #if DEBUG
     /// The bytes the decoder holds: a partial header, a partial payload, and the
     /// payloads of frames not yet returned.
-    public var bufferedByteCount: Int { partial.count + payload.count + readyPayloadByteCount }
+    package var bufferedByteCountForTesting: Int {
+        partial.count + payload.count + ready[readyHead...].reduce(0) { $0 + $1.payload.count }
+    }
+    #endif
 
     /// Creates a decoder expecting the preamble first.
     public init() {}
@@ -75,7 +78,6 @@ public struct FrameDecoder: Sendable {
         // Released at once, so a returned payload is never pinned here.
         ready[readyHead] = Frame(streamID: .session, type: .data)
         readyHead += 1
-        readyPayloadByteCount -= frame.payload.count
         if readyHead == ready.count {
             ready.removeAll(keepingCapacity: true)
             readyHead = 0
@@ -149,7 +151,6 @@ public struct FrameDecoder: Sendable {
 
     private mutating func emit(_ header: Header, payload: Data) {
         ready.append(Frame(streamID: header.streamID, type: header.type, flags: header.flags, payload: payload))
-        readyPayloadByteCount += payload.count
     }
 
     private mutating func fail(_ error: FrameError) {

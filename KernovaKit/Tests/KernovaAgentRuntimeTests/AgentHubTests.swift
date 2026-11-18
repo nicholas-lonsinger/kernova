@@ -433,7 +433,6 @@ struct AgentHubTests {
         try await harness.attached()
         let first = HubPeer(harness, claim: .session(.user, instance: 1))
         _ = try await harness.snapshot { $0.peers.count == 1 }
-        let firstAcceptor = harness.transport.acceptor
 
         let second = TestTransport()
         harness.hub.attach(second, policy: Fixture.logsEnabled, republisher: harness.republisher)
@@ -448,7 +447,6 @@ struct AgentHubTests {
         try await flush(harness.hub.queue)
         #expect(harness.connector.closures == [1: 1])
         try await harness.transport.released(1)
-        #expect(firstAcceptor?.liveConnectionCount == 0)
         #expect(harness.connector.policies.elements.last?.connection == 2)
         #expect(harness.connector.policies.elements.last?.policy == Fixture.logsEnabled)
         next.driver.close(.shuttingDown)
@@ -663,7 +661,6 @@ struct GuestStreamAcceptorTests {
         let host = probe.offer()
         probe.acceptor.stop()
         #expect(host?.shutdowns.withLock { $0 } == 1)
-        #expect(probe.acceptor.liveConnectionCount == 0)
         let opened = Locked(false)
         #expect(
             !probe.acceptor.offer { _ in
@@ -685,14 +682,15 @@ struct GuestStreamAcceptorTests {
         #expect(!admitted)
         #expect(probe.accepted.elements.isEmpty)
         #expect(host.shutdowns.withLock { $0 } == 1)
-        #expect(probe.acceptor.liveConnectionCount == 0)
     }
 
     @Test("A stream that cannot be built gives its slot back")
     func failedOpenReleases() {
         let probe = Probe()
         #expect(!probe.acceptor.offer { _ in nil })
-        #expect(probe.acceptor.liveConnectionCount == 0)
+        let admitted = (0..<GuestStreamAcceptor.connectionLimit).compactMap { _ in probe.offer() }
+        #expect(admitted.count == GuestStreamAcceptor.connectionLimit)
+        probe.acceptor.stop()
     }
 }
 

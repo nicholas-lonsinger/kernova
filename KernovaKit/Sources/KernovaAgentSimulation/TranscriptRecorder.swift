@@ -704,8 +704,8 @@ package final class Duet {
                 if transmit.isFinal { peer.finalTransmitWritten(now: instant) }
             }
         }
-        _ = host.takeTrace()
-        _ = peer.takeTrace()
+        _ = host.takeTraceForTesting()
+        _ = peer.takeTraceForTesting()
     }
 
     private func write(_ transmit: Transmit, from side: SimSide) {

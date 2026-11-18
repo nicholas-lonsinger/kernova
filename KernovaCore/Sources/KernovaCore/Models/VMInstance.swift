@@ -1420,13 +1420,6 @@ package final class VMInstance {
         }
     }
 
-    /// Cancels the absence watchdog's timer if armed.
-    ///
-    /// Leaves the warned scopes and expired away peers as they are.
-    package func cancelAgentAbsenceWatchdog() {
-        sessionContext?.cancelAgentAbsenceWatchdog()
-    }
-
     #if DEBUG
     /// The absence watchdog's in-flight timer, or `nil` when none is armed.
     ///

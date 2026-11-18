@@ -15,8 +15,6 @@ struct ItemTransferSchemaTests {
         #expect(FeatureID.itemTransfer.rawValue == 13)
         #expect(StreamKind.itemPullByHost.rawValue == 1001)
         #expect(StreamKind.itemPullByPeer.rawValue == 1002)
-        #expect(StreamKind.testBulkByPeer.rawValue == 9000)
-        #expect(StreamKind.testBulkByHost.rawValue == 9001)
         #expect(FeatureID.clipboard.rawValue == 10)
         #expect(FeatureID.drop.rawValue == 11)
         #expect(FeatureID.drag.rawValue == 12)

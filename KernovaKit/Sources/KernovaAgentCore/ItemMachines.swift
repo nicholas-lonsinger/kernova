@@ -126,8 +126,12 @@ struct ItemMachines: Sendable {
             } else {
                 drag.handleTake(event, items: &transfer, connection: &connection)
             }
-        case .power, .update, .logs, .testBulk:
+        case .power, .update, .logs:
             break
+        #if DEBUG
+        case .testBulk:
+            break
+        #endif
         }
     }
 
