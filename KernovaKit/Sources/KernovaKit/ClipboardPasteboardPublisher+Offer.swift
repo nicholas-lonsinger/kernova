@@ -29,7 +29,7 @@ public protocol ClipboardItemPulling: Sendable {
     func whenEnded(_ handler: @escaping @Sendable () -> Void)
 }
 
-/// What publishing a peer's offer (``ClipboardPasteboardPublisher/publish(_:concealed:pasteCeiling:puller:serving:)``)
+/// What publishing a peer's offer (``ClipboardPasteboardPublisher/publish(_:concealed:pasteCeiling:puller:serving:onReleased:)``)
 /// did to the pasteboard.
 public enum ClipboardOfferPublishOutcome: Equatable, Sendable {
     /// The offer promises nothing the pasteboard carries: the pasteboard is untouched.
@@ -60,10 +60,11 @@ extension ClipboardPasteboardPublisher {
     /// asks for it. Files over the ceiling are left out, and an offer that is nothing else is not written.
     ///
     /// A concealed offer marks each item with `org.nspasteboard.ConcealedType`. The write serves `offer`, so
-    /// ``retractWrite(servingOffer:withdrawing:)`` withdraws it once that offer ends.
+    /// ``retractWrite(servingOffer:withdrawing:)`` withdraws it once that offer ends; `onReleased` runs once the
+    /// write no longer stands (``write(_:source:onReleased:)``).
     public func publish(
         _ items: [OfferedItem], concealed: Bool, pasteCeiling limitBytes: Int, puller: any ClipboardItemPulling,
-        serving offer: ClipboardWriteSource.Serving
+        serving offer: ClipboardWriteSource.Serving, onReleased: (@MainActor @Sendable () -> Void)? = nil
     ) -> ClipboardOfferPublishOutcome {
         let plan = ClipboardPromisePolicy.copyPlan(items, room: UInt64(clamping: limitBytes))
         let filesLeftOut: Int
@@ -85,7 +86,7 @@ extension ClipboardPasteboardPublisher {
         let source = ClipboardWriteSource(
             serving: offer,
             parts: [.init(items: items, concealed: concealed, servingFileURLs: plan.servesFileURLs, puller: puller)])
-        guard write(specs, source: source) else {
+        guard write(specs, source: source, onReleased: onReleased) else {
             Self.logger.log(.error, "The pasteboard refused an offer's write")
             return .writeFailed
         }
@@ -177,7 +178,7 @@ extension ClipboardPasteboardPublisher {
         }
     }
 
-    /// The item specs promising `items`, as ``publish(_:concealed:pasteCeiling:puller:serving:)``
+    /// The item specs promising `items`, as ``publish(_:concealed:pasteCeiling:puller:serving:onReleased:)``
     /// writes them.
     ///
     /// An item none of whose representations is kept is left out, so a paste

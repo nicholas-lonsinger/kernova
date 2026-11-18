@@ -233,7 +233,7 @@ struct GuestClipboardStagingTests {
         #expect(pasteboard.items.isEmpty)
         #expect(
             lines.retractions == [
-                "Retracted the Mac's clipboard from the guest pasteboard: the Mac stopped passthrough"
+                "Retracted the Mac's clipboard from the guest pasteboard: the clipboard setting changed"
             ])
     }
 

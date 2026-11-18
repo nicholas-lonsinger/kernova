@@ -92,8 +92,8 @@ final class HubClipboardService: ClipboardServicing {
         self.sink = sink
         self.maxPasteBytes = maxPasteBytes
         exchange = ClipboardItemExchange(
-            side: .host, stagingLabel: "host-\(stagingKey)", stagingRoot: stagingRoot, pasteCeiling: maxPasteBytes,
-            logger: Self.logger)
+            side: .host, gate: .everyCopy, stagingLabel: "host-\(stagingKey)", stagingRoot: stagingRoot,
+            pasteCeiling: maxPasteBytes, logger: Self.logger)
         promiseStaging = ClipboardFileStaging(label: "host-promises-\(stagingKey)", root: stagingRoot)
         snapshotStaging = .leased(label: "host-copies-\(stagingKey)", root: stagingRoot)
         exchange.onRemoteOffer = { [weak self] in self?.received($0) }
@@ -226,7 +226,7 @@ final class HubClipboardService: ClipboardServicing {
         switch ending {
         case .movedOn: return
         case .byFarSide: withdrawn = true
-        case .superseded, .passthroughStopped, .linkLost: withdrawn = false
+        case .superseded, .settingChanged, .linkLost: withdrawn = false
         }
         switch retraction {
         case .cleared: reportRefusal(gesture: .copy, withdrawn ? .withdrawnCopyRetracted : .disconnectedCopyRetracted)
@@ -330,7 +330,7 @@ final class HubClipboardService: ClipboardServicing {
         let withdrawal: ClipboardWithdrawal
         switch ending {
         case .superseded: return
-        case .linkLost, .passthroughStopped: withdrawal = .unread
+        case .linkLost, .settingChanged: withdrawal = .unread
         case .byFarSide, .movedOn: withdrawal = .everyPromise
         }
         logRetraction(retractHostWrite(remote.token, withdrawal), of: .clipboard, because: .ended(ending))
@@ -349,6 +349,12 @@ struct HubClipboardLink: ClipboardItemLink {
 
     func offerItems(_ offer: ItemOffer, _ completion: @escaping @Sendable (WireError?) -> Void) {
         hub.offerItems(offer, feature: .clipboard) { result in
+            if case .failure(let refusal) = result { completion(refusal) } else { completion(nil) }
+        }
+    }
+
+    func requestOffer(_ token: Data, _ completion: @escaping @Sendable (WireError?) -> Void) {
+        hub.requestClipboardOffer(token) { result in
             if case .failure(let refusal) = result { completion(refusal) } else { completion(nil) }
         }
     }

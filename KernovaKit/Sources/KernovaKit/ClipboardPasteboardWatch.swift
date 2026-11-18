@@ -87,6 +87,9 @@ public final class ClipboardPasteboardWatch {
 
     private func startPolling() {
         guard timer == nil else { return }
+        #if DEBUG
+        if (pasteboard as? any ClipboardTestPolledPasteboard)?.pollsOnlyWhenToldForTesting == true { return }
+        #endif
         // A run-loop timer, not a dispatch timer on `.main`: an observer reads promised flavors, which fire another
         // VM's provider synchronously, and that fire's serviced wait can drain the main queue only when it is not
         // itself inside a main-queue callout (`NestedEventLoopWait`). Default mode only: a poll that would land
@@ -117,3 +120,12 @@ public final class ClipboardPasteboardWatch {
     }
     #endif
 }
+
+#if DEBUG
+/// A pasteboard whose test may poll it alone (``ClipboardPasteboardWatch/pollForTesting(_:)``): while
+/// ``pollsOnlyWhenToldForTesting`` holds, no timer polls it, so what its observers hear rests on no elapsed time.
+public protocol ClipboardTestPolledPasteboard: AnyObject {
+    /// Whether only its test polls it.
+    var pollsOnlyWhenToldForTesting: Bool { get }
+}
+#endif

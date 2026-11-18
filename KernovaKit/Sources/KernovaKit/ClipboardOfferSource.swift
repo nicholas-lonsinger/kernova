@@ -83,9 +83,10 @@ public final class ClipboardOfferSource {
     private var owed: Withdrawal?
     /// Hears the first reason a copy sent of this source is owed a withdrawal.
     private var onOwed: (@MainActor (Withdrawal) -> Void)?
-    /// Watches the pasteboard a concealed source was read from, while a copy sent of it is withdrawn when it moves
-    /// on.
+    /// Watches the pasteboard the source was read from while anything waits for it to move on.
     private var movedOnWatch: ClipboardPasteboardWatch.Observation?
+    /// Hear the pasteboard the source was read from move on from it (``whenMovedOn(_:)``).
+    private var onMovedOn: [@MainActor () -> Void] = []
     /// The items, by index, the read left a file out of.
     let incompleteItems: Set<Int>
 
@@ -123,27 +124,40 @@ public final class ClipboardOfferSource {
     }
 
     /// Runs `handler` once, at the first reason the far side's write of a copy of this snapshot is owed a
-    /// withdrawal, at once when one has come already. A snapshot with neither reason never runs it. From then on, a
-    /// concealed snapshot watches the pasteboard it was read from, for as long as it lives.
+    /// withdrawal, at once when one has come already. A snapshot with neither reason never runs it. A concealed
+    /// snapshot's pasteboard moving on is one (``whenMovedOn(_:)``).
     public func whenWithdrawalOwed(_ handler: @escaping @MainActor (Withdrawal) -> Void) {
         if let owed { return handler(owed) }
         onOwed = handler
-        guard concealed, let readFrom else { return }
-        guard standsOnItsPasteboard else { return owe(.movedOn) }
-        movedOnWatch = ClipboardPasteboardWatch.observe(readFrom.pasteboard, in: .standingWrites) { [weak self] in
-            guard let self, !self.standsOnItsPasteboard else { return }
-            self.owe(.movedOn)
-        }
+        guard concealed else { return }
+        whenMovedOn { [weak self] in self?.owe(.movedOn) }
     }
 
     private func owe(_ withdrawal: Withdrawal) {
         guard owed == nil else { return }
         owed = withdrawal
-        movedOnWatch?.cancel()
-        movedOnWatch = nil
         let handler = onOwed
         onOwed = nil
         handler?(withdrawal)
+    }
+
+    /// Runs `handler` once, at the first poll of the pasteboard this source was read from to find it no longer
+    /// holds what it was read from (``standsOnItsPasteboard``) — in the watch's
+    /// ``ClipboardPasteboardWatch/Turn/standingWrites`` turn, so before anything reads what replaced it — or at
+    /// once when it already does not. The source watches that pasteboard only while it lives and something waits.
+    public func whenMovedOn(_ handler: @escaping @MainActor () -> Void) {
+        guard let readFrom else { return }
+        guard standsOnItsPasteboard else { return handler() }
+        onMovedOn.append(handler)
+        guard movedOnWatch == nil else { return }
+        movedOnWatch = ClipboardPasteboardWatch.observe(readFrom.pasteboard, in: .standingWrites) { [weak self] in
+            guard let self, !self.standsOnItsPasteboard else { return }
+            self.movedOnWatch?.cancel()
+            self.movedOnWatch = nil
+            let handlers = self.onMovedOn
+            self.onMovedOn = []
+            for handler in handlers { handler() }
+        }
     }
 
     /// Whether `url` is a file of this offer's own staging, which goes when the offer does.

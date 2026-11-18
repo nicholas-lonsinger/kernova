@@ -31,7 +31,7 @@ struct ClipboardRetractionLogTests {
         #expect(line(nil, .clipboard) == nil)
     }
 
-    @Test("Each end names the far side as the cause: sharing with it, its passthrough, its clipboard, its withdrawal")
+    @Test("Each end names the cause: sharing with the far side, the setting, the far side's clipboard, its withdrawal")
     func causes() {
         func line(
             _ end: ClipboardRetractionLog.End, _ write: ClipboardRetractionLog.Write,
@@ -44,8 +44,8 @@ struct ClipboardRetractionLogTests {
                 == "Retracted the guest's copy from the host pasteboard for 'V': clipboard sharing with the guest stopped"
         )
         #expect(
-            line(.host(vm: "V"), .clipboard, .passthroughStopped)
-                == "Retracted the guest's clipboard from the host pasteboard for 'V': the guest stopped passthrough")
+            line(.host(vm: "V"), .clipboard, .settingChanged)
+                == "Retracted the guest's clipboard from the host pasteboard for 'V': the clipboard setting changed")
         #expect(
             line(.host(vm: "V"), .clipboard, .byFarSide(hasSuccessor: false))
                 == "Retracted the guest's clipboard from the host pasteboard for 'V': the guest's clipboard moved on")
@@ -53,8 +53,8 @@ struct ClipboardRetractionLogTests {
             line(.guest, .clipboard, .linkLost)
                 == "Retracted the Mac's clipboard from the guest pasteboard: clipboard sharing with the Mac stopped")
         #expect(
-            line(.guest, .clipboard, .passthroughStopped)
-                == "Retracted the Mac's clipboard from the guest pasteboard: the Mac stopped passthrough")
+            line(.guest, .clipboard, .settingChanged)
+                == "Retracted the Mac's clipboard from the guest pasteboard: the clipboard setting changed")
         #expect(
             line(.guest, .copy, .byFarSide(hasSuccessor: false))
                 == "Retracted the Mac's copy from the guest pasteboard: the Mac withdrew the copy")

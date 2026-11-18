@@ -10,6 +10,10 @@ public protocol ClipboardItemLink: Sendable {
     /// Offers `offer` on CLIPBOARD, withdrawing this side's previous clipboard offer unless it is a copy; nil
     /// once it opened, or why it did not.
     func offerItems(_ offer: ItemOffer, _ completion: @escaping @Sendable (WireError?) -> Void)
+    /// The host: asks the far side to offer its clipboard, by a request of `token` (`CLIPBOARD_OFFER_REQUEST`),
+    /// which withdraws no offer of this side's; nil once it opened, or why it did not — `UNSUPPORTED_KIND` from a
+    /// guest, which opens none. Its one `.offerEnded` follows, and withdrawing `token` calls it off.
+    func requestOffer(_ token: Data, _ completion: @escaping @Sendable (WireError?) -> Void)
     /// Withdraws this side's offer of `token`, RESET with `code`.
     func withdrawOffer(_ token: Data, code: ErrorCode)
     /// Releases the far side's offer of `token`: this side pulls nothing more of it.

@@ -70,8 +70,8 @@ final class GuestClipboard {
         let ceiling = Locked(pasteCeiling)
         self.pasteCeiling = ceiling
         exchange = ClipboardItemExchange(
-            side: .guest, stagingLabel: "agent", stagingRoot: stagingRoot, pasteCeiling: { ceiling.withLock { $0 } },
-            logger: logger)
+            side: .guest, gate: .everyCopy, stagingLabel: "agent", stagingRoot: stagingRoot,
+            pasteCeiling: { ceiling.withLock { $0 } }, logger: logger)
         promiseStaging = ClipboardFileStaging(label: "agent-promises", root: stagingRoot)
         snapshotStaging = .leased(label: "agent-copies", root: stagingRoot)
         publisher = ClipboardPasteboardPublisher(
@@ -394,7 +394,7 @@ final class GuestClipboard {
         switch ending {
         case .superseded: return
         case .byFarSide, .movedOn: withdrawal = .everyPromise
-        case .passthroughStopped, .linkLost: withdrawal = .unread
+        case .settingChanged, .linkLost: withdrawal = .unread
         }
         retractWrite(servingOffer: remote.token, withdrawing: withdrawal, of: .clipboard, because: .ended(ending))
     }
@@ -444,6 +444,10 @@ struct AgentClipboardLink: ClipboardItemLink {
 
     func offerItems(_ offer: ItemOffer, _ completion: @escaping @Sendable (WireError?) -> Void) {
         calls.offerItems(offer, feature: .clipboard, completion)
+    }
+
+    func requestOffer(_ token: Data, _ completion: @escaping @Sendable (WireError?) -> Void) {
+        completion(WireError(.unsupportedKind, debugDetail: "only the host asks for the far side's clipboard"))
     }
 
     func withdrawOffer(_ token: Data, code: ErrorCode) { calls.withdrawOffer(token, code: code) }

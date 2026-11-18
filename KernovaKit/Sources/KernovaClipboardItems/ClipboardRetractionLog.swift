@@ -49,7 +49,7 @@ public enum ClipboardRetractionLog {
             switch cause {
             case .passthroughStopped: "passthrough stopped"
             case .ended(.linkLost): "clipboard sharing with \(far) stopped"
-            case .ended(.passthroughStopped): "\(far) stopped passthrough"
+            case .ended(.settingChanged): "the clipboard setting changed"
             case .ended(.byFarSide) where write == .copy: "\(far) withdrew the copy"
             case .ended(.byFarSide), .ended(.movedOn): "\(far)'s clipboard moved on"
             case .ended(.superseded): "a copy of this side's replaced it"

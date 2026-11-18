@@ -30,9 +30,13 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
 
     private let writer = FakeWritePasteboard()
     private let state = Locked(State())
+    /// Whether only the test polls it (``ClipboardTestPolledPasteboard``).
+    public let pollsOnlyWhenToldForTesting: Bool
 
-    /// Creates an empty pasteboard double.
-    public init() {}
+    /// Creates an empty pasteboard double, which no timer polls when `pollsOnlyWhenTold`: its test polls it.
+    public init(pollsOnlyWhenTold: Bool = false) {
+        pollsOnlyWhenToldForTesting = pollsOnlyWhenTold
+    }
 
     /// Fires after every mutation; await it instead of polling.
     public var changed: AsyncGate { writer.changed }
@@ -219,3 +223,7 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         }
     }
 }
+
+#if DEBUG
+extension FakePasteboard: ClipboardTestPolledPasteboard {}
+#endif
