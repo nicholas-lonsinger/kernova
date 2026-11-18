@@ -275,10 +275,12 @@ jobs:
               mv "${BODY_FILE}.linked" "$BODY_FILE"
             fi
 
-            NEW_URL=$(gh issue create \
-              --title "$TITLE" \
-              --label "$TRACKER_LABEL" \
-              --body-file "$BODY_FILE")
+            NEW_URL=$(gh api "repos/$GH_REPO/issues" \
+              -f title="$TITLE" \
+              -F body=@"$BODY_FILE" \
+              -f "labels[]=$TRACKER_LABEL" \
+              -f type=Task \
+              --jq .html_url)
             echo "Opened $NEW_URL"
 
             if [ -n "$PREV_CLOSED" ]; then
