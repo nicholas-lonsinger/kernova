@@ -36,9 +36,6 @@ struct VZNetworkDeviceHandleTests {
             attachments: attachments)
     }
 
-    /// Runs behind the correction's main-actor hop, which the serial main
-    /// executor enqueued ahead of this.
-
     @Test("A build finding nothing at install time clears the applied mirror")
     func buildFoundNothingClearsMirror() async throws {
         let harness = makeHarness()

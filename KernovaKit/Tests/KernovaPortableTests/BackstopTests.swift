@@ -39,9 +39,9 @@ struct BackstopTests {
         let backstop = Backstop("an operation that outlives it", timeout: 0.1)
         await #expect(throws: TestFailure.self) {
             try await backstop.run {
+                defer { returned.withLock { $0 = true } }
                 // A park, which a cancel does not end.
                 try await release.wait { released.withLock { $0 } }
-                returned.withLock { $0 = true }
             }
         }
         #expect(!returned.withLock { $0 }, "the run waited for its operation")
