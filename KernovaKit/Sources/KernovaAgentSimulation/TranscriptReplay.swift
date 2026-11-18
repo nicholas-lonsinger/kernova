@@ -287,7 +287,8 @@ package final class SoloReplay {
                 report.input(UpdatePullID(generation: TranscriptInput.generation, stream: StreamID(rawValue: stream))),
                 now: instant)
         case .peerLogs: break
-        case .offer, .itemPull, .withdraw, .release, .takeDrag, .controlTake, .cancelTake, .answerTake, .targetTake:
+        case .offer, .requestOffer, .itemPull, .withdraw, .release, .refuse, .takeDrag, .controlTake, .cancelTake,
+            .answerTake, .targetTake:
             failures.append("t=\(now): `\(input.text)` names an item feature, which no frozen transcript replays")
         }
         drain()

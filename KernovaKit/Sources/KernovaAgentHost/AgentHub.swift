@@ -307,6 +307,26 @@ public final class AgentHub: Sendable {
         _ offer: ItemOffer, feature: FeatureID,
         _ completion: @escaping @Sendable (Result<PeerHandle, WireError>) -> Void
     ) {
+        openOnConsolePeer(of: feature, { .offer($0, offer, feature: feature) }, completion)
+    }
+
+    /// Asks the peer the snapshot's `consolePeers` names for CLIPBOARD now to offer its clipboard, by a request
+    /// of `token` (``ItemCommand/requestClipboardOffer(_:token:)``), and calls `completion` once with that peer,
+    /// whose `.items` events then carry the request's one `.offerEnded` and the offer answering it, or why it was
+    /// not opened, as ``offerItems(_:feature:_:)`` says. Once that peer is no longer CLIPBOARD's console peer,
+    /// the hub withdraws the request, and its `.offerEnded` follows.
+    public func requestClipboardOffer(
+        _ token: Data, _ completion: @escaping @Sendable (Result<PeerHandle, WireError>) -> Void
+    ) {
+        openOnConsolePeer(of: .clipboard, { .requestClipboardOffer($0, token: token) }, completion)
+    }
+
+    /// Sends the command `command` builds, which opens an offer of `feature`'s and is answered `.offered`, to
+    /// `feature`'s console peer now, and calls `completion` once with that peer or why it was not opened.
+    private func openOnConsolePeer(
+        of feature: FeatureID, _ command: @escaping @Sendable (ItemRequestID) -> ItemCommand,
+        _ completion: @escaping @Sendable (Result<PeerHandle, WireError>) -> Void
+    ) {
         queue.async { [self] in
             let route = state.withLock { state in
                 state.consolePeer(for: feature).map { Result.success($0) }
@@ -314,7 +334,7 @@ public final class AgentHub: Sendable {
             }
             guard case .success(let peer) = route else { return completion(route) }
             awaitReply(
-                from: peer, { .offer($0, offer, feature: feature) },
+                from: peer, command,
                 { if case .offered(let refusal) = $0 { refusal.map(Result.failure) ?? .success(peer) } else { nil } },
                 unanswered: .failure(Self.connectionEnded), completion)
         }

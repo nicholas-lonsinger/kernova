@@ -176,6 +176,7 @@ public nonisolated enum Kernova_V2_FeatureId: SwiftProtobuf.Enum, Swift.CaseIter
 /// | ITEM_PULL_BY_PEER | ITEM_TRANSFER | peer | PullRequest | nothing      | raw DATA only        | PullOutcome    | empty         |
 /// | CLIPBOARD_OFFER_BY_HOST | CLIPBOARD | host | ItemSetHeader | Item msgs | nothing              | empty          | empty         |
 /// | CLIPBOARD_OFFER_BY_PEER | CLIPBOARD | peer | ItemSetHeader | Item msgs | nothing              | empty          | empty         |
+/// | CLIPBOARD_OFFER_REQUEST | CLIPBOARD | host | ItemSetHeader | nothing   | nothing              | empty, at once | empty         |
 /// | DROP_OFFER    | DROP    | host   | ItemSetHeader | Item msgs         | nothing              | empty          | DropLanded    |
 /// | DRAG_OFFER    | DRAG    | peer   | ItemSetHeader | Item msgs         | nothing              | empty          | empty         |
 /// | DRAG_TAKE     | DRAG    | host   | DragTake     | DragTakeControl msgs | DragTakeReport msgs | empty        | DragTakeOutcome |
@@ -185,6 +186,11 @@ public nonisolated enum Kernova_V2_FeatureId: SwiftProtobuf.Enum, Swift.CaseIter
 /// acceptor's END, and so is DRAG_TAKE's, which answers it.
 /// LOG_FORWARD's acceptor END answers the opener's END; at most one
 /// LOG_FORWARD is open per connection.
+/// CLIPBOARD_OFFER_REQUEST asks the peer to offer its clipboard. The peer
+/// answers by opening a CLIPBOARD_OFFER_BY_PEER that names the request in
+/// `ItemSetHeader.request`, then ENDs the request, or RESETs the request to say
+/// why it offers nothing. A request is no clipboard offer: it withdraws none,
+/// and no clipboard offer withdraws it.
 /// A stream code a receiver does not expect on a stream RESET (a connection
 /// code, another feature's code, an unrecognized value) reads as
 /// ERROR_CODE_STREAM_PROTOCOL_ERROR.
@@ -207,6 +213,7 @@ public nonisolated enum Kernova_V2_StreamKind: SwiftProtobuf.Enum, Swift.CaseIte
   case dragOffer // = 1004
   case dragTake // = 1005
   case clipboardOfferByPeer // = 1006
+  case clipboardOfferRequest // = 1007
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -226,6 +233,7 @@ public nonisolated enum Kernova_V2_StreamKind: SwiftProtobuf.Enum, Swift.CaseIte
     case 1004: self = .dragOffer
     case 1005: self = .dragTake
     case 1006: self = .clipboardOfferByPeer
+    case 1007: self = .clipboardOfferRequest
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -243,6 +251,7 @@ public nonisolated enum Kernova_V2_StreamKind: SwiftProtobuf.Enum, Swift.CaseIte
     case .dragOffer: return 1004
     case .dragTake: return 1005
     case .clipboardOfferByPeer: return 1006
+    case .clipboardOfferRequest: return 1007
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -260,6 +269,7 @@ public nonisolated enum Kernova_V2_StreamKind: SwiftProtobuf.Enum, Swift.CaseIte
     .dragOffer,
     .dragTake,
     .clipboardOfferByPeer,
+    .clipboardOfferRequest,
   ]
 
 }
@@ -381,7 +391,7 @@ public nonisolated enum Kernova_V2_ErrorCode: SwiftProtobuf.Enum, Swift.CaseIter
   /// a CLIPBOARD copy's RESET by its receiver: its clipboard changed after the copy arrived, so it was left as it is; by its sender: its clipboard moved on from a concealed copy, so the receiver removes it
   case clipboardChanged // = 1008
 
-  /// a CLIPBOARD ask's RESET by the peer: its clipboard holds nothing to copy
+  /// a CLIPBOARD ask's or CLIPBOARD_OFFER_REQUEST's RESET by the peer: its clipboard holds nothing to copy
   case clipboardNothingToCopy // = 1009
 
   /// a CLIPBOARD copy's RESET by its receiver: the copy is only references to one offer of the receiver's that its clipboard still holds, so nothing was written
@@ -2206,8 +2216,9 @@ public nonisolated struct Kernova_V2_ItemSetHeader: Sendable {
   /// history and logs.
   public var concealed: Bool = false
 
-  /// The Item messages that follow. Only an ask (`copy`) holds none; any other
-  /// CLIPBOARD offer of none is refused.
+  /// The Item messages that follow. A CLIPBOARD_OFFER_REQUEST and a DRAG_OFFER
+  /// list none, else RESET MALFORMED_MESSAGE. Of the other CLIPBOARD kinds only
+  /// an ask (`copy`) holds none; any other CLIPBOARD offer of none is refused.
   public var count: UInt32 = 0
 
   /// 16 random bytes naming this offer; a pull quotes it.
@@ -2227,6 +2238,11 @@ public nonisolated struct Kernova_V2_ItemSetHeader: Sendable {
   /// the snapshot does not carry whole: a file or another part of one left
   /// out, or the item dropped.
   public var leftOut: UInt32 = 0
+
+  /// CLIPBOARD_OFFER_BY_PEER only: the token of the host's
+  /// CLIPBOARD_OFFER_REQUEST this offer answers; empty when it answers none.
+  /// Empty on every other kind.
+  public var request: Data = Data()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2975,7 +2991,7 @@ nonisolated extension Kernova_V2_FeatureId: SwiftProtobuf._ProtoNameProviding {
 }
 
 nonisolated extension Kernova_V2_StreamKind: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STREAM_KIND_UNSPECIFIED\0\u{2}d\u{1}STREAM_KIND_POWER_REQUEST\0\u{2}d\u{1}STREAM_KIND_UPDATE_PULL\0\u{2}d\u{1}STREAM_KIND_LOG_FORWARD\0\u{2}|\u{a}STREAM_KIND_CLIPBOARD_OFFER_BY_HOST\0\u{1}STREAM_KIND_ITEM_PULL_BY_HOST\0\u{1}STREAM_KIND_ITEM_PULL_BY_PEER\0\u{1}STREAM_KIND_DROP_OFFER\0\u{1}STREAM_KIND_DRAG_OFFER\0\u{1}STREAM_KIND_DRAG_TAKE\0\u{1}STREAM_KIND_CLIPBOARD_OFFER_BY_PEER\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0STREAM_KIND_UNSPECIFIED\0\u{2}d\u{1}STREAM_KIND_POWER_REQUEST\0\u{2}d\u{1}STREAM_KIND_UPDATE_PULL\0\u{2}d\u{1}STREAM_KIND_LOG_FORWARD\0\u{2}|\u{a}STREAM_KIND_CLIPBOARD_OFFER_BY_HOST\0\u{1}STREAM_KIND_ITEM_PULL_BY_HOST\0\u{1}STREAM_KIND_ITEM_PULL_BY_PEER\0\u{1}STREAM_KIND_DROP_OFFER\0\u{1}STREAM_KIND_DRAG_OFFER\0\u{1}STREAM_KIND_DRAG_TAKE\0\u{1}STREAM_KIND_CLIPBOARD_OFFER_BY_PEER\0\u{1}STREAM_KIND_CLIPBOARD_OFFER_REQUEST\0")
 }
 
 nonisolated extension Kernova_V2_ErrorCode: SwiftProtobuf._ProtoNameProviding {
@@ -4514,7 +4530,7 @@ nonisolated extension Kernova_V2_Item: SwiftProtobuf.Message, SwiftProtobuf._Mes
 
 nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ItemSetHeader"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}concealed\0\u{2}\u{2}count\0\u{1}token\0\u{1}after\0\u{1}copy\0\u{3}left_out\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}concealed\0\u{2}\u{2}count\0\u{1}token\0\u{1}after\0\u{1}copy\0\u{3}left_out\0\u{1}request\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4528,6 +4544,7 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
       case 5: try { try decoder.decodeSingularBytesField(value: &self.after) }()
       case 6: try { try decoder.decodeSingularEnumField(value: &self.copy) }()
       case 7: try { try decoder.decodeSingularUInt32Field(value: &self.leftOut) }()
+      case 8: try { try decoder.decodeSingularBytesField(value: &self.request) }()
       default: break
       }
     }
@@ -4552,6 +4569,9 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
     if self.leftOut != 0 {
       try visitor.visitSingularUInt32Field(value: self.leftOut, fieldNumber: 7)
     }
+    if !self.request.isEmpty {
+      try visitor.visitSingularBytesField(value: self.request, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -4562,6 +4582,7 @@ nonisolated extension Kernova_V2_ItemSetHeader: SwiftProtobuf.Message, SwiftProt
     if lhs.after != rhs.after {return false}
     if lhs.copy != rhs.copy {return false}
     if lhs.leftOut != rhs.leftOut {return false}
+    if lhs.request != rhs.request {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

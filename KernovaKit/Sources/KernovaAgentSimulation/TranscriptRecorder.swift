@@ -17,14 +17,19 @@ package enum TranscriptInput: Sendable, Equatable {
     case pull(PullReport)
     /// The peer's logger emits `count` records into the ring.
     case peerLogs(Int)
-    /// A side offers the fixture offer of this name as the feature's offer.
-    case offer(SimSide, FeatureID, String)
+    /// A side offers the fixture offer of this name as the feature's offer, naming the far side's request it
+    /// answers, if any.
+    case offer(SimSide, FeatureID, String, request: Data = Data())
+    /// The host asks the peer to offer its clipboard, by a request of the token.
+    case requestOffer(Data)
     /// A side pulls from the far side's offer.
     case itemPull(SimSide, PullRequest)
     /// A side withdraws its offer of the token.
     case withdraw(SimSide, Data)
     /// A side releases the far side's offer of the token.
     case release(SimSide, Data)
+    /// A side refuses the far side's offer of the token with the code.
+    case refuse(SimSide, Data, ErrorCode)
     /// The host takes the peer's drag offer of the token.
     case takeDrag(Data)
     /// The host tells the peer this on the take it opened last.
@@ -55,9 +60,11 @@ package enum TranscriptInput: Sendable, Equatable {
 
     var side: SimSide {
         switch self {
-        case .host, .takeDrag, .controlTake, .cancelTake: .host
+        case .host, .requestOffer, .takeDrag, .controlTake, .cancelTake: .host
         case .peer, .pull, .peerLogs, .answerTake, .targetTake: .peer
-        case .offer(let side, _, _), .itemPull(let side, _), .withdraw(let side, _), .release(let side, _): side
+        case .offer(let side, _, _, _), .itemPull(let side, _), .withdraw(let side, _), .release(let side, _),
+            .refuse(let side, _, _):
+            side
         }
     }
 
@@ -105,8 +112,11 @@ package enum TranscriptInput: Sendable, Equatable {
             return "peer update rejected code=\(code.rawValue)"
         case .peerLogs(let count):
             return "peer logs records=\(count)"
-        case .offer(let side, let feature, let name):
+        case .offer(let side, let feature, let name, let request):
             return "\(Self.name(side)) offer feature=\(feature.rawValue) fixture=\(name)"
+                + (request.isEmpty ? "" : " request=\(FrozenFields.hex(request))")
+        case .requestOffer(let token):
+            return "host requestOffer token=\(FrozenFields.hex(token))"
         case .itemPull(let side, let request):
             return
                 "\(Self.name(side)) pull token=\(FrozenFields.hex(request.token)) item=\(request.item) representation=\(request.representation) ceiling=\(request.byteCeiling)"
@@ -114,6 +124,8 @@ package enum TranscriptInput: Sendable, Equatable {
             return "\(Self.name(side)) withdraw token=\(FrozenFields.hex(token))"
         case .release(let side, let token):
             return "\(Self.name(side)) release token=\(FrozenFields.hex(token))"
+        case .refuse(let side, let token, let code):
+            return "\(Self.name(side)) refuse token=\(FrozenFields.hex(token)) code=\(code.rawValue)"
         case .takeDrag(let token):
             return "host take token=\(FrozenFields.hex(token))"
         case .controlTake(.catcher(let shown)):
@@ -235,6 +247,9 @@ package enum TranscriptInput: Sendable, Equatable {
         case ("host", "take"):
             guard let token else { return nil }
             self = .takeDrag(token)
+        case ("host", "requestOffer"):
+            guard let token else { return nil }
+            self = .requestOffer(token)
         case ("host", "takeControl"):
             guard words.count >= 3 else { return nil }
             switch words[2] {
@@ -251,7 +266,8 @@ package enum TranscriptInput: Sendable, Equatable {
                 guard let name = fields["fixture"], TranscriptFixture.offer(name) != nil,
                     let feature = FeatureID(rawValue: number("feature"))
                 else { return nil }
-                self = .offer(side, feature, name)
+                let request = fields["request"].flatMap { FrozenFields.unhex(Substring($0)) }
+                self = .offer(side, feature, name, request: request ?? Data())
             case "pull":
                 guard let token else { return nil }
                 var request = PullRequest()
@@ -266,6 +282,9 @@ package enum TranscriptInput: Sendable, Equatable {
             case "release":
                 guard let token else { return nil }
                 self = .release(side, token)
+            case "refuse":
+                guard let token else { return nil }
+                self = .refuse(side, token, code("code"))
             default:
                 return nil
             }
@@ -455,6 +474,25 @@ package struct Exchange: Sendable {
                 (500, .offer(.peer, .drag, "drag-1")), (600, .takeDrag(SimItems.token(1))),
                 (620, .answerTake(.report(.armed))), (650, .cancelTake), (700, .withdraw(.peer, SimItems.token(1))),
             ], end: 1000),
+        Exchange(
+            id: "C09",
+            title:
+                "clipboard: the host asks the peer for its clipboard; the peer offers it naming the request and releases the request, and the host pulls the offer's INLINE",
+            hostFixture: "host-items", peerFixture: "linux-session-items",
+            script: [
+                (500, .requestOffer(SimItems.token(5))),
+                (600, .offer(.peer, .clipboard, "text-64", request: SimItems.token(5))),
+                (600, .release(.peer, SimItems.token(5))),
+                (700, .itemPull(.host, SimItems.request(2, ceiling: 1 << 20))),
+            ], end: 1000),
+        Exchange(
+            id: "C10",
+            title: "clipboard: the peer refuses the host's request for its clipboard CLIPBOARD_NOTHING_TO_COPY",
+            hostFixture: "host-items", peerFixture: "linux-session-items",
+            script: [
+                (500, .requestOffer(SimItems.token(5))),
+                (600, .refuse(.peer, SimItems.token(5), .clipboardNothingToCopy)),
+            ], end: 1000),
     ]
 }
 
@@ -574,14 +612,18 @@ package final class Duet {
                 if ring.append(record) { post = true }
             }
             if post { peer.handle(.logs(.recordsAvailable), now: instant) }
-        case .offer(let side, let feature, let name):
-            guard let offer = TranscriptFixture.offer(name) else { break }
+        case .offer(let side, let feature, let name, let request):
+            guard var offer = TranscriptFixture.offer(name) else { break }
+            offer.request = request
             item(side, ask(input) { .offer($0, offer, feature: feature) })
+        case .requestOffer(let token):
+            item(.host, ask(input) { .requestClipboardOffer($0, token: token) })
         case .itemPull(let side, let request):
             let order = ItemPullOrder(request, landing: DecodingItemSink.landing)
             item(side, ask(input) { .pull($0, order) })
         case .withdraw(let side, let token): item(side, .withdraw(token: token, code: .cancelled))
         case .release(let side, let token): item(side, .release(token: token))
+        case .refuse(let side, let token, let code): item(side, .refuse(token: token, WireError(code)))
         case .takeDrag(let token):
             item(.host, ask(input) { .takeDrag($0, token: token) })
         case .controlTake(let control):
@@ -912,6 +954,8 @@ package enum TranscriptEvents {
         return switch event {
         case .offerReceived(let header):
             "\(prefix) offerReceived feature=\(header.feature.rawValue) token=\(FrozenFields.hex(header.token)) items=\(header.count)"
+                + (header.isOfferRequest ? " offerRequest" : "")
+                + (header.request.isEmpty ? "" : " request=\(FrozenFields.hex(header.request))")
         case .offerEnded(let feature, let origin, let token, let closure):
             "\(prefix) offerEnded feature=\(feature.rawValue) \(origin == .local ? "local" : "remote") token=\(FrozenFields.hex(token)) \(describe(closure))"
         case .pullEnded(let feature, let id, let result):

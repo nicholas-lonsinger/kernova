@@ -289,6 +289,43 @@ struct AgentHubItemTests {
         harness.hub.close()
     }
 
+    @Test("A clipboard offer request goes to the console peer, its answer names it, and its end reaches the owner")
+    func requestClipboardOffer() async {
+        let harness = await harness()
+        let peer = HubPeer(harness, claim: Fixture.peerClaim, items: MemoryItems())
+        let handle = await harness.snapshot { $0.consolePeers.count == 3 }.peers[0].handle
+        let request = SimItems.token(5)
+        let opened = await withCheckedContinuation { continuation in
+            harness.hub.requestClipboardOffer(request) { continuation.resume(returning: $0) }
+        }
+        #expect(opened == .success(handle))
+        var events = peer.events.waiter()
+        guard
+            case .items(.offerReceived(let asked)) = await events.next(where: {
+                if case .items(.offerReceived) = $0 { true } else { false }
+            })
+        else { Issue.record("no request received"); return }
+        #expect(asked.isOfferRequest && asked.token == request && asked.count == 0 && asked.feature == .clipboard)
+
+        var answer = Self.offer
+        answer.request = request
+        peer.send(.offer(ItemRequestID(rawValue: 1), answer, feature: .clipboard))
+        peer.send(.release(token: request))
+        var log = harness.itemLog.waiter()
+        let received = await log.next { if case .event(.items(_, .offerReceived)) = $0 { true } else { false } }
+        guard case .event(.items(handle, .offerReceived(let header))) = received else {
+            Issue.record("received \(received)"); return
+        }
+        #expect(header.token == Self.token && header.request == request && !header.isOfferRequest)
+        let ended = await log.next {
+            if case .event(.items(_, .offerEnded(_, .local, request, _))) = $0 { true } else { false }
+        }
+        guard case .event(.items(handle, .offerEnded(.clipboard, .local, request, .completed))) = ended else {
+            Issue.record("ended \(ended)"); return
+        }
+        harness.hub.close()
+    }
+
     @Test("A call to a peer the hub does not hold is answered at once, as a connection that ended")
     func gonePeer() async throws {
         let harness = try await harness()

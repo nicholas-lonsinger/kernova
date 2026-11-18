@@ -27,6 +27,12 @@ public enum ItemCommand: Sendable, Equatable {
     /// the host, or DRAG from a peer; answered `.offered`, refused `UNSUPPORTED_KIND` for a kind this side
     /// does not open.
     case offer(ItemRequestID, ItemOffer, feature: FeatureID)
+    /// Host: ask the peer to offer its clipboard, by a request of `token`, 16 bytes no open offer of this side
+    /// holds, which withdraws no clipboard offer; answered `.offered`, refused `UNSUPPORTED_KIND` from a peer.
+    /// The peer answers with a clipboard offer naming `token` in ``ItemOffer/request``; the request's one
+    /// `.offerEnded(.clipboard, .local, token:)` closes `.completed` once the peer released it, or
+    /// `.resetByPeer` with why it offers nothing. Withdrawing it calls it off.
+    case requestClipboardOffer(ItemRequestID, token: Data)
     /// Withdraw this side's offer of `token`, RESET with `code`; its `.offerEnded` follows.
     case withdraw(token: Data, code: ErrorCode)
     /// Release the far side's offer of `token`: this side pulls nothing more of it. Once the offer is whole
@@ -72,6 +78,8 @@ extension ItemMachines {
         switch command {
         case .offer(let id, let offer, let feature):
             return (id, .offered(self.offer(offer, feature: feature, connection: &connection)))
+        case .requestClipboardOffer(let id, let token):
+            return (id, .offered(requestClipboardOffer(token, connection: &connection)))
         case .withdraw(let token, let code):
             withdraw(token, code: code, connection: &connection)
         case .release(let token, let endBody):

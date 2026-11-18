@@ -8,7 +8,8 @@ import KernovaWire
 
 /// Every open offer on one connection, this side's and the far side's, of whichever feature's offer kind, and
 /// the item-set message stream that carries each: an `ItemSetHeader` OPEN, one `Item` MESSAGE per item, then
-/// the opener's END. An offer is in
+/// the opener's END. The host's clipboard offer request rides one too, of no items, and is held as an offer of
+/// CLIPBOARD's that no pull can name an item of. An offer is in
 /// the registry exactly while its stream is open; the opener's RESET withdraws it, and the receiver's END or
 /// RESET releases it. This side's tokens and the far side's are separate namespaces: a pull of this side's
 /// offer is looked up among this side's, and one this side opens among the far side's.
@@ -26,6 +27,7 @@ package struct ItemOfferRegistry: Sendable {
 
     struct Local: Sendable {
         var stream: StreamID
+        var kind: StreamKind
         var feature: FeatureID
         var offer: ItemOffer
         var encoded: [Data]
@@ -57,9 +59,9 @@ package struct ItemOfferRegistry: Sendable {
     /// The tokens of this side's open offers.
     package var localTokens: [Data] { local.map(\.offer.token) }
 
-    /// The tokens of this side's open offers of `feature`, its copies (``ItemOffer/copy``) left out.
-    package func localTokens(of feature: FeatureID) -> [Data] {
-        local.filter { $0.feature == feature && $0.offer.copy == .notACopy }.map(\.offer.token)
+    /// The tokens of this side's open offers on `kind`, its copies (``ItemOffer/copy``) left out.
+    package func localTokens(on kind: StreamKind) -> [Data] {
+        local.filter { $0.kind == kind && $0.offer.copy == .notACopy }.map(\.offer.token)
     }
 
     /// The feature of this side's open offer of `token`; nil when none is open.
@@ -191,6 +193,7 @@ package struct ItemOfferRegistry: Sendable {
         header.after = offer.after
         header.copy = offer.copy.wire
         header.leftOut = UInt32(clamping: offer.leftOut)
+        header.request = offer.request
         let body = header.encoded
         if let oversize = (encoded + [body]).first(where: { $0.count > WireConstants.maxControlPayload }) {
             return WireError(
@@ -198,7 +201,7 @@ package struct ItemOfferRegistry: Sendable {
         }
         let stream = connection.open(kind, body: body)
         guard stream != .session else { return WireError(.internal) }
-        local.append(Local(stream: stream, feature: feature, offer: offer, encoded: encoded))
+        local.append(Local(stream: stream, kind: kind, feature: feature, offer: offer, encoded: encoded))
         pump(stream, &connection)
         return nil
     }
@@ -285,15 +288,19 @@ package struct ItemOfferRegistry: Sendable {
 
     private mutating func received(_ stream: StreamID, _ body: Data, _ connection: inout Connection) {
         // The connection admits only a kind the table lists, and routes only an item-set offer kind here.
-        guard let feature = connection.descriptor(of: stream)?.feature else { return }
+        guard let descriptor = connection.descriptor(of: stream), let feature = descriptor.feature else { return }
         let header = ItemSetHeaderValue(
-            (try? Kernova_V2_ItemSetHeader(serializedBytes: body)) ?? Kernova_V2_ItemSetHeader(), feature: feature)
+            (try? Kernova_V2_ItemSetHeader(serializedBytes: body)) ?? Kernova_V2_ItemSetHeader(),
+            kind: descriptor.kind, feature: feature)
         guard !remote.contains(where: { $0.header.token == header.token }) else {
             return refuse(stream, .streamProtocolError, "a token the far side already offers", &connection)
         }
         // A drag's items come with its take (`carry`), never on its offer.
         guard feature != .drag || header.count == 0 else {
             return refuse(stream, .malformedMessage, "a DRAG_OFFER that lists items", &connection)
+        }
+        guard !header.isOfferRequest || header.count == 0 else {
+            return refuse(stream, .malformedMessage, "a CLIPBOARD_OFFER_REQUEST that lists items", &connection)
         }
         // The header's claim is reserved whole, so no count can outrun the budget.
         guard header.count <= (Self.remoteItemByteLimit - remoteCharged) / Self.remoteItemOverhead else {

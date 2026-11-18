@@ -39,11 +39,15 @@ public struct ItemOffer: Sendable, Equatable {
     /// A copy's: how many items of its opener's clipboard it does not carry whole
     /// (`ItemSetHeader.left_out`); 0 on every other offer.
     public var leftOut: Int
+    /// A peer's CLIPBOARD offer: the token of the host's offer request it answers
+    /// (``ItemSetHeaderValue/isOfferRequest``), empty when none (`ItemSetHeader.request`). Empty on every other
+    /// offer.
+    public var request: Data
 
     /// Creates an offer.
     public init(
         token: Data, concealed: Bool = false, items: [OfferedItem], after: Data = Data(),
-        copy: ClipboardCopyRole = .notACopy, leftOut: Int = 0
+        copy: ClipboardCopyRole = .notACopy, leftOut: Int = 0, request: Data = Data()
     ) {
         self.token = token
         self.concealed = concealed
@@ -51,6 +55,7 @@ public struct ItemOffer: Sendable, Equatable {
         self.after = after
         self.copy = copy
         self.leftOut = leftOut
+        self.request = request
     }
 }
 
@@ -70,11 +75,17 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
     public var copy: ClipboardCopyRole
     /// ``ItemOffer/leftOut``, as the OPEN carried it.
     public var leftOut: Int
+    /// ``ItemOffer/request``, as the OPEN carried it.
+    public var request: Data
+    /// The host's request that this side offer its clipboard (`CLIPBOARD_OFFER_REQUEST`), of no items, rather
+    /// than an offer. It is no clipboard offer: none withdraws it. This side answers by offering its clipboard
+    /// naming `token` in ``ItemOffer/request``, then releasing it, or refuses it to say why it offers nothing.
+    public var isOfferRequest: Bool
 
     /// A header announcing `count` items of `feature`'s offer `token`.
     public init(
         feature: FeatureID, token: Data, concealed: Bool, count: Int, after: Data = Data(),
-        copy: ClipboardCopyRole = .notACopy, leftOut: Int = 0
+        copy: ClipboardCopyRole = .notACopy, leftOut: Int = 0, request: Data = Data(), isOfferRequest: Bool = false
     ) {
         self.feature = feature
         self.token = token
@@ -83,12 +94,15 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
         self.after = after
         self.copy = copy
         self.leftOut = leftOut
+        self.request = request
+        self.isOfferRequest = isOfferRequest
     }
 
-    init(_ header: Kernova_V2_ItemSetHeader, feature: FeatureID) {
+    init(_ header: Kernova_V2_ItemSetHeader, kind: StreamKind, feature: FeatureID) {
         self.init(
             feature: feature, token: header.token, concealed: header.concealed, count: Int(header.count),
-            after: header.after, copy: ClipboardCopyRole(header.copy), leftOut: Int(header.leftOut))
+            after: header.after, copy: ClipboardCopyRole(header.copy), leftOut: Int(header.leftOut),
+            request: header.request, isOfferRequest: kind == .clipboardOfferRequest)
     }
 }
 

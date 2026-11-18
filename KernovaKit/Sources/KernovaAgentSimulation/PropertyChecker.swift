@@ -208,7 +208,8 @@ package struct TraceChecker: Sendable {
 ///     any other pull ends by its connection's `.closed` at the latest, not landed. The serving side's source
 ///     hears exactly one `.release` first, and its end is landed only when the puller's sink published. No
 ///     pull has effects after its end, and a sink's decoder holds at most one record and one feed.
-/// 12. Each side holds at most one clipboard offer of its own open at any time.
+/// 12. Each side holds at most one clipboard offer of its own open at any time; the host's clipboard offer
+///     requests are not clipboard offers.
 /// 13. Every item command that carries a request id is answered exactly once, before any event it caused:
 ///     an offer's `.offerEnded`, a pull's `.pullEnded`, a take's `.ended`.
 ///
@@ -341,7 +342,7 @@ package final class PropertyChecker {
     /// Property 12 after a drain of `side`.
     func clipboardOffers(_ link: SimLink, _ side: SimSide) {
         let offers = side == .host ? link.host?.itemOffersForTesting : link.peer?.itemOffersForTesting
-        let open = offers?.localTokens(of: .clipboard).count ?? 0
+        let open = offers?.localTokens(on: side == .host ? .clipboardOfferByHost : .clipboardOfferByPeer).count ?? 0
         if open > 1 { fail("property 12: link \(link.id) \(side) holds \(open) clipboard offers of its own") }
     }
 

@@ -44,10 +44,7 @@ struct AgentHubAuthorityTests {
     }
 
     private static func header(_ tag: UInt8, _ feature: FeatureID) -> ItemSetHeaderValue {
-        var header = Kernova_V2_ItemSetHeader()
-        header.token = SimItems.token(tag)
-        header.count = 1
-        return ItemSetHeaderValue(header, feature: feature)
+        ItemSetHeaderValue(feature: feature, token: SimItems.token(tag), concealed: false, count: 1)
     }
 
     @Test("A connection that never said Hello, or one displaced, hands the owner none of its item events")

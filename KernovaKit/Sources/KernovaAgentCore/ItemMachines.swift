@@ -146,6 +146,11 @@ struct ItemMachines: Sendable {
         }
     }
 
+    /// Host: asks the peer to offer its clipboard, by a request of `token`; nil when opened, or why not.
+    mutating func requestClipboardOffer(_ token: Data, connection: inout Connection) -> WireError? {
+        clipboard.requestOffer(token, items: &transfer, connection: &connection)
+    }
+
     /// Withdraws this side's offer of `token`, RESET with `code`.
     mutating func withdraw(_ token: Data, code: ErrorCode, connection: inout Connection) {
         transfer.withdraw(token, code: code, connection: &connection)

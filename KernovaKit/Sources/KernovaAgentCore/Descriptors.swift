@@ -105,6 +105,7 @@ package struct StreamKindDescriptor: Sendable {
             spendsOpenBucket: false, isValidOpenBody: { (try? PullRequest(serializedBytes: $0)) != nil }),
         itemOffer(.clipboardOfferByHost, feature: .clipboard, openerRole: .host),
         itemOffer(.clipboardOfferByPeer, feature: .clipboard, openerRole: .peer),
+        itemOffer(.clipboardOfferRequest, feature: .clipboard, openerRole: .host, openerToAcceptor: .nothing),
         itemOffer(.dropOffer, feature: .drop, openerRole: .host),
         itemOffer(.dragOffer, feature: .drag, openerRole: .peer),
         StreamKindDescriptor(
@@ -113,12 +114,13 @@ package struct StreamKindDescriptor: Sendable {
             isValidOpenBody: { (try? Kernova_V2_DragTake(serializedBytes: $0))?.token.count == 16 }),
     ]
 
-    /// An item-set offer kind: an `ItemSetHeader` OPEN followed by `Item` messages, any number at once.
-    private static func itemOffer(_ kind: StreamKind, feature: FeatureID, openerRole: OpenerRole)
-        -> StreamKindDescriptor
-    {
+    /// An item-set kind: an `ItemSetHeader` OPEN followed by `Item` messages — none on a kind whose opener sends
+    /// `.nothing` — any number at once.
+    private static func itemOffer(
+        _ kind: StreamKind, feature: FeatureID, openerRole: OpenerRole, openerToAcceptor: StreamDirection = .messages
+    ) -> StreamKindDescriptor {
         StreamKindDescriptor(
-            kind: kind, feature: feature, owner: .itemOffer, openerRole: openerRole, openerToAcceptor: .messages,
+            kind: kind, feature: feature, owner: .itemOffer, openerRole: openerRole, openerToAcceptor: openerToAcceptor,
             acceptorToOpener: .nothing, maxPerConnection: nil, isValidOpenBody: ItemOfferRegistry.isValidHeader)
     }
 

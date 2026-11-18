@@ -102,6 +102,7 @@ enum FeatureId {
 // | ITEM_PULL_BY_PEER | ITEM_TRANSFER | peer | PullRequest | nothing      | raw DATA only        | PullOutcome    | empty         |
 // | CLIPBOARD_OFFER_BY_HOST | CLIPBOARD | host | ItemSetHeader | Item msgs | nothing              | empty          | empty         |
 // | CLIPBOARD_OFFER_BY_PEER | CLIPBOARD | peer | ItemSetHeader | Item msgs | nothing              | empty          | empty         |
+// | CLIPBOARD_OFFER_REQUEST | CLIPBOARD | host | ItemSetHeader | nothing   | nothing              | empty, at once | empty         |
 // | DROP_OFFER    | DROP    | host   | ItemSetHeader | Item msgs         | nothing              | empty          | DropLanded    |
 // | DRAG_OFFER    | DRAG    | peer   | ItemSetHeader | Item msgs         | nothing              | empty          | empty         |
 // | DRAG_TAKE     | DRAG    | host   | DragTake     | DragTakeControl msgs | DragTakeReport msgs | empty        | DragTakeOutcome |
@@ -111,6 +112,11 @@ enum FeatureId {
 // acceptor's END, and so is DRAG_TAKE's, which answers it.
 // LOG_FORWARD's acceptor END answers the opener's END; at most one
 // LOG_FORWARD is open per connection.
+// CLIPBOARD_OFFER_REQUEST asks the peer to offer its clipboard. The peer
+// answers by opening a CLIPBOARD_OFFER_BY_PEER that names the request in
+// `ItemSetHeader.request`, then ENDs the request, or RESETs the request to say
+// why it offers nothing. A request is no clipboard offer: it withdraws none,
+// and no clipboard offer withdraws it.
 // A stream code a receiver does not expect on a stream RESET (a connection
 // code, another feature's code, an unrecognized value) reads as
 // ERROR_CODE_STREAM_PROTOCOL_ERROR.
@@ -132,7 +138,8 @@ enum StreamKind {
   STREAM_KIND_DRAG_OFFER = 1004;
   STREAM_KIND_DRAG_TAKE = 1005;
   STREAM_KIND_CLIPBOARD_OFFER_BY_PEER = 1006;
-  reserved 1007 to 1099;
+  STREAM_KIND_CLIPBOARD_OFFER_REQUEST = 1007;
+  reserved 1008 to 1099;
   reserved 1100 to 1199;            // exec
   // The simulation's test kinds (KernovaAgentSimulation). No shipping
   // endpoint opens or serves one.
@@ -210,7 +217,7 @@ enum ErrorCode {
   ERROR_CODE_DRAG_PRESS_OVER = 1006;                // the press that carried the drag is over
   ERROR_CODE_ITEM_OFFER_REPLACED = 1007;            // a CLIPBOARD offer's RESET: the opener's next offer follows; a CLIPBOARD copy's RESET by its receiver: the sender's next copy arrived before it landed, so it was not written
   ERROR_CODE_CLIPBOARD_CHANGED = 1008;              // a CLIPBOARD copy's RESET by its receiver: its clipboard changed after the copy arrived, so it was left as it is; by its sender: its clipboard moved on from a concealed copy, so the receiver removes it
-  ERROR_CODE_CLIPBOARD_NOTHING_TO_COPY = 1009;      // a CLIPBOARD ask's RESET by the peer: its clipboard holds nothing to copy
+  ERROR_CODE_CLIPBOARD_NOTHING_TO_COPY = 1009;      // a CLIPBOARD ask's or CLIPBOARD_OFFER_REQUEST's RESET by the peer: its clipboard holds nothing to copy
   ERROR_CODE_CLIPBOARD_ALREADY_HELD = 1010;         // a CLIPBOARD copy's RESET by its receiver: the copy is only references to one offer of the receiver's that its clipboard still holds, so nothing was written
   ERROR_CODE_CLIPBOARD_FILES_WITHHELD = 1011;       // a CLIPBOARD copy's RESET by its receiver: its clipboard was written without the copy's files, which total over the paste ceiling; Error.limit names it
   ERROR_CODE_CLIPBOARD_PARTS_GONE = 1012;           // a CLIPBOARD copy's RESET by its receiver: references of the copy named what the receiver's offer could no longer give, so they were left out of what it wrote
@@ -743,8 +750,9 @@ message ItemSetHeader {
   // The content is sensitive (a password): the receiver keeps it out of
   // history and logs.
   bool concealed = 1;
-  // The Item messages that follow. Only an ask (`copy`) holds none; any other
-  // CLIPBOARD offer of none is refused.
+  // The Item messages that follow. A CLIPBOARD_OFFER_REQUEST and a DRAG_OFFER
+  // list none, else RESET MALFORMED_MESSAGE. Of the other CLIPBOARD kinds only
+  // an ask (`copy`) holds none; any other CLIPBOARD offer of none is refused.
   uint32 count = 3;
   // 16 random bytes naming this offer; a pull quotes it.
   bytes token = 4;
@@ -760,6 +768,10 @@ message ItemSetHeader {
   // the snapshot does not carry whole: a file or another part of one left
   // out, or the item dropped.
   uint32 left_out = 7;
+  // CLIPBOARD_OFFER_BY_PEER only: the token of the host's
+  // CLIPBOARD_OFFER_REQUEST this offer answers; empty when it answers none.
+  // Empty on every other kind.
+  bytes request = 8;
 }
 
 // CLIPBOARD only: an offer the user's command sent, which is not its opener's

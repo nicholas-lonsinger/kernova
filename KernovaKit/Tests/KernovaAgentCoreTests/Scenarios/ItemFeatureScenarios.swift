@@ -12,8 +12,9 @@ import KernovaWire
 /// each side holds at most one clipboard offer of its own.
 enum ItemFeatureScenarios {
     static let all: [Scenario] = [
-        clipboardReplaces, replacedMidPull, wrongRoleOffers, dragTaken, dragRefused, dragTakenOnce,
-        dragWithdrawnWhileAsked, dragHandshake, dragStepsAtOnce, dragCalledOff, systemPeerServesNone, policyOff,
+        clipboardReplaces, replacedMidPull, wrongRoleOffers, offerRequestAnswered, offerRequestRefused, dragTaken,
+        dragRefused, dragTakenOnce, dragWithdrawnWhileAsked, dragHandshake, dragStepsAtOnce, dragCalledOff,
+        systemPeerServesNone, policyOff,
     ]
 
     static func options(_ options: inout SimOptions) {
@@ -121,6 +122,77 @@ enum ItemFeatureScenarios {
                 + expectThat(
                     items(world, .peer)?.offersReceived.isEmpty == true
                         && items(world, .host)?.offersReceived.isEmpty == true, "an offer opened")
+        })
+
+    /// The token of the host's clipboard offer requests in these scenarios.
+    static let requestToken = SimItems.token(5)
+
+    static let offerRequestAnswered = Scenario(
+        name:
+            "clipboard: the host's request withdraws no clipboard offer and its next clipboard offer leaves it open; the peer answers with an ordinary clipboard offer naming it, then releases it",
+        seeds: 20, end: .sec(3), options: options,
+        script: { world in
+            world.addPeer(.session())
+            world.at(.ms(500)) { world in
+                world.links.first?.items(.peer).offerRequestAnswer = .offer(SimItems.offer(9, [[file]]).items)
+                world.offerItems(SimItems.offer(1, [[file]]), from: .peer)
+                world.offerItems(SimItems.offer(2, [[file]]), from: .host)
+            }
+            world.at(.ms(700)) { world in
+                world.requestClipboardOffer(requestToken)
+                world.offerItems(SimItems.offer(3, [[file]]), from: .host)
+            }
+        },
+        expect: { world in
+            let host = items(world, .host)
+            let local = host?.offersEnded.filter { $0.origin == .local } ?? []
+            let answers = items(world, .peer)?.requestAnswers ?? []
+            let received = host?.offersReceived.map(\.header).filter { !$0.request.isEmpty } ?? []
+            let requests = items(world, .peer)?.offersReceived.map(\.header).filter(\.isOfferRequest) ?? []
+            return expectThat(host?.offerRefusals.isEmpty == true, "the host's offers and request opened")
+                + expectThat(
+                    local.map(\.token) == [SimItems.token(2), requestToken]
+                        && local.first?.closure == .resetLocally(WireError(.itemOfferReplaced))
+                        && local.allSatisfy { $0.feature == .clipboard },
+                    "the host's next clipboard offer withdrew only its previous one: \(local)")
+                + expectThat(
+                    local.last.map { if case .completed = $0.closure { true } else { false } } == true,
+                    "the peer released the request: \(local)")
+                + expectThat(
+                    requests.map(\.token) == [requestToken] && requests.allSatisfy { $0.count == 0 },
+                    "the peer heard the request once, of no items: \(requests)")
+                + expectThat(
+                    answers.count == 1
+                        && received.map(\.token) == answers.map(\.token)
+                        && received.allSatisfy { $0.request == requestToken && $0.feature == .clipboard },
+                    "the host received the answer naming its request: \(received)")
+                + expectThat(
+                    ends(world, .host, .remote) == [.resetByPeer(WireError(.itemOfferReplaced))],
+                    "the answer withdrew the peer's previous clipboard offer: \(ends(world, .host, .remote))")
+        })
+
+    static let offerRequestRefused = Scenario(
+        name:
+            "clipboard: the peer refuses the host's request CLIPBOARD_NOTHING_TO_COPY; a peer's request is refused UNSUPPORTED_KIND and nothing opens",
+        seeds: 5, end: .sec(2), options: options,
+        script: { world in
+            world.addPeer(.session())
+            world.at(.ms(500)) { world in
+                world.links.first?.items(.peer).offerRequestAnswer = .refuse(WireError(.clipboardNothingToCopy))
+                world.requestClipboardOffer(requestToken)
+                world.requestClipboardOffer(SimItems.token(6), by: .peer)
+            }
+        },
+        expect: { world in
+            let local = items(world, .host)?.offersEnded.filter { $0.origin == .local } ?? []
+            return expectThat(
+                local.map(\.token) == [requestToken]
+                    && local.map(\.closure) == [.resetByPeer(WireError(.clipboardNothingToCopy))],
+                "the request: \(local)")
+                + expectThat(
+                    items(world, .peer)?.offerRefusals.map(\.code) == [.unsupportedKind],
+                    "the peer's request: \(String(describing: items(world, .peer)?.offerRefusals))")
+                + expectThat(items(world, .host)?.offersReceived.isEmpty == true, "the host received an offer")
         })
 
     /// The items a drag's take lists.
