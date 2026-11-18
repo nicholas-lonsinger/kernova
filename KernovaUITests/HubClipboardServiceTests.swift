@@ -713,6 +713,66 @@ struct HubClipboardServiceTests {
         #expect(instance.clipboardTransferReport == .idle)
     }
 
+    /// Runs Copy to Guest of `text` until the connection opened its offer.
+    private func copyToGuestOpens(
+        _ text: String, _ instance: VMInstance, _ pasteboard: FakePasteboard, _ probe: AgentHubProbe
+    ) async throws {
+        let before = offers(probe).count
+        #expect(pasteboard.setString(text, forType: .string))
+        instance.copyMacClipboardToGuest()
+        try await probe.changed.wait { offers(probe).count == before + 1 }
+        try await acceptLastOffer(probe)
+    }
+
+    @Test("Copy to Guest opening while the Copy to Mac answer is still arriving ends the request unheard")
+    func copyToGuestEndsARequestWhoseAnswerArrives() async throws {
+        let probe = AgentHubProbe()
+        let (instance, pasteboard) = try await connected(probe, passthrough: false)
+        let request = try await askForGuestClipboard(instance, probe)
+        // The answer's OPEN reached the host's item registry, which says nothing of it until it is whole.
+        try await copyToGuestOpens("from the Mac", instance, pasteboard, probe)
+        // The open released the arriving answer, which ends the request as that release.
+        probe.deliver(
+            .items(.offerEnded(.clipboard, .remote, token: Self.guestToken, .resetLocally(WireError(.cancelled)))),
+            fromConnection: 0)
+        probe.deliver(
+            .items(.requestEnded(.local, token: request, .resetLocally(WireError(.cancelled)))), fromConnection: 0)
+        try await probe.settle()
+        #expect(instance.clipboardTransferReport == .idle, "\(instance.clipboardTransferReport)")
+        try await probe.changed.wait { withdrawn(request, probe) }
+    }
+
+    @Test("Copy to Guest opening while the host reads the Copy to Mac answer ends the request unheard for good")
+    func copyToGuestEndsARequestWhoseAnswerIsRead() async throws {
+        let probe = AgentHubProbe()
+        let (instance, pasteboard) = try await connected(probe, passthrough: false)
+        let request = try await askForGuestClipboard(instance, probe)
+        let readsBefore = reads(probe).count
+        deliverOffer(on: probe, token: Self.guestToken, request: request)
+        try await probe.changed.wait { reads(probe).count == readsBefore + 1 }
+        try await copyToGuestOpens("from the Mac", instance, pasteboard, probe)
+        #expect(released(Self.guestToken, probe))
+        // A request still held when the connection leaves is refused.
+        probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
+        try await waitForChange { !instance.hubClipboard.isConnected }
+        try await probe.settle()
+        #expect(instance.clipboardTransferReport == .idle, "\(instance.clipboardTransferReport)")
+    }
+
+    @Test("Copy to Mac takes its answer arriving after a Copy to Guest the connection refused to open")
+    func copyToMacOutlivesARefusedCopyToGuest() async throws {
+        let probe = AgentHubProbe()
+        let (instance, pasteboard) = try await connected(probe, passthrough: false)
+        let request = try await askForGuestClipboard(instance, probe)
+        #expect(pasteboard.setString("from the Mac", forType: .string))
+        instance.copyMacClipboardToGuest()
+        try await probe.changed.wait { offers(probe).count == 1 }
+        probe.deliver(.itemReply(offers(probe)[0].id, .offered(WireError(.tooLarge))), fromConnection: 0)
+        try await probe.settle()
+        try await written(Self.text, request: request, to: pasteboard, on: probe)
+        #expect(!withdrawn(request, probe))
+    }
+
     @Test("A Mac clipboard holding nothing to copy is said of Copy to Guest, never of a copy passthrough reads")
     func nothingToCopyIsSaidOnlyOfTheCommand() async throws {
         let probe = AgentHubProbe()

@@ -25,7 +25,7 @@ import KernovaWire
 ///   host's own commands. Changing the gate ends every offer and request of either side's that this end sent or
 ///   took.
 /// - The host's request that the guest offer its clipboard is no offer: the guest answers it once, with an offer
-///   naming it or a refusal, and no offer withdraws it.
+///   naming it or a refusal. An offer of the host's that opens before the answer is taken ends it unheard.
 /// - A connection's leaving ends every offer and request it carried: what an end wrote of the far side's is the
 ///   end's to retract, since nothing more of it can be pulled.
 ///
@@ -126,8 +126,8 @@ public final class ClipboardItemExchange {
         if case .open(let token, let source) = local { (token, source) } else { nil }
     }
     /// The host: this end's request on `link` (``requestOffer(on:)``), until the offer answering it is taken or
-    /// the request is refused (``onRequestRefused``) — or, unheard, until a later request, a gate change, or this
-    /// side's offer crossing the answer.
+    /// the request is refused (``onRequestRefused``) — or, unheard, until a later request, a gate change, an offer
+    /// of this side's opening, or the answer arriving across one.
     private var request: Request?
 
     /// The host's request.
@@ -222,25 +222,27 @@ public final class ClipboardItemExchange {
 
     /// Makes `source`, which holds at least one item, this end's clipboard and offers it on the connection,
     /// withdrawing this side's offer before it and ending the far side's, answering the host's `request` when one
-    /// is named, which is released once the offer opens. The offer is withdrawn once the pasteboard it was read
-    /// from moves on from it. False when nothing was sent: `request` was answered or ended already, or no
-    /// connection carries the clipboard.
+    /// is named, which is released once the offer opens. Once it opens, this end's own request ends unheard
+    /// (``requestCrossed(_:on:)``). The offer is withdrawn once the pasteboard it was read from moves on from it.
+    /// False when nothing was sent: `request` was answered or ended already, or no connection carries the
+    /// clipboard.
     @discardableResult
     func offer(_ source: ClipboardOfferSource, answering request: OfferRequest?) -> Bool {
         if let request, requests.remove(request.token) == nil { return false }
         endRemote(.superseded)
         guard let link else { return false }
-        // A far-side offer still being read predates this side's offer too: an answer among them crossed it.
+        // A far-side offer still being read predates this side's offer too.
         for token in reading { link.releaseOffer(token) }
         reading.removeAll()
-        if self.request?.answer != nil { self.request = nil }
         withdrawLocal()
         let token = Self.freshToken()
         local = .opening(token: token, source: source)
+        let held = self.request?.token
         let offer = ItemOffer(
             token: token, concealed: source.concealed, items: source.items, request: request?.token ?? Data())
         send(offer, on: link) { [weak self] opened in
             self?.answered(token, opened: opened)
+            if opened, let held { self?.requestCrossed(held, on: link) }
             guard let request else { return }
             if opened {
                 link.releaseOffer(request.token)
@@ -331,8 +333,9 @@ public final class ClipboardItemExchange {
     // MARK: Requests
 
     /// The host: asks the far side, over `link` — the one this end runs over — to offer its clipboard as it
-    /// stands now, by a request whose answer this end takes whatever its gate, unless it crossed an offer of this
-    /// side's (``Side/host``). A request whose answer is not taken otherwise is refused, once
+    /// stands now, by a request whose answer this end takes whatever its gate, unless an offer of this side's
+    /// comes first: one that opens before the answer is taken (``requestCrossed(_:on:)``), or one the answer
+    /// arrives across (``Side/host``). A request whose answer is not taken otherwise is refused, once
     /// (``onRequestRefused``). A request made while one is open replaces it.
     func requestOffer(on link: any ClipboardHostItemLink) {
         if let open = request { link.withdrawOffer(open.token, code: .itemOfferReplaced) }
@@ -347,6 +350,16 @@ public final class ClipboardItemExchange {
             )
             MainActorBridge.async { self?.requestEnded(token, refusedWith: refusal) }
         }
+    }
+
+    /// An offer of this side's opened while this end's request `token` was held: every far-side clipboard offer
+    /// was let go by then — one being read as the offer was sent, the rest as it opened — so the request ends
+    /// unheard, withdrawn from a far side yet to answer it. The open is answered before any event it caused, so
+    /// the request is gone before the `.requestEnded` its answer's release brings.
+    private func requestCrossed(_ token: Data, on link: any ClipboardItemLink) {
+        guard request?.token == token else { return }
+        request = nil
+        link.withdrawOffer(token, code: .itemOfferReplaced)
     }
 
     /// The host's request `token` ended as `closure` says. Its answer, had one arrived whole, came first: one this

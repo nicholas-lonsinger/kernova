@@ -265,7 +265,9 @@ struct ClipboardEndSweepTests {
             case .land(let side):
                 pair.landRead(on: side)
             case .answer(let side):
+                let token = pair.wire?.unansweredOpens(side).first
                 pair.wire?.answerOldestOpen(of: side)
+                if let token { model.opened(token, by: side) }
             case .paste(let side):
                 let serves = pasteServes(on: side)
                 paste = (side, serves, try await pair.paste(on: side))
@@ -442,6 +444,8 @@ struct ClipboardEndSweepTests {
             let sequence: Int
             /// Its side's count of resets of its own offers when it opened.
             let openedAt: Int
+            /// The host's request open when the host sent it, which its open ends unheard.
+            let crossing: Data?
             /// The far side's reset count when the offer reached it, whether the rules had the far side take it,
             /// and the far side's copy count then.
             var arrived: (at: Int, taken: Bool, farCopies: Int)?
@@ -577,8 +581,15 @@ struct ClipboardEndSweepTests {
         mutating func record(_ offer: ItemOffer, by side: Side) {
             offers[offer.token] = Offer(
                 side: side, name: ClipboardEndPair.name(of: offer.items), request: offer.request,
-                sequence: nextSequence, openedAt: ownResets[side] ?? 0)
+                sequence: nextSequence, openedAt: ownResets[side] ?? 0, crossing: side == .host ? hostRequest : nil)
             nextSequence += 1
+        }
+
+        /// `side`'s offer `token` opened: one of the host's ends the request it crossed unheard, whatever its answer
+        /// had reached.
+        mutating func opened(_ token: Data, by side: Side) {
+            guard side == .host, let crossing = offers[token]?.crossing, crossing == hostRequest else { return }
+            hostRequest = nil
         }
 
         /// Whether the host holds a copy passthrough is yet to offer, which a guest offer arriving now crosses.

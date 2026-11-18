@@ -360,10 +360,10 @@ extension ClipboardEnd where Role == ClipboardHost {
     }
 
     /// "Copy to Mac": asks the guest to offer its clipboard as it stands now. Its offer answering the request is
-    /// taken unless a later request replaced this one, the gate changed, or the Mac's clipboard was offered after
-    /// the guest made its answer — the two crossed, and the Mac's wins. Any other request whose answer is not
-    /// taken — refused, its answer lost before it arrived whole, or with no connection to ask over — is heard once
-    /// as ``ClipboardEndEvent/requestRefused(_:)``.
+    /// taken unless, first, the Mac's clipboard was offered — the Mac's wins — the gate changed, or a later request
+    /// replaced this one before the answer arrived whole. Any other request whose answer is not taken — refused,
+    /// its answer lost before it was taken, or with no connection to ask over — is heard once as
+    /// ``ClipboardEndEvent/requestRefused(_:)``.
     public func requestOffer() {
         guard let link else {
             let unconnected = WireError(.cancelled, debugDetail: "no connection carries the clipboard")
