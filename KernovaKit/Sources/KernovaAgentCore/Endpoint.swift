@@ -59,9 +59,9 @@ package protocol RoleMachines: Sendable {
     associatedtype Event: Sendable & Equatable
     associatedtype Effect: Sendable & Equatable
     associatedtype EventSlot: Hashable & Sendable
-    associatedtype Power: FeatureMachine
-    associatedtype Logs: FeatureMachine
-    associatedtype Update: FeatureMachine
+    associatedtype Power: FeatureMachine where Power.Event == Event, Power.Effect == Effect
+    associatedtype Logs: FeatureMachine where Logs.Event == Event, Logs.Effect == Effect
+    associatedtype Update: FeatureMachine where Update.Event == Event, Update.Effect == Effect
 
     /// POWER's machine.
     var power: Power { get set }
@@ -76,23 +76,34 @@ package protocol RoleMachines: Sendable {
     /// The slot `event` coalesces in; nil for one that never does.
     static func slot(of event: Event) -> EventSlot?
 
-    /// Everything the machines emitted since the last call, each machine's in its emission order.
-    mutating func takeOutputs() -> (effects: [Effect], events: [Event], diagnostics: [Diagnostic])
-
     /// Carries out `input` on the connection and the role's machines, and returns what of it is the endpoint's to
     /// carry out.
     mutating func handle(_ input: Input, connection: inout Connection, now: CoreInstant) -> SharedInput?
 
-    /// What the owner hears of `event`: the far side's Hello, or a session message only this role's far side
-    /// sends. Nil when the owner hears nothing of it.
-    mutating func report(_ event: ConnectionEvent, connection: inout Connection) -> Event?
+    /// Handles `message` on the connection and the role's machines, and returns what the owner hears of it and what
+    /// of it is the endpoint's to carry out.
+    mutating func receive(
+        _ message: SessionMessage, connection: inout Connection
+    ) -> (event: Event?, shared: SharedInput?)
 
     /// What the owner hears of a change, since the last report, in which features are usable on `connection`, or
     /// once it is `closed`.
     mutating func reportUsability(of connection: Connection, closed: Bool) -> [Event]
 }
 
-/// What a role's input leaves to the endpoint.
+/// A session message from the far side whose handling is the role's.
+package enum SessionMessage: Sendable {
+    /// The far side's Hello.
+    case hello(RemoteHello)
+    /// A `PeerState`, which only a peer sends.
+    case peerState(PeerSessionState)
+    /// A `PolicyUpdate`, which only the host sends.
+    case policy(PolicySnapshot)
+    /// An `UpdateAvailable`, which only the host sends.
+    case updateAvailable(UpdateManifestValue?)
+}
+
+/// What a role's input or session message leaves to the endpoint.
 package enum SharedInput: Sendable {
     /// Carry out an item command, answering it before anything it causes.
     case itemCommand(ItemCommand)
@@ -259,7 +270,8 @@ package struct Endpoint<Role: RoleMachines>: Sendable {
     private mutating func perform(_ input: SharedInput) {
         switch input {
         case .itemCommand(let command):
-            // Queued before the route below collects what the command caused, so the answer comes first.
+            // Queued now, while what the command caused waits for the route that ends the input, so the answer
+            // comes first.
             if let (id, reply) = items.perform(command, connection: &connection) {
                 events.append(.itemReply(id, reply))
             }
@@ -314,9 +326,10 @@ package struct Endpoint<Role: RoleMachines>: Sendable {
         reportUsability()
     }
 
-    private mutating func report(_ event: ConnectionEvent) {
-        guard let reported = role.report(event, connection: &connection) else { return }
-        emit(reported)
+    private mutating func receive(_ message: SessionMessage) {
+        let (event, shared) = role.receive(message, connection: &connection)
+        if let event { emit(event) }
+        if let shared { perform(shared) }
     }
 
     private mutating func reportUsability(closed: Bool = false) {
@@ -329,17 +342,18 @@ package struct Endpoint<Role: RoleMachines>: Sendable {
 
     private mutating func dispatch(_ routed: RoutedEvent) {
         switch routed.event {
-        case .helloReceived:
-            report(routed.event)
+        case .helloReceived(let hello):
+            receive(.hello(hello))
             notifyAll(.sessionEstablished)
             reportUsability()
         case .remoteAdvertsChanged:
             usabilityChanged()
-        case .peerStateChanged, .updateAvailable:
-            report(routed.event)
-        case .policyChanged:
-            report(routed.event)
-            policyChanged()
+        case .peerStateChanged(let state):
+            receive(.peerState(state))
+        case .policyChanged(let policy):
+            receive(.policy(policy))
+        case .updateAvailable(let manifest):
+            receive(.updateAvailable(manifest))
         case .liveness(let change):
             events.append(.liveness(change))
         case .diagnostic(let diagnostic):
@@ -379,8 +393,8 @@ package struct Endpoint<Role: RoleMachines>: Sendable {
     }
 
     private mutating func collect() {
-        let machines = role.takeOutputs()
-        for effect in machines.effects { effects.append(.role(effect)) }
+        let machines = [role.power.takeOutputs(), role.logs.takeOutputs(), role.update.takeOutputs()]
+        for effect in machines.flatMap(\.effects) { effects.append(.role(effect)) }
         let outputs = items.takeOutputs()
         for output in outputs.items {
             switch output {
@@ -391,7 +405,7 @@ package struct Endpoint<Role: RoleMachines>: Sendable {
             }
         }
         for event in outputs.drag { events.append(.dragTake(event)) }
-        for event in machines.events { emit(event) }
-        for diagnostic in outputs.diagnostics + machines.diagnostics { connection.diagnose(diagnostic) }
+        for event in machines.flatMap(\.events) { emit(event) }
+        for diagnostic in outputs.diagnostics + machines.flatMap(\.diagnostics) { connection.diagnose(diagnostic) }
     }
 }

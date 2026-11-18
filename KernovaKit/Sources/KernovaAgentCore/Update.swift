@@ -125,12 +125,16 @@ package struct UpdateClient: FeatureMachine {
         LocalAdvert(version: 1, availability: Availability(availability) { $0.encodedCapability })
     }
 
-    mutating func takeOutputs() -> (effects: [PeerRoleEffect], diagnostics: [Diagnostic]) {
+    package func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
+
+    package mutating func takeOutputs() -> (
+        effects: [PeerRoleEffect], events: [PeerRoleEvent], diagnostics: [Diagnostic]
+    ) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
         }
-        return (outbox, diagnostics)
+        return (outbox, [], diagnostics)
     }
 
     /// The host's latest offer.
@@ -277,13 +281,17 @@ package struct UpdateServer: FeatureMachine {
         LocalAdvert(version: 1, availability: .available(Data()))
     }
 
-    mutating func takeOutputs() -> (events: [HostRoleEvent], effects: [HostRoleEffect], diagnostics: [Diagnostic]) {
+    package func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
+
+    package mutating func takeOutputs() -> (
+        effects: [HostRoleEffect], events: [HostRoleEvent], diagnostics: [Diagnostic]
+    ) {
         defer {
             outbox.removeAll()
             reads.removeAll()
             diagnostics.removeAll()
         }
-        return (outbox, reads, diagnostics)
+        return (reads, outbox, diagnostics)
     }
 
     /// Handles a connection event.

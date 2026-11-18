@@ -155,12 +155,14 @@ package struct PowerResponder: FeatureMachine {
         request?.deadline?.wake(clock)
     }
 
-    mutating func takeOutputs() -> (effects: [PeerRoleEffect], diagnostics: [Diagnostic]) {
+    package mutating func takeOutputs() -> (
+        effects: [PeerRoleEffect], events: [PeerRoleEvent], diagnostics: [Diagnostic]
+    ) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
         }
-        return (outbox, diagnostics)
+        return (outbox, [], diagnostics)
     }
 
     /// Handles a stream event for POWER_REQUEST.
@@ -384,12 +386,14 @@ package struct PowerRequester: FeatureMachine {
         entries.compactMap { $0.deadline?.wake(clock) }.min()
     }
 
-    mutating func takeOutputs() -> (events: [HostRoleEvent], diagnostics: [Diagnostic]) {
+    package mutating func takeOutputs() -> (
+        effects: [HostRoleEffect], events: [HostRoleEvent], diagnostics: [Diagnostic]
+    ) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
         }
-        return (outbox, diagnostics)
+        return ([], outbox, diagnostics)
     }
 
     /// Starts a request: opens POWER_REQUEST and ends it at once. `ignoringApps` is sent only toward a peer

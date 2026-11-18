@@ -35,17 +35,19 @@ package enum FeatureEvent: Sendable, Equatable {
 
 /// A role's feature machine, as its endpoint drives it.
 package protocol FeatureMachine: Sendable {
+    /// What the machine tells its endpoint's owner.
+    associatedtype Event: Sendable & Equatable
+    /// What the machine asks its endpoint's adapters to do.
+    associatedtype Effect: Sendable & Equatable
+
     /// The machine's advert.
     var localAdvert: LocalAdvert { get }
     /// When the machine next needs `.deadline`; nil when it waits on none.
     func nextDeadline(on clock: JudgedClock) -> CoreInstant?
     /// Handles a connection-wide event, or an event of one of the machine's streams.
     mutating func handle(_ event: FeatureEvent, connection: inout Connection)
-}
-
-extension FeatureMachine {
-    /// None: the machine waits on no deadline.
-    package func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
+    /// Everything the machine emitted since the last call, each kind in its emission order.
+    mutating func takeOutputs() -> (effects: [Effect], events: [Event], diagnostics: [Diagnostic])
 }
 
 extension Connection {

@@ -97,7 +97,6 @@ public enum PeerRoleEvent: Sendable, Equatable {
 package typealias PeerEndpoint = Endpoint<PeerMachines>
 
 extension PeerConfiguration: EndpointConfiguration {
-    /// The connection's configuration, before the endpoint adds its machines' adverts.
     package var connectionConfiguration: ConnectionConfiguration {
         ConnectionConfiguration(claim: claim, initialState: state, adverts: [], policy: receiverPolicy)
     }
@@ -129,19 +128,6 @@ package struct PeerMachines: RoleMachines {
         }
     }
 
-    /// The three machines' effects and diagnostics; none emits an event.
-    package mutating func takeOutputs() -> (
-        effects: [PeerRoleEffect], events: [PeerRoleEvent], diagnostics: [Diagnostic]
-    ) {
-        let power = power.takeOutputs()
-        let logs = logs.takeOutputs()
-        let update = update.takeOutputs()
-        return (
-            power.effects + logs.effects + update.effects, [],
-            power.diagnostics + logs.diagnostics + update.diagnostics
-        )
-    }
-
     /// Carries out the session state or an adapter's report; leaves item commands, item answers and drag answers to
     /// the endpoint.
     package mutating func handle(_ input: PeerInput, connection: inout Connection, now: CoreInstant) -> SharedInput? {
@@ -164,18 +150,21 @@ package struct PeerMachines: RoleMachines {
         return nil
     }
 
-    /// The shell hears the host's Hello, its policy, and its offer, which the update client hears first.
-    package mutating func report(_ event: ConnectionEvent, connection: inout Connection) -> PeerRoleEvent? {
-        switch event {
-        case .helloReceived(let hello):
-            return .established(host: hello.claim)
-        case .policyChanged(let policy):
-            return .policyReceived(policy)
+    /// The shell hears the host's Hello, its policy, which every machine then hears, and its offer, which the update
+    /// client hears first. The host sends no peer state: the connection closes on one before it reaches here.
+    package mutating func receive(
+        _ message: SessionMessage, connection: inout Connection
+    ) -> (event: PeerRoleEvent?, shared: SharedInput?) {
+        switch message {
+        case .hello(let hello):
+            return (.established(host: hello.claim), nil)
+        case .policy(let policy):
+            return (.policyReceived(policy), .policyChanged)
         case .updateAvailable(let manifest):
             update.offerChanged(manifest, connection: &connection)
-            return .updateAvailable(manifest)
-        default:
-            return nil
+            return (.updateAvailable(manifest), nil)
+        case .peerState:
+            return (nil, nil)
         }
     }
 

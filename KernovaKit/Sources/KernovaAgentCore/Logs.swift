@@ -56,12 +56,16 @@ package struct LogForwarder: FeatureMachine {
         LocalAdvert(version: 1, availability: Availability(availability) { _ in Data() })
     }
 
-    mutating func takeOutputs() -> (effects: [PeerRoleEffect], diagnostics: [Diagnostic]) {
+    package func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
+
+    package mutating func takeOutputs() -> (
+        effects: [PeerRoleEffect], events: [PeerRoleEvent], diagnostics: [Diagnostic]
+    ) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
         }
-        return (outbox, diagnostics)
+        return (outbox, [], diagnostics)
     }
 
     /// Handles a connection event.
@@ -171,12 +175,16 @@ package struct LogReceiver: FeatureMachine {
         LocalAdvert(version: 1, availability: .available(Kernova_V2_LogCapability().encoded))
     }
 
-    mutating func takeOutputs() -> (events: [HostRoleEvent], diagnostics: [Diagnostic]) {
+    package func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
+
+    package mutating func takeOutputs() -> (
+        effects: [HostRoleEffect], events: [HostRoleEvent], diagnostics: [Diagnostic]
+    ) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
         }
-        return (outbox, diagnostics)
+        return ([], outbox, diagnostics)
     }
 
     /// Handles a connection event.

@@ -333,7 +333,7 @@ package struct FixturePayloadSource: Sendable {
 
     package init() {}
 
-    /// The answer to a `HostEffect.read` of up to `maxBytes` of `manifest`'s payload from `offset`.
+    /// The answer to a `HostRoleEffect.read` of up to `maxBytes` of `manifest`'s payload from `offset`.
     package mutating func answer(
         _ id: UpdatePullID, _ manifest: UpdateManifestValue, offset: UInt64, maxBytes: Int
     ) -> PayloadInput {

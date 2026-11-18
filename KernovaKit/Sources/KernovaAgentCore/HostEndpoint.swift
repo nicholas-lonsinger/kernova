@@ -101,7 +101,6 @@ public enum HostRoleEffect: Sendable, Equatable {
 package typealias HostEndpoint = Endpoint<HostMachines>
 
 extension HostConfiguration: EndpointConfiguration {
-    /// The connection's configuration, before the endpoint adds its machines' adverts.
     package var connectionConfiguration: ConnectionConfiguration {
         ConnectionConfiguration(
             claim: claim, adverts: [], sessionToken: sessionToken, hostPolicy: policy, hostBundles: bundles,
@@ -114,12 +113,10 @@ package struct HostMachines: RoleMachines {
     package var power: PowerRequester
     package var logs = LogReceiver()
     package var update: UpdateServer
-    private let generation: ConnectionGeneration
     private var lastStatus: FeatureStatusTable?
 
     /// The machines of a connection just accepted.
     package init(_ configuration: HostConfiguration, generation: ConnectionGeneration) {
-        self.generation = generation
         power = PowerRequester(generation: generation)
         update = UpdateServer(generation: generation)
     }
@@ -131,19 +128,6 @@ package struct HostMachines: RoleMachines {
         case .featuresChanged: .features
         case .helloReceived, .power, .log, .update: nil
         }
-    }
-
-    /// The update server's reads, and the three machines' events and diagnostics.
-    package mutating func takeOutputs() -> (
-        effects: [HostRoleEffect], events: [HostRoleEvent], diagnostics: [Diagnostic]
-    ) {
-        let power = power.takeOutputs()
-        let logs = logs.takeOutputs()
-        let served = update.takeOutputs()
-        return (
-            served.effects, power.events + logs.events + served.events,
-            power.diagnostics + logs.diagnostics + served.diagnostics
-        )
     }
 
     /// Carries out a hub command or a payload answer; leaves item commands, item answers and a policy change to the
@@ -165,21 +149,24 @@ package struct HostMachines: RoleMachines {
         case .hub(.items(let command)):
             return .itemCommand(command)
         case .payload(.bytes(let id, let data)):
-            if id.generation == generation { update.bytes(id, data, connection: &connection) }
+            update.bytes(id, data, connection: &connection)
         case .payload(.failed(let id, let error)):
-            if id.generation == generation { update.failed(id, error, connection: &connection) }
+            update.failed(id, error, connection: &connection)
         case .items(let input):
             return .items(input)
         }
         return nil
     }
 
-    /// The hub hears the peer's Hello and each change of its state.
-    package func report(_ event: ConnectionEvent, connection: inout Connection) -> HostRoleEvent? {
-        switch event {
-        case .helloReceived(let hello): .helloReceived(hello.claim, hello.state ?? PeerSessionState())
-        case .peerStateChanged(let state): .peerStateChanged(state)
-        default: nil
+    /// The hub hears the peer's Hello and each change of its state. A peer sends no policy or offer: the connection
+    /// closes on either before it reaches here.
+    package func receive(
+        _ message: SessionMessage, connection: inout Connection
+    ) -> (event: HostRoleEvent?, shared: SharedInput?) {
+        switch message {
+        case .hello(let hello): (.helloReceived(hello.claim, hello.state ?? PeerSessionState()), nil)
+        case .peerState(let state): (.peerStateChanged(state), nil)
+        case .policy, .updateAvailable: (nil, nil)
         }
     }
 
