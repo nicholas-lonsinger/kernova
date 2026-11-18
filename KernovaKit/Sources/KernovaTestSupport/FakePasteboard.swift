@@ -24,6 +24,8 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         var resolved: [NSPasteboard.PasteboardType: Data] = [:]
         /// Every type a resident item was read for, in order.
         var reads: [NSPasteboard.PasteboardType] = []
+        /// Every promised type read before a provider resolved it, in order.
+        var promiseReads: [NSPasteboard.PasteboardType] = []
     }
 
     private let writer = FakeWritePasteboard()
@@ -42,15 +44,20 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     /// fired provider has already resolved, or the user's own copy.
     public var items: [any ClipboardPasteboardItemReading] {
         let promised = writer.promisedTypesByItem
+        let state = self.state
         guard promised.isEmpty else {
             let bytes = state.withLock { $0.resolved }
             return zip(promised, writer.dataByItem).map { types, data in
-                FakePasteboardItem(
+                let unresolved = Set(types).subtracting(data.keys).subtracting(bytes.keys)
+                return FakePasteboardItem(
                     types: Array(data.keys) + types,
-                    bytes: bytes.merging(data, uniquingKeysWith: { _, written in written }))
+                    bytes: bytes.merging(data, uniquingKeysWith: { _, written in written })
+                ) { type in
+                    guard unresolved.contains(type) else { return }
+                    state.withLock { $0.promiseReads.append(type) }
+                }
             }
         }
-        let state = self.state
         return state.withLock { $0.residents }.map { representations in
             FakePasteboardItem(representations) { type in state.withLock { $0.reads.append(type) } }
         }
@@ -64,6 +71,10 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     /// Every type the user's own copy was read for — as data or as a string —
     /// in the order read, for a test proving what was read when.
     public var residentReads: [NSPasteboard.PasteboardType] { state.withLock { $0.reads } }
+
+    /// Every promised type an item was read for before a provider resolved it, in the order read: on a real
+    /// pasteboard each such read fires the promise's provider in the reading process.
+    public var promiseReads: [NSPasteboard.PasteboardType] { state.withLock { $0.promiseReads } }
 
     // MARK: - Promised writes
 

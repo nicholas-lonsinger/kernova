@@ -155,8 +155,8 @@ public final class ClipboardPasteboardPublisher {
     /// Process-lifetime owner of the lazy data providers a write promises.
     private let providerRegistry: LazyClipboardProviderRegistry
 
-    /// Where each write records what it was made from, for a snapshot of the pasteboard holding it.
-    private let ledger: ClipboardWriteLedger
+    /// Where each write records what it was made from, for a read of the pasteboard holding it.
+    let ledger: ClipboardWriteLedger
 
     /// The pasteboard's `changeCount` right after the most recent write — a
     /// retraction's clear included — or `nil` before any write.

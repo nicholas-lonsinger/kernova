@@ -263,13 +263,16 @@ public final class ClipboardWriteLedger {
             pasteboard: pasteboard, changeCount: pasteboard.changeCount, write: write, publisher: publisher)
     }
 
-    /// What the write `pasteboard` holds was made from, while it holds a write of this process that promised
-    /// something and that nothing has replaced since.
-    public func standingWrite(on pasteboard: any ClipboardReadPasteboard) -> ClipboardWriteSource? {
+    /// What the write `pasteboard` holds was made from, and the publisher that made it, while it holds a write of
+    /// this process that promised something and that nothing has replaced since.
+    public func standingWrite(
+        on pasteboard: any ClipboardReadPasteboard
+    ) -> (source: ClipboardWriteSource, publisher: ClipboardPasteboardPublisher)? {
         guard let entry = entries[ObjectIdentifier(pasteboard)], entry.pasteboard === pasteboard,
-            entry.changeCount == pasteboard.changeCount
+            entry.changeCount == pasteboard.changeCount, let write = entry.write, let source = write.source,
+            let publisher = write.publisher
         else { return nil }
-        return entry.write?.source
+        return (source, publisher)
     }
 
     /// Whether `pasteboard` still holds the latest write of this process on it.

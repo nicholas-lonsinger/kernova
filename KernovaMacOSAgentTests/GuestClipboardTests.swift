@@ -302,7 +302,7 @@ struct GuestClipboardTests {
         promised.setItem(Self.promiseTypes.map { (type: $0, data: Data()) })
         let root = staging.root
         let outcome = await ClipboardPasteboardReader.readOffer(
-            from: promised, promises: [receiver],
+            from: promised, publisher: .elsewhere(), promises: [receiver],
             promiseDestination: {
                 calledIn.notify()
                 return try ClipboardFileStaging(label: "promises", root: root).reserveScratchDirectory(generation: 1)

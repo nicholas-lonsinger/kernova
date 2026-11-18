@@ -408,7 +408,9 @@ struct ClipboardCopyTests {
         #expect(try await source.served(item: 0, representation: 1) == .bytes(Data("jpeg".utf8)))
 
         // Passthrough's offer reads the item by the same rule.
-        guard case .offer(let offer, let offerLost) = await ClipboardPasteboardReader.readOffer(from: pasteboard)
+        guard
+            case .offer(let offer, let offerLost) = await ClipboardPasteboardReader.readOffer(
+                from: pasteboard, publisher: .elsewhere())
         else { throw TestFailure("no offer") }
         #expect(offerLost == 1)
         #expect(offer.items.map { $0.representations.compactMap(\.type.appleUTI) } == [crossing])
@@ -452,7 +454,9 @@ struct ClipboardCopyTests {
         #expect(try await source.served(item: 0, representation: 3) == .bytes(Data("private".utf8)))
 
         // Passthrough's offer reads the item by the same rule.
-        guard case .offer(let offer, let offerLost) = await ClipboardPasteboardReader.readOffer(from: pasteboard)
+        guard
+            case .offer(let offer, let offerLost) = await ClipboardPasteboardReader.readOffer(
+                from: pasteboard, publisher: .elsewhere())
         else { throw TestFailure("no offer") }
         #expect(offerLost == 0)
         #expect(offer.items.map { $0.representations.map(\.type.appleUTI) } == [crossing])
@@ -500,7 +504,7 @@ struct ClipboardCopyTests {
         // Passthrough's offer reads the item by the same rule.
         guard
             case .offer(let offer, let offerLost) = await ClipboardPasteboardReader.readOffer(
-                from: pasteboard, promises: pasteboard.filePromiseReceivers)
+                from: pasteboard, publisher: .elsewhere(), promises: pasteboard.filePromiseReceivers)
         else { throw TestFailure("no offer") }
         #expect(offerLost == 0)
         #expect(offer.items.map { $0.representations.compactMap(\.type.appleUTI) } == [["public.jpeg"] + crossing])

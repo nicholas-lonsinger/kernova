@@ -203,7 +203,7 @@ final class GuestClipboard {
         Task { @MainActor [weak self] in
             guard let self else { return }
             let outcome = await ClipboardPasteboardReader.readOffer(
-                from: pasteboard, promises: receivers,
+                from: pasteboard, publisher: publisher, promises: receivers,
                 promiseDestination: { try promiseStaging.reserveScratchDirectory(generation: generation) })
             if readingChangeCount == changeCount { readingChangeCount = nil }
             guard pasteboard.changeCount == changeCount, isOffering else { return }
@@ -218,6 +218,8 @@ final class GuestClipboard {
                 onNotice()
             case .empty, .suppressed:
                 exchange.withdrawLocal()
+            case .heldByFarSide:
+                break
             }
         }
     }

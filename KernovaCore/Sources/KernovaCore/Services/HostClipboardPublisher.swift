@@ -16,8 +16,9 @@ package final class HostClipboardPublisher {
     /// coordinator polls through this publisher so both name the same one.
     package let pasteboard: any ClipboardPasteboard
 
-    /// The shared write choke point every publication goes through.
-    private let publisher: ClipboardPasteboardPublisher
+    /// The shared write choke point every publication goes through, which a read of the same pasteboard names
+    /// as its own.
+    let publisher: ClipboardPasteboardPublisher
 
     /// Hears each paste of a write of this publisher's whose promised bytes the pasteboard refused.
     var onPasteRefused: (@MainActor () -> Void)? {

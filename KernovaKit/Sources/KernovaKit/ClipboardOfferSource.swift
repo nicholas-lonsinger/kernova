@@ -31,7 +31,7 @@ public enum ClipboardServeError: Error, Equatable, Sendable {
 /// One local offer: the items it sends, metadata only, and where each
 /// representation's bytes come from when a peer pulls it.
 ///
-/// Built by ``ClipboardPasteboardReader/readOffer(from:promises:promiseDestination:sizeOf:)``
+/// Built by ``ClipboardPasteboardReader/readOffer(from:publisher:promises:promiseDestination:sizeOf:)``
 /// or ``ClipboardPasteboardReader/readDropOffer(from:promises:sizeOf:)`` from a
 /// pasteboard. No byte is read until ``serve(item:representation:)``.
 @MainActor
@@ -58,7 +58,7 @@ public final class ClipboardOfferSource {
         case spent
         /// The receiver's own: what this side held only as its promise, which it fills itself.
         case reference
-        /// Another connection's FILE or FOLDER, which a write of this process holds only as that connection's
+        /// Another connection's representation, which a write of this process holds only as that connection's
         /// promise: pulled through `puller` when pulled, for as long as that offer lasts.
         case upstream(any ClipboardItemPulling, item: Int, representation: Int)
     }
@@ -356,6 +356,41 @@ public final class ClipboardOfferSource {
         return (snapshot, lost)
     }
 
+    /// An offer of what a write of another publisher of this process placed, built from what it was made from:
+    /// the pasteboard holding it is never read, since each read of a promise fires its provider in this process.
+    /// Every representation the write placed is offered promised and pulled through its part's puller when pulled
+    /// (``Origin/upstream``), for as long as that offer lasts; one naming the far side's own offer by reference is
+    /// left out, since no puller serves it. Nil when nothing remains. `pasteboard` holds the write now.
+    static func offer(
+        of source: ClipboardWriteSource, on pasteboard: any ClipboardReadPasteboard
+    ) -> ClipboardOfferSource? {
+        var items: [OfferedItem] = []
+        var origins: [[Origin]] = []
+        for part in source.parts {
+            guard let puller = part.puller else { continue }
+            for (index, item) in part.items.enumerated() {
+                var offered = OfferedItem()
+                var itemOrigins: [Origin] = []
+                for promised in ClipboardPromisePolicy.promisedTypes(for: item, servingFileURLs: part.servingFileURLs)
+                where !item.representations[promised.representation].hasReference {
+                    var representation = item.representations[promised.representation]
+                    representation.promised = true
+                    offered.representations.append(representation)
+                    itemOrigins.append(.upstream(puller, item: index, representation: promised.representation))
+                }
+                guard !offered.representations.isEmpty else { continue }
+                items.append(offered)
+                origins.append(itemOrigins)
+            }
+        }
+        guard !items.isEmpty else { return nil }
+        return ClipboardOfferSource(
+            items: items, origins: origins, concealed: source.parts.contains(where: \.concealed), pasteboard: nil,
+            changeCount: pasteboard.changeCount, promises: [],
+            promiseDestination: { throw ClipboardServeError.unavailable },
+            readFrom: (pasteboard, pasteboard.changeCount))
+    }
+
     /// Serves one representation for a pull, reading its bytes now.
     ///
     /// A pasteboard type is read only while the pasteboard still holds the
@@ -366,7 +401,8 @@ public final class ClipboardOfferSource {
     /// its source takes, or until the task serving the pull is cancelled. An
     /// image file's INLINE bytes are read off the main actor, downloading the
     /// file when it is dataless (``DatalessMaterialization/on``); a FILE or
-    /// FOLDER is read by the item source serving the pull.
+    /// FOLDER is read by the item source serving the pull. What another
+    /// connection promised is pulled through that connection's puller now.
     public func serve(item: Int, representation: Int) async throws(ClipboardServeError)
         -> ClipboardServedRepresentation
     {
@@ -399,6 +435,14 @@ public final class ClipboardOfferSource {
             return try await Self.served(landing: callIn(index), as: storage)
         case .landing(let file):
             return try await Self.served(landing: file, as: storage)
+        case .upstream(let puller, let upstreamItem, let upstreamRepresentation) where storage == .inline:
+            let bytes = await withCheckedContinuation { continuation in
+                puller.pullBytes(item: upstreamItem, representation: upstreamRepresentation) {
+                    continuation.resume(returning: $0)
+                }
+            }
+            guard let bytes else { throw .unavailable }
+            return .bytes(bytes)
         case .upstream(let puller, let upstreamItem, let upstreamRepresentation):
             let landed = await withCheckedContinuation { continuation in
                 puller.pullFile(item: upstreamItem, representation: upstreamRepresentation) {

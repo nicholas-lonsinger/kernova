@@ -28,11 +28,15 @@ public struct FakePasteboardItem: ClipboardPasteboardItemReading, Sendable {
         self.onRead = onRead
     }
 
-    /// Creates an item declaring `types` while serving only what `bytes` holds.
-    public init(types: [NSPasteboard.PasteboardType], bytes: [NSPasteboard.PasteboardType: Data]) {
+    /// Creates an item declaring `types` while serving only what `bytes` holds, telling `onRead` of every read
+    /// of one.
+    public init(
+        types: [NSPasteboard.PasteboardType], bytes: [NSPasteboard.PasteboardType: Data],
+        onRead: (@Sendable (NSPasteboard.PasteboardType) -> Void)? = nil
+    ) {
         self.types = types
         self.bytes = bytes
-        self.onRead = nil
+        self.onRead = onRead
     }
 
     /// The bytes staged for `type`, or `nil` when the item vends none.

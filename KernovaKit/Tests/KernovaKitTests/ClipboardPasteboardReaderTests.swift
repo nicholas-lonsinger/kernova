@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaSynchronization
 import KernovaTestSupport
 import KernovaWire
 import Testing
@@ -28,7 +29,7 @@ struct ClipboardPasteboardReaderTests {
     private func offer(
         _ pasteboard: FakeReadPasteboard
     ) async -> (source: ClipboardOfferSource, lost: Int)? {
-        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, sizeOf: nil)
+        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
         guard case .offer(let source, let lost) = outcome else {
             Issue.record("expected an offer, got \(outcome)")
             return nil
@@ -55,7 +56,7 @@ struct ClipboardPasteboardReaderTests {
 
         guard
             case .suppressed(let reason) = await ClipboardPasteboardReader.readOffer(
-                from: pasteboard, sizeOf: nil)
+                from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
         else {
             Issue.record("Expected .suppressed")
             return
@@ -99,7 +100,7 @@ struct ClipboardPasteboardReaderTests {
 
         guard
             case .nothingOfferable(let lost) = await ClipboardPasteboardReader.readOffer(
-                from: pasteboard, sizeOf: nil)
+                from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
         else {
             Issue.record("Expected .nothingOfferable")
             return
@@ -121,7 +122,7 @@ struct ClipboardPasteboardReaderTests {
 
         guard
             case .nothingOfferable(let lost) = await ClipboardPasteboardReader.readOffer(
-                from: pasteboard, sizeOf: nil)
+                from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
         else {
             Issue.record("Expected .nothingOfferable")
             return
@@ -136,11 +137,116 @@ struct ClipboardPasteboardReaderTests {
         let pasteboard = FakeReadPasteboard()
 
         guard
-            case .empty = await ClipboardPasteboardReader.readOffer(from: pasteboard, sizeOf: nil)
+            case .empty = await ClipboardPasteboardReader.readOffer(
+                from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
         else {
             Issue.record("Expected .empty")
             return
         }
+    }
+
+    // MARK: - A promised write of this process
+
+    /// A far side's offer: answers each INLINE pull with `bytes` and each file pull with `url`, counting both.
+    private final class CountingPuller: ClipboardItemPulling {
+        let bytes: Data
+        let url: URL
+        private let counts = Locked<(bytes: Int, files: Int)>((0, 0))
+        init(bytes: Data, url: URL) {
+            self.bytes = bytes
+            self.url = url
+        }
+        var pulls: (bytes: Int, files: Int) { counts.withLock { $0 } }
+        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+            counts.withLock { $0.bytes += 1 }
+            completion(bytes)
+        }
+        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
+            counts.withLock { $0.files += 1 }
+            completion(url)
+        }
+        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
+    }
+
+    /// Two VMs' publishers over the Mac's one pasteboard, the first holding its write of a far-side offer of one
+    /// item of `representation`, served through `puller`.
+    private func twoPublishers(
+        writing representation: Representation, through puller: CountingPuller, registry: LazyClipboardProviderRegistry
+    ) -> (pasteboard: FakePasteboard, writer: ClipboardPasteboardPublisher, other: ClipboardPasteboardPublisher) {
+        let pasteboard = FakePasteboard()
+        let ledger = ClipboardWriteLedger()
+        let writer = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        let other = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        var item = OfferedItem()
+        item.representations = [representation]
+        let outcome = writer.publish(
+            [item], concealed: false, pasteCeiling: .max, puller: puller,
+            serving: .init(token: Data(repeating: 1, count: 16), connection: ClipboardConnectionID()))
+        #expect(outcome == .written)
+        return (pasteboard, writer, other)
+    }
+
+    @Test("another publisher's promised file is offered through its puller, none of its promises read")
+    func anotherPublishersFileIsPulledUpstream() async throws {
+        let file = scratch.url.appendingPathComponent("a.bin")
+        try Data("upstream file".utf8).write(to: file)
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let puller = CountingPuller(bytes: Data(), url: file)
+        let (pasteboard, _, other) = twoPublishers(
+            writing: .make(TypeDescriptor(appleUTI: "public.data"), .file, size: 13, name: "a.bin"),
+            through: puller, registry: registry)
+
+        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, publisher: other, sizeOf: nil)
+        #expect(pasteboard.promiseReads.isEmpty)
+        guard case .offer(let source, let lost) = outcome else {
+            Issue.record("expected an offer, got \(outcome)")
+            return
+        }
+        #expect(lost == 0)
+        #expect(source.items.map { $0.representations.map(\.storage) } == [[.file]])
+        #expect(source.items.first?.representations.first?.promised == true)
+        #expect(try await source.serve(item: 0, representation: 0) == .file(file))
+        #expect(puller.pulls.files == 1)
+        #expect(pasteboard.promiseReads.isEmpty)
+    }
+
+    @Test("another publisher's promised text is offered through its puller, none of its promises read")
+    func anotherPublishersTextIsPulledUpstream() async throws {
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let puller = CountingPuller(bytes: Data("upstream text".utf8), url: scratch.url)
+        let (pasteboard, _, other) = twoPublishers(
+            writing: .make(TypeDescriptor(appleUTI: NSPasteboard.PasteboardType.string.rawValue), .inline, size: 0),
+            through: puller, registry: registry)
+
+        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, publisher: other, sizeOf: nil)
+        guard case .offer(let source, _) = outcome else {
+            Issue.record("expected an offer, got \(outcome)")
+            return
+        }
+        #expect(source.items.first?.representations.first?.promised == true)
+        #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("upstream text".utf8)))
+        #expect(puller.pulls.bytes == 1)
+        #expect(pasteboard.promiseReads.isEmpty)
+    }
+
+    @Test("the reader's own publisher's promised write offers nothing, none of its promises read")
+    func ownPromisedWriteIsHeldByTheFarSide() async {
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let puller = CountingPuller(bytes: Data("upstream text".utf8), url: scratch.url)
+        let (pasteboard, writer, _) = twoPublishers(
+            writing: .make(TypeDescriptor(appleUTI: NSPasteboard.PasteboardType.string.rawValue), .inline, size: 0),
+            through: puller, registry: registry)
+
+        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, publisher: writer, sizeOf: nil)
+        guard case .heldByFarSide = outcome else {
+            Issue.record("expected .heldByFarSide, got \(outcome)")
+            return
+        }
+        #expect(pasteboard.promiseReads.isEmpty)
+        #expect(puller.pulls.bytes == 0)
     }
 
     // MARK: - Sizing files

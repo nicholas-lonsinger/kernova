@@ -241,3 +241,14 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         }
     }
 }
+
+extension ClipboardPasteboardPublisher {
+    /// A publisher over a pasteboard of its own, recording into a ledger of its own: a reader naming it as its
+    /// own finds no write of this process on any other pasteboard.
+    @MainActor
+    public static func elsewhere() -> ClipboardPasteboardPublisher {
+        ClipboardPasteboardPublisher(
+            pasteboard: FakeWritePasteboard(), providerRegistry: LazyClipboardProviderRegistry(),
+            ledger: ClipboardWriteLedger())
+    }
+}

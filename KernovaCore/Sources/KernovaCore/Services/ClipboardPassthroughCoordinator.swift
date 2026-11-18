@@ -237,10 +237,11 @@ final class ClipboardPassthroughCoordinator {
         forwardsStartedForTesting += 1
         #endif
         let pasteboard = pasteboard
+        let writer = publisher.publisher
         let promises = pasteboard.filePromiseReceivers
         Task { @MainActor [weak self, weak service] in
             let read = await ClipboardPasteboardReader.readOffer(
-                from: pasteboard, promises: promises,
+                from: pasteboard, publisher: writer, promises: promises,
                 promiseDestination: {
                     guard let destination = service?.reservePromiseDestination() else {
                         throw ClipboardServeError.unavailable
@@ -274,6 +275,8 @@ final class ClipboardPassthroughCoordinator {
     ) {
         guard pasteboard.changeCount == changeCount else { return }
         switch read {
+        case .heldByFarSide:
+            connection.settledChangeCount = changeCount
         case .empty, .suppressed:
             connection.settledChangeCount = changeCount
             service.hostCopyOffersNothing()

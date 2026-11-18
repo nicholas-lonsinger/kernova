@@ -127,7 +127,7 @@ struct ClipboardItemBridgeTests {
     ) async throws -> ClipboardOfferSource {
         let promiseFolder = try directory("promises")
         let outcome = await ClipboardPasteboardReader.readOffer(
-            from: pasteboard, promises: promises,
+            from: pasteboard, publisher: .elsewhere(), promises: promises,
             promiseDestination: {
                 let folder = promiseFolder.appendingPathComponent(UUID().uuidString)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -464,7 +464,7 @@ struct ClipboardItemBridgeTests {
             (type: .init(marker), data: Data()),
         ])
 
-        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, sizeOf: nil)
+        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
 
         guard case .suppressed(let suppressed) = outcome else {
             Issue.record("expected suppression, got \(outcome)")
