@@ -2,6 +2,7 @@ import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
 import KernovaAgentRuntime
+import KernovaClipboardItems
 import KernovaCommandModel
 import KernovaFileTree
 import KernovaItemTransfer
@@ -114,27 +115,9 @@ package final class VMInstance {
 
     // MARK: - Clipboard Sharing
 
-    /// ``hubClipboard`` while the agent hub names a console peer for CLIPBOARD,
-    /// and nil otherwise.
-    package var clipboardService: (any ClipboardServicing)? {
-        #if DEBUG
-        if let clipboardServiceForTesting { return clipboardServiceForTesting }
-        #endif
-        return agentHubSnapshot.consolePeers[.clipboard] == nil ? nil : hubClipboard
-    }
-
-    #if DEBUG
-    /// Stands in for ``clipboardService`` whatever the hub names; tests only.
-    var clipboardServiceForTesting: (any ClipboardServicing)?
-    #endif
-
     /// This VM's clipboard over the guest agent's CLIPBOARD items, for the
     /// instance's whole life: its owner is the hub's.
     @ObservationIgnored let hubClipboard: HubClipboardService
-
-    /// The one host-pasteboard writer for this VM's clipboard, so passthrough's
-    /// poll skips whatever change count it last produced.
-    @ObservationIgnored package let hostClipboardPublisher: HostClipboardPublisher
 
     /// Where this VM's clipboard and drop producers publish, and the owner of the
     /// value below.
@@ -153,9 +136,6 @@ package final class VMInstance {
     /// Mirrored from ``clipboardTransfers`` because KernovaKit deploys to
     /// macOS 12 and cannot be `@Observable` itself.
     package private(set) var clipboardTransferReport: ClipboardTransferReport = .idle
-
-    /// The clipboard commands running now: one of each at a time, a repeat while it runs joining it.
-    package internal(set) var runningClipboardCommands: Set<ClipboardCommand> = []
 
     /// `true` while the absence watchdog warns about some agent scope
     /// (``warnedMissingAgents``).
@@ -469,18 +449,18 @@ package final class VMInstance {
         self.bundle = bundle
         self.activity = VMActivity(phase: phase, logSink: logSink)
         self.preferences = preferences
-        self.hostClipboardPublisher = HostClipboardPublisher(pasteboard: hostPasteboard)
         let snapshots = AgentHubSnapshotRelay()
         let payloads = BundledGuestAgentPayloads(bundleProducts.guestAgents, guestOS: bundle.configuration.guestOS)
         let hubLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub")
         let itemSink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
         self.itemSink = itemSink
-        let hubClipboard = HubClipboardService(
-            sink: itemSink, stagingRoot: stagingRoot,
-            stagingKey: bundle.configuration.id.uuidString, maxPasteBytes: { preferences.clipboardMaxPasteBytes })
-        self.hubClipboard = hubClipboard
         let clipboardTransfers = ClipboardTransferReporter()
         self.clipboardTransfers = clipboardTransfers
+        let hubClipboard = HubClipboardService(
+            pasteboard: hostPasteboard, gate: Self.clipboardOfferGate(for: bundle.configuration), sink: itemSink,
+            stagingRoot: stagingRoot, stagingKey: bundle.configuration.id.uuidString,
+            maxPasteBytes: { preferences.clipboardMaxPasteBytes }, reporter: clipboardTransfers)
+        self.hubClipboard = hubClipboard
         let dropService = HubDropService(stagingRoot: stagingRoot, reporter: clipboardTransfers)
         self.dropService = dropService
         let dragOut = HubDragOut(sink: itemSink, reporter: clipboardTransfers) { [snapshots] in
@@ -513,36 +493,8 @@ package final class VMInstance {
         clipboardTransfers.onReportChanged = { [weak self] report in
             self?.clipboardTransferReport = report
         }
-        wireHubClipboard()
-    }
-
-    /// Points ``hubClipboard`` at this VM's hub, report and host-pasteboard
-    /// writer.
-    private func wireHubClipboard() {
-        let publisher = hostClipboardPublisher
         hubClipboard.hub = agentHub
-        hubClipboard.reporter = clipboardTransfers
-        publisher.onPasteRefused = { [weak self] in
-            guard let self else { return }
-            Self.logger.log(
-                .error,
-                "The host pasteboard refused a paste of the guest's clipboard for '\(self.name, privacy: .public)'")
-            clipboardTransfers.gestureBegan()
-            clipboardTransfers.finish(
-                ClipboardTransferFinish(gesture: .paste, outcome: .failed(.transferFailed), peerName: name))
-        }
         hubClipboard.label = { [weak self] in self?.name ?? "VM" }
-        hubClipboard.retractHostWrite = { publisher.retractWrite(servingOffer: $0, withdrawing: $1) }
-        hubClipboard.hostPasteboardChangeCount = { publisher.pasteboard.changeCount }
-        hubClipboard.passthroughRuns = { [weak self] in
-            self?.sessionContext?.clipboardPassthroughCoordinator != nil
-        }
-        hubClipboard.passthroughHoldsUnsentCopy = { [weak self] in
-            self?.sessionContext?.clipboardPassthroughCoordinator?.holdsUnsentCopy ?? false
-        }
-        hubClipboard.passthroughForwardNow = { [weak self] in
-            self?.sessionContext?.clipboardPassthroughCoordinator?.forwardNow()
-        }
     }
 
     deinit {
@@ -1137,29 +1089,26 @@ package final class VMInstance {
         return (NSTemporaryDirectory() as NSString).appendingPathComponent("knv-\(short).sock")
     }
 
-    // MARK: - Clipboard Passthrough Lifecycle
+    // MARK: - Clipboard
 
-    /// Starts or stops automatic clipboard passthrough to match the current
-    /// configuration and session state. Stopping it ends what it carried
-    /// across (``ClipboardServicing/passthroughStopped()``). Starting it sends
-    /// nothing: only a copy made after crosses. The guest agent hears the
-    /// setting in CLIPBOARD's policy (``agentHubPolicy(for:maxPasteBytes:)``).
-    package func refreshClipboardPassthrough() {
-        guard let context = sessionContext else { return }
-        let shouldRun = configuration.clipboardPassthroughIsEffective && hasLiveVirtualMachine
-        if shouldRun {
-            let coordinator =
-                context.clipboardPassthroughCoordinator
-                ?? ClipboardPassthroughCoordinator(
-                    instance: self, publisher: hostClipboardPublisher,
-                    reporter: clipboardTransfers)
-            context.clipboardPassthroughCoordinator = coordinator
-            coordinator.start()
-        } else if let coordinator = context.clipboardPassthroughCoordinator {
-            coordinator.stop()
-            context.clipboardPassthroughCoordinator = nil
-            clipboardService?.passthroughStopped()
-        }
+    /// When `configuration` has the Mac's clipboard offered to the guest: at
+    /// every copy while passthrough is effective, and otherwise only by the
+    /// clipboard commands. The guest agent hears the same setting in
+    /// CLIPBOARD's policy (``agentHubPolicy(for:maxPasteBytes:)``).
+    static func clipboardOfferGate(for configuration: VMConfiguration) -> ClipboardOfferGate {
+        configuration.clipboardPassthroughIsEffective ? .everyCopy : .onCommand
+    }
+
+    /// Copy Guest Clipboard to Mac: asks the guest to offer its clipboard as
+    /// it stands now.
+    package func copyGuestClipboardToMac() {
+        hubClipboard.end.requestOffer()
+    }
+
+    /// Copy Mac Clipboard to Guest: offers the Mac's clipboard as it stands
+    /// now.
+    package func copyMacClipboardToGuest() {
+        hubClipboard.end.offerOnCommand()
     }
 
     // MARK: - Agent Transport Lifecycle
@@ -1190,12 +1139,10 @@ package final class VMInstance {
     /// host→guest ones.
     package var effectiveClipboardMaxPasteBytes: Int { preferences.clipboardMaxPasteBytes }
 
-    /// Asks any live passthrough session to replay an offer a lower ceiling
-    /// refused.
-    ///
-    /// No-ops when passthrough is off.
-    func republishPassthroughIfCeilingRaised() {
-        sessionContext?.clipboardPassthroughCoordinator?.republishIfCeilingRaised()
+    /// The paste ceiling may have risen: the guest's clipboard a lower one cut
+    /// is written to the Mac again, whole, while it still stands there.
+    func clipboardPasteCeilingChanged() {
+        hubClipboard.pasteCeilingChanged()
     }
 
     /// Re-pushes the current policy to the guest agents.
@@ -1453,8 +1400,8 @@ package final class VMInstance {
         }
     }
 
-    /// Reacts to a configuration change: pushes the agent hub its new policy,
-    /// and applies what a running VM takes live.
+    /// Reacts to a configuration change: pushes the agent hub its new policy
+    /// and the clipboard its gate, and applies what a running VM takes live.
     ///
     /// The agent hub takes every change to its policy, running or not: it
     /// builds a later session's connections from the policy it holds.
@@ -1462,6 +1409,7 @@ package final class VMInstance {
         if agentHubPolicy(for: oldConfig) != agentHubPolicy(for: newConfig) {
             agentHub.setPolicy(agentHubPolicy(for: newConfig))
         }
+        hubClipboard.setGate(Self.clipboardOfferGate(for: newConfig))
 
         guard hasLiveSession else { return }
 
@@ -1475,10 +1423,6 @@ package final class VMInstance {
 
         if oldConfig.serialSocketRelayEnabled != newConfig.serialSocketRelayEnabled {
             applyLiveSerialRelayPolicy(enabled: newConfig.serialSocketRelayEnabled)
-        }
-
-        if oldConfig.clipboardPassthroughIsEffective != newConfig.clipboardPassthroughIsEffective {
-            refreshClipboardPassthrough()
         }
     }
 

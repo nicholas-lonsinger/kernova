@@ -9,7 +9,7 @@ import KernovaCommandModel
 ///
 /// ``VMInstance`` holds exactly one optional of this type: opening it begins a
 /// session, ``tearDown()`` ends it. Objects that outlive a session by intent —
-/// the agent hub, the transfer reporter, the host clipboard publisher —
+/// the agent hub, the transfer reporter, the clipboard —
 /// belong to the instance and are handed to whatever session-scoped owner
 /// publishes into them, so a service can do so without owning them.
 @MainActor
@@ -42,12 +42,6 @@ package final class VMSessionContext {
     /// Created once per running session and captured by the output readability
     /// handler; it only binds a socket while started.
     @ObservationIgnored var serialSocketRelay: SerialSocketRelay?
-
-    // MARK: - Clipboard Passthrough
-
-    /// Automatic clipboard passthrough driver, created and torn down by
-    /// `VMInstance.refreshClipboardPassthrough()`.
-    @ObservationIgnored var clipboardPassthroughCoordinator: ClipboardPassthroughCoordinator?
 
     // MARK: - Agent Transport
 
@@ -159,8 +153,6 @@ package final class VMSessionContext {
         networkAttachmentCoordinator?.stop()
         networkAttachmentCoordinator = nil
         networkAttachment = nil
-        clipboardPassthroughCoordinator?.stop()
-        clipboardPassthroughCoordinator = nil
         detachAgentTransport()
         stopSerialReading()
         cancelAgentAbsenceWatchdog()

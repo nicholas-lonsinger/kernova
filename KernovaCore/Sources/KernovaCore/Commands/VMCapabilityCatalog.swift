@@ -233,10 +233,7 @@ package enum VMCapability: CaseIterable, Hashable {
         case .togglePopOut, .toggleFullscreen:
             return .affordance(.externalDisplay)
         case .copyGuestClipboardToMac, .copyMacClipboardToGuest:
-            // With passthrough on the clipboards are one already, and with no
-            // agent carrying the clipboard there is nothing to copy over.
-            guard !instance.configuration.clipboardPassthroughEnabled, instance.clipboardService?.isConnected == true
-            else { return nil }
+            guard instance.hubClipboard.takesCommands else { return nil }
             return .affordance(.clipboard)
         case .showGuestAgentStatus:
             return .affordance(.guestAgentStatus)

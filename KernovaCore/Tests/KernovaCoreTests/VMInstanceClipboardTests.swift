@@ -1,6 +1,7 @@
 import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
+import KernovaClipboardItems
 import KernovaCommandModel
 import KernovaKit
 import KernovaTestSupport
@@ -10,28 +11,77 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// Which guests share a VM's clipboard, what carries it, and the policy its agent hears.
+/// Which guests share a VM's clipboard, when its commands are offered, what its clipboard's events report, and the
+/// policy its agent hears.
 @MainActor
 @Suite("VM clipboard", .caseScoped)
 struct VMInstanceClipboardTests {
     private static let peer = PeerHandle(rawValue: 4)
 
-    private static func snapshot(consolePeer: PeerHandle?) -> AgentHubSnapshot {
-        AgentHubSnapshot(
-            peers: [], features: FeatureStatus.merge([]), consolePeers: consolePeer.map { [.clipboard: $0] } ?? [:])
+    /// Whether each clipboard command is named on `instance`, Copy to Mac's first.
+    private static func commandsNamed(on instance: VMInstance) -> [Bool] {
+        [VMCapability.copyGuestClipboardToMac, .copyMacClipboardToGuest].map { $0.request(on: instance) != nil }
     }
 
-    @Test("A CLIPBOARD console peer gives the VM its clipboard service, and takes it away when it goes")
-    func consolePeerCarriesTheClipboard() {
-        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
+    @Test("The clipboard commands are named only while an agent carries the clipboard and passthrough is off")
+    func commandsFollowTheLinkAndTheSetting() {
+        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID())) {
+            $0.clipboardSharingEnabled = true
+            $0.clipboardPassthroughEnabled = true
+        }
         instance.beginSessionContextForTesting()
-        #expect(instance.clipboardService == nil)
+        #expect(Self.commandsNamed(on: instance) == [false, false])
 
-        instance.publishAgentHubSnapshotForTesting(Self.snapshot(consolePeer: Self.peer))
-        #expect(instance.clipboardService === instance.hubClipboard)
+        instance.hubClipboard.setConsolePeer(Self.peer)
+        #expect(Self.commandsNamed(on: instance) == [false, false])
 
-        instance.publishAgentHubSnapshotForTesting(Self.snapshot(consolePeer: nil))
-        #expect(instance.clipboardService == nil)
+        var off = instance.configuration
+        off.clipboardPassthroughEnabled = false
+        instance.applyLivePolicy(oldConfig: instance.configuration, newConfig: off)
+        #expect(Self.commandsNamed(on: instance) == [true, true])
+
+        instance.hubClipboard.setConsolePeer(nil)
+        #expect(Self.commandsNamed(on: instance) == [false, false])
+    }
+
+    @Test("Each of the clipboard's events reports what passthrough and the commands report, or nothing")
+    func eventsReport() {
+        let expected: [(ClipboardEndEvent, ClipboardTransferGesture?, ClipboardTransferFailure?)] = [
+            (.readBegan(.copy), nil, nil),
+            (.readEnded(.copy, .offered(skipped: 0)), nil, nil),
+            (.readEnded(.copy, .offered(skipped: 2)), .forward, .itemsSkipped(count: 2)),
+            (.readEnded(.copy, .nothingToCopy), nil, nil),
+            (.readEnded(.copy, .unreadable), .forward, .itemsUnreadable),
+            (.readEnded(.copy, .heldByFarSide), nil, nil),
+            (.readEnded(.copy, .superseded), nil, nil),
+            (.readEnded(.command, .offered(skipped: 0)), nil, nil),
+            (.readEnded(.command, .offered(skipped: 1)), .forward, .itemsSkipped(count: 1)),
+            (.readEnded(.command, .nothingToCopy), .forward, .nothingToCopy),
+            (.readEnded(.command, .unreadable), .forward, .itemsUnreadable),
+            (.readEnded(.command, .heldByFarSide), nil, nil),
+            (.readEnded(.command, .superseded), nil, nil),
+            (.notAdmitted(.command), nil, nil),
+            (.published(.written), nil, nil),
+            (.published(.nothingToWrite), nil, nil),
+            (.published(.writtenWithoutFiles(count: 2, limitBytes: 9)), .copy, .filesLeftOut(count: 2, limitBytes: 9)),
+            (.published(.tooLarge(limitBytes: 9)), .copy, .tooLarge(limitBytes: 9)),
+            (.published(.writeFailed), .copy, .transferFailed),
+            (.retracted(.cleared, .byFarSide(hasSuccessor: false)), nil, nil),
+            (.retracted(.keptPart, .linkLost), nil, nil),
+            (.retracted(.cleared, .settingChanged), nil, nil),
+            (.requestRefused(.nothingToCopy), .copy, .nothingToCopy),
+            (.requestRefused(.unreadable), .copy, .itemsUnreadable),
+            (.requestRefused(.failed(WireError(.cancelled))), .copy, .transferFailed),
+            (.served, nil, nil),
+            (.landed, nil, nil),
+            (.pullFailed(WireError(.tooLarge)), nil, nil),
+            (.pasteRefused, .paste, .transferFailed),
+        ]
+        for (event, gesture, failure) in expected {
+            let refusal = HubClipboardService.refusal(for: event)
+            #expect(refusal?.gesture == gesture, "\(event)")
+            #expect(refusal?.failure == failure, "\(event)")
+        }
     }
 
     @Test("Only a macOS guest shares the clipboard: a Linux guest's stored flags offer and send nothing")

@@ -14,7 +14,8 @@ import KernovaTestSupport
 /// ``VMLibrary/admitFixture(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:mutate:)``.
 @MainActor
 enum VMInstanceFixture {
-    /// The bundle URL is derived from the configuration `mutate` leaves behind.
+    /// The bundle URL is derived from the configuration `mutate` leaves behind,
+    /// and the VM's clipboard runs over `hostPasteboard`.
     ///
     /// `hostState`, `snapshots` and `pairings` seed the bundle's files, which
     /// the instance then reads as a load would. `files` is where they live — a
@@ -35,6 +36,7 @@ enum VMInstanceFixture {
         bundleProducts: AppBundleProducts = .testing,
         agentConnector: (any HostConnectionMaking)? = nil,
         stagingRoot: ProcessStagingRoot = ClipboardFileStaging.processRoot,
+        hostPasteboard: any ClipboardPasteboard = FakePasteboard(),
         mutate: (inout VMConfiguration) -> Void = { _ in }
     ) -> VMInstance {
         let read = seed(
@@ -44,7 +46,7 @@ enum VMInstanceFixture {
             bundle: (bundleFactory ?? VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: files)))
                 .make(read),
             phase: phase, preferences: preferences,
-            hostPasteboard: FakePasteboard(), bundleProducts: bundleProducts, logSink: nil,
+            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts, logSink: nil,
             agentConnector: agentConnector, stagingRoot: stagingRoot)
         // A VM neither at rest nor removed holds its run lock.
         if !phase.isAtRest, phase != .removed { instance.activity.takeRunLockForTesting() }
@@ -71,7 +73,7 @@ enum VMInstanceFixture {
     }
 
     /// Seeds a fixture bundle's files into `files` and reads it back as a load
-    /// would — what ``make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:bundleProducts:agentConnector:stagingRoot:mutate:)``
+    /// would — what ``make(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:bundleFactory:bundleProducts:agentConnector:stagingRoot:hostPasteboard:mutate:)``
     /// and a library's fixture admission build their bundle from.
     static func seed(
         name: String, guestOS: VMGuestOS, hostState: VMHostState, snapshots: VMSnapshotManifest,

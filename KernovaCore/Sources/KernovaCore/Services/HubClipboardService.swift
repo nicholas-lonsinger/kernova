@@ -10,28 +10,31 @@ import KernovaLogging
 import KernovaSynchronization
 import KernovaWire
 
-/// A VM's clipboard over the guest agent's CLIPBOARD items, through the agent hub to the feature's console
-/// peer: the host's offer of a copy on the Mac passthrough read from its pasteboard, the guest's offer, and the
-/// copies the clipboard commands send each way.
+/// A VM's clipboard: the host's ``ClipboardEnd`` over the host pasteboard, run over the guest agent's CLIPBOARD
+/// items through the agent hub to the feature's console peer, with what it does reported to the VM's transfer
+/// report.
 ///
 /// One per VM, for its whole life: its owner is registered with the hub's item router before the hub exists.
-/// The guest's offer is taken only while passthrough runs, which writes it to the Mac; one arriving otherwise
-/// crossed passthrough stopping, and is let go unwritten.
 @MainActor
 @Observable
-final class HubClipboardService: ClipboardServicing {
+final class HubClipboardService {
     // MARK: - Observable state
 
     /// `true` while a console peer carries CLIPBOARD.
     private(set) var isConnected = false
 
-    /// Bumped once per guest offer taken.
-    private(set) var inboundOfferSeq: UInt64 = 0
+    /// When the Mac's clipboard is offered to the guest: at every copy while passthrough is on, and otherwise only
+    /// by the clipboard commands.
+    private(set) var gate: ClipboardOfferGate
+
+    /// Whether the clipboard commands do anything now: a console peer carries CLIPBOARD and passthrough is off,
+    /// since with it on the clipboards are one already.
+    var takesCommands: Bool { isConnected && gate == .onCommand }
 
     // MARK: - Wiring
 
-    /// The exchange both directions run through.
-    @ObservationIgnored let exchange: ClipboardItemExchange
+    /// The host's clipboard end, both directions of it.
+    @ObservationIgnored let end: ClipboardEnd<ClipboardHost>
 
     /// The hub whose console peer carries the clipboard; set once the hub exists, before it accepts anything.
     @ObservationIgnored var hub: AgentHub?
@@ -39,99 +42,68 @@ final class HubClipboardService: ClipboardServicing {
     /// The VM's name, for logs and reports.
     @ObservationIgnored var label: () -> String = { "VM" }
 
-    /// This VM's transfer report.
-    @ObservationIgnored var reporter: ClipboardTransferReporter?
-
-    /// The paste ceiling in force: what the exchange's pulls read, from any thread.
-    @ObservationIgnored let maxPasteBytes: @Sendable () -> Int
-
-    /// Withdraws the promises the withdrawal names of this VM's write serving the offer named, if the host
-    /// pasteboard still holds it, returning what that left: what an offer's end owes a write of it.
-    @ObservationIgnored var retractHostWrite:
-        (_ servingOffer: Data, _ withdrawal: ClipboardWithdrawal) -> ClipboardRetraction? = { _, _ in nil }
-
-    /// Whether passthrough runs: a guest offer is taken only while it does.
-    @ObservationIgnored var passthroughRuns: () -> Bool = { false }
-
-    /// The host pasteboard's change count now.
-    @ObservationIgnored var hostPasteboardChangeCount: () -> Int = { 0 }
-
-    /// Whether passthrough holds a Mac copy it has yet to offer, and asks it to offer that copy now: what a guest
-    /// offer crossing it loses to.
-    @ObservationIgnored var passthroughHoldsUnsentCopy: () -> Bool = { false }
-    @ObservationIgnored var passthroughForwardNow: () -> Void = {}
-
-    /// Bumped each time a console peer is named, so passthrough sees a new connection however fast the last
-    /// one went.
-    private(set) var connectionEpoch: UInt64 = 0
-
-    /// The host pasteboard's change count when the latest console peer was named, after the last one's
-    /// retraction: a Mac copy since is one made while that connection was up.
-    @ObservationIgnored private(set) var connectionStartChangeCount = 0
-
+    @ObservationIgnored private let reporter: ClipboardTransferReporter
     @ObservationIgnored private let sink: ItemSinkAdapter<POSIXTreeFileSystem>
     @ObservationIgnored private var peer: PeerHandle?
 
-    /// The guest's offer, while it is the host's clipboard.
-    @ObservationIgnored private var remote: ClipboardRemoteOffer?
-
-    /// Where a file promise copied on the Mac is called in when passthrough's offer of it is pulled.
-    @ObservationIgnored private let promiseStaging: ClipboardFileStaging
-    /// Where a snapshot of the Mac's clipboard calls its file promises in, each into a lease of its own.
-    @ObservationIgnored let snapshotStaging: ClipboardFileStaging
-    @ObservationIgnored private var nextPromiseGeneration: UInt64 = 1
-
     nonisolated private static let logger = KernovaLogger(subsystem: "app.kernova", category: "HubClipboardService")
 
-    /// A service landing the guest's representations in clipboard staging under `stagingRoot`, keyed
-    /// `stagingKey`, its pulls built by `sink`, the hub's item sink, under the paste ceiling `maxPasteBytes` reads.
+    /// A service over `pasteboard`, offering as `gate` says, landing the guest's representations in clipboard
+    /// staging under `stagingRoot` keyed `stagingKey`, its pulls built by `sink`, the hub's item sink, under the
+    /// paste ceiling `maxPasteBytes` reads, reporting to `reporter`.
     init(
-        sink: ItemSinkAdapter<POSIXTreeFileSystem>, stagingRoot: ProcessStagingRoot, stagingKey: String,
-        maxPasteBytes: @escaping @Sendable () -> Int
+        pasteboard: any ClipboardPasteboard, gate: ClipboardOfferGate, sink: ItemSinkAdapter<POSIXTreeFileSystem>,
+        stagingRoot: ProcessStagingRoot, stagingKey: String, maxPasteBytes: @escaping @Sendable () -> Int,
+        reporter: ClipboardTransferReporter
     ) {
+        self.gate = gate
         self.sink = sink
-        self.maxPasteBytes = maxPasteBytes
-        exchange = ClipboardItemExchange(
-            side: .host, gate: .everyCopy, stagingLabel: "host-\(stagingKey)", stagingRoot: stagingRoot,
+        self.reporter = reporter
+        end = ClipboardEnd(
+            pasteboard: pasteboard, gate: gate, stagingLabel: "host-\(stagingKey)", stagingRoot: stagingRoot,
             pasteCeiling: maxPasteBytes, logger: Self.logger)
-        promiseStaging = ClipboardFileStaging(label: "host-promises-\(stagingKey)", root: stagingRoot)
-        snapshotStaging = .leased(label: "host-copies-\(stagingKey)", root: stagingRoot)
-        exchange.onRemoteOffer = { [weak self] in self?.received($0) }
-        exchange.onRemoteOfferEnded = { [weak self] in self?.remoteEnded($0, $1) }
-        exchange.holdsUnsentCopy = { [weak self] in self?.passthroughHoldsUnsentCopy() ?? false }
-        exchange.onCrossingRefused = { [weak self] in self?.passthroughForwardNow() }
-        exchange.onCopyEnded = { [weak self] in self?.copyEnded($0, $1) }
-        exchange.onCopyRefused = { [weak self] in self?.copyRefused($0, $1) }
+        end.onEvent = { [weak self] in self?.heard($0) }
+        end.setMayOffer(true)
     }
 
     /// CLIPBOARD's owner on the hub's connections.
     nonisolated func owner() -> ItemFeatureOwner<PeerHandle> {
-        let exchange = exchange
+        let end = end
         return ItemFeatureOwner(
             usable: { [weak self] peer in MainActorBridge.async { self?.setConsolePeer(peer) } },
             events: { [weak self] peer, event in
-                if case .pullEnded(_, let id, let result) = event { return exchange.pullEnded(id, result) }
+                if case .pullEnded(_, let id, let result) = event { return end.pullEnded(id, result) }
                 MainActorBridge.async { self?.handle(event, from: peer) }
             },
-            content: { id, request, _ in exchange.content(id, request) })
+            content: { id, request, _ in end.content(id, request) })
     }
 
-    // MARK: - The console peer
+    // MARK: - Inputs
 
-    /// CLIPBOARD's console peer is now `peer`, or none. A new connection starts where the Mac's clipboard stands
-    /// once the last one's retraction is done: neither side is sent what its clipboard already holds.
+    /// CLIPBOARD's console peer is now `peer`, or none.
     func setConsolePeer(_ peer: PeerHandle?) {
         guard peer != self.peer else { return }
         self.peer = peer
-        isConnected = peer != nil
-        exchange.setLink(peer.flatMap(link(to:)))
+        let link = peer.flatMap(link(to:))
+        isConnected = link != nil
+        end.setLink(link)
         guard let peer else { return }
-        connectionEpoch &+= 1
-        connectionStartChangeCount = hostPasteboardChangeCount()
         Self.logger.log(
             .notice,
             "The guest agent's peer \(peer.rawValue, privacy: .public) carries the clipboard for '\(self.label(), privacy: .public)'"
         )
+    }
+
+    /// Offers as `gate` says from now on; a change ends both sides' offers.
+    func setGate(_ gate: ClipboardOfferGate) {
+        guard gate != self.gate else { return }
+        self.gate = gate
+        end.setGate(gate)
+    }
+
+    /// The paste ceiling may have risen.
+    func pasteCeilingChanged() {
+        end.pasteCeilingChanged()
     }
 
     private func link(to peer: PeerHandle) -> HubClipboardLink? {
@@ -144,200 +116,60 @@ final class HubClipboardService: ClipboardServicing {
 
     private func handle(_ event: ItemTransferEvent, from peer: PeerHandle) {
         guard let link = link(to: peer) else { return }
-        exchange.handle(event, on: link)
+        end.handle(event, on: link)
     }
 
-    // MARK: - ClipboardServicing
+    // MARK: - Reporting
 
-    /// Passthrough stopped, and both ends' passthrough offers end with it: the host's offer, which only
-    /// passthrough makes, is withdrawn `DISABLED_BY_POLICY`, so the guest retracts its write of it as at a
-    /// link's end; the guest's offer is let go, and the Mac's write of it retracted so, its promises no paste
-    /// had withdrawn (``ClipboardWithdrawal/unread``). Nothing crosses after that but a command: the guest
-    /// offers nothing while passthrough is off.
-    func passthroughStopped() {
-        exchange.withdrawLocal(.disabledByPolicy)
-        guard let remote else { return }
-        self.remote = nil
-        exchange.release(remote)
-        logRetraction(retractHostWrite(remote.token, .unread), of: .clipboard, because: .passthroughStopped)
-    }
-
-    /// Makes the Mac's copy the host's clipboard and offers it: a new connection is offered only a copy made
-    /// after it, so nothing is owed a retry.
-    func offerHostCopy(_ copy: ClipboardOfferSource) {
-        exchange.offer(copy)
-    }
-
-    /// The Mac's pasteboard changed to something it offers nothing of: the host's offer is withdrawn, and the
-    /// guest's clipboard is left as it is.
-    func hostCopyOffersNothing() {
-        exchange.withdrawLocal()
-    }
-
-    var clipboardConnection: ClipboardConnectionID { exchange.connection }
-
-    // MARK: - The clipboard commands
-
-    /// Sends `snapshot` to the guest as a copy, served until the guest releases it, its write replaced.
-    func copyMacClipboardToGuest(_ snapshot: ClipboardOfferSource) -> ClipboardTransferFailure? {
-        exchange.sendCopy(snapshot) ? nil : .transferFailed
-    }
-
-    /// Asks the guest for its clipboard, lands every representation of its copy but a file or folder, and has
-    /// `write` write it unless a newer copy arrived first.
-    func guestClipboardCopy(_ write: @escaping @MainActor (GuestCopyContents) -> Void) async -> GuestClipboardCopy {
-        let answer = await withCheckedContinuation { continuation in
-            exchange.askForCopy { continuation.resume(returning: $0) }
-        }
-        switch answer {
-        case .nothing:
-            return .nothing
-        case .failed(let error):
-            Self.logger.log(
-                .notice, "The guest's clipboard was not copied: \(String(describing: error), privacy: .public)")
-            return .failed(Self.failure(error))
-        case .copy(let copy):
-            let exchange = exchange
-            let landing = await exchange.land(copy) { leftOut in
-                write(
-                    GuestCopyContents(
-                        serving: copy.serving, items: copy.items, concealed: copy.concealed,
-                        plan: ClipboardPromisePolicy.copyPlan(copy.items, room: copy.pasteRoom),
-                        held: { copy.held(item: $0, representation: $1) }, puller: copy,
-                        referencesLeftOut: leftOut, itemsLeftOut: copy.leftOut,
-                        release: { exchange.releaseCopy(copy) }))
-            }
-            switch landing {
-            case .written: return .landed
-            case .alreadyHeld: return .alreadyHeld
-            case .superseded: return .failed(.transferFailed)
-            case .failed(let error): return .failed(Self.failure(error))
-            }
-        }
-    }
-
-    /// A copy the guest sent ended, with the link or withdrawn by the guest: what the Mac's clipboard holds
-    /// of it that no paste had is retracted, its files being on the guest's disk, and a concealed copy goes whole,
-    /// pasted or not; the user is told what went and why. A concealed copy whose source moved on went where the
-    /// guest's clipboard went, as passthrough's does: nothing is said.
-    private func copyEnded(_ copy: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
-        let retraction = logRetraction(retractHostWrite(copy.token, .unread), of: .copy, because: .ended(ending))
-        let withdrawn: Bool
-        switch ending {
-        case .movedOn: return
-        case .byFarSide: withdrawn = true
-        case .superseded, .settingChanged, .linkLost: withdrawn = false
-        }
-        switch retraction {
-        case .cleared: reportRefusal(gesture: .copy, withdrawn ? .withdrawnCopyRetracted : .disconnectedCopyRetracted)
-        case .keptPart:
-            reportRefusal(gesture: .copy, withdrawn ? .withdrawnFilesRetracted : .disconnectedFilesRetracted)
-        case .keptEverything, nil: break
-        }
-    }
-
-    /// Logs what `retraction` of the write of `write` took back, and its `cause`; nothing when it took nothing
-    /// back.
-    @discardableResult
-    private func logRetraction(
-        _ retraction: ClipboardRetraction?, of write: ClipboardRetractionLog.Write,
-        because cause: ClipboardRetractionLog.Cause
-    ) -> ClipboardRetraction? {
-        if let line = ClipboardRetractionLog.line(retraction, of: write, on: .host(vm: label()), because: cause) {
+    private func heard(_ event: ClipboardEndEvent) {
+        if case .retracted(let retraction, let ending) = event,
+            let line = ClipboardRetractionLog.line(
+                retraction, of: .clipboard, on: .host(vm: label()), because: .ended(ending))
+        {
             Self.logger.log(.notice, "\(line, privacy: .public)")
         }
-        return retraction
-    }
-
-    /// The guest refused `copy` of the Mac's clipboard, or wrote it without some of it. A copy only naming what
-    /// the guest's clipboard holds already, and one a newer copy superseded, are the user's to make again: nothing
-    /// is said.
-    private func copyRefused(_ copy: ClipboardOfferSource, _ error: WireError) {
+        guard let refusal = Self.refusal(for: event) else { return }
         Self.logger.log(
-            .notice, "The guest refused the Mac's clipboard copy: \(String(describing: error), privacy: .public)")
-        switch error.code {
-        case .clipboardAlreadyHeld, .itemOfferReplaced:
-            return
-        case .clipboardFilesWithheld:
-            reportRefusal(
-                gesture: .send,
-                .filesLeftOut(
-                    count: ClipboardPromisePolicy.fileCount(copy.items), limitBytes: Int(clamping: error.limit)))
-        default:
-            reportRefusal(gesture: .send, Self.failure(error))
+            .notice,
+            "Clipboard refusal for '\(self.label(), privacy: .public)': \(String(describing: refusal.failure), privacy: .public)"
+        )
+        // Each refusal is a gesture of its own, owed its message even when the one before raised the same.
+        reporter.gestureBegan()
+        reporter.finish(
+            ClipboardTransferFinish(gesture: refusal.gesture, outcome: .failed(refusal.failure), peerName: label()))
+    }
+
+    /// What `event` reports to the VM's transfer report, or nil when it reports nothing. The Mac's clipboard is
+    /// sent to the guest as `.forward` whether a copy or Copy to Guest offered it; the guest's arrives as `.copy`
+    /// whether passthrough or Copy to Mac brought it. A read that finds the Mac's clipboard empty says so only to
+    /// the command that asked for it; a retraction is logged, never reported.
+    static func refusal(for event: ClipboardEndEvent)
+        -> (gesture: ClipboardTransferGesture, failure: ClipboardTransferFailure)?
+    {
+        switch event {
+        case .readEnded(_, .offered(let skipped)) where skipped > 0:
+            (.forward, .itemsSkipped(count: skipped))
+        case .readEnded(_, .unreadable):
+            (.forward, .itemsUnreadable)
+        case .readEnded(.command, .nothingToCopy):
+            (.forward, .nothingToCopy)
+        case .published(.writtenWithoutFiles(let count, let limitBytes)):
+            (.copy, .filesLeftOut(count: count, limitBytes: limitBytes))
+        case .published(.tooLarge(let limitBytes)):
+            (.copy, .tooLarge(limitBytes: limitBytes))
+        case .published(.writeFailed):
+            (.copy, .transferFailed)
+        case .requestRefused(.nothingToCopy):
+            (.copy, .nothingToCopy)
+        case .requestRefused(.unreadable):
+            (.copy, .itemsUnreadable)
+        case .requestRefused(.failed):
+            (.copy, .transferFailed)
+        case .pasteRefused:
+            (.paste, .transferFailed)
+        case .readBegan, .readEnded, .notAdmitted, .published, .retracted, .served, .landed, .pullFailed:
+            nil
         }
-    }
-
-    /// The failure a copy ending with `error` reports.
-    private static func failure(_ error: WireError) -> ClipboardTransferFailure {
-        switch error.code {
-        case .clipboardChanged: .clipboardChanged
-        case .clipboardPartsGone: .partsGone
-        case .readFailed: .itemsUnreadable
-        case .tooLarge: .tooLarge(limitBytes: Int(clamping: error.limit))
-        default: .transferFailed
-        }
-    }
-
-    func reservePromiseDestination() -> URL? {
-        let generation = nextPromiseGeneration
-        nextPromiseGeneration += 1
-        do {
-            return try promiseStaging.reserveScratchDirectory(generation: generation)
-        } catch {
-            Self.logger.log(
-                .error,
-                "Failed to reserve a clipboard promise directory for '\(self.label(), privacy: .public)': \(String(describing: error), privacy: .public)"
-            )
-            return nil
-        }
-    }
-
-    func guestClipboardOffer() -> CopyToMacOffer? {
-        guard let remote, remote.isOpen else { return nil }
-        return CopyToMacOffer(
-            serving: remote.serving, items: remote.items, concealed: remote.concealed, limitBytes: maxPasteBytes(),
-            puller: remote)
-    }
-
-    // MARK: - The guest's offer
-
-    /// Takes the guest's offer for passthrough to write, or — passthrough having stopped as it crossed — lets
-    /// it go unwritten.
-    private func received(_ remote: ClipboardRemoteOffer) {
-        guard passthroughRuns() else {
-            Self.logger.log(
-                .notice,
-                "Let the guest's clipboard offer go for '\(self.label(), privacy: .public)': passthrough is off")
-            exchange.release(remote)
-            return
-        }
-        self.remote = remote
-        inboundOfferSeq &+= 1
-    }
-
-    /// The guest's offer stopped being the host's clipboard. A write of it the host pasteboard still holds is
-    /// retracted, since nothing more of it can be pulled; a Mac copy that replaced it already replaced the
-    /// write. Passthrough made the write, so nothing is reported.
-    ///
-    /// - The guest ended it, its clipboard moving on: every promise is withdrawn, pasted or not.
-    /// - A Mac copy replaced it: the guest's clipboard is that copy now.
-    /// - The guest stopped passthrough, or the link ended: the guest may hold it still, so what a paste had
-    ///   stays (``ClipboardWithdrawal/unread``); the next link carries only its next copy.
-    private func remoteEnded(_ remote: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
-        guard self.remote === remote else { return }
-        self.remote = nil
-        let withdrawal: ClipboardWithdrawal
-        switch ending {
-        case .superseded: return
-        case .linkLost, .settingChanged: withdrawal = .unread
-        case .byFarSide, .movedOn: withdrawal = .everyPromise
-        }
-        logRetraction(retractHostWrite(remote.token, withdrawal), of: .clipboard, because: .ended(ending))
-    }
-
-    private func reportRefusal(gesture: ClipboardTransferGesture, _ failure: ClipboardTransferFailure) {
-        reporter?.finish(ClipboardTransferFinish(gesture: gesture, outcome: .failed(failure), peerName: label()))
     }
 }
 
