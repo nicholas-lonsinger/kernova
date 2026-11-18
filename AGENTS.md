@@ -166,7 +166,7 @@ An AI agent's commit message ends with one `Co-authored-by` trailer per model th
 
 The "Require Attestation" ruleset holds a merge until the PR head's `Commit Attestation` status passes. `make attest` posts it for the checked-out commit, reusing a passing `make lint` and `make test` of the same content or running them; where those cannot run, labeling the PR `ci` has CI lint and test every push and post it instead.
 
-The repo's squash default leaves the commit body empty, so the merge supplies one: a short paragraph describing the merged state, not the route to it, then one `Co-authored-by` trailer per model that contributed to the branch.
+Whoever merges — through auto-merge too — supplies the squash commit body: a short paragraph describing the merged state, then one `Co-authored-by` trailer per model that contributed to the branch.
 
 A PR body answers the prompts in `.github/PULL_REQUEST_TEMPLATE.md`, which a body passed on the command line or through the API never shows.
 
