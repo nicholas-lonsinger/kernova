@@ -69,11 +69,6 @@ public enum DragTakeAnswer: Sendable, Equatable {
     case returned
     /// The drag stays the guest's: `DRAG_PRESS_OVER`, `DRAG_NOT_CURRENT`, …
     case refused(WireError)
-
-    /// Whether the answer ends the take.
-    var ends: Bool {
-        if case .report = self { false } else { true }
-    }
 }
 
 /// What a delivering drop delivered of a drag, by the index of each item in the taken offer.
