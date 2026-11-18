@@ -349,7 +349,7 @@ package struct ClipboardTransferWording: Equatable {
     }
 
     /// The wording for files dragged out of the VM display that did not reach
-    /// where they were dropped on this Mac.
+    /// where they were dropped on this Mac, or that could not leave the guest.
     ///
     /// Says the drag did not finish rather than that nothing arrived: a
     /// destination asks for each item in turn, so the items before the failure

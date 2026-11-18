@@ -182,7 +182,8 @@ final class GuestDragCatcher {
     }
 
     /// Take `id` is over without this side ending it: the host called it off,
-    /// its offer ended, or the connection closed. Only a take this side ended
+    /// its offer ended, the connection closed, or the drag held more items
+    /// than one take can list. Only a take this side ended
     /// keeps the surface up, for the drop it must refuse.
     func cancelled(take id: DragTakeID) {
         guard let current = take, current.id == id, !current.ended else { return }

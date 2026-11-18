@@ -647,7 +647,7 @@ package final class GuestDragTake: GuestDragTaking {
 
     /// The take ended: the guest's END, or how the stream closed without one.
     /// A refusal `TOO_LARGE` is the user's to hear: the drag holds more items
-    /// than its take lists.
+    /// than one take can list.
     func takeEnded(_ result: DragTakeResult) {
         takeOpen = false
         let reason = Self.describe(result)
