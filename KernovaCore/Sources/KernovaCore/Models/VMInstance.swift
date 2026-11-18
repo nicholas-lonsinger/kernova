@@ -769,7 +769,6 @@ package final class VMInstance {
             guestOS: configuration.guestOS,
             networkEnabled: configuration.networkEnabled,
             savedStateSurvivesMembershipMove: configuration.savedStateSurvivesMembershipMove,
-            sharesClipboard: configuration.sharesClipboard,
             reachesGuestAgent: reachesGuestAgent,
             hasPendingGuestSetup: configuration.pendingGuestSetup != nil,
             usbPassthroughGap: peers?.usbPassthroughGap,

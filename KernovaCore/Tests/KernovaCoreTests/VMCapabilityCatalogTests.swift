@@ -114,10 +114,10 @@ struct VMCapabilityCatalogTests {
     @Test("Each capability asks admission for the request the table states")
     func requestPerCapability() {
         let harness = makeHarness()
-        let instance = makeInstance(in: harness)
+        let instance = makeInstance(in: harness) { $0.clipboardSharingEnabled = true }
         // Stop Anyway names a request only where the guest's agents offer it.
         #expect(VMCapability.stopAnyway.request(on: instance) == nil)
-        // The clipboard commands name one only while an agent carries the clipboard.
+        // The clipboard commands name one only while clipboard sharing is on and an agent carries the clipboard.
         #expect(VMCapability.copyGuestClipboardToMac.request(on: instance) == nil)
         #expect(VMCapability.copyMacClipboardToGuest.request(on: instance) == nil)
         instance.publishAgentHubSnapshotForTesting(
@@ -141,6 +141,37 @@ struct VMCapabilityCatalogTests {
             }
         }
         #expect(Self.requests.count == VMCapability.allCases.count - 2)
+    }
+
+    @Test("A clipboard command says why it is unavailable only on a running macOS guest, and never while available")
+    func clipboardCommandsGapOnlyWhereTheStateTakesThem() {
+        for guestOS in VMGuestOS.allCases {
+            for (phase, running): (VMLifecyclePhase, Bool) in [
+                (.stopped, false), (.running(sessionID: UUID()), true), (.livePaused(sessionID: UUID()), false),
+            ] {
+                let harness = makeHarness()
+                let instance = makeInstance(in: harness, phase: phase, guestOS: guestOS) {
+                    $0.clipboardSharingEnabled = true
+                }
+                let takesClipboard = guestOS == .macOS && running
+                let label = "\(guestOS), \(phase)"
+                // No agent is connected yet.
+                #expect(
+                    harness.catalog.clipboardCommandsGap(on: instance)
+                        == (takesClipboard ? .notCarried(.noAgent) : nil), "\(label)")
+                for capability in [VMCapability.copyGuestClipboardToMac, .copyMacClipboardToGuest] {
+                    #expect(!harness.catalog.isAvailable(capability, on: instance), "\(capability), \(label)")
+                }
+
+                instance.hubClipboard.setConsolePeer(PeerHandle(rawValue: 1))
+                #expect(harness.catalog.clipboardCommandsGap(on: instance) == nil, "\(label)")
+                for capability in [VMCapability.copyGuestClipboardToMac, .copyMacClipboardToGuest] {
+                    #expect(
+                        harness.catalog.isAvailable(capability, on: instance) == takesClipboard,
+                        "\(capability), \(label)")
+                }
+            }
+        }
     }
 
     // MARK: - The three levels

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaAgentHost
+import KernovaClipboardItems
 import KernovaCommandModel
 import KernovaKit
 import KernovaWire
@@ -19,9 +20,39 @@ package enum DisplayDropAvailability {
     case available
 }
 
+/// Why Copy Guest Clipboard to Mac and Copy Mac Clipboard to Guest can't be
+/// invoked on a VM, where its settings or its guest agent are why.
+package enum ClipboardCommandsGap: Equatable, Sendable {
+    /// Automatic clipboard passthrough is on.
+    case passthroughOn
+    /// No agent carries the clipboard: `DISABLED_BY_POLICY` while clipboard
+    /// sharing is off in the VM's settings, and otherwise why no agent at the
+    /// guest's screen does, as the agent hub reports it.
+    case notCarried(AbsenceReason)
+
+    /// What a disabled command says of it.
+    package var reason: String {
+        switch self {
+        case .passthroughOn: "Unavailable while automatic clipboard passthrough is on."
+        case .notCarried(let absence): GuestAgentPresentation.consoleReason(absence)
+        }
+    }
+}
+
 /// Presentation properties derived from a VM's status, shared by every
 /// surface that shows the VM.
 extension VMInstance {
+    /// Why the clipboard commands can't be invoked as far as the VM's settings
+    /// and its guest agent decide, or `nil` when they take them. A surface says
+    /// it through ``VMCapabilityCatalog/clipboardCommandsGap(on:)``, which
+    /// leaves out the VM's state.
+    package var clipboardCommandsGap: ClipboardCommandsGap? {
+        guard configuration.clipboardSharingEnabled else { return .notCarried(.disabledByPolicy) }
+        guard hubClipboard.gate == .onCommand else { return .passthroughOn }
+        guard !hubClipboard.isConnected else { return nil }
+        return .notCarried(agentHubSnapshot.features.consoleAbsence(of: .clipboard))
+    }
+
     /// Whether files dragged onto this VM's display can be sent to the guest.
     ///
     /// The single read site for the gesture's three states. `.none` is decided

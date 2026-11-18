@@ -381,12 +381,15 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // still copying would disable the GUI's only full-quit affordance.
         guard let capability = Self.capability(for: menuItem.action) else { return true }
 
-        // The titles a missing selection still words, applied before the
-        // selection guard so none strands the last selection's wording: the
+        // The wording a missing selection still sets, applied before the
+        // selection guard so none strands the last selection's: the
         // guest-agent item's title is part of what it reports (see
-        // `unavailableTitle`), and the Clone items name the preference.
+        // `unavailableTitle`), the Clone items name the preference, and a
+        // clipboard command's tooltip says why it is unavailable.
         let target = self.target(of: menuItem, workingInstance: workingInstance)
         switch menuItem.action {
+        case #selector(AppDelegate.copyGuestClipboardToMac(_:)), #selector(AppDelegate.copyMacClipboardToGuest(_:)):
+            menuItem.toolTip = target.flatMap { viewModel.capabilities.clipboardCommandsGap(on: $0) }?.reason
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)):
             menuItem.title = GuestAgentDiskControl.unavailableTitle
         case #selector(AppDelegate.cloneVM(_:)):

@@ -58,6 +58,17 @@ public struct AgentHubSnapshot: Sendable, Equatable {
     public static let empty = AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]))
 }
 
+extension FeatureStatusTable {
+    /// Why no peer serving the console session offers `feature`, read off this merged table: the merged absence,
+    /// or `NOT_ON_CONSOLE` where some peer offers it while serving none.
+    public func consoleAbsence(of feature: FeatureID) -> AbsenceReason {
+        switch self[feature] {
+        case .absent(let reason, _): reason
+        case .available: .notOnConsole
+        }
+    }
+}
+
 /// A peer that disconnected, as it was when it did.
 public struct AwayPeer: Sendable, Equatable {
     /// The peer as the snapshot last showed it.

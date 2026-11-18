@@ -27,13 +27,12 @@ struct VMAdmissionTests {
     ]
 
     /// The facts a table row varies; every other fact is a macOS guest with
-    /// snapshots, a network device, clipboard sharing and USB passthrough.
+    /// snapshots, a network device and USB passthrough.
     private struct Variant: Sendable, CustomStringConvertible {
         var guestOS: VMGuestOS = .macOS
         var pendingSetup = false
         var usbPassthroughGap: USBAccessoryPassthrough.Gap?
         var networkEnabled = true
-        var clipboardSharing = true
         /// The saved state restores after a membership move — a NAT VM's.
         var survivesMembershipMove = false
         var writesOutsideBundle = false
@@ -46,13 +45,12 @@ struct VMAdmissionTests {
         static let linuxPendingSetup = Variant(guestOS: .linux, pendingSetup: true)
         static let noUSB = Variant(usbPassthroughGap: .needsEntitlement)
         static let noNetwork = Variant(networkEnabled: false)
-        static let noClipboard = Variant(clipboardSharing: false)
         static let writesOutsideBundle = Variant(writesOutsideBundle: true)
         static let noAgentChannel = Variant(guestOS: .linux, reachesGuestAgent: false)
 
         var description: String {
             "\(guestOS) setup=\(pendingSetup) usbGap=\(String(describing: usbPassthroughGap)) "
-                + "network=\(networkEnabled) clipboard=\(clipboardSharing) "
+                + "network=\(networkEnabled) "
                 + "survivesMembershipMove=\(survivesMembershipMove) "
                 + "writesOutsideBundle=\(writesOutsideBundle) reachesGuestAgent=\(reachesGuestAgent)"
         }
@@ -65,7 +63,7 @@ struct VMAdmissionTests {
             hasSaveFile: slot, hasSnapshots: true, guestOS: variant.guestOS,
             networkEnabled: variant.networkEnabled,
             savedStateSurvivesMembershipMove: variant.survivesMembershipMove,
-            sharesClipboard: variant.clipboardSharing, reachesGuestAgent: variant.reachesGuestAgent,
+            reachesGuestAgent: variant.reachesGuestAgent,
             hasPendingGuestSetup: variant.pendingSetup, usbPassthroughGap: variant.usbPassthroughGap,
             writesOutsideBundle: variant.writesOutsideBundle, identityConflict: nil,
             accessoryHolder: nil, terminating: terminating,
@@ -136,8 +134,8 @@ struct VMAdmissionTests {
         (.pendingSetup, .cancel(.guestSetup), "IIIIIIR"),
         (.linuxPendingSetup, .start(recovery: false), "AAAAIIR"),
         (.linuxPendingSetup, .operation(.bringUp(.settingUp(.linuxImageDownload))), "AAAIIIR"),
-        (.noClipboard, .affordance(.clipboard), "IIIIIIR"),
-        (.noClipboard, .affordance(.externalDisplay), "IIIIAAR"),
+        // The clipboard is carried by the guest agent of macOS alone.
+        (.linux, .affordance(.clipboard), "IIIIIIR"),
         (.noUSB, .edit(.pairingRules), "UUUUUUR"),
         (.noUSB, .operation(.attachingUSB(registryID: 7)), "UUUUUUR"),
         (.noUSB, .operation(.detachingUSB(deviceID: session)), "UUUUUUR"),

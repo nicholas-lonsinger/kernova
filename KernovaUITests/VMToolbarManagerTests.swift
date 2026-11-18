@@ -302,6 +302,33 @@ struct VMToolbarManagerTests {
         #expect(button?.target == nil)
     }
 
+    @Test("A dimmed clipboard button says why where the VM's state would take it, and its own description otherwise")
+    func clipboardToolTipSaysWhy() {
+        let ids = ["testCopyToMac", "testCopyToGuest"]
+        let running = makeInstance(phase: .running(sessionID: UUID()))
+        let manager = makeManager(instance: running)
+        let (toolbar, _, _) = makeToolbar(manager: manager)
+        let descriptions = ids.map { manager.makeToolbarItem(for: NSToolbarItem.Identifier($0))?.view?.toolTip }
+        #expect(descriptions.allSatisfy { $0 != nil })
+
+        manager.updateToolbarItems(in: toolbar)
+        for id in ids {
+            #expect(item(id, in: toolbar)?.isEnabled == false, "\(id)")
+            #expect(clipboardButton(id, in: toolbar)?.toolTip == ClipboardCommandsGap.notCarried(.noAgent).reason)
+        }
+
+        running.hubClipboard.setConsolePeer(PeerHandle(rawValue: 1))
+        manager.updateToolbarItems(in: toolbar)
+        #expect(ids.map { item($0, in: toolbar)?.isEnabled } == [true, true])
+        #expect(ids.map { clipboardButton($0, in: toolbar)?.toolTip } == descriptions)
+
+        let stopped = makeManager(instance: makeInstance(phase: .stopped))
+        let (stoppedToolbar, _, _) = makeToolbar(manager: stopped)
+        stopped.updateToolbarItems(in: stoppedToolbar)
+        #expect(ids.map { item($0, in: stoppedToolbar)?.isEnabled } == [false, false])
+        #expect(ids.map { clipboardButton($0, in: stoppedToolbar)?.toolTip } == descriptions)
+    }
+
     /// Stands a running readout on `instance` moving `direction`, as a producer's operation would, returning the
     /// operation — the reporter holds only a weak reference, so the caller must keep it alive.
     private func publishProgress(

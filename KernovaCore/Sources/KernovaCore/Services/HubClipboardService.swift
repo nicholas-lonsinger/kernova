@@ -27,10 +27,6 @@ final class HubClipboardService {
     /// by the clipboard commands.
     private(set) var gate: ClipboardOfferGate
 
-    /// Whether the clipboard commands do anything now: a console peer carries CLIPBOARD and passthrough is off,
-    /// since with it on the clipboards are one already.
-    var takesCommands: Bool { isConnected && gate == .onCommand }
-
     // MARK: - Wiring
 
     /// The host's clipboard end, both directions of it.

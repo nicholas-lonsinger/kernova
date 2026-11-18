@@ -21,25 +21,46 @@ struct VMInstanceClipboardTests {
         [VMCapability.copyGuestClipboardToMac, .copyMacClipboardToGuest].map { $0.request(on: instance) != nil }
     }
 
-    @Test("The clipboard commands are named only while an agent carries the clipboard and passthrough is off")
-    func commandsFollowTheLinkAndTheSetting() {
-        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID())) {
-            $0.clipboardSharingEnabled = true
-            $0.clipboardPassthroughEnabled = true
+    /// The hub's clipboard entries a test stands, each with the absence the hub names for no agent at the guest's
+    /// screen carrying it: the entry's own, or `NOT_ON_CONSOLE` where some agent offers it.
+    private static let hubEntries: [(status: Availability<Data>, absence: AbsenceReason)] = [
+        (.absent(.noAgent, debugDetail: ""), .noAgent),
+        (.absent(.versionMismatch, debugDetail: ""), .versionMismatch),
+        (.absent(.notServedByRole, debugDetail: ""), .notServedByRole),
+        (.available(Data()), .notOnConsole),
+    ]
+
+    @Test("The clipboard commands are held back by sharing, then passthrough, then no agent at the guest's screen")
+    func gapFollowsTheSettingsThenTheAgent() {
+        for sharing in [false, true] {
+            for passthrough in [false, true] {
+                for connected in [false, true] {
+                    for entry in Self.hubEntries {
+                        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID())) {
+                            $0.clipboardSharingEnabled = sharing
+                            $0.clipboardPassthroughEnabled = passthrough
+                        }
+                        instance.publishAgentHubSnapshotForTesting(
+                            AgentHubSnapshot(
+                                peers: [], features: FeatureStatusTable([(feature: .clipboard, status: entry.status)])))
+                        instance.hubClipboard.setConsolePeer(connected ? Self.peer : nil)
+                        let expected: ClipboardCommandsGap? =
+                            if !sharing {
+                                .notCarried(.disabledByPolicy)
+                            } else if passthrough {
+                                .passthroughOn
+                            } else if connected {
+                                nil
+                            } else {
+                                .notCarried(entry.absence)
+                            }
+                        let label = "sharing \(sharing), passthrough \(passthrough), connected \(connected), \(entry)"
+                        #expect(instance.clipboardCommandsGap == expected, "\(label)")
+                        #expect(Self.commandsNamed(on: instance) == [expected == nil, expected == nil], "\(label)")
+                    }
+                }
+            }
         }
-        instance.beginSessionContextForTesting()
-        #expect(Self.commandsNamed(on: instance) == [false, false])
-
-        instance.hubClipboard.setConsolePeer(Self.peer)
-        #expect(Self.commandsNamed(on: instance) == [false, false])
-
-        var off = instance.configuration
-        off.clipboardPassthroughEnabled = false
-        instance.applyLivePolicy(oldConfig: instance.configuration, newConfig: off)
-        #expect(Self.commandsNamed(on: instance) == [true, true])
-
-        instance.hubClipboard.setConsolePeer(nil)
-        #expect(Self.commandsNamed(on: instance) == [false, false])
     }
 
     @Test("Only a macOS guest shares the clipboard: a Linux guest's stored flags offer and send nothing")
