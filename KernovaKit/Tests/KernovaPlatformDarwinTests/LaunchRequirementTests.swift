@@ -40,7 +40,12 @@ struct LaunchRequirementTests {
         let directory = try Self.scratch()
         let installed = try Self.adHocBundle(in: directory, version: "1")
         let update = try Self.adHocBundle(in: directory, version: "2")
-        let requirement = try LaunchRequirement.designatedRequirement(ofCodeAt: installed).get()
+        var code: SecStaticCode?
+        try #require(
+            SecStaticCodeCreateWithPath(URL(fileURLWithPath: installed) as CFURL, SecCSFlags(), &code) == errSecSuccess)
+        var designated: SecRequirement?
+        try #require(SecCodeCopyDesignatedRequirement(try #require(code), SecCSFlags(), &designated) == errSecSuccess)
+        let requirement = try #require(designated)
 
         #expect(LaunchRequirement.refusal(ofBundleAt: installed, against: requirement) == nil)
         let refusal = try #require(LaunchRequirement.refusal(ofBundleAt: update, against: requirement))

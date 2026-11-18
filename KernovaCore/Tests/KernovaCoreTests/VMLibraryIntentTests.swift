@@ -44,9 +44,10 @@ struct VMLibraryIntentTests {
 
     @Test("Every clone outcome, and following the preference, is offered, named, and maps back")
     func cloneOutcomesMirrorEveryOutcome() {
-        for outcome in CloneOutcome.allCases.map(Optional.some) + [nil] {
-            let offered = VMCloneOutcome(outcome)
-            #expect(offered.outcome == outcome)
+        let outcomes = CloneOutcome.allCases.map(Optional.some) + [nil]
+        #expect(VMCloneOutcome.allCases.count == outcomes.count)
+        #expect(Set(VMCloneOutcome.allCases.map(\.outcome)) == Set(outcomes))
+        for offered in VMCloneOutcome.allCases {
             #expect(VMCloneOutcome.caseDisplayRepresentations[offered] != nil)
         }
     }

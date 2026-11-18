@@ -295,7 +295,7 @@ struct SidebarFolderTests {
         #expect(viewModel.library.folders?.map(\.name) == ["Clients"])
         #expect(viewModel.activeRename == nil)
         controller.viewDidAppear()
-        #expect(sectionHeader(.folder(folder.id), in: outline)?.isRenaming == false)
+        #expect(isRenaming(sectionHeader(.folder(folder.id), in: outline)) == false)
         #expect(
             (0..<outline.numberOfRows).compactMap { (outline.item(atRow: $0) as? SidebarSection)?.title } == [
                 "Virtual Machines", "Clients",
@@ -340,7 +340,7 @@ struct SidebarFolderTests {
         editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
 
         #expect(viewModel.activeRename == nil)
-        #expect(!header.isRenaming)
+        #expect(isRenaming(header) == false)
         #expect(viewModel.library.folders?.map(\.name) == ["Clients"])
     }
 
@@ -510,7 +510,7 @@ struct SidebarFolderTests {
         try move(.library, to: belowEveryRow)
         #expect(shown() == ["Y", "Everything", "X", "Virtual Machines"])
         #expect(
-            viewModel.library.organization.sections?.map(\.id) == [
+            viewModel.library.organization.state.listed?.sections.map(\.id) == [
                 .folder(y.id), .smartGroup(group.id), .folder(x.id), .library,
             ])
 

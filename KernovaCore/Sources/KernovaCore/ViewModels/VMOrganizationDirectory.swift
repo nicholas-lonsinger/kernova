@@ -259,10 +259,6 @@ package final class VMOrganizationDirectory {
 
     private(set) var state: State = .listed(File())
 
-    /// Every section, the library's included, in the order the sidebar lists
-    /// them; `nil` while the file can't be read.
-    var sections: [Section]? { state.listed?.sections }
-
     /// Every smart group, in the order the sidebar lists them; `nil` while the
     /// file can't be read.
     var smartGroups: [VMSmartGroup]? { state.listed?.smartGroups }

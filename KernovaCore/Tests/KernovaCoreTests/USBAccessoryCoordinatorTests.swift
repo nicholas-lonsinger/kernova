@@ -326,7 +326,7 @@ struct USBAccessoryCoordinatorTests {
         let instance = makeStoppedInstance(in: h)
         let other = makeStoppedInstance(in: h, named: "Other")
         defer { withExtendedLifetime(h) {} }
-        instance.onSessionBecameAttachable = { [weak coordinator = h.coordinator] in
+        instance.activity.onSessionBecameAttachable = { [weak coordinator = h.coordinator] in
             coordinator?.sessionBecameAttachable(instance) ?? []
         }
         let mine = MockUSBAccessoryService.accessory(registryID: 1, serial: "A")
@@ -354,7 +354,7 @@ struct USBAccessoryCoordinatorTests {
         let instance = makeStoppedInstance(in: h)
         defer { withExtendedLifetime(h) {} }
         let takeBacks = TakeBackCounter()
-        instance.onSessionBecameAttachable = { [weak coordinator = h.coordinator] in
+        instance.activity.onSessionBecameAttachable = { [weak coordinator = h.coordinator] in
             takeBacks.count += 1
             return coordinator?.sessionBecameAttachable(instance) ?? []
         }
@@ -397,7 +397,7 @@ struct USBAccessoryCoordinatorTests {
 
         // The guest powers off while the attach still holds the VM, which
         // ends the attach the assignment queued for that session.
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
         #expect(instance.activity.queuedFollowUpCountForTesting == 0)
         service.resumeAttach()
         _ = try await held.joined()

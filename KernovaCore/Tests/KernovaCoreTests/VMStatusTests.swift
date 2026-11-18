@@ -22,9 +22,10 @@ struct VMStatusTests {
             (.error, "in an error state"),
         ]
         for (status, phrase) in rows {
-            #expect(status.phrase(heldByAnotherCopy: false) == phrase)
             #expect(VMStatus.phrase(forWireName: status.rawValue, heldByAnotherCopy: false) == phrase)
-            #expect(status.phrase(heldByAnotherCopy: true) == "in use by another copy of Kernova")
+            #expect(
+                VMStatus.phrase(forWireName: status.rawValue, heldByAnotherCopy: true)
+                    == "in use by another copy of Kernova")
         }
         #expect(VMStatus.phrase(forWireName: VMStatus.preparingWireName, heldByAnotherCopy: false) == "preparing")
         #expect(

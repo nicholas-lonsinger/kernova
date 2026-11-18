@@ -23,8 +23,6 @@ final class NetworksSettingsViewController: NSViewController, SettingsPaneConten
 
     /// The networks the table shows, as the core reports them.
     private(set) var networks: [NetworkSummary] = []
-    /// Whether the last read found the list unreadable.
-    var isUnreadable: Bool { editor.isUnreadable }
 
     private lazy var editor = SettingsNamedListEditor(
         noun: "Network",

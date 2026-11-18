@@ -48,9 +48,16 @@ struct TakeSnapshotSheetContentViewControllerTests {
     @Test("The Name field is prefilled with the suggestion and Notes is optional")
     func fieldsStartPrefilled() {
         let sheet = makeSheet(suggestedName: "Snapshot 3")
-        #expect(sheet.enteredName == "Snapshot 3")
-        #expect(sheet.enteredNotes.isEmpty)
+        var confirmations: [(name: String, notes: String)] = []
+        sheet.onConfirm = { confirmations.append(($0, $1)) }
         #expect(findLabel(withText: "Optional", in: sheet.view) != nil)
+
+        let confirm = findButton(titled: "Take Snapshot", in: sheet.view)
+        confirm.map { _ = $0.target?.perform($0.action, with: $0) }
+
+        #expect(confirmations.count == 1)
+        #expect(confirmations.first?.name == "Snapshot 3")
+        #expect(confirmations.first?.notes.isEmpty == true)
     }
 
     @Test("Confirming hands back what was typed, newlines and all")

@@ -435,10 +435,5 @@ public final class BlockingConnectGate: Sendable {
             states[label] = state
         }
     }
-
-    /// How many of `label`'s attempts are parked in the kernel.
-    func parkedCount(_ label: String) -> Int {
-        states.withLock { $0[label]?.parked ?? 0 }
-    }
 }
 #endif

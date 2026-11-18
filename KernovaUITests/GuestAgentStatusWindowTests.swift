@@ -64,7 +64,7 @@ struct GuestAgentStatusWindowTests {
 
         fixture.registry.showGuestAgentStatus(for: target)
 
-        let window = try #require(fixture.registry.guestAgentStatusWindow(for: instance.instanceID))
+        let window = try #require(fixture.focus.presentedKeyAndFront.last)
         #expect(fixture.focus.requests == [.present(library, .back), .present(window, .keyAndFront)])
         #expect(window.title == "Selected — Guest Agent Status")
         let status = try content(of: window)
@@ -80,7 +80,7 @@ struct GuestAgentStatusWindowTests {
         let fixture = makeFixture()
         let instance = makeLinuxInstance(in: fixture.viewModel)
         fixture.registry.showGuestAgentStatus(for: instance)
-        let window = try #require(fixture.registry.guestAgentStatusWindow(for: instance.instanceID))
+        let window = try #require(fixture.focus.presentedKeyAndFront.last)
         let status = try content(of: window)
         let waitingHeight = window.contentRect(forFrameRect: window.frame).height
         #expect(waitingHeight == status.view.fittingSize.height)
@@ -102,12 +102,13 @@ struct GuestAgentStatusWindowTests {
         let context = instance.beginSessionContextForTesting()
         context.hasAgentTransport = true
         fixture.registry.showGuestAgentStatus(for: instance)
-        let window = try #require(fixture.registry.guestAgentStatusWindow(for: instance.instanceID))
+        let window = try #require(fixture.focus.presentedKeyAndFront.last)
+        #expect(fixture.registry.instance(shownIn: window) === instance)
 
         context.hasAgentTransport = false
 
-        try await waitUntil { fixture.registry.guestAgentStatusWindow(for: instance.instanceID) == nil }
-        #expect(!window.isVisible)
+        try await waitUntil { !window.isVisible }
+        #expect(fixture.registry.instance(shownIn: window) == nil)
     }
 
     @Test("Done closes the window, and the window offers no install-nudge dismissal")
@@ -120,14 +121,14 @@ struct GuestAgentStatusWindowTests {
         let instance = makeMenuInstance(in: fixture.viewModel, phase: .running(sessionID: UUID()))
         instance.beginSessionContextForTesting().hasAgentTransport = true
         fixture.registry.showGuestAgentStatus(for: instance)
-        let window = try #require(fixture.registry.guestAgentStatusWindow(for: instance.instanceID))
+        let window = try #require(fixture.focus.presentedKeyAndFront.last)
         let status = try content(of: window)
         #expect(status.actionButtonRole == .done)
         #expect(!status.hasDismissAction)
 
         try #require(findButton(titled: "Done", in: status.view)).performClick(nil)
 
-        #expect(fixture.registry.guestAgentStatusWindow(for: instance.instanceID) == nil)
         #expect(!window.isVisible)
+        #expect(fixture.registry.instance(shownIn: window) == nil)
     }
 }

@@ -81,7 +81,7 @@ struct DetailContainerLibraryLoadTests {
         present(controller)
         #expect(hasEmptyState(controller) == false)
 
-        await viewModel.loadVMs()
+        await viewModel.library.loadVMs()
         try await drainMainQueue()
 
         // Load completion is the only change here — an empty library leaves
@@ -97,7 +97,7 @@ struct DetailContainerLibraryLoadTests {
         let viewModel = makeViewModel()
         let controller = DetailContainerViewController(viewModel: viewModel)
         present(controller)
-        await viewModel.loadVMs()
+        await viewModel.library.loadVMs()
         let gate = GatedStep()
 
         let arrival = viewModel.library.beginGatedArrival(named: "Arriving", gate: gate)
@@ -136,7 +136,7 @@ struct DetailContainerLibraryLoadTests {
         let viewModel = makeViewModel(storageService: try storageHoldingAnUnreadableBundle())
         let controller = DetailContainerViewController(viewModel: viewModel)
         present(controller)
-        await viewModel.loadVMs()
+        await viewModel.library.loadVMs()
         try await drainMainQueue()
 
         #expect(viewModel.selectedEntry?.unreadable?.name == "Bad VM")
@@ -149,7 +149,7 @@ struct DetailContainerLibraryLoadTests {
         var checks: [VMLibraryViewModel.ConfigCheckRequest] = []
         viewModel.onShowConfigCheck = { checks.append($0) }
 
-        await viewModel.loadVMs()
+        await viewModel.library.loadVMs()
         #expect(checks.isEmpty)
 
         let controller = DetailContainerViewController(viewModel: viewModel)
@@ -157,7 +157,7 @@ struct DetailContainerLibraryLoadTests {
         #expect(checks == [.automatic])
 
         // Reported once: a reconcile that finds the same bundle asks for nothing.
-        viewModel.reconcileWithDisk()
+        viewModel.library.reconcileWithDisk()
         #expect(checks == [.automatic])
     }
 }

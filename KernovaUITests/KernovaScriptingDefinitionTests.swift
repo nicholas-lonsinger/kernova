@@ -227,11 +227,19 @@ struct KernovaScriptingDefinitionTests {
     func everyStateHasAnEnumerator() throws {
         let declared = try enumerators("VM state")
 
+        let terms: [VMScriptState: String] = [
+            .stopped: "stopped", .starting: "starting", .running: "running", .paused: "paused",
+            .suspended: "suspended", .saving: "saving", .snapshotting: "snapshotting", .cloning: "cloning",
+            .restoring: "restoring", .installing: "installing", .forceStopping: "force stopping",
+            .initialBoot: "initial boot", .failed: "failed", .preparing: "preparing",
+        ]
+
         // `VMScriptState` covers every `VMStatus` by an exhaustive switch, so a
         // new status cannot compile without landing here.
         #expect(declared.count == VMScriptState.allCases.count)
         for state in VMScriptState.allCases {
-            #expect(declared[state.term] == state.code, "No \(state.term) enumerator")
+            let term = try #require(terms[state], "No term for \(state)")
+            #expect(declared[term] == state.code, "No \(term) enumerator")
         }
     }
 
@@ -245,11 +253,14 @@ struct KernovaScriptingDefinitionTests {
     func everyStopDispositionHasAnEnumerator() throws {
         let declared = try enumerators("VM stop method")
 
+        let terms: [VMScriptStopMethod: String] = [.normal: "normal", .anyway: "anyway", .force: "force"]
+
         #expect(declared.count == StopDisposition.allCases.count)
-        for disposition in StopDisposition.allCases {
-            let method = VMScriptStopMethod(disposition)
-            #expect(declared[method.term] == method.code, "No \(method.term) enumerator")
-            #expect(method.disposition == disposition)
+        #expect(VMScriptStopMethod.allCases.count == StopDisposition.allCases.count)
+        #expect(Set(VMScriptStopMethod.allCases.map(\.disposition)) == Set(StopDisposition.allCases))
+        for method in VMScriptStopMethod.allCases {
+            let term = try #require(terms[method], "No term for \(method)")
+            #expect(declared[term] == method.code, "No \(term) enumerator")
         }
     }
 
@@ -281,11 +292,14 @@ struct KernovaScriptingDefinitionTests {
     func everyNetworkKindHasAnEnumerator() throws {
         let declared = try enumerators("network kind")
 
+        let terms: [VMScriptNetworkKind: String] = [.nat: "nat", .hostOnly: "host only"]
+
         #expect(declared.count == NetworkKind.allCases.count)
         for kind in NetworkKind.allCases {
-            let term = VMScriptNetworkKind(kind)
-            #expect(declared[term.term] == term.code, "No \(term.term) enumerator")
-            #expect(term.kind == kind)
+            let scriptKind = VMScriptNetworkKind(kind)
+            let term = try #require(terms[scriptKind], "No term for \(scriptKind)")
+            #expect(declared[term] == scriptKind.code, "No \(term) enumerator")
+            #expect(scriptKind.kind == kind)
         }
         let suite = try loadSuite()
         #expect(try values("class[@name='network']/property[@name='kind']", "type", in: suite) == ["network kind"])
@@ -297,9 +311,12 @@ struct KernovaScriptingDefinitionTests {
 
         // `VMScriptStorageDiskKind` covers every `StorageDiskKind` by an
         // exhaustive switch, so a new bus cannot compile without landing here.
+        let terms: [VMScriptStorageDiskKind: String] = [.virtio: "virtio", .usbMassStorage: "USB mass storage"]
+
         #expect(declared.count == VMScriptStorageDiskKind.allCases.count)
         for kind in VMScriptStorageDiskKind.allCases {
-            #expect(declared[kind.term] == kind.code, "No \(kind.term) enumerator")
+            let term = try #require(terms[kind], "No term for \(kind)")
+            #expect(declared[term] == kind.code, "No \(term) enumerator")
         }
         #expect(VMScriptStorageDiskKind(wireName: "virtio") == .virtio)
         #expect(VMScriptStorageDiskKind(wireName: "usbMassStorage") == .usbMassStorage)

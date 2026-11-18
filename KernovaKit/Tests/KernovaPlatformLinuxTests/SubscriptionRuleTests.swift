@@ -121,18 +121,18 @@ struct SubscriptionRuleTests {
     @Test("cancel() writes RemoveMatch for its rule, and for the owner rule once its name's last subscriber is gone")
     func removeMatch() throws {
         let transport = RecordingTransport()
-        let connection = try DBusBusConnection(transport: transport, uid: 0)
+        var connection: DBusBusConnection? = try DBusBusConnection(transport: transport, uid: 0)
         #expect(try Self.next(transport) == "Hello ")
         let rule = BusConnectionTests.tickRule
         let ownerRule = DBusMatchRule(
             sender: DBusBus.name, path: DBusBus.path, interface: DBusBus.interface, member: "NameOwnerChanged",
             arg0: BusConnectionTests.serviceName)
 
-        let first = try connection.subscribe(rule) { _ in }
+        let first = try #require(connection).subscribe(rule) { _ in }
         #expect(try Self.next(transport) == "AddMatch \(ownerRule.text)")
         #expect(try Self.next(transport) == "GetNameOwner \(BusConnectionTests.serviceName)")
         #expect(try Self.next(transport) == "AddMatch \(rule.text)")
-        let second = try connection.subscribe(rule) { _ in }
+        let second = try #require(connection).subscribe(rule) { _ in }
         #expect(try Self.next(transport) == "AddMatch \(rule.text)")
 
         first.cancel()
@@ -141,7 +141,8 @@ struct SubscriptionRuleTests {
         second.cancel()
         #expect(try Self.next(transport) == "RemoveMatch \(rule.text) (no reply)")
         #expect(try Self.next(transport) == "RemoveMatch \(ownerRule.text) (no reply)")
-        connection.close()
+        // Its last reference gone, the connection ends, writing nothing more.
+        connection = nil
         #expect(transport.written.isEmpty)
     }
 }

@@ -94,8 +94,6 @@ public enum NetworkModeChoice: Hashable, Sendable, Codable {
 
     /// NAT's common network.
     public static let nat = NetworkModeChoice.vmnet(.nat, .common)
-    /// Host Only's common network.
-    public static let hostOnly = NetworkModeChoice.vmnet(.hostOnly, .common)
 
     /// How a VM naming a named network reads it while the library's list of
     /// networks can't be read.

@@ -22,7 +22,7 @@ struct DeliveryTests {
         }
 
         func tick(_ label: String) throws {
-            try service.send(BusConnectionTests.tick(label))
+            try service.sendForTesting(BusConnectionTests.tick(label))
         }
     }
 
@@ -56,25 +56,28 @@ struct DeliveryTests {
     }
 
     @Test(
-        "cancel() and close() wait for the handler in flight, and return once it has finished",
+        "cancel() and releasing the connection wait for the handler in flight, and return once it has finished",
         arguments: [false, true])
-    func cancelWaitsForTheHandler(byClosing: Bool) throws {
+    func cancelWaitsForTheHandler(byReleasing: Bool) throws {
         let setup = try Setup()
         let events = BlockingInbox<String>()
         let gate = BlockingInbox<String>()
         let waits = OffTaskWaits()
-        let client = setup.client
-        client.observeDeliveryWaitsForTesting { events.put("waiting") }
-        let subscription = try client.subscribe(BusConnectionTests.tickRule) { _ in
-            events.put("started")
-            waits.run { _ = try gate.next() }
-            events.put("finished")
-        }
+        // The box holds the client's only reference, so emptying it ends the
+        // connection on the thread that does.
+        let held = ConnectionBox(try setup.bus.connect())
+        held.connection?.observeDeliveryWaitsForTesting { events.put("waiting") }
+        let subscription = try #require(
+            try held.connection?.subscribe(BusConnectionTests.tickRule) { _ in
+                events.put("started")
+                waits.run { _ = try gate.next() }
+                events.put("finished")
+            })
         try setup.tick("one")
         #expect(try events.next() == "started")
         Thread {
-            if byClosing {
-                client.close()
+            if byReleasing {
+                held.connection = nil
             } else {
                 subscription.cancel()
             }
@@ -87,15 +90,17 @@ struct DeliveryTests {
         #expect(try [events.next(), events.next()] == ["finished", "returned"])
     }
 
-    @Test("A handler may cancel its own subscription, and close its own connection, without waiting on itself")
+    @Test(
+        "A handler may cancel its own subscription, and release its connection's last reference, without waiting on itself"
+    )
     func cancelFromTheHandler() throws {
         let setup = try Setup()
         let events = BlockingInbox<String>()
         let box = SubscriptionBox()
-        let client = setup.client
-        box.subscription = try client.subscribe(BusConnectionTests.tickRule) { _ in
+        let held = ConnectionBox(try setup.bus.connect())
+        box.subscription = try held.connection?.subscribe(BusConnectionTests.tickRule) { _ in
             box.subscription?.cancel()
-            client.close()
+            held.connection = nil
             events.put("handled")
         }
         try setup.tick("one")
@@ -121,5 +126,15 @@ struct DeliveryTests {
 /// Holds a subscription its own handler reaches.
 final class SubscriptionBox: @unchecked Sendable {
     var subscription: DBusSubscription?
+}
+
+/// Holds a connection's only reference, for a test that ends the connection
+/// by letting that reference go.
+final class ConnectionBox: @unchecked Sendable {
+    var connection: DBusBusConnection?
+
+    init(_ connection: DBusBusConnection) {
+        self.connection = connection
+    }
 }
 #endif

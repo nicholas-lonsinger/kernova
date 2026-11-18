@@ -33,6 +33,7 @@ enum VMCloneOutcome: String, AppEnum {
         }
     }
 
+    // periphery:ignore - never called: an exhaustive switch, so an outcome added stops compiling here
     /// The case asking for `outcome`.
     init(_ outcome: CloneOutcome?) {
         self =

@@ -78,7 +78,7 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         instance.detailPaneMode = .settings
 
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
 
         #expect(instance.detailPaneMode == .display)
         #expect(instance.status == .stopped)
@@ -91,7 +91,7 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         instance.displayMode = .hidden
 
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
 
         #expect(instance.displayMode == .inline)
     }
@@ -103,7 +103,7 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         instance.displayMode = mode
 
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
 
         #expect(instance.displayMode == mode)
     }
@@ -227,7 +227,7 @@ struct VMInstanceTests {
 
         let fileOnly = VMInstanceFixture.make(guestOS: .macOS)
         try FileManager.default.createDirectory(at: fileOnly.bundleURL, withIntermediateDirectories: true)
-        try Data([2]).write(to: fileOnly.machineIdentifierURL)
+        try Data([2]).write(to: fileOnly.bundleLayout.machineIdentifierURL)
         #expect(fileOnly.machineIdentity == .mac(Data([2])))
     }
 
@@ -254,7 +254,6 @@ struct VMInstanceTests {
     func bundlePaths() {
         let instance = VMInstanceFixture.make()
 
-        #expect(instance.diskImageURL.lastPathComponent == "Disk.asif")
         #expect(instance.bundleLayout.saveFileURL.lastPathComponent == "SaveFile.vzvmsave")
     }
 
@@ -384,7 +383,7 @@ struct VMInstanceTests {
         #expect(instance.networkAttachmentPending)
         let context = try #require(instance.sessionContext)
 
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
 
         // `NetworkAttachmentCoordinator.isActive` is private, so the mock link
         // observer is the only external signal that `stop()` actually ran —
@@ -579,7 +578,7 @@ struct VMInstanceTests {
         let instance = makeMacOSInstanceWithAgentInstalled()
         #expect(instance.agentPresentation?.status == .connecting(expected: "0.9.2"))
 
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
 
         #expect(instance.sessionContext == nil)
         #expect(instance.agentPresentation?.status == nil)
@@ -686,7 +685,7 @@ struct VMInstanceTests {
         let instance = VMInstanceFixture.make(phase: .running(sessionID: UUID()))
         // No session attached: any delivered id is stale — the event a
         // torn-down session's guest stop produces after a fresh start.
-        instance.deliverSessionEvent(.guestDidStop, from: UUID())
+        instance.activity.deliverSessionEvent(.guestDidStop, from: UUID())
         #expect(instance.status == .running)
     }
 
@@ -701,7 +700,7 @@ struct VMInstanceTests {
         coordinator.activate()
         #expect(device.appliedPlans.isEmpty)
 
-        instance.handleSessionEvent(
+        instance.activity.handleSessionEvent(
             .networkAttachmentDisconnected(NSError(domain: "test", code: 2)))
 
         // The framework-nil'd mirror is cleared and the chosen mode reattached.
@@ -834,16 +833,16 @@ struct VMInstanceTests {
         // opens a fresh context per attempt, so a Recovery boot that hits
         // file-lock contention must come back up in Recovery.
         let instance = makeMacOSInstanceWithAgentInstalled(bootedIntoRecovery: true)
-        #expect(instance.bootedIntoRecovery)
+        #expect(instance.sessionContext?.bootedIntoRecovery == true)
 
-        instance.handleSessionEvent(.guestDidStop)
-        #expect(!instance.bootedIntoRecovery)
+        instance.activity.handleSessionEvent(.guestDidStop)
+        #expect(instance.sessionContext == nil)
 
         instance.beginSessionContextForTesting(bootedIntoRecovery: true)
-        #expect(instance.bootedIntoRecovery)
+        #expect(instance.sessionContext?.bootedIntoRecovery == true)
         // And an ordinary attempt on the same instance is ordinary.
         instance.beginSessionContextForTesting()
-        #expect(!instance.bootedIntoRecovery)
+        #expect(instance.sessionContext?.bootedIntoRecovery == false)
     }
 
     @Test("Watchdog is a no-op while macOS install is in progress")
@@ -1065,7 +1064,7 @@ struct VMInstanceTests {
 
     /// Ends `instance`'s run as the guest stopping does, then starts its next one, its agents not yet back.
     private func runAgain(_ instance: VMInstance) {
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         instance.beginSessionContextForTesting().hasAgentTransport = true
         instance.publishAgentHubSnapshotForTesting(.empty)
@@ -1089,7 +1088,7 @@ struct VMInstanceTests {
         #expect(instance.missingAgentNoticesForTesting.count == 1)
 
         // The run that saw it replaces the records: the system peer only.
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
         #expect(instance.configuration.lastSeenAgent(.login) == nil)
         #expect(
             instance.configuration.lastSeenAgent(.system)
@@ -1104,7 +1103,7 @@ struct VMInstanceTests {
             instance.startAgentAbsenceWatch()
             #expect(instance.agentAbsenceTimerForTesting == nil)
             #expect(instance.warnedMissingAgents.isEmpty)
-            instance.handleSessionEvent(.guestDidStop)
+            instance.activity.handleSessionEvent(.guestDidStop)
         }
         #expect(instance.missingAgentNoticesForTesting.count == 1)
     }
@@ -1124,7 +1123,7 @@ struct VMInstanceTests {
         try await instance.agentAbsenceTimerForTesting?.joined()
         #expect(instance.warnedMissingAgents.map(\.scope) == [.system])
 
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
         #expect(instance.configuration.lastSeenAgent(.system) == nil)
         #expect(instance.configuration.lastSeenAgent(.login)?.versionLabel == "1.0")
 
@@ -1149,7 +1148,7 @@ struct VMInstanceTests {
         #expect(recorded.lastSeenAgent(.login) != nil && recorded.lastSeenAgent(.system) != nil)
 
         // This run sees nothing.
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
 
         #expect(instance.configuration == recorded)
         #expect(storage.saveConfigurationCallCount == saves)

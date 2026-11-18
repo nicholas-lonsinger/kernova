@@ -991,7 +991,6 @@ private final class FollowUpOrder {
 /// VM process a stop is waiting on.
 private final class StopRecordingSession: VMSessionOperating, @unchecked Sendable {
     let id: UUID
-    let hasVirtioSocketDevice = false
     let hasUSBController = false
     /// Fires as each stop arrives, after ``stops`` rises.
     let stopped = AsyncGate()

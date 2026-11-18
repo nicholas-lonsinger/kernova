@@ -15,7 +15,7 @@ import KernovaDBus
 /// message at a time in arrival order; one that blocks stalls every later
 /// message, so none may make a blocking call on this connection.
 ///
-/// The connection ends on `close()`, on deinit, or when the bus or transport
+/// The connection ends on deinit, or when the bus or transport
 /// fails it; every call then waiting throws `DBusCallError.disconnected`.
 public final class DBusBusConnection: Sendable {
     /// How long a call waits for its reply by default: the reference
@@ -139,13 +139,6 @@ public final class DBusBusConnection: Sendable {
         return try engine.call(call, timeout: timeout)
     }
 
-    /// Queues `message` to be written, awaiting no reply, and returns its
-    /// serial.
-    @discardableResult
-    public func send(_ message: DBusMessage) throws(DBusCallError) -> UInt32 {
-        try engine.send(message)
-    }
-
     /// Registers `rule` with the bus, then calls `handler`, on the reader
     /// thread, for each message that matches it, until the subscription is
     /// cancelled.
@@ -160,15 +153,17 @@ public final class DBusBusConnection: Sendable {
         try engine.subscribe(rule, handler: handler)
     }
 
-    /// Ends the connection. Once it returns no handler is running or called
-    /// again, unless it is called from a handler, which then finishes.
-    public func close() {
-        engine.close()
+    #if DEBUG
+    /// Queues `message` to be written, awaiting no reply, and returns its
+    /// serial — a test playing another peer on the bus.
+    @discardableResult
+    public func sendForTesting(_ message: DBusMessage) throws(DBusCallError) -> UInt32 {
+        try engine.send(message)
     }
 
-    #if DEBUG
     /// Calls `observer`, under the connection's lock, each time a `cancel()`
-    /// or `close()` starts waiting for a handler in flight to finish.
+    /// or the connection's end starts waiting for a handler in flight to
+    /// finish.
     public func observeDeliveryWaitsForTesting(_ observer: @escaping @Sendable () -> Void) {
         engine.observeDeliveryWaitsForTesting(observer)
     }
@@ -203,7 +198,8 @@ public enum DBusCallError: Error, Hashable, Sendable {
 
 /// Why a connection ended.
 public enum DBusDisconnection: Error, Hashable, Sendable {
-    /// `close()` ended it.
+    /// This side ended it: the connection was released, or never finished
+    /// connecting.
     case closed
     /// The bus closed the stream.
     case endOfStream

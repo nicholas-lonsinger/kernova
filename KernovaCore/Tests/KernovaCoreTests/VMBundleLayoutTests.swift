@@ -17,10 +17,6 @@ struct VMBundleLayoutTests {
         let layout = VMBundleLayout(bundleURL: bundleURL)
         #expect(layout.snapshotsDirectoryURL.lastPathComponent == "Snapshots")
         #expect(layout.snapshotsDirectoryURL.deletingLastPathComponent() == bundleURL)
-        #expect(layout.snapshotManifestURL.lastPathComponent == "manifest.json")
-        #expect(
-            layout.snapshotManifestURL.deletingLastPathComponent()
-                == layout.snapshotsDirectoryURL)
     }
 
     @Test("a snapshot's layout names its captured copies the way the bundle names its own")

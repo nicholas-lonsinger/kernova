@@ -12,10 +12,6 @@ import Synchronization
 /// safe to call from the background queue that drives serial output; the socket
 /// itself belongs to a ``UnixSocketListener``.
 final class SerialSocketRelay: Sendable {
-    /// Filesystem path of the bound socket, for UI display — `nil` until
-    /// `start()` binds successfully, and again after `stop()`.
-    var socketPath: String? { listener.boundPath }
-
     private let path: String
     /// Write end of the guest's serial input pipe.
     ///
@@ -50,8 +46,7 @@ final class SerialSocketRelay: Sendable {
     /// Binds + listens on the AF_UNIX path and begins accepting a client.
     ///
     /// Idempotent. A path that can't fit `sockaddr_un.sun_path`, or a socket the
-    /// app cannot bind, leaves the relay disabled (`socketPath` stays `nil`) —
-    /// the VM is unaffected.
+    /// app cannot bind, leaves the relay disabled — the VM is unaffected.
     func start() {
         do {
             try listener.start { [weak self] fd in self?.adoptClient(fd) }

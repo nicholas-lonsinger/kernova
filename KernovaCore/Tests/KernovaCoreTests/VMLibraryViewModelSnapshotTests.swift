@@ -133,7 +133,7 @@ struct VMLibraryViewModelSnapshotTests {
         try FileManager.default.createDirectory(at: bundleURL, withIntermediateDirectories: true)
         try Data("spent".utf8).write(to: spentSlot)
 
-        await harness.viewModel.loadVMs()
+        await harness.viewModel.library.loadVMs()
         #expect(harness.snapshots.sweptStagingBundleURLs.isEmpty)
         #expect(FileManager.default.fileExists(atPath: spentSlot.path(percentEncoded: false)))
 

@@ -69,7 +69,7 @@ struct VirtualizationServiceTests {
             await MainActor.run {
                 // However far VZ got before the guest went away.
                 try? VMInstanceFixture.writeSaveFile(for: instance)
-                instance.handleSessionEvent(.guestDidStop)
+                instance.activity.handleSessionEvent(.guestDidStop)
             }
         }
 
@@ -219,7 +219,7 @@ struct VirtualizationServiceTests {
 
         try await restore(instance, over: session)
         unlock.run()
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
 
         #expect(instance.phase == .stopped)
         #expect(!instance.hasSaveFile)
@@ -416,7 +416,7 @@ struct VirtualizationServiceTests {
         }
         let session = MockSnapshotSession(guestState: .running)
         await session.setAfterSave {
-            await MainActor.run { instance.handleSessionEvent(.guestDidStop) }
+            await MainActor.run { instance.activity.handleSessionEvent(.guestDidStop) }
         }
 
         try await suspend(instance, over: session)
@@ -460,7 +460,7 @@ struct VirtualizationServiceTests {
         // still succeeds.
         await session.setAfterSave {
             await MainActor.run {
-                instance.handleSessionEvent(
+                instance.activity.handleSessionEvent(
                     .didStopWithError(
                         NSError(
                             domain: "test", code: 1,
@@ -588,9 +588,10 @@ struct VirtualizationServiceTests {
         ]
         let snapshotLayout = layout.snapshotLayout(id: snapshot.id)
         try FileManager.default.createDirectory(
-            at: snapshotLayout.additionalDisksDirectoryURL, withIntermediateDirectories: true)
+            at: snapshotLayout.bundleURL.appendingPathComponent("AdditionalDisks"), withIntermediateDirectories: true)
         try Data("captured-disk".utf8).write(to: snapshotLayout.diskImageURL)
-        try Data("captured-extra".utf8).write(to: snapshotLayout.additionalDiskURL(id: extraID))
+        try Data("captured-extra".utf8).write(
+            to: snapshotLayout.bundleURL.appendingPathComponent("AdditionalDisks/\(extraID.uuidString).asif"))
         try Data("captured-state".utf8).write(to: snapshotLayout.saveFileURL)
         try VMConfiguration.makeJSONEncoder().encode(capturedConfiguration)
             .write(to: snapshotLayout.configURL)
@@ -892,7 +893,7 @@ struct VirtualizationServiceTests {
         let holding = VMInstanceFixture.make(phase: .suspended)
         try VMInstanceFixture.writeSaveFile(for: holding)
 
-        holding.activity.placeForTesting(holding.restingPhase(withoutSlot: .stopped))
+        holding.activity.placeForTesting(holding.activity.restingPhase(withoutSlot: .stopped))
 
         #expect(holding.status == .suspended)
         #expect(holding.isSuspended)
@@ -900,7 +901,7 @@ struct VirtualizationServiceTests {
         #expect(holding.hasSaveFile)
 
         let emptied = VMInstanceFixture.make(phase: .suspended)
-        emptied.activity.placeForTesting(emptied.restingPhase(withoutSlot: .stopped))
+        emptied.activity.placeForTesting(emptied.activity.restingPhase(withoutSlot: .stopped))
         #expect(emptied.status == .stopped)
         #expect(emptied.errorMessage == nil)
     }

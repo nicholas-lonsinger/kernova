@@ -47,9 +47,6 @@ final class SidebarVMRowCellView: NSTableCellView {
     /// tags.
     private var tags: (() -> [VMTag])?
 
-    /// `true` while the name label is in its editable rename state.
-    var isRenaming: Bool { nameLabel.isEditing }
-
     // MARK: - Subviews
 
     private let iconView = NSImageView()

@@ -161,11 +161,6 @@ package final class VMInstance {
     /// (``warnedMissingAgents``).
     var agentExpectedButMissing: Bool { !warnedMissingAgents.isEmpty }
 
-    /// `true` when this session cold-booted into macOS Recovery, which never
-    /// runs the guest agent — so agent silence is evidence of nothing for the
-    /// whole session, not just at the moment of boot.
-    var bootedIntoRecovery: Bool { sessionContext?.bootedIntoRecovery ?? false }
-
     /// Routes a configuration write made under a permit for this VM through
     /// ``VMLibrary/updateConfiguration(_:mutate:)``, answering what that
     /// answers — ``VMEditPermit/updateConfiguration(_:)``.
@@ -601,8 +596,6 @@ package final class VMInstance {
         item.isInstaller(of: bundleProducts.guestAgents, in: bundleLayout)
     }
 
-    var diskImageURL: URL { bundleLayout.diskImageURL }
-    var machineIdentifierURL: URL { bundleLayout.machineIdentifierURL }
     package var serialLogURL: URL { bundleLayout.serialLogURL }
 
     /// Whether the bundle holds a suspend slot.
@@ -788,23 +781,6 @@ package final class VMInstance {
         guard activity.liveSessionIsStopping else { return nil }
         return VMProcessEndInstruction(
             appName: bundleProducts.displayName, bundlePath: bundleURL.path(percentEncoded: false))
-    }
-
-    var onSessionBecameAttachable: (@MainActor () -> [VMFollowUp])? {
-        get { activity.onSessionBecameAttachable }
-        set { activity.onSessionBecameAttachable = newValue }
-    }
-
-    func restingPhase(withoutSlot fallback: VMRestPhase) -> VMLifecyclePhase {
-        activity.restingPhase(withoutSlot: fallback)
-    }
-
-    func deliverSessionEvent(_ event: VMSessionEvent, from sessionID: UUID) {
-        activity.deliverSessionEvent(event, from: sessionID)
-    }
-
-    func handleSessionEvent(_ event: VMSessionEvent) {
-        activity.handleSessionEvent(event)
     }
 
     package func adoptBuildProducts(

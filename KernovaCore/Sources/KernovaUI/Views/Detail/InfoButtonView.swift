@@ -16,8 +16,12 @@ final class InfoButtonView: NSView {
     /// Owns the per-button popover lifecycle.
     private let coordinator = Coordinator()
 
-    /// The paragraphs the popover renders on the next click.
-    var paragraphs: [InfoPopoverParagraph] { coordinator.paragraphs() }
+    #if DEBUG
+    /// The paragraphs the popover renders on the next click. A test reads them
+    /// here: a shown popover is constrained onto a display, beyond which the
+    /// test host keeps every window.
+    var paragraphsForTesting: [InfoPopoverParagraph] { coordinator.paragraphs() }
+    #endif
 
     init() {
         super.init(frame: .zero)

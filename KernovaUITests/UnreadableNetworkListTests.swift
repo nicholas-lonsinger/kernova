@@ -114,8 +114,9 @@ struct UnreadableNetworkListTests {
         let router = VMCommandEnvelopeRouter(commands: harness.core)
 
         let request = try JSONEncoder().encode(VMCommandRequest(verb: .networks))
+        let decoded = try #require(try? router.decode(request).get())
         let response = try JSONDecoder().decode(
-            VMCommandResponse.self, from: await router.handle(request))
+            VMCommandResponse.self, from: router.encode(await router.respond(to: decoded)))
 
         #expect(response.result == .failure(refusal.dto))
     }

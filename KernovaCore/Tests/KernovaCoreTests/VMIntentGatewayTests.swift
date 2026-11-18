@@ -249,11 +249,9 @@ struct VMIntentGatewayTests {
         #expect(vm.status == .running)
         #expect(!virtualization.lastStartBootIntoRecovery)
 
-        try await gateway.open(id)
-        #expect(harness.surfacedDisplays == [id])
         // A running VM's reveal is its display.
         try await gateway.reveal(id)
-        #expect(harness.surfacedDisplays == [id, id])
+        #expect(harness.surfacedDisplays == [id])
         #expect(harness.revealedInLibrary.isEmpty)
         #expect(try await gateway.ipAddress(of: id) == nil)
 
@@ -296,7 +294,7 @@ struct VMIntentGatewayTests {
         #expect(clock.requestedSeconds.isEmpty)
         #expect(vm.liveSessionID == session)
 
-        vm.deliverSessionEvent(.guestDidStop, from: session)
+        vm.activity.deliverSessionEvent(.guestDidStop, from: session)
         try await restart.joined()
 
         #expect(vm.status == .running)

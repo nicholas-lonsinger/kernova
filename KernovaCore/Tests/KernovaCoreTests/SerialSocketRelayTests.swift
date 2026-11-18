@@ -76,7 +76,6 @@ struct SerialSocketRelayTests {
             path: path, guestInputWriteHandle: pipe.fileHandleForWriting, label: "test")
         relay.start()
         defer { relay.stop() }
-        #expect(relay.socketPath == path)
 
         let client = try connectClient(to: path)
         defer { close(client) }
@@ -192,7 +191,6 @@ struct SerialSocketRelayTests {
         #expect(FileManager.default.fileExists(atPath: path))
         relay.stop()
         #expect(!FileManager.default.fileExists(atPath: path))
-        #expect(relay.socketPath == nil)
     }
 
     @Test("VMInstance.serialSocketPath(for:) is short enough to bind")

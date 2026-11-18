@@ -19,9 +19,6 @@ public typealias StreamKind = Kernova_V2_StreamKind
 /// What a representation's bytes are: a canonical MIME type and namespaced native names.
 public typealias TypeDescriptor = Kernova_V2_TypeDescriptor
 
-/// A container codec a destination decodes besides plain bytes.
-public typealias Codec = Kernova_V2_Codec
-
 /// One form of an offered item: its type, and whether it travels as bytes, a file or a folder.
 public typealias Representation = Kernova_V2_Representation
 

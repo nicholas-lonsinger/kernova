@@ -18,7 +18,6 @@ struct PreambleAndEncoderTests {
         #expect(WireConstants.windowPayloadByteCount == 4)
         #expect(WireConstants.pingPayloadByteCount == 8)
         #expect(WireConstants.maxWindow == UInt32(Int32.max))
-        #expect(WireConstants.maxPingIntervalNanoseconds == 5_000_000_000)
         #expect(WireConstants.vsockPort == 0xC008)
     }
 

@@ -201,7 +201,7 @@ struct VMRunLockTests {
 
         // A session ending rests the VM and lets it go.
         let sessionID = try #require(instance.liveSessionID)
-        instance.deliverSessionEvent(.guestDidStop, from: sessionID)
+        instance.activity.deliverSessionEvent(.guestDidStop, from: sessionID)
         #expect(instance.phase == .stopped)
         expectLockFollowsPhase(instance, store)
 
@@ -209,7 +209,7 @@ struct VMRunLockTests {
         try await startLive(instance)
         let stopped = try #require(instance.liveSessionID)
         let stop = try instance.activity.forceStop {}
-        instance.deliverSessionEvent(.stopDidComplete, from: stopped)
+        instance.activity.deliverSessionEvent(.stopDidComplete, from: stopped)
         try await stop.resolved()
         #expect(instance.phase == .stopped)
         expectLockFollowsPhase(instance, store)
@@ -302,7 +302,7 @@ struct VMRunLockTests {
         try await startLive(instance)
 
         let sessionID = try #require(instance.liveSessionID)
-        instance.deliverSessionEvent(.guestDidStop, from: sessionID)
+        instance.activity.deliverSessionEvent(.guestDidStop, from: sessionID)
 
         // The store refuses a second lock on a bundle this copy holds, so the
         // revert was admitted only because it kept the one the ending held.

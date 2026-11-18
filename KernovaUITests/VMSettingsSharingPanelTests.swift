@@ -34,13 +34,13 @@ struct VMSettingsSharingPanelTests {
     func guestAgentInfoCopy() {
         let (macVC, _, _) = makeController(guestOS: .macOS, isReadOnly: false)
         #expect(
-            infoButton(about: "Guest Agent", in: macVC.view)?.paragraphs == [
+            infoButton(about: "Guest Agent", in: macVC.view)?.paragraphsForTesting == [
                 .body(
                     "Clipboard sharing, drag and drop, and log forwarding need the Kernova guest agent in the guest. Kernova offers to install or update it from the Virtual Machine menu."
                 )
             ])
         #expect(
-            infoButton(about: "Forward guest logs", in: macVC.view)?.paragraphs == [
+            infoButton(about: "Forward guest logs", in: macVC.view)?.paragraphsForTesting == [
                 .body(
                     "Streams `os.Logger` records from the macOS guest agent to this Mac, where they appear in Console.app under `app.kernova.guest`."
                 )
@@ -48,11 +48,11 @@ struct VMSettingsSharingPanelTests {
 
         let (linuxVC, _, _) = makeController(guestOS: .linux, isReadOnly: false)
         #expect(
-            infoButton(about: "Guest Agent", in: linuxVC.view)?.paragraphs == [
+            infoButton(about: "Guest Agent", in: linuxVC.view)?.paragraphsForTesting == [
                 .body("Log forwarding needs the Kernova guest agent in the guest.")
             ])
         #expect(
-            infoButton(about: "Forward guest logs", in: linuxVC.view)?.paragraphs == [
+            infoButton(about: "Forward guest logs", in: linuxVC.view)?.paragraphsForTesting == [
                 .body(
                     "Streams the Linux guest agent's own log records to this Mac, where they appear in Console.app under `app.kernova.guest`. Other records in the guest's journal are not forwarded."
                 )
@@ -418,16 +418,16 @@ struct VMSettingsSharingPanelTests {
         vc.showCategory(.sharing)
         let panel = try #require(vc.panelForTesting(.sharing))
         let info = try #require(infoButton(about: "Shared Directories", in: panel))
-        #expect(!Self.mentionsResume(info.paragraphs))
+        #expect(!Self.mentionsResume(info.paragraphsForTesting))
 
         viewModel.library.editConfiguration(of: instance, as: .observations) {
             $0.lastSeenGuestOSVersion = "13.7.8"
         }
-        #expect(Self.mentionsResume(info.paragraphs))
+        #expect(Self.mentionsResume(info.paragraphsForTesting))
 
         viewModel.library.editConfiguration(of: instance, as: .observations) {
             $0.lastSeenGuestOSVersion = "14.8.9"
         }
-        #expect(!Self.mentionsResume(info.paragraphs))
+        #expect(!Self.mentionsResume(info.paragraphsForTesting))
     }
 }

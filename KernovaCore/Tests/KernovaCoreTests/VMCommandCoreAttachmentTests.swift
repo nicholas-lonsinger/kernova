@@ -131,16 +131,16 @@ struct VMCommandCoreAttachmentTests {
                 .id(instance.id), assignments: [ConfigurationEntry(key: "cpus", value: String(cpus + 1))],
                 consent: .all)
         }
-        #expect(edit.isBusy)
+        #expect({ if case .busy = edit { true } else { false } }())
         let start = try await #require(throws: CommandError.self) {
             try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
         }
-        #expect(start.isBusy)
+        #expect({ if case .busy = start { true } else { false } }())
         let delete = try await #require(throws: CommandError.self) {
             try await harness.core.delete(
                 .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
         }
-        #expect(delete.isBusy)
+        #expect({ if case .busy = delete { true } else { false } }())
 
         diskImages.resumeCreateDiskImage()
         try await creation.joined()
@@ -575,7 +575,7 @@ struct VMCommandCoreAttachmentTests {
         #expect(instance.phase.operation?.kind == .creatingRemovableMedia)
         #expect(instance.status == .running)
         let suspend = try await #require(throws: CommandError.self) { try await harness.core.suspend(.id(instance.id)) }
-        #expect(suspend.isBusy)
+        #expect({ if case .busy = suspend { true } else { false } }())
         let other = externalPath("other.iso")
         try harness.core.attachRemovableMedia(
             .id(instance.id), paths: [PickedFile(path: other, bookmark: nil)])
@@ -645,7 +645,7 @@ struct VMCommandCoreAttachmentTests {
         // The eject's reconcile holds the VM, so the save cannot tear the
         // session down under the detach.
         let refusal = try await #require(throws: CommandError.self) { try await harness.core.suspend(.id(instance.id)) }
-        #expect(refusal.isBusy)
+        #expect({ if case .busy = refusal { true } else { false } }())
 
         try await waitForChange { instance.phase.operation == nil }
         #expect(harness.removableMedia.detachCallCount == 1)

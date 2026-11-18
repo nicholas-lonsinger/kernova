@@ -46,7 +46,7 @@ struct ValidatedConfigurationTests {
         let (instance, context) = try await attachAgentTransport(deviceShape: .current)
 
         #expect(context.hasAgentTransport)
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
     }
 
     @Test(
@@ -63,9 +63,8 @@ struct ValidatedConfigurationTests {
 
         let (instance, context) = try await attachAgentTransport(deviceShape: unrecorded.deviceShape)
 
-        #expect(context.session?.hasVirtioSocketDevice == false)
         #expect(!context.hasAgentTransport)
-        instance.handleSessionEvent(.guestDidStop)
+        instance.activity.handleSessionEvent(.guestDidStop)
     }
 
     /// Attaches a Linux instance's agent transport over a real session built

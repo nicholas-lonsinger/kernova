@@ -615,13 +615,6 @@ public enum CommandStep: Codable, Sendable, Hashable {
     case discardSavedState(vm: VMSummary)
     /// Makes `assignments` on the VM's configuration.
     case setConfiguration(vm: VMSummary, assignments: [ConfigurationEntry])
-
-    /// The VM the step acts on.
-    public var vm: VMSummary {
-        switch self {
-        case .resume(let vm), .discardSavedState(let vm), .setConfiguration(let vm, _): vm
-        }
-    }
 }
 
 /// One way through a ``StepRequirement``: steps taken in order, then the

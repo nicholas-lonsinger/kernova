@@ -48,9 +48,8 @@ package protocol VMSessionOperating: AnyObject, VMSnapshotSessionOperating {
     /// drop events from a session it has already replaced.
     var id: UUID { get }
 
-    // Configuration facts snapshotted at creation, so main-actor guards on
+    // A configuration fact snapshotted at creation, so main-actor guards on
     // device presence stay synchronous.
-    var hasVirtioSocketDevice: Bool { get }
     var hasUSBController: Bool { get }
 
     /// Sends the VM a stop and returns at once, its completion arriving as

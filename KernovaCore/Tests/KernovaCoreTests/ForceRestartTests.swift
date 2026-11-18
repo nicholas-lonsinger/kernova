@@ -68,7 +68,7 @@ struct ForceRestartTests {
             Issue.record("The cancelled Force Restart booted")
         }
         let forceRestartStop = try instance.activity.forceStop(continuingWith: boot) {}
-        #expect(instance.activity.liveSessionContinues)
+        #expect(boot.outcome.result == nil)
 
         let forceStop = try instance.activity.forceStop { Issue.record("A joined Force Stop terminated again") }
         await #expect(throws: VMContinuationStopped.self) { try await boot.outcome.resolved() }
@@ -76,7 +76,6 @@ struct ForceRestartTests {
         try await forceRestartStop.resolved()
         try await forceStop.resolved()
 
-        #expect(!instance.activity.liveSessionContinues)
         #expect(instance.status == .stopped)
     }
 }

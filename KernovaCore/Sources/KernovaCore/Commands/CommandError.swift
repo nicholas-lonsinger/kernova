@@ -134,12 +134,6 @@ extension CommandError {
     /// What a surface tells the user, in one sentence per fact.
     package var message: String { dto.message }
 
-    /// Whether the VM already had work in flight that this verb would race.
-    var isBusy: Bool {
-        if case .busy = self { return true }
-        return false
-    }
-
     /// Whether the verb ran and did not complete, as opposed to being refused
     /// before it started.
     var isOperationFailure: Bool {

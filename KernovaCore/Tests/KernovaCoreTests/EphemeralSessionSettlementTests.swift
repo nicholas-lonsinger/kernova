@@ -290,7 +290,6 @@ struct EphemeralSessionSettlementTests {
         switch stop {
         case .graceful:
             try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .none)
-            #expect(!instance.activity.liveSessionContinues)
             // The guest honours the request: the end of a session no restart
             // waits on any more.
             instance.activity.deliverSessionEvent(.guestDidStop, from: session)

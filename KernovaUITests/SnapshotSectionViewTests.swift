@@ -69,7 +69,7 @@ struct SnapshotSectionViewTests {
         #expect(findLabel(containing: "3 GB", in: view) != nil)
         #expect(findLabel(containing: "4 GB", in: view) == nil)
         #expect(!view.countReadout.isHidden)
-        #expect(view.sizeInfoButton.paragraphs == SnapshotSectionView.sizeExplanation)
+        #expect(view.sizeInfoButton.paragraphsForTesting == SnapshotSectionView.sizeExplanation)
     }
 
     @Test("On a cloning volume a row's size carries its private bytes in parentheses")

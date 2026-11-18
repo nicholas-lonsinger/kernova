@@ -174,10 +174,14 @@ struct StopAnywayTests {
             try await restartAnyway(fixture, consent: .all)
         }
         #expect(error.stepRequirement?.title == "Can\u{2019}t Restart Anyway")
-        #expect(!fixture.instance.activity.liveSessionContinues)
         #expect(fixture.harness.virtualization.stopCallCount == 0)
-        #expect(fixture.harness.virtualization.startCallCount == 0)
         #expect(fixture.instance.status == .running)
+
+        // A boot still owed to the session would start as the session ends.
+        let session = try #require(fixture.instance.activity.liveSessionID)
+        fixture.instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        try await waitForChange { fixture.instance.status == .stopped && fixture.instance.phase.operation == nil }
+        #expect(fixture.harness.virtualization.startCallCount == 0)
     }
 
     // MARK: - Doors
@@ -185,7 +189,6 @@ struct StopAnywayTests {
     @Test("Shortcuts' and AppleScript's stop methods each name the anyway disposition")
     func doorsNameTheDisposition() {
         #expect(VMStopMethod.anyway.disposition == .anyway)
-        #expect(VMStopMethod(.anyway) == .anyway)
         #expect(Set(VMStopMethod.allCases.map(\.disposition)) == Set(StopDisposition.allCases))
         #expect(VMStopMethod.caseDisplayRepresentations[.anyway] != nil)
     }

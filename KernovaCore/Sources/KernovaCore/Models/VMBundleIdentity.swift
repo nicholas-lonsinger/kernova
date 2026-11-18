@@ -14,9 +14,13 @@ package struct VMBundleIdentity: Hashable {
     /// opaque object, compared only with `isEqual(_:)`.
     let fileResourceIdentifier: Identifier
 
+    #if DEBUG
+    /// An identity no directory backs, for a storage fake that folds bundles
+    /// together as a volume does.
     init(fileResourceIdentifier: Identifier) {
         self.fileResourceIdentifier = fileResourceIdentifier
     }
+    #endif
 
     /// The identity of the bundle — a directory holding a configuration — on
     /// disk at `url`, or `nil` when none is there.

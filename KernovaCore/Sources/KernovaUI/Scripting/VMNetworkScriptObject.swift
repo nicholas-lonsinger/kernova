@@ -104,15 +104,7 @@ enum VMScriptNetworkKind: CaseIterable {
         self = match
     }
 
-    /// The term the dictionary names this kind with.
-    var term: String {
-        switch self {
-        case .nat: "nat"
-        case .hostOnly: "host only"
-        }
-    }
-
-    /// The Apple event code the dictionary gives that term.
+    /// The Apple event code the dictionary gives this case's term.
     var code: FourCharCode {
         switch self {
         case .nat: FourCharCode(scriptingCode: "KnSh")

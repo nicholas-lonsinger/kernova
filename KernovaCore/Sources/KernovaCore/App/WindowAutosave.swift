@@ -26,10 +26,6 @@ package struct WindowAutosave: Sendable {
 
     package func displayFrame(for vmID: UUID) -> String { frame("VMDisplay-\(vmID)") }
 
-    package func clipboardFrame(for vmID: UUID) -> String {
-        frame("Clipboard-\(vmID.uuidString)")
-    }
-
     package func guestAgentStatusFrame(for vmID: UUID) -> String {
         frame("GuestAgentStatus-\(vmID.uuidString)")
     }

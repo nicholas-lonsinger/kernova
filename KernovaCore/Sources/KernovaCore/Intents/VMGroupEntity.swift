@@ -133,6 +133,7 @@ enum VMGroupActionChoice: String, AppEnum {
         }
     }
 
+    // periphery:ignore - never called: an exhaustive switch, so an action added stops compiling here
     /// The case naming `action`.
     init(_ action: VMGroupAction) {
         self =

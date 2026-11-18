@@ -183,7 +183,7 @@ struct VMBundleTests {
             let bundle = makeBundle(try onDisk(url))
             // The copy that was still arriving when the bundle was read.
             try Data(#"{"startsAutomaticallyOnLaunch":true}"#.utf8).write(
-                to: VMBundleLayout(bundleURL: url).hostStateURL)
+                to: url.appendingPathComponent("host-state.json"))
 
             try bundle.commitHostState { $0.displayPreference = .fullscreen }
 
@@ -197,7 +197,7 @@ struct VMBundleTests {
     @Test("A pairings file that does not decode is still on disk after a read")
     func anUndecodablePairingsFileIsKept() throws {
         try withBundle { url in
-            let pairingsURL = VMBundleLayout(bundleURL: url).usbPairingsURL
+            let pairingsURL = url.appendingPathComponent("usb-accessories.json")
             let corrupt = Data("{ not json".utf8)
             try corrupt.write(to: pairingsURL)
 
@@ -248,7 +248,7 @@ struct VMBundleTests {
     @Test("A host state that cannot be opened fails the read rather than reading as the defaults")
     func anUnopenableHostStateThrows() throws {
         try withBundle { url in
-            let hostStateURL = VMBundleLayout(bundleURL: url).hostStateURL
+            let hostStateURL = url.appendingPathComponent("host-state.json")
             try writer(url).update(.hostState) { $0.startsAutomaticallyOnLaunch = true }
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0], ofItemAtPath: hostStateURL.path(percentEncoded: false))
@@ -267,7 +267,7 @@ struct VMBundleTests {
             let layout = VMBundleLayout(bundleURL: url)
             try FileManager.default.createDirectory(
                 at: layout.snapshotsDirectoryURL, withIntermediateDirectories: true)
-            try Data("not json".utf8).write(to: layout.snapshotManifestURL)
+            try Data("not json".utf8).write(to: url.appendingPathComponent("Snapshots/manifest.json"))
 
             #expect(throws: UnreadableConfigFile.self) { try onDisk(url) }
         }
@@ -281,7 +281,7 @@ struct VMBundleTests {
             try Data(
                 #"{"pairings":[{"key":"k","form":"serialNumber","displayName":"Drive","pairedAt":"2026-09-12T00:00:00Z"}]}"#
                     .utf8
-            ).write(to: VMBundleLayout(bundleURL: url).usbPairingsURL)
+            ).write(to: url.appendingPathComponent("usb-accessories.json"))
 
             let loaded = try onDisk(url).usbPairings
 
@@ -293,7 +293,7 @@ struct VMBundleTests {
     @Test("A pairings file holding no pairings key reads as no pairings")
     func pairingsObjectWithoutPairingsReadsAsEmpty() throws {
         try withBundle { url in
-            try Data("{}".utf8).write(to: VMBundleLayout(bundleURL: url).usbPairingsURL)
+            try Data("{}".utf8).write(to: url.appendingPathComponent("usb-accessories.json"))
 
             let read = try onDisk(url)
 
@@ -347,7 +347,7 @@ struct VMBundleTests {
             #expect(loaded.snapshot(id: unrecorded.id) == unrecorded)
             // The snapshot's own configuration is where the address lives; the
             // manifest never records a second copy of it.
-            let manifestData = try Data(contentsOf: VMBundleLayout(bundleURL: url).snapshotManifestURL)
+            let manifestData = try Data(contentsOf: url.appendingPathComponent("Snapshots/manifest.json"))
             #expect(!String(decoding: manifestData, as: UTF8.self).contains("macAddress"))
         }
     }
@@ -513,7 +513,7 @@ struct VMBundleTests {
             try await context.bundle.trashInternalDisk(atRelativePath: relativePath)
         }
 
-        let diskURL = VMBundleLayout(bundleURL: bundle.url).additionalDiskURL(id: id)
+        let diskURL = bundle.url.appendingPathComponent("AdditionalDisks/\(id.uuidString).asif")
         #expect(diskImages.lastCreatedDiskImageURL == diskURL)
         #expect(fileSystem.trashedURLs == [diskURL])
     }

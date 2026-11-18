@@ -29,9 +29,10 @@ struct VMGroupIntentTests {
             #expect(VMGroupKindChoice(kind).kind == kind)
             #expect(VMGroupKindChoice.caseDisplayRepresentations[VMGroupKindChoice(kind)] != nil)
         }
-        for action in VMGroupAction.allCases {
-            #expect(VMGroupActionChoice(action).action == action)
-            #expect(VMGroupActionChoice.caseDisplayRepresentations[VMGroupActionChoice(action)] != nil)
+        #expect(VMGroupActionChoice.allCases.count == VMGroupAction.allCases.count)
+        #expect(Set(VMGroupActionChoice.allCases.map(\.action)) == Set(VMGroupAction.allCases))
+        for choice in VMGroupActionChoice.allCases {
+            #expect(VMGroupActionChoice.caseDisplayRepresentations[choice] != nil)
         }
     }
 

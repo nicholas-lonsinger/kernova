@@ -219,8 +219,8 @@ struct LaunchdJobsTests {
 
     @Test("The rollback check kills the job that pulls and switches: the session peer, or the system peer")
     func updatingJobs() {
-        #expect(Self.user.updatingLabel == "app.kernova.macosagent")
-        #expect(Self.system.updatingLabel == "app.kernova.macosagent.system")
+        #expect(MacInstallLayout.updatingLabel(.user) == "app.kernova.macosagent")
+        #expect(MacInstallLayout.updatingLabel(.system) == "app.kernova.macosagent.system")
     }
 
     @Test("launchctl list's listing gives a running job's process, and 0 for one stopped or missing")

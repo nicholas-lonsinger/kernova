@@ -151,9 +151,6 @@ final class SidebarGroupHeaderCellView: NSTableCellView {
 
     // MARK: - Inline rename
 
-    /// `true` while the title is in its editable rename state.
-    var isRenaming: Bool { label.isEditing }
-
     /// Opens the rename box on the title, holding `draft` in place of it when
     /// one is given.
     func beginRename(holding draft: String? = nil) {

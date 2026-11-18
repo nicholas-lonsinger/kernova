@@ -57,11 +57,6 @@ enum LaunchRequirement {
         return designatedRequirement(of: code)
     }
 
-    /// The designated requirement of the code at `path`.
-    static func designatedRequirement(ofCodeAt path: String) -> Result<SecRequirement, Failure> {
-        staticCode(at: path).flatMap(designatedRequirement(of:))
-    }
-
     private static func designatedRequirement(of code: SecStaticCode) -> Result<SecRequirement, Failure> {
         var requirement: SecRequirement?
         let status = SecCodeCopyDesignatedRequirement(code, SecCSFlags(), &requirement)

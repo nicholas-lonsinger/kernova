@@ -7,21 +7,35 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// A stand-in for a wire transport: it encodes a request, hands the bytes to
-/// the router, and decodes what comes back — the same round trip a transport
-/// makes, with no transport.
+/// A stand-in for a wire transport: it encodes a request, has the router
+/// decode, answer and encode it as `VMCommandSocketListener` does, and decodes
+/// what comes back — the same round trip a transport makes, with no transport.
 @MainActor
 private struct TestTransport {
     let router: VMCommandEnvelopeRouter
 
     func send(_ verb: VMCommandRequest.Verb) async throws -> VMCommandResponse {
-        let request = try JSONEncoder().encode(VMCommandRequest(verb: verb))
-        let response = await router.handle(request)
-        return try JSONDecoder().decode(VMCommandResponse.self, from: response)
+        try await sendRaw(JSONEncoder().encode(VMCommandRequest(verb: verb)))
     }
 
     func sendRaw(_ bytes: Data) async throws -> VMCommandResponse {
-        try JSONDecoder().decode(VMCommandResponse.self, from: await router.handle(bytes))
+        let answer: VMCommandResponse
+        switch router.decode(bytes) {
+        case .failure(let refusal):
+            answer = VMCommandResponse(result: .refused(refusal))
+        case .success(let request):
+            answer = await router.respond(to: request)
+        }
+        return try JSONDecoder().decode(VMCommandResponse.self, from: router.encode(answer))
+    }
+}
+
+extension VMCommandResponse {
+    /// The refusal this response carries, or `nil` when the verb succeeded —
+    /// what a client reads matching `.failure` on ``result``, as the CLI does.
+    fileprivate var failure: CommandErrorDTO? {
+        guard case .failure(let error) = result else { return nil }
+        return error
     }
 }
 
