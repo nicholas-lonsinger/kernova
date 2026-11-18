@@ -9,6 +9,7 @@ import KernovaAgentCore
 import KernovaAgentRuntime
 import KernovaAgentSimulation
 import KernovaLogging
+import KernovaPortableTestSupport
 import KernovaSynchronization
 import KernovaWire
 
@@ -189,8 +190,8 @@ final class ManualScheduler: RuntimeScheduler {
 }
 
 /// Waits until every block already on `queue` has run.
-func flush(_ queue: DispatchQueue) async {
-    await withCheckedContinuation { continuation in queue.async { continuation.resume() } }
+func flush(_ queue: DispatchQueue, fileID: String = #fileID, line: Int = #line) async throws {
+    try await Backstop("flush", fileID: fileID, line: line).park { resume in queue.async { resume(()) } }
 }
 
 /// The configurations both roles run with in these suites.
@@ -395,8 +396,8 @@ final class PeerDriverHarness: Sendable {
     }
 
     /// Runs every block already on the driver queue.
-    func settle() async {
-        await flush(driver.queue)
+    func settle(fileID: String = #fileID, line: Int = #line) async throws {
+        try await flush(driver.queue, fileID: fileID, line: line)
     }
 
     /// The events delivered since the last call.
@@ -413,14 +414,14 @@ final class PeerDriverHarness: Sendable {
     }
 
     /// Starts the driver, completes its first write, and delivers the host's Hello and what follows it.
-    func handshake() async {
+    func handshake(fileID: String = #fileID, line: Int = #line) async throws {
         driver.start()
-        await settle()
+        try await settle(fileID: fileID, line: line)
         stream.completeWrite()
-        await settle()
+        try await settle(fileID: fileID, line: line)
         hostReads()
         stream.deliver(.received(far.output()))
-        await settle()
+        try await settle(fileID: fileID, line: line)
     }
 }
 

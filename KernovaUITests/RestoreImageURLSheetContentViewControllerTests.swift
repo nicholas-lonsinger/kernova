@@ -27,9 +27,9 @@ struct RestoreImageURLSheetContentViewControllerTests {
     }
 
     /// Runs Check and awaits the production task rather than polling for it.
-    private func check(_ vc: RestoreImageURLSheetContentViewController) async {
+    private func check(_ vc: RestoreImageURLSheetContentViewController) async throws {
         findButton(titled: "Check", in: vc.view)?.performClick(nil)
-        await vc.probeTaskForTesting?.value
+        try await vc.probeTaskForTesting?.joined()
     }
 
     @Test("Use is disabled until a URL has been checked")
@@ -40,11 +40,11 @@ struct RestoreImageURLSheetContentViewControllerTests {
     }
 
     @Test("A malformed URL is refused without reaching the probe")
-    func malformedURLNeverProbes() async {
+    func malformedURLNeverProbes() async throws {
         let probe = MockRestoreImageProbeService()
         let vc = makeSheet(probe: probe, initialURL: "not a url")
 
-        await check(vc)
+        try await check(vc)
 
         #expect(probe.probeCallCount == 0)
         #expect(vc.checkedImage == nil)
@@ -52,7 +52,7 @@ struct RestoreImageURLSheetContentViewControllerTests {
     }
 
     @Test("Choosing hands the checked image to onChoose")
-    func chooseReports() async {
+    func chooseReports() async throws {
         let probe = MockRestoreImageProbeService()
         let vc = makeSheet(probe: probe, initialURL: "https://example.com/R.ipsw")
         var chosen: ProbedRestoreImage?
@@ -60,7 +60,7 @@ struct RestoreImageURLSheetContentViewControllerTests {
         vc.onChoose = { chosen = $0 }
         vc.onCancel = { cancelCount += 1 }
 
-        await check(vc)
+        try await check(vc)
         findButton(titled: "Use", in: vc.view)?.performClick(nil)
 
         #expect(chosen == probe.probeResult)
@@ -82,13 +82,13 @@ struct RestoreImageURLSheetContentViewControllerTests {
     }
 
     @Test("An image newer than the host warns without blocking Use")
-    func tooNewImageWarnsButDoesNotBlock() async {
+    func tooNewImageWarnsButDoesNotBlock() async throws {
         let probe = MockRestoreImageProbeService()
         probe.probeResult = makeProbedImage(version: "27.0", build: "26A100")
         let vc = makeSheet(
             probe: probe, initialURL: "https://example.com/R.ipsw", hostMajor: 26)
 
-        await check(vc)
+        try await check(vc)
 
         // The version came from the filename, so it is a hint, not a verdict.
         #expect(vc.checkedImage != nil)
@@ -97,13 +97,13 @@ struct RestoreImageURLSheetContentViewControllerTests {
     }
 
     @Test("An unrecognized filename leads the badge with the unknown version")
-    func unknownVersionIsCalledOut() async {
+    func unknownVersionIsCalledOut() async throws {
         let probe = MockRestoreImageProbeService()
         probe.probeResult = makeProbedImage(
             urlString: "https://example.com/image.ipsw", version: nil, build: nil)
         let vc = makeSheet(probe: probe, initialURL: "https://example.com/image.ipsw")
 
-        await check(vc)
+        try await check(vc)
 
         #expect(vc.checkedImage != nil)
         #expect(
@@ -114,13 +114,13 @@ struct RestoreImageURLSheetContentViewControllerTests {
     }
 
     @Test("A recognized filename leads the badge with its version")
-    func recognizedVersionLeadsBadge() async {
+    func recognizedVersionLeadsBadge() async throws {
         let probe = MockRestoreImageProbeService()
         probe.probeResult = makeProbedImage(version: "26.0", build: "25A354")
         let vc = makeSheet(
             probe: probe, initialURL: "https://example.com/R.ipsw", hostMajor: 26)
 
-        await check(vc)
+        try await check(vc)
 
         #expect(
             findLabel(
@@ -133,7 +133,7 @@ struct RestoreImageURLSheetContentViewControllerTests {
     func editingClearsTheVerdict() async throws {
         let probe = MockRestoreImageProbeService()
         let vc = makeSheet(probe: probe, initialURL: "https://example.com/R.ipsw")
-        await check(vc)
+        try await check(vc)
         #expect(vc.checkedImage != nil)
 
         let field = try #require(findEditableField(in: vc.view))
@@ -157,7 +157,7 @@ struct RestoreImageURLSheetContentViewControllerTests {
         field.stringValue = "https://example.com/B.ipsw"
         vc.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification))
         probe.release()
-        await inFlight.value
+        try await inFlight.joined()
 
         // A's answer must not become B's verdict.
         #expect(vc.checkedImage == nil)
@@ -177,11 +177,13 @@ private final class SuspendingProbeService: RestoreImageProbing {
     private let gate = AsyncGate()
     private var isProbing = false
     private var isReleased = false
+    /// Where a hold the test never releases fails the test.
+    private let waits = OffTaskWaits()
 
     func probe(_ url: URL) async throws -> ProbedRestoreImage {
         isProbing = true
         gate.notify()
-        try? await gate.wait(until: { self.isReleased })
+        await waits.run { try await gate.wait(until: { self.isReleased }) }
         return probeResult
     }
 

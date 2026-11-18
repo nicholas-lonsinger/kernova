@@ -278,7 +278,7 @@ struct VMOverviewResolverTests {
         let files = MockVMBundleMachineFiles()
         let (resolver, _, snapshot) = makeMeasuredResolver(files)
         resolver.refresh()
-        await resolver.snapshotSizeTaskForTesting?.value
+        try await resolver.snapshotSizeTaskForTesting?.joined()
         resolver.refresh()
         #expect(files.sizeReads == 1)
 
@@ -286,7 +286,7 @@ struct VMOverviewResolverTests {
         files.setSize(grown, for: snapshot.id)
         resolver.remeasureSnapshotSizes()
         resolver.refresh()
-        await resolver.snapshotSizeTaskForTesting?.value
+        try await resolver.snapshotSizeTaskForTesting?.joined()
 
         #expect(files.sizeReads == 2)
         #expect(resolver.resolved.snapshotSizes[snapshot.id] == grown)
@@ -300,7 +300,7 @@ struct VMOverviewResolverTests {
         instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [first], currentID: first.id))
         let resolver = makeResolver(instance: instance, viewModel: viewModel)
         resolver.refresh()
-        await resolver.snapshotSizeTaskForTesting?.value
+        try await resolver.snapshotSizeTaskForTesting?.joined()
         let measured = try #require(resolver.resolved.snapshotSizes[first.id])
 
         // Capturing a second snapshot re-issues the walk, which takes seconds on
@@ -314,7 +314,7 @@ struct VMOverviewResolverTests {
         #expect(resolver.resolved.snapshotSizes[first.id] == measured)
         #expect(resolver.resolved.snapshotSizes[second.id] == nil)
 
-        await resolver.snapshotSizeTaskForTesting?.value
+        try await resolver.snapshotSizeTaskForTesting?.joined()
         #expect(resolver.resolved.snapshotSizes.count == 2)
     }
 
@@ -348,11 +348,11 @@ struct VMOverviewResolverTests {
     }
 
     @Test("A stopped VM is measured once per attachment set and phase; a running one on every pass")
-    func onlyARunningVMIsRemeasuredEveryPass() async {
+    func onlyARunningVMIsRemeasuredEveryPass() async throws {
         let files = MockVMBundleMachineFiles()
         let (resolver, instance, _) = makeAttachmentResolver(files)
         resolver.refresh()
-        await resolver.attachmentSizeTaskForTesting?.value
+        try await resolver.attachmentSizeTaskForTesting?.joined()
         resolver.refresh()
         #expect(files.diskSizeReads == 1)
 
@@ -360,19 +360,19 @@ struct VMOverviewResolverTests {
         // writes, so does every pass after it.
         instance.activity.placeForTesting(.running(sessionID: UUID()))
         resolver.refresh()
-        await resolver.attachmentSizeTaskForTesting?.value
+        try await resolver.attachmentSizeTaskForTesting?.joined()
         #expect(files.diskSizeReads == 2)
         resolver.refresh()
-        await resolver.attachmentSizeTaskForTesting?.value
+        try await resolver.attachmentSizeTaskForTesting?.joined()
         #expect(files.diskSizeReads == 3)
     }
 
     @Test("Detaching a medium drops its sizes at once and leaves the disks' on screen")
-    func detachingDropsOnlyItsOwnSizes() async {
+    func detachingDropsOnlyItsOwnSizes() async throws {
         let files = MockVMBundleMachineFiles()
         let (resolver, instance, viewModel) = makeAttachmentResolver(files)
         resolver.refresh()
-        await resolver.attachmentSizeTaskForTesting?.value
+        try await resolver.attachmentSizeTaskForTesting?.joined()
         let hold = files.holdNextDiskSizeRead()
 
         viewModel.ejectRemovableMedia(Self.stick.id, from: instance)
@@ -383,7 +383,7 @@ struct VMOverviewResolverTests {
         #expect(resolver.resolved.attachmentSizes[Self.installer.id] == Self.installerSizes)
         #expect(resolver.resolved.attachmentSizes[Self.mainDisk.id] == Self.mainDiskSizes)
         hold.signal()
-        await resolver.attachmentSizeTaskForTesting?.value
+        try await resolver.attachmentSizeTaskForTesting?.joined()
     }
 
     @Test("A measurement landing after a newer one never replaces it")
@@ -399,16 +399,16 @@ struct VMOverviewResolverTests {
         files.setDiskSizes(fresh, for: Self.mainDisk.id)
         resolver.remeasureAttachmentSizes()
         resolver.refresh()
-        await resolver.attachmentSizeTaskForTesting?.value
+        try await resolver.attachmentSizeTaskForTesting?.joined()
         #expect(resolver.resolved.attachmentSizes[Self.mainDisk.id] == fresh)
 
         hold.signal()
-        await staleRead?.value
+        try await staleRead?.joined()
         #expect(resolver.resolved.attachmentSizes[Self.mainDisk.id] == fresh)
     }
 
     @Test("Binding to another VM drops what described the outgoing one")
-    func rebindingClearsTheOutgoingVMsValues() async {
+    func rebindingClearsTheOutgoingVMsValues() async throws {
         let viewModel = makeSettingsViewModel(preferences: preferences)
         let instance = viewModel.library.admitFixture()
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
@@ -417,8 +417,8 @@ struct VMOverviewResolverTests {
                 snapshots: [snapshot], currentID: snapshot.id))
         let resolver = makeResolver(instance: instance, viewModel: viewModel)
         resolver.refresh()
-        await resolver.snapshotSizeTaskForTesting?.value
-        await resolver.attachmentSizeTaskForTesting?.value
+        try await resolver.snapshotSizeTaskForTesting?.joined()
+        try await resolver.attachmentSizeTaskForTesting?.joined()
         #expect(!resolver.resolved.snapshotSizes.isEmpty)
         #expect(!resolver.resolved.attachmentSizes.isEmpty)
 
@@ -432,7 +432,7 @@ struct VMOverviewResolverTests {
     }
 
     @Test("A resolved read reports the category whose card it moved")
-    func resolvedReadsReportTheirCategory() async {
+    func resolvedReadsReportTheirCategory() async throws {
         let viewModel = makeSettingsViewModel(preferences: preferences)
         let instance = viewModel.library.admitFixture()
         let snapshot = VMSnapshot(name: "Base", macAddress: nil)
@@ -444,8 +444,8 @@ struct VMOverviewResolverTests {
         resolver.onCategoryResolved = { reported.append($0) }
 
         resolver.refresh()
-        await resolver.snapshotSizeTaskForTesting?.value
-        await resolver.attachmentSizeTaskForTesting?.value
+        try await resolver.snapshotSizeTaskForTesting?.joined()
+        try await resolver.attachmentSizeTaskForTesting?.joined()
 
         #expect(reported.contains(.snapshots))
         #expect(reported.contains(.storage))

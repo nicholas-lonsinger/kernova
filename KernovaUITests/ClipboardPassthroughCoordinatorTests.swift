@@ -13,14 +13,20 @@ import Testing
 extension ClipboardOfferSource {
     /// The first INLINE UTF-8 text representation's text, read now; nil when the offer has none or it can no
     /// longer be served.
-    fileprivate func utf8Text() async -> String? {
+    fileprivate func utf8Text(fileID: String = #fileID, line: Int = #line) async throws -> String? {
         for (item, offered) in items.enumerated() {
             guard
                 let index = offered.representations.firstIndex(where: {
                     $0.storage == .inline && $0.type.appleUTI == NSPasteboard.PasteboardType.string.rawValue
                 })
             else { continue }
-            guard case .bytes(let data)? = try? await serve(item: item, representation: index) else { return nil }
+            let served: ClipboardServedRepresentation
+            do {
+                served = try await self.served(item: item, representation: index, fileID: fileID, line: line)
+            } catch is ClipboardServeError {
+                return nil
+            }
+            guard case .bytes(let data) = served else { return nil }
             return String(decoding: data, as: UTF8.self)
         }
         return nil
@@ -70,9 +76,9 @@ struct ClipboardPassthroughCoordinatorTests {
         var grabbed: [Forwarded] = []
 
         /// The text of each copy in `grabbed`, read now.
-        func grabbedTexts() async -> [String?] {
+        func grabbedTexts() async throws -> [String?] {
             var texts: [String?] = []
-            for forwarded in grabbed { texts.append(await forwarded.copy.utf8Text()) }
+            for forwarded in grabbed { texts.append(try await forwarded.copy.utf8Text()) }
             return texts
         }
 
@@ -329,7 +335,7 @@ struct ClipboardPassthroughCoordinatorTests {
         // And settling the superseded count must not roll the record backwards:
         // the copy that replaced it still forwards.
         try await poll(h)
-        #expect(await h.service.grabbedTexts() == ["copied over the folder"])
+        #expect(try await h.service.grabbedTexts() == ["copied over the folder"])
     }
 
     @Test("A file resolve outliving its passthrough session offers nothing, and the next copy still forwards")
@@ -354,7 +360,7 @@ struct ClipboardPassthroughCoordinatorTests {
 
         writeText("copied after the restart", to: h.pasteboard)
         try await poll(h)
-        #expect(await h.service.grabbedTexts() == ["copied after the restart"])
+        #expect(try await h.service.grabbedTexts() == ["copied after the restart"])
     }
 
     // MARK: - Replaying a refusal after the ceiling is raised
@@ -541,7 +547,7 @@ struct ClipboardPassthroughCoordinatorTests {
         // Only a consumer's flavor read fires a pull. Read off the main thread,
         // where the publisher's hold parks rather than running an event loop.
         nonisolated(unsafe) let consumer = pasteboard
-        let served = await Task.detached { consumer.data(forType: textType) }.value
+        let served = try await offCooperativePool { consumer.data(forType: textType) }
         #expect(served == Data("promised bytes".utf8))
         #expect(service.puller.pullCount == 1)
     }

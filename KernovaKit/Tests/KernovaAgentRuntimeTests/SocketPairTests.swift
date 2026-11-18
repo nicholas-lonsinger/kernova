@@ -17,6 +17,7 @@ import Dispatch
 import KernovaAgentCore
 import KernovaAgentRuntime
 import KernovaPlatformPOSIX
+import KernovaPortableTestSupport
 import KernovaWire
 import Testing
 
@@ -89,8 +90,8 @@ final class SocketPair: Sendable {
     }
 
     /// Stops the peer; it closes its connection, if one is up, before the completion.
-    func finish() async {
-        await withCheckedContinuation { continuation in peer.close { continuation.resume() } }
+    func finish() async throws {
+        try await Backstop("peer.close").park { resume in peer.close { resume(()) } }
         host.send(.close(.shuttingDown, retryAfter: nil))
     }
 
@@ -138,7 +139,7 @@ extension SocketTests {
             let pair = try SocketPair()
             var host = pair.hostEvents.waiter()
             var peer = pair.peerEvents.waiter()
-            let hello = await host.next { $0.isHello }
+            let hello = try await host.next { $0.isHello }
             guard case .helloReceived(let claim, let state) = hello else {
                 Issue.record("no Hello")
                 return
@@ -147,54 +148,54 @@ extension SocketTests {
             #expect(claim.instanceID.count == 16)
             #expect(claim.instanceID != Fixture.peerClaim.instanceID)
             #expect(state.sessionID == "1")
-            let established = await peer.next {
+            let established = try await peer.next {
                 if case .established = $0 { return true }
                 return false
             }
             #expect(established == .established(host: Fixture.hostClaim))
-            await pair.finish()
+            try await pair.finish()
         }
 
         @Test("A power request reaches the adapter and its outcome comes back")
         func powerRequest() async throws {
             let pair = try SocketPair()
             var host = pair.hostEvents.waiter()
-            _ = await host.next { $0.powerUsable }
+            _ = try await host.next { $0.powerUsable }
             let id = PowerRequestID(generation: pair.host.generation, rawValue: 1)
             pair.host.send(.requestPower(id, .shutdown))
             var performed = pair.power.performed.waiter()
-            _ = await performed.next { _ in true }
-            let accepted = await host.next(where: \.isPower)
+            _ = try await performed.next { _ in true }
+            let accepted = try await host.next(where: \.isPower)
             #expect(accepted == .power(id, .accepted))
-            let finished = await host.next(where: \.isPower)
+            let finished = try await host.next(where: \.isPower)
             #expect(finished == .power(id, .finished(.handedOff)))
-            await pair.finish()
+            try await pair.finish()
         }
 
         @Test("An update offer is pulled, written and installed")
         func updatePull() async throws {
             let pair = try SocketPair()
             var host = pair.hostEvents.waiter()
-            let result = await host.next(where: \.isUpdateResult)
+            let result = try await host.next(where: \.isUpdateResult)
             guard case .update(.result(_, let value)) = result else {
                 Issue.record("no result")
                 return
             }
             #expect(value.kind == .staged)
             #expect(pair.installer.calls.elements == ["complete \(SocketPair.payloadSize)"])
-            await pair.finish()
+            try await pair.finish()
         }
 
         @Test("A payload bundled but not updating in band is never offered, so the peer pulls nothing")
         func notInBandIsNeverPulled() async throws {
             let pair = try SocketPair(bundled: .notInBand)
             var peer = pair.peerEvents.waiter()
-            let available = await peer.next {
+            let available = try await peer.next {
                 if case .updateAvailable = $0 { return true }
                 return false
             }
             #expect(available == .updateAvailable(nil))
-            await pair.finish()
+            try await pair.finish()
             #expect(!pair.hostEvents.elements.contains { if case .update = $0 { true } else { false } })
             #expect(pair.installer.calls.elements.isEmpty)
         }
@@ -203,22 +204,22 @@ extension SocketTests {
         func supersededAfterWriteErrorStops() async throws {
             let pair = try SocketPair(peerSendBuffer: 4_096, bundled: .nothing)
             var peer = pair.peerEvents.waiter()
-            _ = await peer.next { $0.isPolicyReceived }
+            _ = try await peer.next { $0.isPolicyReceived }
 
             pair.hostStream.gate()
             var writes = pair.peerStream.writes.waiterFromNow()
             for index in 0..<400 { pair.logs.append(SocketPair.record(index)) }
-            _ = await writes.next { $0 == nil }
+            _ = try await writes.next { $0 == nil }
             pair.peerStream.gate()
 
             pair.host.send(.close(.superseded, retryAfter: nil))
-            _ = await writes.next { $0 != nil && $0 != .some(nil) }
+            _ = try await writes.next { $0 != nil && $0 != .some(nil) }
             pair.peerStream.release()
 
-            let closed = await peer.next { $0.isClosed }
+            let closed = try await peer.next { $0.isClosed }
             #expect(closed == .closed(.closedByPeer(WireError(.superseded))))
             var stops = pair.stops.waiter()
-            #expect(await stops.next { _ in true } == .superseded)
+            #expect(try await stops.next { _ in true } == .superseded)
             #expect(pair.dialer.dials.elements == [1])
         }
     }

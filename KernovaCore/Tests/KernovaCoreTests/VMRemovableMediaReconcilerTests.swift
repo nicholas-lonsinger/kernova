@@ -160,7 +160,7 @@ struct VMRemovableMediaReconcilerTests {
         let new = RemovableMediaItem(path: "/tmp/new.iso", readOnly: true)
 
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0.removableMedia = [new] }
-        await waitForObservedChange { !isReconciling(instance) }
+        try await waitForChange { !isReconciling(instance) }
 
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 1)
@@ -185,7 +185,7 @@ struct VMRemovableMediaReconcilerTests {
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) {
             $0.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: false)]
         }
-        await waitForObservedChange { !isReconciling(instance) }
+        try await waitForChange { !isReconciling(instance) }
 
         #expect(mock.detachCallCount == 1)
         #expect(mock.attachCallCount == 0)
@@ -204,7 +204,7 @@ struct VMRemovableMediaReconcilerTests {
         let good = RemovableMediaItem(path: "/tmp/good.iso", readOnly: true)
 
         harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0.removableMedia = [bad, good] }
-        await waitForObservedChange { !isReconciling(instance) }
+        try await waitForChange { !isReconciling(instance) }
 
         #expect(mock.attachCallCount == 2)
         #expect(instance.liveRemovableMedia.map(\.path) == ["/tmp/good.iso"])
@@ -315,7 +315,7 @@ struct VMRemovableMediaReconcilerTests {
         try await mock.waitUntilSuspended()
         mock.attachError = nil
         mock.resumeSuspended()
-        await waitForObservedChange { !isReconciling(instance) }
+        try await waitForChange { !isReconciling(instance) }
 
         #expect(mock.attachCallCount == 2)
         #expect(instance.liveRemovableMedia.map(\.path) == ["/tmp/B.iso"])
@@ -342,7 +342,7 @@ struct VMRemovableMediaReconcilerTests {
             $0.removableMedia = [RemovableMediaItem(path: "/tmp/new.iso", readOnly: true)]
         }
 
-        await waitForObservedChange { !isReconciling(instance) }
+        try await waitForChange { !isReconciling(instance) }
 
         // The detach landed and the attach did not, so the config describes an
         // empty drive — in memory and in the bundle alike.

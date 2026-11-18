@@ -76,7 +76,7 @@ struct VMLibraryIntentTests {
         let arrival = try #require(wired.library.arrivals.first)
         #expect(copy.id == arrival.id)
         hold.signal()
-        let cloned = try #require(await arrival.settle())
+        let cloned = try #require(try await arrival.settle())
         // An Exact Copy keeps the identity of the VM addressed, not its twin's.
         #expect(cloned.configuration.genericMachineIdentifierData == sourceIdentity)
         #expect(twin.configuration.genericMachineIdentifierData == Data([4, 5, 6]))
@@ -214,9 +214,9 @@ struct VMLibraryIntentTests {
 
         #expect(asked.map(\.kind) == [.cancelPreparing, .cancelGuestSetup])
         #expect(arrival.isCancelling)
-        for await _ in setupCancelled { break }
+        _ = try await awaitFirst(setupCancelled)
         gate.release()
-        #expect(await arrival.settle() == nil)
-        await installing.setupOperationTask?.value
+        #expect(try await arrival.settle() == nil)
+        try await installing.setupOperationTask?.joined()
     }
 }

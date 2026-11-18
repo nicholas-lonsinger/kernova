@@ -28,6 +28,8 @@ struct VMScriptingGatewayTests {
         /// Fires when the gateway starts waiting, and again when it is let go.
         private let gate = AsyncGate()
         private var isOpen = false
+        /// Where a gate no test opens fails the test.
+        private let waits = OffTaskWaits()
 
         /// Whether the gateway is parked on the readiness await.
         private(set) var isWaiting = false
@@ -41,12 +43,7 @@ struct VMScriptingGatewayTests {
         func wait() async {
             isWaiting = true
             gate.notify()
-            do {
-                try await gate.wait { self.isOpen }
-            } catch {
-                Issue.record("readiness gate was never opened: \(error)")
-                await VMScriptingGatewayTests.parkForever()
-            }
+            if await !waits.run({ try await gate.wait { self.isOpen } }) { await parkForever() }
         }
 
         /// Lands the library read.
@@ -59,12 +56,6 @@ struct VMScriptingGatewayTests {
         func awaitWaiting() async throws {
             try await gate.wait { self.isWaiting }
         }
-    }
-
-    /// A readiness await that never lands and arms no clock, for a deferred
-    /// read that must stay parked for the rest of the process's life.
-    private static func parkForever() async {
-        await withUnsafeContinuation { (_: UnsafeContinuation<Void, Never>) in }
     }
 
     private func makeGateway(
@@ -406,7 +397,7 @@ struct VMScriptingGatewayTests {
         var runtime = standIn.runtime
         var suspensions: [ObjectIdentifier] = []
         runtime.suspend = { suspensions.append(ObjectIdentifier($0)) }
-        let gateway = makeGateway(wired, awaitReady: { await Self.parkForever() }, runtime: runtime)
+        let gateway = makeGateway(wired, awaitReady: { await parkForever() }, runtime: runtime)
 
         #expect(gateway.virtualMachines().isEmpty)
         #expect(gateway.virtualMachine(named: "Alpha") == nil)
@@ -716,7 +707,7 @@ struct VMScriptingGatewayTests {
         #expect(alpha.status == .running)
 
         readiness.open()
-        try await run.value
+        try await run.joined()
         #expect(virtualization.pauseCallCount == 1)
         #expect(alpha.status == .paused)
     }

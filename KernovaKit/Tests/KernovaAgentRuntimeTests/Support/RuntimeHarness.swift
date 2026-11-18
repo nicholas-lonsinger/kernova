@@ -16,15 +16,16 @@ import KernovaWire
 /// once the stream has started (its start queue is the driver queue), a round flushes each queue twice in
 /// turn, and two rounds that move nothing end the pump.
 func exchange(
-    _ stream: ScriptedStream, queues: [DispatchQueue], read: (Data) -> Void, output: () -> Data
-) async {
+    _ stream: ScriptedStream, queues: [DispatchQueue], fileID: String = #fileID, line: Int = #line,
+    read: (Data) -> Void, output: () -> Data
+) async throws {
     var calls = stream.calls.waiter()
-    _ = await calls.next { $0 == "start" }
+    _ = try await calls.next(fileID: fileID, line: line) { $0 == "start" }
     var idle = 0
     while idle < 2 {
         for _ in 0..<2 {
-            for queue in queues { await flush(queue) }
-            if let queue = stream.queue { await flush(queue) }
+            for queue in queues { try await flush(queue, fileID: fileID, line: line) }
+            if let queue = stream.queue { try await flush(queue, fileID: fileID, line: line) }
         }
         var moved = false
         if stream.hasPendingWrite {
@@ -73,26 +74,27 @@ final class PeerRuntimeHarness: Sendable {
     }
 
     /// Runs every block already on the runtime's queue.
-    func settle() async {
-        await flush(runtime.queue)
+    func settle(fileID: String = #fileID, line: Int = #line) async throws {
+        try await flush(runtime.queue, fileID: fileID, line: line)
     }
 
     /// Answers dial `number` with a new link and pumps it through the Hello.
-    func connect(_ number: Int) async -> RuntimeLink {
+    func connect(_ number: Int, fileID: String = #fileID, line: Int = #line) async throws -> RuntimeLink {
         var dials = dialer.dials.waiter()
-        _ = await dials.next { $0 == number }
+        _ = try await dials.next(fileID: fileID, line: line) { $0 == number }
         let link = RuntimeLink(far: far(scheduler))
         dialer.answer(number, .success(link.stream))
         var calls = link.stream.calls.waiter()
-        _ = await calls.next { $0 == "start" }
-        await pump(link)
+        _ = try await calls.next(fileID: fileID, line: line) { $0 == "start" }
+        try await pump(link, fileID: fileID, line: line)
         return link
     }
 
     /// Pumps `link` until it is quiet.
-    func pump(_ link: RuntimeLink) async {
-        await exchange(
-            link.stream, queues: [runtime.queue], read: link.far.read, output: link.far.output)
+    func pump(_ link: RuntimeLink, fileID: String = #fileID, line: Int = #line) async throws {
+        try await exchange(
+            link.stream, queues: [runtime.queue], fileID: fileID, line: line, read: link.far.read,
+            output: link.far.output)
     }
 }
 

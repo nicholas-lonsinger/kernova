@@ -160,8 +160,8 @@ final class ProbeStubURLProtocol: URLProtocol {
         // Both deliveries run on this loading thread's run loop, where
         // `stopLoading` cancels them. The primer is scheduled rather than
         // delivered here because nothing handed to the client reaches it until
-        // `startLoading` has returned. A run-loop timer bypasses the stopwatch
-        // helpers, so the session activity is armed here.
+        // `startLoading` has returned. A run-loop timer arms no `Backstop`, so
+        // the session activity is armed here.
         armTestSessionActivity()
         withheldBody = reply.body
         let modes = [RunLoop.Mode.default] + (RunLoop.current.currentMode.map { [$0] } ?? [])

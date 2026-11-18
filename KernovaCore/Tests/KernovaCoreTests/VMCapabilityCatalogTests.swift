@@ -230,7 +230,7 @@ struct VMCapabilityCatalogTests {
     }
 
     @Test("Clone stays available while a different VM is being copied")
-    func cloneIgnoresAnotherVMsCopy() async {
+    func cloneIgnoresAnotherVMsCopy() async throws {
         let harness = makeHarness()
         let settled = makeInstance(in: harness, name: "Settled")
         let gate = GatedStep()
@@ -242,7 +242,7 @@ struct VMCapabilityCatalogTests {
         #expect(harness.catalog.isAvailable(.clone, on: settled))
 
         gate.release()
-        await copying.settle()
+        try await copying.settle()
     }
 
     // MARK: - Bring-up: offer versus accept

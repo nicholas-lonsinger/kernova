@@ -406,7 +406,7 @@ struct VMCommandEnvelopeRouterTests {
         let started = try await harness.transport.send(
             .start(.id(instance.id), recovery: false, consent: .none))
         #expect(started.result == .ok)
-        for await _ in installService.installStartedStream { break }
+        _ = try await awaitFirst(installService.installStartedStream)
 
         // The gate covers exactly the setup phase: while the install pipeline
         // is still running, cancelGuestSetup is offered and cancelling it works.
@@ -417,7 +417,7 @@ struct VMCommandEnvelopeRouterTests {
         // Drain the setup operation before asserting or firing the second
         // cancel: until its ending commits, the operation still holds the VM
         // and a cancel legitimately still answers `.ok`.
-        await instance.setupOperationTask?.value
+        try await instance.setupOperationTask?.joined()
 
         #expect(instance.status == .initialBoot)
         #expect(instance.configuration.installContext != nil)
@@ -645,7 +645,7 @@ struct VMCommandEnvelopeRouterTests {
                     operation: "import"))
         #expect(harness.wired.revealedInFinder.isEmpty)
         gate.release()
-        await arrival.settle()
+        try await arrival.settle()
     }
 
     @Test("A quit crosses the wire once, and is answered before anything acts on it")

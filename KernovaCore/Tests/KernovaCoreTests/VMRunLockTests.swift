@@ -66,7 +66,7 @@ struct VMRunLockTests {
                 context.bringUp.bindSessionForTesting(UUID())
             }
             return .rest(.live(.running), ())
-        }.value()
+        }.resolved()
     }
 
     // MARK: - Refusal
@@ -85,13 +85,13 @@ struct VMRunLockTests {
             try await instance.activity.launchStartGuest(.starting(recovery: false)) { _ in
                 recorder.bodyRan = true
                 return .rest(.asStarted, ())
-            }.value()
+            }.resolved()
         },
         Attempt(description: "restore", phase: .suspended, slot: true) { instance, recorder in
             try await instance.activity.launchStartGuest(.restoringSavedState) { _ in
                 recorder.bodyRan = true
                 return .rest(.asStarted, ())
-            }.value()
+            }.resolved()
         },
         Attempt(description: "setup", phase: .initialBoot, pendingSetup: true) { instance, recorder in
             try instance.activity.launchBringUp(.settingUp(.linuxImageDownload)) { _ in
@@ -189,7 +189,7 @@ struct VMRunLockTests {
             recorder.heldInBody = instance.activity.holdsRunLock
             context.bringUp.bindSessionForTesting(UUID())
             return .rest(.live(.running), ())
-        }.value()
+        }.resolved()
         #expect(recorder.heldInBody == true)
         expectLockFollowsPhase(instance, store)
 
@@ -210,7 +210,7 @@ struct VMRunLockTests {
         let stopped = try #require(instance.liveSessionID)
         let stop = try instance.activity.forceStop {}
         instance.deliverSessionEvent(.stopDidComplete, from: stopped)
-        try await stop.value()
+        try await stop.resolved()
         #expect(instance.phase == .stopped)
         expectLockFollowsPhase(instance, store)
 
@@ -248,7 +248,7 @@ struct VMRunLockTests {
         await #expect(throws: Probe.self) {
             try await instance.activity.launchStartGuest(.starting(recovery: false)) {
                 (_: borrowing VMGuestStartContext) throws -> VMOperationEnding<Void> in throw Probe()
-            }.value()
+            }.resolved()
         }
         expectLockFollowsPhase(instance, store)
 
@@ -261,7 +261,7 @@ struct VMRunLockTests {
         try await gate.waitUntilEntered()
         expectLockFollowsPhase(instance, store)
         gate.release()
-        try await outcome.value()
+        try await outcome.resolved()
         expectLockFollowsPhase(instance, store)
 
         // A refused admission keeps nothing.
@@ -316,7 +316,7 @@ struct VMRunLockTests {
         }
         expectLockFollowsPhase(instance, store)
         gate.release()
-        try await revert.value()
+        try await revert.resolved()
         #expect(instance.phase == .stopped)
         expectLockFollowsPhase(instance, store)
     }
@@ -336,7 +336,7 @@ struct VMRunLockTests {
             recorder.startedFrom = instance.phase.operation?.startedFrom
             recorder.pendingSetupInBody = instance.configuration.pendingGuestSetup != nil
             return .rest(.asStarted, ())
-        }.value()
+        }.resolved()
 
         #expect(recorder.startedFrom == .stopped)
         #expect(recorder.pendingSetupInBody == false)
@@ -354,7 +354,7 @@ struct VMRunLockTests {
             try await instance.activity.launchStartGuest(.starting(recovery: false)) { _ in
                 recorder.bodyRan = true
                 return .rest(.asStarted, ())
-            }.value()
+            }.resolved()
         }
 
         #expect(!recorder.bodyRan)

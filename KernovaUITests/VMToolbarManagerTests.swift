@@ -162,7 +162,7 @@ struct VMToolbarManagerTests {
         // from still names a capture — one requested now is refused as busy,
         // so the button has to go dim rather than error on click.
         let resume = try lifecycle.launchResume(instance)
-        await suspending.waitUntilSuspended()
+        try await suspending.waitUntilSuspended()
         try await applied.wait { item("testTakeSnapshot", in: toolbar)?.isEnabled == false }
 
         #expect(
@@ -171,7 +171,7 @@ struct VMToolbarManagerTests {
         #expect(item("testTakeSnapshot", in: toolbar)?.isEnabled == false)
 
         suspending.resumeSuspended()
-        try await resume.value()
+        try await resume.resolved()
     }
 
     @Test("makeToolbarItem returns separate bordered pop-out and fullscreen items")
@@ -276,7 +276,7 @@ struct VMToolbarManagerTests {
         }
 
         gate.release()
-        await arrival.settle()
+        try await arrival.settle()
     }
 
     // MARK: - Clipboard commands

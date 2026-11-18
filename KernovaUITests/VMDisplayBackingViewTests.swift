@@ -96,11 +96,11 @@ struct VMDisplayBackingViewTests {
 
         host.displayDropAvailability = .disconnected
         // The observation's pass is queued on main by the change itself.
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(backing.registeredDraggedTypes.contains(.fileURL))
 
         host.displayDropAvailability = .none
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(backing.registeredDraggedTypes.isEmpty)
     }
 

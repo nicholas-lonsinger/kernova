@@ -57,9 +57,6 @@ struct DetailContainerLibraryLoadTests {
     /// `ObservationLoop` applies through `Task { @MainActor … }` enqueued
     /// synchronously from the mutation, so a task enqueued afterwards lands
     /// behind it — a deterministic hand-off, not a poll or a settle delay.
-    private func drainMainActor() async {
-        await Task { @MainActor in }.value
-    }
 
     private func hasEmptyState(_ controller: DetailContainerViewController) -> Bool {
         func search(_ view: NSView) -> Bool {
@@ -78,14 +75,14 @@ struct DetailContainerLibraryLoadTests {
     }
 
     @Test("A library that reads back empty reaches the no-VM empty state")
-    func emptyStateShownAfterEmptyLoad() async {
+    func emptyStateShownAfterEmptyLoad() async throws {
         let viewModel = makeViewModel()
         let controller = DetailContainerViewController(viewModel: viewModel)
         present(controller)
         #expect(hasEmptyState(controller) == false)
 
         await viewModel.loadVMs()
-        await drainMainActor()
+        try await drainMainQueue()
 
         // Load completion is the only change here — an empty library leaves
         // `instances` and `selectedID` exactly as they were — so this pins the
@@ -96,7 +93,7 @@ struct DetailContainerLibraryLoadTests {
     }
 
     @Test("A selected arrival shows the placeholder carrying its label, which follows its stage")
-    func selectedArrivalShowsThePlaceholder() async {
+    func selectedArrivalShowsThePlaceholder() async throws {
         let viewModel = makeViewModel()
         let controller = DetailContainerViewController(viewModel: viewModel)
         present(controller)
@@ -104,18 +101,18 @@ struct DetailContainerLibraryLoadTests {
         let gate = GatedStep()
 
         let arrival = viewModel.library.beginGatedArrival(named: "Arriving", gate: gate)
-        await drainMainActor()
+        try await drainMainQueue()
 
         #expect(viewModel.selectedEntry?.arrival === arrival)
         #expect(hasEmptyState(controller) == false)
         #expect(labels(in: controller).contains("Importing\u{2026}"))
 
         #expect(arrival.requestCancel() == .cancelled)
-        await drainMainActor()
+        try await drainMainQueue()
         #expect(labels(in: controller).contains("Cancelling\u{2026}"))
 
         gate.release()
-        await arrival.settle()
+        try await arrival.settle()
     }
 
     /// A library holding one bundle whose `config.json` names "Bad VM" and
@@ -140,7 +137,7 @@ struct DetailContainerLibraryLoadTests {
         let controller = DetailContainerViewController(viewModel: viewModel)
         present(controller)
         await viewModel.loadVMs()
-        await drainMainActor()
+        try await drainMainQueue()
 
         #expect(viewModel.selectedEntry?.unreadable?.name == "Bad VM")
         #expect(labels(in: controller).contains("Kernova can\u{2019}t read \u{201C}Bad VM\u{201D}"))

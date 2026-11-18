@@ -111,9 +111,9 @@ struct VMSettingsNetworkPanelTests {
     /// Reads the host's table once and lets the pane repaint from what it
     /// found: the repaint is a main-actor task a published address enqueues,
     /// so it has run once the main queue drains behind it.
-    private func readGuestAddresses(_ viewModel: VMLibraryViewModel) async {
+    private func readGuestAddresses(_ viewModel: VMLibraryViewModel) async throws {
         await viewModel.library.guestAddresses.readForTesting()
-        await drainMainQueue()
+        try await drainMainQueue()
     }
 
     @Test("A running NAT VM reads not seen, then fills in the address the host saw, on both surfaces")
@@ -129,7 +129,7 @@ struct VMSettingsNetworkPanelTests {
         #expect(copy.value == nil)
 
         arpTable.setTable([.scripted("192.168.64.10", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)])
-        await readGuestAddresses(viewModel)
+        try await readGuestAddresses(viewModel)
 
         #expect(visibleLabel("192.168.64.10", in: vc.view))
         #expect(visibleLabel("IP address", in: vc.view))
@@ -356,7 +356,7 @@ struct VMSettingsNetworkPanelTests {
         #expect(try natReachText(in: vc).contains("its address on that subnet"))
 
         arpTable.setTable([.scripted("192.168.64.10", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)])
-        await readGuestAddresses(viewModel)
+        try await readGuestAddresses(viewModel)
 
         #expect(visibleLabel("192.168.64.10", in: vc.view))
         #expect(try natReachText(in: vc).contains("the address in the IP address row"))

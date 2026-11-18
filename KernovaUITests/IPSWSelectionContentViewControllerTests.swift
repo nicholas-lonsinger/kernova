@@ -43,7 +43,7 @@ struct IPSWSelectionContentViewControllerTests {
         vc.loadViewIfNeeded()
         // Mounting the step joins the lookup; the badge upgrades when it answers.
         vc.viewDidAppear()
-        await vc.latestImageTaskForTesting?.value
+        try await vc.latestImageTaskForTesting?.joined()
 
         #expect(
             findLabel(
@@ -71,7 +71,7 @@ struct IPSWSelectionContentViewControllerTests {
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
-        await vc.latestImageTaskForTesting?.value
+        try await vc.latestImageTaskForTesting?.joined()
 
         #expect(findLabel(withText: "Couldn\u{2019}t look up the latest macOS", in: vc.view) != nil)
         #expect(
@@ -89,7 +89,7 @@ struct IPSWSelectionContentViewControllerTests {
         try #require(findButton(titled: "Try Again", in: vc.view)).performClick(nil)
         #expect(vm.latestImageLookup == .unanswered)
         #expect(firstSubview(NSProgressIndicator.self, in: vc.view) != nil)
-        await vc.latestImageTaskForTesting?.value
+        try await vc.latestImageTaskForTesting?.joined()
 
         #expect(ipswService.fetchCallCount == 2)
         #expect(findLabel(containing: "macOS 26.5.2  ·  Build 25F84", in: vc.view) != nil)
@@ -108,7 +108,7 @@ struct IPSWSelectionContentViewControllerTests {
         let rebuilt = IPSWSelectionContentViewController(creationVM: vm)
         rebuilt.loadViewIfNeeded()
         rebuilt.viewDidAppear()
-        await rebuilt.latestImageTaskForTesting?.value
+        try await rebuilt.latestImageTaskForTesting?.joined()
         // Mounted after it answered, so the badge is built with the view.
         let built = IPSWSelectionContentViewController(creationVM: vm)
         built.loadViewIfNeeded()
@@ -138,13 +138,13 @@ struct IPSWSelectionContentViewControllerTests {
     }
 
     @Test("Overwrite warning shows when a file exists; Use Existing switches to local file")
-    func overwriteUseExisting() async {
+    func overwriteUseExisting() async throws {
         let path = makeIPSW()
 
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "26.5.2", build: "25F84", isSupportedOnThisHost: true, sizeBytes: 15_500_000_000)
-        let vm = await makeLookedUpWizard(localImageInspector: inspector)
+        let vm = try await makeLookedUpWizard(localImageInspector: inspector)
         #expect(vm.shouldShowOverwriteWarning == true)
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
@@ -152,7 +152,7 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(findButton(titled: "Use Existing File", in: vc.view) != nil)
 
         findButton(titled: "Use Existing File", in: vc.view)?.performClick(nil)
-        await vc.adoptTaskForTesting?.value
+        try await vc.adoptTaskForTesting?.joined()
 
         #expect(
             vm.ipswSelection
@@ -167,7 +167,7 @@ struct IPSWSelectionContentViewControllerTests {
     }
 
     @Test("A file of a different build is named, and not adopted until confirmed")
-    func mismatchedExistingFileIsNotAdopted() async {
+    func mismatchedExistingFileIsNotAdopted() async throws {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "14.2", build: "23C64", isSupportedOnThisHost: true, sizeBytes: 8_500_000_000)
@@ -180,7 +180,7 @@ struct IPSWSelectionContentViewControllerTests {
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
         findButton(titled: "Use Existing File", in: vc.view)?.performClick(nil)
-        await vc.adoptTaskForTesting?.value
+        try await vc.adoptTaskForTesting?.joined()
 
         #expect(vm.ipswSelection == .catalogVersion(entry))
         #expect(findLabel(containing: "macOS 14.2 (23C64)", in: vc.view) != nil)
@@ -200,7 +200,7 @@ struct IPSWSelectionContentViewControllerTests {
     }
 
     @Test("A hand-picked unsupported IPSW shows the same message the adopt route uses, with no metadata")
-    func unsupportedPickShowsUnusableBanner() async {
+    func unsupportedPickShowsUnusableBanner() async throws {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "13.0", build: "22A5286j", isSupportedOnThisHost: false)
@@ -210,7 +210,7 @@ struct IPSWSelectionContentViewControllerTests {
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
-        await vc.localFileInspectionTaskForTesting?.value
+        try await vc.localFileInspectionTaskForTesting?.joined()
 
         #expect(
             findLabel(
@@ -238,14 +238,14 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(vm.validationMessage == "Checking the selected restore image\u{2026}")
 
         inspector.release()
-        await vc.localFileInspectionTaskForTesting?.value
+        try await vc.localFileInspectionTaskForTesting?.joined()
     }
 
     @Test("Download & Replace confirms the overwrite and dismisses the banner")
-    func overwriteConfirm() async {
+    func overwriteConfirm() async throws {
         makeIPSW()
 
-        let vm = await makeLookedUpWizard()
+        let vm = try await makeLookedUpWizard()
         #expect(vm.shouldShowOverwriteWarning == true)
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
@@ -258,7 +258,7 @@ struct IPSWSelectionContentViewControllerTests {
     }
 
     @Test("Switching install source clears a stale mismatch banner")
-    func sourceSwitchClearsMismatchBanner() async {
+    func sourceSwitchClearsMismatchBanner() async throws {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "14.2", build: "23C64", isSupportedOnThisHost: true)
@@ -271,7 +271,7 @@ struct IPSWSelectionContentViewControllerTests {
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
         findButton(titled: "Use Existing File", in: vc.view)?.performClick(nil)
-        await vc.adoptTaskForTesting?.value
+        try await vc.adoptTaskForTesting?.joined()
         #expect(findButton(titled: "Use It Anyway", in: vc.view) != nil)
 
         // Clicking another source drops the verdict, so the button that would
@@ -289,7 +289,7 @@ struct IPSWSelectionContentViewControllerTests {
         makeIPSW()
 
         let inspector = SuspendingMockLocalRestoreImageInspector()
-        let vm = await makeLookedUpWizard(localImageInspector: inspector)
+        let vm = try await makeLookedUpWizard(localImageInspector: inspector)
 
         let vc = IPSWSelectionContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -308,7 +308,7 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(findButton(titled: "Download & Replace", in: vc.view) != nil)
 
         inspector.release()
-        await inFlight.value
+        try await inFlight.joined()
         #expect(vm.ipswSelection == .downloadLatest)
     }
 
@@ -361,7 +361,7 @@ struct IPSWSelectionContentViewControllerTests {
         #expect(vm.ipswSource == .downloadLatest)
         #expect(vm.currentStep == .bootConfig)
 
-        await vc.latestImageTaskForTesting?.value
+        try await vc.latestImageTaskForTesting?.joined()
         radio.mouseDown(with: doubleClick)
         #expect(vm.currentStep == .resources)
     }
@@ -373,11 +373,11 @@ struct IPSWSelectionContentViewControllerTests {
     /// one ``makeIPSW(at:)`` writes by default.
     private func makeLookedUpWizard(
         localImageInspector: any LocalRestoreImageInspecting = MockLocalRestoreImageInspector()
-    ) async -> VMCreationViewModel {
+    ) async throws -> VMCreationViewModel {
         let vm = VMCreationViewModel.overEngine(
             probeService: MockRestoreImageProbeService(), localImageInspector: localImageInspector,
             ipswService: MockIPSWService(), downloadsDirectory: scratch.url)
-        await vm.loadLatestImageDetails()?.value
+        try await vm.loadLatestImageDetails()?.joined()
         return vm
     }
 

@@ -314,7 +314,7 @@ struct VMInstanceTests {
     }
 
     @Test("A running Bridged VM on its own NAT network says so, naming the missing interface")
-    func bridgedFallbackSaysWhy() async {
+    func bridgedFallbackSaysWhy() async throws {
         let library = makeWiredLibrary()
         let instance = library.registerFixture(phase: .running(sessionID: UUID())) {
             $0.networkEnabled = true
@@ -324,7 +324,7 @@ struct VMInstanceTests {
         let device = MockNetworkDeviceControl()
         let coordinator = attachNetworkCoordinator(to: instance, device: device, entitlements: .entitled)
         coordinator.activate()
-        await coordinator.vmnetMaterializationTaskForTesting?.value
+        try await coordinator.vmnetMaterializationTaskForTesting?.joined()
 
         #expect(instance.isOnBridgedFallback)
         #expect(instance.statusToolTip?.contains("en1") == true)
@@ -664,7 +664,7 @@ struct VMInstanceTests {
                     to: instance, device: MockNetworkDeviceControl(), linkObserver: observer)
                 context.bindSessionForTesting(UUID())
                 return .rest(.live(.running), ())
-            }.value()
+            }.resolved()
         default:
             instance.beginSessionContextForTesting()
             attachNetworkCoordinator(
@@ -790,7 +790,7 @@ struct VMInstanceTests {
         let watchdog = try #require(instance.agentAbsenceTimerForTesting)
 
         instance.cancelAgentAbsenceWatchdog()
-        await watchdog.value
+        try await watchdog.joined()
         #expect(instance.agentExpectedButMissing == false)
     }
 
@@ -803,7 +803,7 @@ struct VMInstanceTests {
         let floor = try #require(context.agentAbsenceFloor)
         #expect(context.agentAbsenceTimerDeadline == floor + Self.testWatchdogGrace)
 
-        await instance.agentAbsenceTimerForTesting?.value
+        try await instance.agentAbsenceTimerForTesting?.joined()
         #expect(SystemScheduler().now >= floor + Self.testWatchdogGrace)
         #expect(instance.agentExpectedButMissing == true)
         #expect(instance.missingAgentNoticesForTesting.count == 1)
@@ -873,13 +873,13 @@ struct VMInstanceTests {
 
         // The timer that was armed has run out, by firing or by being
         // cancelled.
-        await armed.value
+        try await armed.joined()
         #expect(instance.missingAgentNoticesForTesting.isEmpty)
         #expect(!instance.agentExpectedButMissing)
 
         let session = try #require(instance.liveSessionID)
         instance.activity.deliverSessionEvent(.stopDidComplete, from: session)
-        try await stop.value()
+        try await stop.resolved()
     }
 
     @Test("Reading the agents again with nothing changed keeps the armed timer and its deadline")
@@ -914,7 +914,7 @@ struct VMInstanceTests {
 
         instance.startAgentAbsenceWatch()
 
-        await instance.agentAbsenceTimerForTesting?.value
+        try await instance.agentAbsenceTimerForTesting?.joined()
         #expect(instance.agentExpectedButMissing == true)
         #expect(instance.hostState.agentInstallNudgeDismissed == false)
         #expect(storage.saveHostStateCallCount == 1)
@@ -938,7 +938,7 @@ struct VMInstanceTests {
 
         instance.startAgentAbsenceWatch()
 
-        await instance.agentAbsenceTimerForTesting?.value
+        try await instance.agentAbsenceTimerForTesting?.joined()
         #expect(instance.agentExpectedButMissing == true)
         #expect(instance.settings == held)
         #expect(storage.bundles[instance.bundleURL] == held.configuration)
@@ -1074,7 +1074,7 @@ struct VMInstanceTests {
     private static let systemHash = Data(repeating: 0x5A, count: 32)
 
     @Test("A scope the guest stopped running warns in one run at most, then is no longer expected")
-    func scopeSwitchWarnsOnce() async {
+    func scopeSwitchWarnsOnce() async throws {
         let storage = MockVMStorageService()
         let library = makeWiredLibrary(storage: storage)
         let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "1.0")
@@ -1084,7 +1084,7 @@ struct VMInstanceTests {
         connectAgents(to: instance, [(.systemPeer, "2.0", Self.systemHash)])
         instance.agentAbsenceGrace = Self.testWatchdogGrace
         instance.startAgentAbsenceWatch()
-        await instance.agentAbsenceTimerForTesting?.value
+        try await instance.agentAbsenceTimerForTesting?.joined()
         #expect(instance.warnedMissingAgents.map(\.scope) == [.login])
         #expect(instance.missingAgentNoticesForTesting.count == 1)
 
@@ -1110,7 +1110,7 @@ struct VMInstanceTests {
     }
 
     @Test("A scope that leaves the guest during a run warns in that run only")
-    func scopeLeavingDuringARunWarnsOnce() async {
+    func scopeLeavingDuringARunWarnsOnce() async throws {
         let library = makeWiredLibrary()
         let instance = makeMacOSInstanceWithAgentInstalled(in: library, lastSeen: "1.0")
         defer { withExtendedLifetime(library) {} }
@@ -1121,7 +1121,7 @@ struct VMInstanceTests {
         connectAgents(to: instance, [session])
         instance.agentAbsenceGrace = Self.testWatchdogGrace
         instance.startAgentAbsenceWatch()
-        await instance.agentAbsenceTimerForTesting?.value
+        try await instance.agentAbsenceTimerForTesting?.joined()
         #expect(instance.warnedMissingAgents.map(\.scope) == [.system])
 
         instance.handleSessionEvent(.guestDidStop)

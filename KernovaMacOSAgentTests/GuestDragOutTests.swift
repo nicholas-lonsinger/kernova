@@ -327,7 +327,7 @@ struct GuestDragOutTests {
     @Test(
         "a drag its source is still filling goes out whole: the take carries what the catcher sees, not the watcher's early read"
     )
-    func aDragStillFillingGoesOutWhole() throws {
+    func aDragStillFillingGoesOutWhole() async throws {
         let urls = [try file("IMG_0001.JPG"), try file("IMG_0002.JPG"), try file("IMG_0003.JPG", "third")]
         let rig = Rig()
         rig.input.press()
@@ -352,14 +352,14 @@ struct GuestDragOutTests {
         #expect(rig.peer.answers(to: id) == [.armed, .targeted(names(urls))])
         #expect(rig.surface.shownItems == items(urls))
         let served = rig.dragOut.served
-        #expect(served.content(request(try rig.token(), item: 2)) == .success(.tree(path: urls[2].path)))
+        #expect(try await serve(served, request(try rig.token(), item: 2)) == .success(.tree(path: urls[2].path)))
         #expect(rig.catcher.draggingUpdated(GuestDragCatcher.Drag(sourceMask: .copy, items: entered)) == .copy)
         #expect(rig.peer.offers.count == 1)
         #expect(!rig.peer.events.contains(.withdrew(token: try rig.token())))
     }
 
     @Test("items that cannot go out are answered no operation, refusing the take DRAG_NOT_CURRENT")
-    func itemsThatCannotGoOutAreRefused() throws {
+    func itemsThatCannotGoOutAreRefused() async throws {
         // The root's URL names no file a drop could land under.
         let urls = [try file("plain.txt"), URL(fileURLWithPath: "/")]
         let rig = Rig()
@@ -371,7 +371,8 @@ struct GuestDragOutTests {
         #expect(rig.peer.answers(to: id) == [.armed, .refused(.dragNotCurrent)])
         #expect(!rig.surface.isShown)
         #expect(
-            failureCode(rig.dragOut.served.content(request(try rig.token(), item: 0))) == .itemRepresentationUnavailable
+            failureCode(try await serve(rig.dragOut.served, request(try rig.token(), item: 0)))
+                == .itemRepresentationUnavailable
         )
     }
 
@@ -749,7 +750,7 @@ struct GuestDragOutTests {
         #expect(!rig.peer.answers(to: takeID(1)).contains { if case .named = $0 { true } else { false } })
         #expect(!rig.peer.events.contains(.withdrew(token: try rig.token())))
         #expect(
-            failureCode(rig.dragOut.served.content(request(try rig.token(), item: 1)))
+            failureCode(try await serve(rig.dragOut.served, request(try rig.token(), item: 1)))
                 == .itemRepresentationUnavailable)
         // Its source may still write, so the folder goes only once it has.
         let folder = try #require(unnamed.destination)
@@ -800,7 +801,7 @@ struct GuestDragOutTests {
     }
 
     @Test("a whole drop relays each file only once its coordinated read is granted, naming the drag once all are")
-    func aWholeDropRelaysOnlyGrantedFiles() throws {
+    func aWholeDropRelaysOnlyGrantedFiles() async throws {
         let (rig, _, folder) = try wholeDropRig(["public.jpeg", "public.jpeg"])
         let token = try rig.token()
         let served = rig.dragOut.served
@@ -810,11 +811,11 @@ struct GuestDragOutTests {
         rig.input.appear(["IMG_00001.jpg", "IMG_00002.jpg"])
 
         #expect(rig.input.coordinationsWaiting.map(\.lastPathComponent) == ["IMG_00001.jpg", "IMG_00002.jpg"])
-        #expect(failureCode(served.content(request(token, item: 1))) == .itemRepresentationUnavailable)
+        #expect(failureCode(try await serve(served, request(token, item: 1))) == .itemRepresentationUnavailable)
         rig.input.grant("IMG_00001.jpg")
         // One of two granted: still nothing named, nothing relayed.
         #expect(!rig.peer.answers(to: takeID(1)).contains { if case .named = $0 { true } else { false } })
-        #expect(failureCode(served.content(request(token, item: 1))) == .itemRepresentationUnavailable)
+        #expect(failureCode(try await serve(served, request(token, item: 1))) == .itemRepresentationUnavailable)
 
         rig.input.grant("IMG_00002.jpg")
 
@@ -822,13 +823,13 @@ struct GuestDragOutTests {
             Array(rig.peer.answers(to: takeID(1)).suffix(2)) == [
                 .named(["IMG_00001.jpg", "IMG_00002.jpg"]), .caught(sizes: [5, 8, 8]),
             ])
-        #expect(served.content(request(token, item: 1)) == .success(.tree(path: first.path)))
-        #expect(served.content(request(token, item: 2)) == .success(.tree(path: second.path)))
+        #expect(try await serve(served, request(token, item: 1)) == .success(.tree(path: first.path)))
+        #expect(try await serve(served, request(token, item: 2)) == .success(.tree(path: second.path)))
         #expect(rig.input.watchedFolder == nil)
     }
 
     @Test("a whole drop gives each arriving file to the first waiting promise of its kind")
-    func aWholeDropMatchesKinds() throws {
+    func aWholeDropMatchesKinds() async throws {
         let (rig, _, folder) = try wholeDropRig(["public.folder", "public.jpeg"])
         let photo = try place("IMG_00001.jpg", in: folder)
         let album = folder.appendingPathComponent("Album", isDirectory: true)
@@ -841,8 +842,8 @@ struct GuestDragOutTests {
 
         #expect(rig.peer.answers(to: takeID(1)).contains(.named(["Album", "IMG_00001.jpg"])))
         let token = try rig.token()
-        #expect(rig.dragOut.served.content(request(token, item: 1)) == .success(.tree(path: album.path)))
-        #expect(rig.dragOut.served.content(request(token, item: 2)) == .success(.tree(path: photo.path)))
+        #expect(try await serve(rig.dragOut.served, request(token, item: 1)) == .success(.tree(path: album.path)))
+        #expect(try await serve(rig.dragOut.served, request(token, item: 2)) == .success(.tree(path: photo.path)))
     }
 
     @Test(
@@ -863,7 +864,7 @@ struct GuestDragOutTests {
         rig.input.grant("IMG_00002.jpg")
         #expect(!rig.peer.answers(to: takeID(1)).contains { if case .named = $0 { true } else { false } })
         #expect(
-            failureCode(rig.dragOut.served.content(request(token, item: 1))) == .itemRepresentationUnavailable)
+            failureCode(try await serve(rig.dragOut.served, request(token, item: 1))) == .itemRepresentationUnavailable)
         await rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
         #expect(!exists(folder))
     }
@@ -908,18 +909,26 @@ struct GuestDragOutTests {
     /// own, as a pull's queue serves it, returning once the call is under way.
     private func startPull(
         _ rig: Rig, token: Data, item: UInt32
-    ) async throws -> Task<Result<ItemContent, WireError>, Never> {
+    ) async throws -> BlockingCall<Result<ItemContent, WireError>> {
         let served = rig.dragOut.served
         let request = request(token, item: item)
         let probe = PullProbe()
-        let task = Task {
-            await offCooperativePool {
-                probe.markStarted()
-                return served.content(request)
-            }
+        let pull = BlockingCall {
+            probe.markStarted()
+            return served.content(request)
         }
         try await probe.started.wait { probe.isStarted }
-        return task
+        return pull
+    }
+
+    /// `served`'s answer to `request`, served off the main actor as a pull's
+    /// queue serves it: a promise's serve waits on its landing, and a serve
+    /// that never answers would hold the main thread every main-actor test
+    /// needs.
+    private func serve(
+        _ served: GuestDragServedOffers, _ request: PullRequest, fileID: String = #fileID, line: Int = #line
+    ) async throws -> Result<ItemContent, WireError> {
+        try await offCooperativePool(fileID: fileID, line: line) { served.content(request) }
     }
 
     private func failureCode(_ result: Result<ItemContent, WireError>) -> ErrorCode? {
@@ -928,26 +937,26 @@ struct GuestDragOutTests {
     }
 
     @Test("an offer serves nothing until a take carries it, then each plain file from where it is")
-    func filesAreServedOnceCarried() throws {
+    func filesAreServedOnceCarried() async throws {
         let one = try file("one.txt")
         let tree = try folder("Tree", files: ["a.txt": "alpha"])
         let rig = try takenRig([one, tree])
         let token = try rig.token()
         let served = rig.dragOut.served
-        #expect(failureCode(served.content(request(token, item: 0))) == .itemRepresentationUnavailable)
+        #expect(failureCode(try await serve(served, request(token, item: 0))) == .itemRepresentationUnavailable)
 
         rig.enter(items([one, tree]))
 
-        #expect(served.content(request(token, item: 0)) == .success(.tree(path: one.path)))
-        #expect(served.content(request(token, item: 1)) == .success(.tree(path: tree.path)))
-        #expect(failureCode(served.content(request(token, item: 2))) == .itemRepresentationUnavailable)
+        #expect(try await serve(served, request(token, item: 0)) == .success(.tree(path: one.path)))
+        #expect(try await serve(served, request(token, item: 1)) == .success(.tree(path: tree.path)))
+        #expect(failureCode(try await serve(served, request(token, item: 2))) == .itemRepresentationUnavailable)
         #expect(
-            failureCode(served.content(request(Data(repeating: 3, count: 16), item: 0)))
+            failureCode(try await serve(served, request(Data(repeating: 3, count: 16), item: 0)))
                 == .itemRepresentationUnavailable)
     }
 
     @Test("a promise not called in serves nothing, and an ended offer serves nothing more")
-    func anUncalledPromiseServesNothing() throws {
+    func anUncalledPromiseServesNothing() async throws {
         let (rig, items) = try promiseRig(
             ["public.heic"], receivers: [FakePromiseReceiver(names: ["IMG_0001.HEIC"])])
         try rig.take(1)
@@ -955,12 +964,12 @@ struct GuestDragOutTests {
         let token = try rig.token()
         let served = rig.dragOut.served
 
-        #expect(failureCode(served.content(request(token, item: 1))) == .itemRepresentationUnavailable)
-        #expect(served.content(request(token, item: 0)).map { _ in true } == .success(true))
+        #expect(failureCode(try await serve(served, request(token, item: 1))) == .itemRepresentationUnavailable)
+        #expect(try await serve(served, request(token, item: 0)).map { _ in true } == .success(true))
 
         rig.dragOut.offerEnded(token)
 
-        #expect(failureCode(served.content(request(token, item: 0))) == .itemRepresentationUnavailable)
+        #expect(failureCode(try await serve(served, request(token, item: 0))) == .itemRepresentationUnavailable)
     }
 
     @Test("a promise naming several files whose first fails is unavailable, whatever the others do")
@@ -972,7 +981,7 @@ struct GuestDragOutTests {
         try burst.fail("IMG_0002.JPG")
         try burst.write("IMG_0003.JPG", contents: Data(count: 3))
 
-        #expect(failureCode(await pull.value) == .itemRepresentationUnavailable)
+        #expect(failureCode(try await pull.returned()) == .itemRepresentationUnavailable)
     }
 
     @Test("a promised folder is served once its folder lands, and a file in its place is unavailable")
@@ -982,13 +991,13 @@ struct GuestDragOutTests {
         let folder = try #require(album.destination)
         let pull = try await startPull(rig, token: try rig.token(), item: 1)
         try album.writeFolder("Album")
-        #expect(await pull.value == .success(.tree(path: folder.appendingPathComponent("Album").path)))
+        #expect(try await pull.returned() == .success(.tree(path: folder.appendingPathComponent("Album").path)))
 
         let flat = FakePromiseReceiver(names: ["Album"])
         let (other, _) = try deliveredRig(["public.folder"], receivers: [flat])
         let refused = try await startPull(other, token: try other.token(), item: 1)
         try flat.write("Album", contents: Data("not a folder".utf8))
-        #expect(failureCode(await refused.value) == .itemRepresentationUnavailable)
+        #expect(failureCode(try await refused.returned()) == .itemRepresentationUnavailable)
     }
 
     @Test("the offer ending while a pull waits on its promise answers the pull unavailable")
@@ -1000,7 +1009,7 @@ struct GuestDragOutTests {
         let pull = try await startPull(rig, token: token, item: 1)
         rig.dragOut.offerEnded(token)
 
-        #expect(failureCode(await pull.value) == .itemRepresentationUnavailable)
+        #expect(failureCode(try await pull.returned()) == .itemRepresentationUnavailable)
     }
 
     // MARK: - Letting the promises go
@@ -1024,7 +1033,8 @@ struct GuestDragOutTests {
             // has landed — and the open offer keeps the folder.
             let pull = try await startPull(rig, token: token, item: 1)
             try photo.write("IMG_0001.HEIC", contents: Data(count: 8))
-            #expect(await pull.value == .success(.tree(path: folder.appendingPathComponent("IMG_0001.HEIC").path)))
+            #expect(
+                try await pull.returned() == .success(.tree(path: folder.appendingPathComponent("IMG_0001.HEIC").path)))
             await rig.dragOut.promisesForTesting.waitForFolderRemovalsForTesting()
             #expect(exists(folder))
             rig.dragOut.offerEnded(token)

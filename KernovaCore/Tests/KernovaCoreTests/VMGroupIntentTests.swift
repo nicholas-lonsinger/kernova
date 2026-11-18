@@ -117,19 +117,19 @@ struct VMGroupIntentTests {
             try await gateway.groupAction(.start, on: VMGroupReference(.folder, named: "Lab"))
         }
         // Beta's start, then Gone's, each let through in turn.
-        await virtualization.waitUntilSuspended()
+        try await virtualization.waitUntilSuspended()
         virtualization.resumeSuspended()
-        await virtualization.waitUntilSuspended()
+        try await virtualization.waitUntilSuspended()
         virtualization.resumeSuspended()
         // Alpha's start is under way, so Gone's turn is over: it was started.
-        await virtualization.waitUntilSuspended()
+        try await virtualization.waitUntilSuspended()
         #expect(gone.status == .running)
         try await harness.core.stop(.id(gone.id), disposition: .force, consent: .all, timeout: nil)
         try await harness.core.delete(.id(gone.id), permanently: true, alsoRemoving: [], consent: .all)
         virtualization.shouldSuspendOnStart = false
         virtualization.resumeSuspended()
 
-        let done = try await action.value
+        let done = try await action.joined()
 
         #expect(done.map(\.id) == [beta.id, alpha.id])
         #expect(beta.status == .running && alpha.status == .running)

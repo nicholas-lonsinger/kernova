@@ -105,7 +105,7 @@ struct VMSleepWakeCoordinatorTests {
     }
 
     @Test("A VM the user paused live is neither paused again, reported, nor resumed on wake")
-    func userLivePausedVMIsLeftAlone() async {
+    func userLivePausedVMIsLeftAlone() async throws {
         let (coordinator, roster, virtService) = makeCoordinator()
         let session = UUID()
         let userPaused = VMInstanceFixture.make(name: "User Paused")
@@ -113,7 +113,7 @@ struct VMSleepWakeCoordinatorTests {
         roster.instances = [userPaused]
 
         let ack = await sleep(coordinator, virtService)
-        await coordinator.resumeAllAfterWake().value
+        try await coordinator.resumeAllAfterWake().joined()
 
         #expect(ack.count == 1)
         #expect(virtService.pauseCallCount == 0)
@@ -141,16 +141,16 @@ struct VMSleepWakeCoordinatorTests {
         }
         #expect(instance.activity.queuedFollowUpCountForTesting == 1)
         #expect(instance.status == .snapshotting)
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(ack.count == 0)
         #expect(virtService.pauseCallCount == 0)
 
         gate.release()
-        try await capture.value()
+        try await capture.resolved()
         // The capture's own ending took the pause off the queue.
         #expect(instance.activity.queuedFollowUpCountForTesting == 0)
         try await ack.waitUntilAllowed()
-        await pass.value
+        try await pass.joined()
 
         #expect(ack.pausesAtAllow == [1])
         #expect(instance.phase == .livePaused(sessionID: session))
@@ -160,17 +160,17 @@ struct VMSleepWakeCoordinatorTests {
     // MARK: - Wake
 
     @Test("A failed wake resume is reported, and a second wake has nothing left to resume")
-    func failedResumeIsReported() async {
+    func failedResumeIsReported() async throws {
         let virtService = MockVirtualizationService()
         let (coordinator, roster, _) = makeCoordinator(virtualizationService: virtService)
         _ = await makeSleepPaused(coordinator, roster: roster, virtService, name: "Sleep Paused")
         virtService.resumeError = VirtualizationError.noVirtualMachine
 
-        await coordinator.resumeAllAfterWake().value
+        try await coordinator.resumeAllAfterWake().joined()
 
         #expect(failures.errorMessage?.contains("Sleep Paused") == true)
         virtService.resumeError = nil
-        await coordinator.resumeAllAfterWake().value
+        try await coordinator.resumeAllAfterWake().joined()
         #expect(virtService.resumeCallCount == 1)
     }
 
@@ -193,10 +193,10 @@ struct VMSleepWakeCoordinatorTests {
         #expect(instance.activity.queuedFollowUpCountForTesting == 0)
         #expect(failures.errorMessage?.contains("Capturing") == true)
         #expect(failures.errorMessage?.contains("slept before") == true)
-        await pass.value
-        await wake.value
+        try await pass.joined()
+        try await wake.joined()
         gate.release()
-        try await capture.value()
+        try await capture.resolved()
         #expect(virtService.pauseCallCount == 0)
         #expect(virtService.resumeCallCount == 0)
         #expect(instance.phase == .running(sessionID: session))
@@ -219,10 +219,10 @@ struct VMSleepWakeCoordinatorTests {
         #expect(virtService.resumeCallCount == 0)
 
         gate.release()
-        try await attach.value()
+        try await attach.resolved()
         // The attach's own ending took the resume off the queue.
         #expect(instance.activity.queuedFollowUpCountForTesting == 0)
-        await wake.value
+        try await wake.joined()
 
         #expect(virtService.resumeCallCount == 1)
         #expect(instance.phase == .running(sessionID: session))
@@ -233,7 +233,7 @@ struct VMSleepWakeCoordinatorTests {
     /// then wakes while the pause still holds the VM.
     private func wakeDuringAParkedPause(
         _ mock: SuspendingMockVirtualizationService
-    ) async -> (
+    ) async throws -> (
         coordinator: VMSleepWakeCoordinator, instance: VMInstance, session: UUID,
         sleep: Task<Void, Never>, wake: Task<Void, Never>
     ) {
@@ -249,7 +249,7 @@ struct VMSleepWakeCoordinatorTests {
         instance.activity.placeForTesting(.running(sessionID: session))
         roster.instances = [instance]
         let sleep = coordinator.pauseAllForSleep {}
-        await mock.waitUntilSuspended()
+        try await mock.waitUntilSuspended()
         #expect(instance.phase.operation?.kind == .pausing)
 
         let wake = coordinator.resumeAllAfterWake()
@@ -257,15 +257,15 @@ struct VMSleepWakeCoordinatorTests {
     }
 
     @Test("Wake while the sleep pause still runs resumes nothing when the pause fails")
-    func wakeDuringARunningPauseThatFailsResumesNothing() async {
+    func wakeDuringARunningPauseThatFailsResumesNothing() async throws {
         let mock = SuspendingMockVirtualizationService()
         mock.pauseError = VirtualizationError.noVirtualMachine
-        let (coordinator, instance, session, sleep, wake) = await wakeDuringAParkedPause(mock)
+        let (coordinator, instance, session, sleep, wake) = try await wakeDuringAParkedPause(mock)
         #expect(instance.activity.queuedFollowUpCountForTesting == 1)
 
         mock.resumeSuspended()
-        await sleep.value
-        await wake.value
+        try await sleep.joined()
+        try await wake.joined()
         // The composition root holds the coordinator; the pass holds it weakly.
         withExtendedLifetime(coordinator) {}
 

@@ -32,7 +32,7 @@ struct ItemSourceMaterializationTests {
         defer { source.handle(.release(Bench.id), reporter: reporter) }
         reading: while true {
             source.handle(.read(Bench.id, maxBytes: readSize), reporter: reporter)
-            switch await sources.next() {
+            switch try await sources.next() {
             case .bytes?: continue
             case .finished?: break reading
             case let report: throw WireError(.internal, debugDetail: "\(String(describing: report))")

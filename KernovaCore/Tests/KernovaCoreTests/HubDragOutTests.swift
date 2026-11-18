@@ -166,9 +166,9 @@ struct HubDragOutTests {
 
     /// The take's event `event`, as the hub hands it to DRAG's owner: on the
     /// hub's queue first, then a hop to the main queue.
-    private func deliver(_ event: DragTakeEvent) async {
+    private func deliver(_ event: DragTakeEvent) async throws {
         dragOut.owner.takes(peer, event)
-        await MainActorTurn.next()
+        try await drainMainQueue()
     }
 
     /// A take of the current offer of `items`, the hub having opened it and
@@ -179,9 +179,9 @@ struct HubDragOutTests {
         try await hub.changed.wait { hub.takeCount == 1 }
         hub.state.withLock { $0.takes[0] }.completion(.success(takeID))
         // The answer hops to the main queue, ahead of the take's events.
-        await MainActorTurn.next()
-        await deliver(.report(takeID, .armed))
-        await deliver(.report(takeID, .targeted(items)))
+        try await drainMainQueue()
+        try await deliver(.report(takeID, .armed))
+        try await deliver(.report(takeID, .targeted(items)))
         try #require(take.phase == .ready)
         take.withheldDrag()
         try #require(take.phase == .carried(.outside(targeted: true)))
@@ -193,7 +193,7 @@ struct HubDragOutTests {
     private func droppedTake() async throws -> GuestDragTake {
         let take = try await carriedTake()
         take.hostSessionEnded(dropped: true)
-        await deliver(.ended(takeID, .caught(nil)))
+        try await deliver(.ended(takeID, .caught(nil)))
         return take
     }
 
@@ -251,7 +251,7 @@ struct HubDragOutTests {
 
         hub.state.withLock { $0.takes[0] }.completion(.success(takeID))
         try await hub.changed.wait { hub.state.withLock { $0.takeCancels } == [takeID] }
-        await deliver(.ended(takeID, .closed(.resetLocally(WireError(.cancelled)))))
+        try await deliver(.ended(takeID, .closed(.resetLocally(WireError(.cancelled)))))
         #expect(hub.state.withLock { $0.releases.map(\.token) } == [token])
     }
 
@@ -260,18 +260,18 @@ struct HubDragOutTests {
         let take = try await carriedTake(Self.promiseAndFolder)
         take.hostSessionEnded(dropped: true)
         #expect(hub.controls == [.deliver])
-        await deliver(.report(takeID, .delivering))
+        try await deliver(.report(takeID, .delivering))
         #expect(take.phase == .released(at: .catcher))
 
-        await deliver(.report(takeID, .named([Data("IMG_0042.jpeg".utf8)])))
+        try await deliver(.report(takeID, .named([Data("IMG_0042.jpeg".utf8)])))
         #expect(take.filename(forItemAt: 0) == "IMG_0042.jpeg")
         for (index, name) in ["IMG_0042.jpeg", "Photos"].enumerated() {
             take.writeItem(at: index, to: scratch.url.appendingPathComponent(name)) { _ in }
         }
-        await MainActorTurn.next()
+        try await drainMainQueue()
         #expect(hub.pullCount == 0, "a write pulled before the delivery sized the items")
 
-        await deliver(
+        try await deliver(
             .ended(takeID, .caught(DragDelivery(names: [0: Data("IMG_0042.jpeg".utf8)], sizes: [0: 1_000, 1: 4096]))))
         try await hub.changed.wait { hub.pullCount == 2 }
         let pulls = hub.state.withLock { $0.pulls.map(\.order.request) }
@@ -288,16 +288,16 @@ struct HubDragOutTests {
         reporter.onReportChanged = { _ in reported.notify() }
         let take = try await carriedTake(Self.promiseAndFolder)
         take.hostSessionEnded(dropped: true)
-        await deliver(.report(takeID, .delivering))
-        await deliver(.report(takeID, .named([Data("IMG_0042.jpeg".utf8)])))
-        await deliver(.ended(takeID, .caught(DragDelivery(names: [0: Data("IMG_0042.jpeg".utf8)], sizes: sizes))))
+        try await deliver(.report(takeID, .delivering))
+        try await deliver(.report(takeID, .named([Data("IMG_0042.jpeg".utf8)])))
+        try await deliver(.ended(takeID, .caught(DragDelivery(names: [0: Data("IMG_0042.jpeg".utf8)], sizes: sizes))))
         for (index, name) in ["IMG_0042.jpeg", "Photos"].enumerated() {
             take.writeItem(at: index, to: scratch.url.appendingPathComponent(name)) { _ in }
             try await hub.changed.wait { hub.pullCount == index + 1 }
             let id = ItemPullID(
                 generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: UInt32(9 + index)))
             hub.state.withLock { $0.pulls[index] }.completion(.success(id))
-            await MainActorTurn.next()
+            try await drainMainQueue()
             dragOut.pullEnded(id, .landed(.named(Data(name.utf8))))
         }
         let finished = { [reporter] () -> ClipboardTransferFinish? in
@@ -326,10 +326,13 @@ struct HubDragOutTests {
         // The hub's queue while the ask holds the main thread: the guest
         // answers the ask, and once the release reached it, names the promise
         // and never sizes the folder.
+        let waits = OffTaskWaits()
         let hubQueue = Thread {
-            hub.delivering.wait()
-            owner.takes(peer, .report(takeID, .delivering))
-            display.releases.wait()
+            waits.run {
+                try Backstop("the hub's delivery").wait(for: hub.delivering)
+                owner.takes(peer, .report(takeID, .delivering))
+                try Backstop("the display's release").wait(for: display.releases)
+            }
             owner.takes(peer, .report(takeID, .named([Data("IMG_0042.jpeg".utf8)])))
         }
         hubQueue.start()
@@ -358,7 +361,7 @@ struct HubDragOutTests {
         let id = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 9))
         pull.completion(.success(id))
         // The answer hops to the main queue, ahead of the pull's end.
-        await MainActorTurn.next()
+        try await drainMainQueue()
         dragOut.pullEnded(id, .landed(.named(Data("notes 2.txt".utf8))))
 
         try await outcome.changed.wait { outcome.isSet }
@@ -374,7 +377,7 @@ struct HubDragOutTests {
         try await hub.changed.wait { hub.pullCount == 1 }
         let id = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 9))
         hub.state.withLock { $0.pulls[0] }.completion(.success(id))
-        await MainActorTurn.next()
+        try await drainMainQueue()
 
         // The hub ends the offer it forwarded, then the pull, each CANCELLED.
         dragOut.offerEnded(token)
@@ -430,15 +433,6 @@ struct HubDragOutTests {
         func set(_ error: (any Error)?) {
             state.withLock { $0 = (true, error) }
             changed.notify()
-        }
-    }
-
-    /// One turn of the main queue, which the owner's hops ride.
-    enum MainActorTurn {
-        static func next() async {
-            await withCheckedContinuation { continuation in
-                DispatchQueue.main.async { continuation.resume() }
-            }
         }
     }
 }

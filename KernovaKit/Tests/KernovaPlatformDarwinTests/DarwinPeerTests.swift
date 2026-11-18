@@ -75,7 +75,7 @@ struct DarwinPeerTests {
         queue.sync {}
         #expect(changes.withLock { $0 }.isEmpty)
         #expect(unlink(root + "/current") == 0)
-        changed.wait()
+        try Backstop("the watcher's report").wait(for: changed)
         #expect(changes.withLock { $0 } == [.removed])
     }
 }
@@ -161,6 +161,7 @@ struct BlockingConnectTests {
             DarwinVsockConnect.boundedBlockingConnect(fd: -1, label: "t", port: 1, gate: gate) { ECONNREFUSED }
                 == .failed(errno: ECONNREFUSED))
         let release = DispatchSemaphore(value: 0)
+        let waits = OffTaskWaits()
         let pipeEnds = UnsafeMutablePointer<Int32>.allocate(capacity: 2)
         defer { pipeEnds.deallocate() }
         #expect(pipe(pipeEnds) == 0)
@@ -169,7 +170,7 @@ struct BlockingConnectTests {
         #expect(
             DarwinVsockConnect.boundedBlockingConnect(fd: pipeEnds[0], label: "t", port: 1, gate: gate, deadline: 0.05)
             {
-                release.wait()
+                waits.run { try Backstop("the test's release of the connect").wait(for: release) }
                 return 0
             } == .abandoned)
         #expect(gate.parkedCount("t") == 1)

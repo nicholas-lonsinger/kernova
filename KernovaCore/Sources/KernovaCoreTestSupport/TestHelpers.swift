@@ -149,8 +149,8 @@ extension VMLibrary {
 
     /// Waits until no VM is held by a revert, including any a running revert's
     /// power-off admits.
-    func waitForRevertsToSettle() async {
-        await waitForObservedChange { [self] in !hasRevertInFlight }
+    func waitForRevertsToSettle(fileID: String = #fileID, line: Int = #line) async throws {
+        try await waitForChange(fileID: fileID, line: line) { [self] in !hasRevertInFlight }
     }
 
     /// Builds a fixture VM over this library's ``bundleFactory`` and adds it
@@ -561,9 +561,9 @@ extension VMLibraryViewModel {
     /// earlier one is awaited, returning once each has left its row and
     /// reported a failure nobody awaited (``VMArrival/isAwaited``) — both land
     /// in the step its outcome settles in.
-    func awaitArrivals() async {
+    func awaitArrivals(fileID: String = #fileID, line: Int = #line) async throws {
         while let arrival = library.arrivals.first {
-            _ = try? await arrival.settled.value
+            _ = try await arrival.settled.joinedResult(fileID: fileID, line: line)
         }
     }
 }
@@ -595,27 +595,26 @@ extension VMInstance {
 /// non-observed state keeps `waitUntil`.
 @MainActor
 func waitForChange(
-    timeout: TimeInterval = testWaitBackstop,
+    timeout: TimeInterval = testWaitBackstop, fileID: String = #fileID, line: Int = #line,
     until predicate: @escaping @MainActor () -> Bool
 ) async throws {
-    let stopwatch = BackstopStopwatch()
+    let backstop = Backstop("waitForChange", timeout: timeout, fileID: fileID, line: line)
     // The production wait answers from the observation loop's apply, a hop
     // before this caller resumes, and work queued between the two can move the
     // state again — so the answer is re-read here, in the caller's own turn.
     while !predicate() {
-        let remaining = timeout - stopwatch.elapsed
+        let remaining = backstop.remaining
         guard remaining > 0,
             await waitForObservedChange(
                 until: predicate,
                 before: ObservedChangeDeadline(seconds: remaining, clock: MonotonicEngineClock()))
         else {
-            throw TestFailure.backstop(
-                "Observed condition not met within \(timeout) s", stopwatch: stopwatch, timeout: timeout)
+            throw backstop.failure()
         }
-        guard stopwatch.elapsed < timeout else {
-            throw TestFailure.backstop(
-                "Condition held only when the deadline re-read it: no observed change to what the predicate reads made it hold",
-                stopwatch: stopwatch, timeout: timeout)
+        guard !backstop.expired else {
+            throw backstop.failure(
+                "its predicate held only when the deadline re-read it: no observed change to what it reads made it hold"
+            )
         }
     }
 }
@@ -654,7 +653,7 @@ extension VMLifecycleCoordinator {
             try record(permit, captured)
             landed.snapshot = captured
         }
-        try await outcome.value()
+        try await outcome.resolved()
         return try #require(landed.snapshot)
     }
 }
@@ -663,6 +662,21 @@ extension VMLifecycleCoordinator {
 @MainActor
 private final class LandedSnapshot {
     var snapshot: VMSnapshot?
+}
+
+extension VMOutcome {
+    /// ``value()`` under the backstop: waits for the operation to end and
+    /// rethrows how it failed, throwing `Backstop.failure(_:)` when it is
+    /// still running at the deadline.
+    func resolved(fileID: String = #fileID, line: Int = #line) async throws {
+        try await Backstop("VMOutcome.value()", fileID: fileID, line: line).run { try await self.value() }
+    }
+
+    /// How the operation ended, once it has, waited for as
+    /// ``resolved(fileID:line:)`` waits.
+    func resolution(fileID: String = #fileID, line: Int = #line) async throws -> Result<Void, any Error> {
+        try await Backstop("VMOutcome.ended()", fileID: fileID, line: line).run { await self.ended() }
+    }
 }
 
 extension VMActivity {
@@ -685,7 +699,7 @@ extension VMActivity {
                 return .failed(rest, error)
             }
         }
-        try await outcome.value()
+        try await outcome.resolved()
         return try #require(landed.value)
     }
 }

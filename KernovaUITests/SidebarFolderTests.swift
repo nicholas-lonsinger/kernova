@@ -549,7 +549,7 @@ struct SidebarFolderTests {
             drag(
                 [elsewhere.url as NSURL], to: middle(of: row(.library(a.id), in: outline), in: outline),
                 in: outline, fromFinder: true) == .copy)
-        await viewModel.awaitArrivals()
+        try await viewModel.awaitArrivals()
 
         #expect(Set(viewModel.instances.map(\.id)) == [a.id, dropped.config.id, elsewhere.config.id])
         #expect(members(of: clients, in: viewModel) == [a.id, dropped.config.id])

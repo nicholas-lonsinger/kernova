@@ -20,6 +20,9 @@ final class TestCommandSocket: Sendable {
     let path: String
 
     private let descriptor: Int32
+    /// A pipe whose read end turns readable once ``close()`` writes to it, waking a serve loop still waiting to
+    /// accept.
+    private let wake: (read: Int32, write: Int32)
 
     /// Runs the serve loop; ``requests()`` and ``close()`` wait behind it.
     private let queue = DispatchQueue(label: "test.kernova.command-socket")
@@ -38,7 +41,7 @@ final class TestCommandSocket: Sendable {
         let scratch = TestScratchDirectory(prefix: "knv")
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         path = scratch.url.appendingPathComponent("c.sock").path
-        descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
+        let descriptor = socket(AF_UNIX, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw TestFailure("server socket() failed: errno \(errno)") }
         var address = try UnixSocketAddress.make(path: path)
         let bound = UnixSocketAddress.withSockaddr(&address) { socketAddress, length in
@@ -48,6 +51,10 @@ final class TestCommandSocket: Sendable {
         guard listen(descriptor, 1) == 0 else {
             throw TestFailure("server listen() failed: errno \(errno)")
         }
+        var ends: [Int32] = [0, 0]
+        guard pipe(&ends) == 0 else { throw TestFailure("wake pipe() failed: errno \(errno)") }
+        self.descriptor = descriptor
+        wake = (ends[0], ends[1])
     }
 
     /// Accepts the pending client and answers its requests with `groups` in
@@ -74,6 +81,14 @@ final class TestCommandSocket: Sendable {
     /// its frame — for an app whose vocabulary this build cannot spell.
     func serveFrames(_ groups: [[Data]], holdingOpen: Bool = false) {
         queue.async { [self] in
+            // Accepts only once a client is waiting, so a close() before any client connects ends this block
+            // rather than leaving it parked in accept().
+            var ready = [
+                pollfd(fd: descriptor, events: Int16(POLLIN), revents: 0),
+                pollfd(fd: wake.read, events: Int16(POLLIN), revents: 0),
+            ]
+            while poll(&ready, nfds_t(ready.count), -1) < 0 && errno == EINTR {}
+            guard ready[1].revents == 0, ready[0].revents & Int16(POLLIN) != 0 else { return }
             let connection = accept(descriptor, nil, nil)
             guard connection >= 0 else { return }
             let isOpen = state.withLock { state in
@@ -117,22 +132,19 @@ final class TestCommandSocket: Sendable {
     /// Throws at ``testWaitBackstop`` when the loop is still reading: a test
     /// that queued an answer the tool never asks for, or held the connection
     /// open without closing its client first.
-    func requests() throws -> [VMCommandRequest] {
-        let stopwatch = BackstopStopwatch()
+    func requests(fileID: String = #fileID, line: Int = #line) throws -> [VMCommandRequest] {
         let loopEnded = DispatchSemaphore(value: 0)
         queue.async { loopEnded.signal() }
-        guard loopEnded.wait(timeout: .now() + testWaitBackstop) == .success else {
-            throw TestFailure.backstop(
-                "The command socket double was still reading",
-                stopwatch: stopwatch, timeout: testWaitBackstop)
-        }
+        try Backstop("the command socket double's serve loop", fileID: fileID, line: line).wait(for: loopEnded)
         return state.withLock { $0.received }
     }
 
     /// Closes the listener and any connection it accepted; idempotent.
     ///
-    /// Shutting the accepted connection down ends a read parked on it, so the
-    /// serve loop this waits behind returns once a client has connected.
+    /// Writing to the wake pipe ends a serve loop still waiting for a client,
+    /// and shutting the accepted connection down ends a read parked on it, so
+    /// the serve loop this waits behind returns whether or not a client
+    /// connected.
     func close() {
         let wasOpen = state.withLock { state in
             defer { state.isClosed = true }
@@ -140,8 +152,12 @@ final class TestCommandSocket: Sendable {
             return !state.isClosed
         }
         guard wasOpen else { return }
+        var byte: UInt8 = 0
+        _ = Darwin.write(wake.write, &byte, 1)
         queue.sync {
             Darwin.close(descriptor)
+            Darwin.close(wake.read)
+            Darwin.close(wake.write)
             unlink(path)
         }
     }

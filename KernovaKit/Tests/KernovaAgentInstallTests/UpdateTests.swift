@@ -58,39 +58,6 @@ final class SlotFixture {
     }
 }
 
-/// Values a handler on another thread delivers, read in order.
-final class Inbox<Value: Sendable>: @unchecked Sendable {
-    private let condition = NSCondition()
-    /// Read and written only while `condition` is locked.
-    private var values: [Value] = []
-
-    func put(_ value: Value) {
-        condition.lock()
-        values.append(value)
-        condition.broadcast()
-        condition.unlock()
-    }
-
-    /// The oldest value not yet read, waiting for one to arrive. The backstop only bounds a failure: nothing
-    /// a passing test waits for takes more than milliseconds.
-    func next() throws -> Value {
-        let deadline = Date(timeIntervalSinceNow: 30)
-        condition.lock()
-        defer { condition.unlock() }
-        while values.isEmpty {
-            guard condition.wait(until: deadline) || !values.isEmpty else { throw InboxTimeout() }
-        }
-        return values.removeFirst()
-    }
-
-    /// The next `count` values.
-    func next(_ count: Int) throws -> [Value] {
-        try (0..<count).map { _ in try next() }
-    }
-}
-
-struct InboxTimeout: Error {}
-
 /// A lander of one file, `agent`, in its slot, staged until it publishes. A write can be made to fail with an
 /// errno, and a publish to refuse.
 struct TestLander: PayloadLander {
@@ -151,9 +118,9 @@ struct TestLander: PayloadLander {
 /// One installer over a fixture, with what it reports and every relaunch and confirmation it asks for.
 struct InstallerRun {
     let installer: SlotUpdateInstaller
-    let reports = Inbox<UpdateInput>()
-    let switched = Inbox<Void>()
-    let confirmed = Inbox<Void>()
+    let reports = BlockingInbox<UpdateInput>()
+    let switched = BlockingInbox<Void>()
+    let confirmed = BlockingInbox<Void>()
 
     init(_ fixture: SlotFixture, running slot: String = "a", lander: TestLander = TestLander()) throws {
         let (switched, confirmed) = (switched, confirmed)

@@ -215,7 +215,7 @@ struct VMSettingsOverviewTests {
         let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
         vc.loadViewIfNeeded()
         vc.viewDidAppear()
-        await vc.overviewForTesting.attachmentSizeTaskForTesting?.value
+        try await vc.overviewForTesting.attachmentSizeTaskForTesting?.joined()
 
         let storage = try card(.storage, in: vc)
         #expect(findLabel(withText: "ubuntu-26.04.1-desktop-arm64", in: storage) != nil)

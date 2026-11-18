@@ -140,7 +140,7 @@ struct EphemeralSessionSettlementTests {
         let events = harness.core.events()
 
         instance.activity.deliverSessionEvent(.didStopWithError(Self.stopError), from: session)
-        await harness.library.waitForRevertsToSettle()
+        try await harness.library.waitForRevertsToSettle()
 
         let message = "Internal Virtualization error. The virtual machine stopped unexpectedly."
         switch vm {
@@ -197,7 +197,7 @@ struct EphemeralSessionSettlementTests {
         #expect(!instance.phase.isSettled)
         #expect(alerts.errors == [message])
         gate.release()
-        _ = try? await start.value
+        _ = try await start.joinedResult()
 
         #expect(instance.phase == .failed(message: message))
         #expect(alerts.errors == [message])
@@ -233,7 +233,7 @@ struct EphemeralSessionSettlementTests {
         case .guestFails:
             instance.activity.deliverSessionEvent(.didStopWithError(Probe()), from: session)
         }
-        try await restart.value
+        try await restart.joined()
 
         #expect(virtualization.revertCallCount == 0)
         // The disks the session left, booted cold — not the baseline's saved
@@ -298,7 +298,7 @@ struct EphemeralSessionSettlementTests {
             try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
         }
 
-        let error = try await #require(throws: CommandError.self) { try await restart.value }
+        let error = try await #require(throws: CommandError.self) { try await restart.joined() }
         // The restart reports without waiting out the revert its stop owes, so
         // the VM it names is the one that revert holds.
         #expect(instance.isHeldByRevert)
@@ -310,7 +310,7 @@ struct EphemeralSessionSettlementTests {
             return
         }
         #expect(message.contains("was stopped while it restarted"))
-        await harness.library.waitForRevertsToSettle()
+        try await harness.library.waitForRevertsToSettle()
 
         #expect(virtualization.startCallCount == 0)
         #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
@@ -332,8 +332,8 @@ struct EphemeralSessionSettlementTests {
         virtualization.startError = Probe()
         instance.activity.deliverSessionEvent(.guestDidStop, from: session)
 
-        await #expect(throws: (any Error).self) { try await restart.value }
-        await harness.library.waitForRevertsToSettle()
+        await #expect(throws: (any Error).self) { try await restart.joined() }
+        try await harness.library.waitForRevertsToSettle()
 
         #expect(virtualization.startCallCount == 1)
         #expect(virtualization.revertedSnapshots.map(\.id) == [baseline.id])
@@ -388,7 +388,7 @@ struct EphemeralSessionSettlementTests {
         await #expect(throws: CommandError.self) {
             try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
         }
-        await harness.library.waitForRevertsToSettle()
+        try await harness.library.waitForRevertsToSettle()
 
         #expect(virtualization.revertCallCount == 0)
         #expect(virtualization.startCallCount == 0)
@@ -457,7 +457,7 @@ struct EphemeralSessionSettlementTests {
                 try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
             }
         }
-        await virtualization.waitUntilSuspended()
+        try await virtualization.waitUntilSuspended()
         #expect(instance.isHeldByRevert)
 
         // Run to its first suspension in this turn, so what it queued is read
@@ -477,8 +477,8 @@ struct EphemeralSessionSettlementTests {
         #expect(instance.isHeldByRevert)
 
         virtualization.resumeSuspended()
-        try await stop?.value
-        try await asked.value
+        try await stop?.joined()
+        try await asked.joined()
 
         #expect(instance.activity.queuedFollowUpCountForTesting == 0)
         switch request {

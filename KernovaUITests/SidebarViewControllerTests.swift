@@ -792,7 +792,7 @@ struct SidebarViewControllerTests {
         try await waitForChange { presenter.forceStopInstances.count == 1 }
         // Then let whatever is still queued run, so the count below reads
         // "exactly once" rather than "once so far".
-        await drainMainQueue()
+        try await drainMainQueue()
 
         #expect(presenter.forceStopInstances.map(\.id) == [suspended.id])
     }
@@ -1060,7 +1060,7 @@ struct SidebarViewControllerTests {
         try await waitUntil { cell.toolTip == "Cancelling\u{2026}" }
 
         gate.release()
-        await arrival.settle()
+        try await arrival.settle()
     }
 
     @Test("An unreadable bundle's row names it, warns in its tooltip, and offers only the check, Finder and the Trash")
@@ -1231,7 +1231,7 @@ struct SidebarViewControllerTests {
         #expect(outline.view(atColumn: 0, row: 2, makeIfNecessary: true) is SidebarArrivalRowCellView)
 
         gate.release()
-        let instance = try #require(await arrival.settle())
+        let instance = try #require(try await arrival.settle())
 
         try await waitUntil { row.entry.vm === instance }
         try await waitUntil {

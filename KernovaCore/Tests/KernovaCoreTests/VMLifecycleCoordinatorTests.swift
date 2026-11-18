@@ -77,7 +77,7 @@ struct VMLifecycleCoordinatorTests {
         instance.activity.placeForTesting(.running(sessionID: UUID()))
 
         let pause = Task { @MainActor in try await coordinator.pause(instance) }
-        await suspendingService.waitUntilSuspended()
+        try await suspendingService.waitUntilSuspended()
 
         try await coordinator.requestStop(instance)
 
@@ -91,7 +91,7 @@ struct VMLifecycleCoordinatorTests {
         #expect(instance.phase.operation?.kind == .pausing)
 
         suspendingService.resumeSuspended()
-        try await pause.value
+        try await pause.joined()
         #expect(instance.phase == .stopped)
     }
 
@@ -104,7 +104,7 @@ struct VMLifecycleCoordinatorTests {
             instance.activity.placeForTesting(.operating(.reconcilingMedia, from: live))
 
             if forced {
-                try await coordinator.forceStop(instance).value()
+                try await coordinator.forceStop(instance).resolved()
             } else {
                 try await coordinator.requestStop(instance)
             }
@@ -124,9 +124,9 @@ struct VMLifecycleCoordinatorTests {
         let instance = VMInstanceFixture.make(bundleFactory: VMBundle.Factory(machineFiles: store))
 
         let task = Task { @MainActor in
-            try await coordinator.launchStart(instance, Self.coldBoot).value()
+            try await coordinator.launchStart(instance, Self.coldBoot).resolved()
         }
-        await suspendingService.waitUntilSuspended()
+        try await suspendingService.waitUntilSuspended()
 
         // A revert reads the very directory this would move to the Trash.
         await #expect(throws: VMAdmissionRefusal(refusal: .busy(.bringUp(.guestStart(Self.coldBoot))))) {
@@ -135,7 +135,7 @@ struct VMLifecycleCoordinatorTests {
         #expect(store.discardedIDs.isEmpty)
 
         suspendingService.resumeSuspended()
-        _ = try await task.value
+        _ = try await task.joined()
     }
 
     // MARK: - macOS Installation
@@ -155,7 +155,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
 
-        try await coordinator.launchGuestSetup(on: instance).value()
+        try await coordinator.launchGuestSetup(on: instance).resolved()
 
         let expected = downloads.appendingPathComponent(
             RestoreImageFilename.destination(for: ipswService.fetchResult.url))
@@ -181,7 +181,7 @@ struct VMLifecycleCoordinatorTests {
         let wizard = VMCreationViewModel.overFakeEngine(
             probeService: MockRestoreImageProbeService(), ipswService: failing,
             downloadsDirectory: downloads)
-        await wizard.loadLatestImageDetails()?.value
+        try await wizard.loadLatestImageDetails()?.joined()
         var context = wizard.buildInstallContext()
         #expect(context.source == .downloadLatest)
         #expect(context.downloadDestinationPath == nil)
@@ -193,7 +193,7 @@ struct VMLifecycleCoordinatorTests {
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: DownloadError.self) {
-            try await coordinator.launchGuestSetup(on: instance).value()
+            try await coordinator.launchGuestSetup(on: instance).resolved()
         }
 
         let expected = downloads.appendingPathComponent(
@@ -227,7 +227,7 @@ struct VMLifecycleCoordinatorTests {
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: DownloadError.self) {
-            try await coordinator.launchGuestSetup(on: instance).value()
+            try await coordinator.launchGuestSetup(on: instance).resolved()
         }
 
         let expected = downloads.appendingPathComponent(
@@ -265,7 +265,7 @@ struct VMLifecycleCoordinatorTests {
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: DownloadError.self) {
-            try await coordinator.launchGuestSetup(on: instance).value()
+            try await coordinator.launchGuestSetup(on: instance).resolved()
         }
 
         let expected = downloads.appendingPathComponent(
@@ -287,7 +287,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = VMInstanceFixture.make { $0.installContext = context }
 
         await #expect(throws: IPSWError.self) {
-            try await coordinator.launchGuestSetup(on: instance).value()
+            try await coordinator.launchGuestSetup(on: instance).resolved()
         }
         // Never silently falls back to resolving the latest image.
         #expect(ipswService.fetchCallCount == 0)
@@ -301,7 +301,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = library.registerFixture { $0.installContext = context }
         defer { withExtendedLifetime(library) {} }
 
-        try await coordinator.launchGuestSetup(on: instance).value()
+        try await coordinator.launchGuestSetup(on: instance).resolved()
 
         #expect(installService.installCallCount == 1)
         #expect(instance.configuration.installContext == nil)
@@ -331,7 +331,7 @@ struct VMLifecycleCoordinatorTests {
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: DownloadError.self) {
-            try await coordinator.launchGuestSetup(on: instance).value()
+            try await coordinator.launchGuestSetup(on: instance).resolved()
         }
 
         let derived = temp.appendingPathComponent(
@@ -374,7 +374,7 @@ struct VMLifecycleCoordinatorTests {
         defer { withExtendedLifetime(library) {} }
 
         await #expect(throws: DownloadError.self) {
-            try await coordinator.launchGuestSetup(on: instance).value()
+            try await coordinator.launchGuestSetup(on: instance).resolved()
         }
 
         #expect(downloadService.lastDownloadDiscardsExisting == true)
@@ -404,7 +404,7 @@ struct VMLifecycleCoordinatorTests {
         defer { withExtendedLifetime(library) {} }
 
         do {
-            try await coordinator.launchGuestSetup(on: instance).value()
+            try await coordinator.launchGuestSetup(on: instance).resolved()
             Issue.record("Expected invalidDownloadDestination")
         } catch DownloadError.invalidDownloadDestination {
             #expect(instance.status == .error)
@@ -435,7 +435,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = VMInstanceFixture.make { $0.installContext = context }
 
         await #expect(throws: CancellationError.self) {
-            try await coordinator.launchGuestSetup(on: instance).value()
+            try await coordinator.launchGuestSetup(on: instance).resolved()
         }
 
         #expect(downloadService.discardResumeDataCallCount == 0)
@@ -471,7 +471,7 @@ struct VMLifecycleCoordinatorTests {
         storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
-            try await coordinator.launchGuestSetup(on: instance).value()
+            try await coordinator.launchGuestSetup(on: instance).resolved()
         }
 
         // The replace belongs to the download, which never ran.
@@ -509,7 +509,7 @@ struct VMLifecycleCoordinatorTests {
             storage.setSaveConfigurationError(nil)
         }
 
-        try await coordinator.launchGuestSetup(on: instance).value()
+        try await coordinator.launchGuestSetup(on: instance).resolved()
 
         #expect(installService.lastRestoreImageURL?.lastPathComponent == "Moved.ipsw")
         // The heal never landed: the bundle still named the picked path.
@@ -581,7 +581,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(
             context: LinuxInstallContext(source: .catalogEntry(entry)), in: fixture)
 
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
+        try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
 
         let expected = fixture.downloads.appendingPathComponent(
             fixture.resolveService.resolveResult.destinationFilename)
@@ -636,7 +636,7 @@ struct VMLifecycleCoordinatorTests {
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture) { $0.storageDisks = [] }
 
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
+        try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
 
         let disks = try #require(instance.configuration.storageDisks)
         #expect(disks.count == 2)
@@ -659,7 +659,7 @@ struct VMLifecycleCoordinatorTests {
         fixture.storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
 
         await #expect(throws: VMLibrary.SettingsWriteFailure.self) {
-            try await fixture.coordinator.launchGuestSetup(on: instance).value()
+            try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
         }
 
         #expect(fixture.downloadService.downloadCallCount == 1)
@@ -679,7 +679,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: DownloadError.self) {
-            try await fixture.coordinator.launchGuestSetup(on: instance).value()
+            try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
         }
 
         let expected = fixture.downloads.appendingPathComponent(
@@ -702,7 +702,7 @@ struct VMLifecycleCoordinatorTests {
             downloadDestinationPath: stale.path(percentEncoded: false))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
+        try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
 
         let expected = fixture.downloads.appendingPathComponent(
             fixture.resolveService.resolveResult.destinationFilename)
@@ -723,7 +723,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
         _ = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
+        try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
 
         let expected = fixture.downloads.appendingPathComponent(
             fixture.resolveService.resolveResult.destinationFilename)
@@ -744,7 +744,7 @@ struct VMLifecycleCoordinatorTests {
         let expected = fixture.downloads.appendingPathComponent(
             fixture.resolveService.resolveResult.destinationFilename)
         do {
-            try await fixture.coordinator.launchGuestSetup(on: instance).value()
+            try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
             Issue.record("Expected checksumMismatch")
         } catch let error as DownloadError {
             guard case .checksumMismatch(let filename, let expected, let actual) = error else {
@@ -797,7 +797,7 @@ struct VMLifecycleCoordinatorTests {
             return persist?(permit, mutate) ?? .refused(.noLibrary)
         }
 
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
+        try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
 
         let destination = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
         #expect(fixture.downloadService.downloadCallCount == 0)
@@ -838,7 +838,7 @@ struct VMLifecycleCoordinatorTests {
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
+        try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
 
         let destination = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
         #expect(fixture.downloadService.adoptExistingFileCallCount == 0)
@@ -863,7 +863,7 @@ struct VMLifecycleCoordinatorTests {
         let context = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
+        try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
 
         let destination = fixture.downloads.appendingPathComponent(resolved.destinationFilename)
         #expect(fixture.downloadService.adoptExistingFileCallCount == 1)
@@ -883,7 +883,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: CancellationError.self) {
-            try await fixture.coordinator.launchGuestSetup(on: instance).value()
+            try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
         }
 
         #expect(fixture.downloadService.downloadCallCount == 0)
@@ -902,7 +902,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         await #expect(throws: CancellationError.self) {
-            try await fixture.coordinator.launchGuestSetup(on: instance).value()
+            try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
         }
 
         #expect(fixture.downloadService.discardResumeDataCallCount == 0)
@@ -929,7 +929,7 @@ struct VMLifecycleCoordinatorTests {
             return persist?(permit, mutate) ?? .refused(.noLibrary)
         }
 
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
+        try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
 
         #expect(observedSteps == [0, 1])
         #expect(observedStepIDs == [.download, .verify])
@@ -955,7 +955,7 @@ struct VMLifecycleCoordinatorTests {
         let context = makeCustomURLContext(fixture: fixture, verified: true)
         let instance = makeLinuxInstance(context: context, in: fixture)
 
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
+        try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
 
         // The URL is re-resolved on every attempt, for the size that bounds the
         // transfer — not to find out which file to fetch.
@@ -990,7 +990,7 @@ struct VMLifecycleCoordinatorTests {
             return persist?(permit, mutate) ?? .refused(.noLibrary)
         }
 
-        try await fixture.coordinator.launchGuestSetup(on: instance).value()
+        try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
 
         #expect(observedStepIDs == [.download, .checksum])
         #expect(instance.configuration.storageDisks?.count == 2)
@@ -1017,7 +1017,7 @@ struct VMLifecycleCoordinatorTests {
         let instance = makeLinuxInstance(context: context, in: fixture)
 
         let error = await #expect(throws: DownloadError.self) {
-            try await fixture.coordinator.launchGuestSetup(on: instance).value()
+            try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
         }
         guard case .checksumMismatch(let filename, let expectedDigest, _) = error else {
             Issue.record("Expected checksumMismatch, got \(String(describing: error))")

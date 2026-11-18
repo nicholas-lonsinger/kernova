@@ -73,7 +73,7 @@ struct VMLibraryAdoptionTests {
                 kind: .creating, configuration: config, destination: destination,
                 staged: try VMStagedBundle.mint(in: storage), source: nil, awaited: true,
                 write: writing(config))
-            return try await arrival.settled.value
+            return try await arrival.settled.joined()
         }
 
         #expect(instance.name == "Edited on Disk")
@@ -168,7 +168,7 @@ struct VMLibraryAdoptionTests {
         #expect(arrival.requestCancel() == .cancelled)
         #expect(arrival.displayLabel == "Cancelling\u{2026}")
         gate.release()
-        await #expect(throws: (any Error).self) { try await arrival.settled.value }
+        await #expect(throws: (any Error).self) { try await arrival.settled.joined() }
 
         #expect(storage.publishBundleCallCount == 0)
         #expect(storage.discardedStagedURLs == [arrival.staged.url])
@@ -195,7 +195,7 @@ struct VMLibraryAdoptionTests {
                 staged: try VMStagedBundle.mint(in: storage), source: nil, awaited: true,
                 write: writing(config))
             arrivalRef.value = arrival
-            await #expect(throws: CancellationError.self) { try await arrival.settled.value }
+            await #expect(throws: CancellationError.self) { try await arrival.settled.joined() }
             return arrival
         }
 

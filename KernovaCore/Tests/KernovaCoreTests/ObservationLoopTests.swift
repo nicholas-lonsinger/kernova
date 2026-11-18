@@ -22,7 +22,7 @@ struct ObservationLoopTests {
     // MARK: - waitForObservedChange
 
     @Test("multiple independent loops can observe the same subject")
-    func independentLoops() async {
+    func independentLoops() async throws {
         let subject = Subject()
         let counterA = Counter()
         let counterB = Counter()
@@ -37,14 +37,14 @@ struct ObservationLoopTests {
         )
 
         subject.value = 1
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(counterA.count == 1)
         #expect(counterB.count == 1)
 
         loopA.cancel()
 
         subject.value = 2
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(counterA.count == 1)
         #expect(counterB.count == 2)
 

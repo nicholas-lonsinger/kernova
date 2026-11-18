@@ -2,9 +2,10 @@
 import Foundation
 import KernovaDBus
 import KernovaPlatformLinux
+import KernovaPortableTestSupport
 import Testing
 
-@Suite("DBusBusConnection against a private dbus-daemon")
+@Suite("DBusBusConnection against a private dbus-daemon", .offTaskWaitsReported)
 struct BusConnectionTests {
     static let serviceName = "org.kernova.Test"
     static let servicePath: DBusObjectPath = "/org/kernova/Test"
@@ -90,7 +91,7 @@ struct BusConnectionTests {
     }
 
     /// A handler putting each signal's first argument into `inbox`.
-    static func collect(into inbox: Inbox<String>) -> @Sendable (DBusReceivedMessage) -> Void {
+    static func collect(into inbox: BlockingInbox<String>) -> @Sendable (DBusReceivedMessage) -> Void {
         { signal in
             if case .string(let label)? = try? signal.decodeBody().first {
                 inbox.put(label)
@@ -105,10 +106,10 @@ struct BusConnectionTests {
         try requestName(Self.serviceName, on: service)
         let impostor = try bus.connect()
         let client = try bus.connect()
-        let inbox = Inbox<String>()
+        let inbox = BlockingInbox<String>()
         let subscription = try client.subscribe(Self.tickRule, handler: Self.collect(into: inbox))
         // Names no sender, so it shows what the bus delivered to the client.
-        let witness = Inbox<String>()
+        let witness = BlockingInbox<String>()
         let witnessRule = DBusMatchRule(path: Self.servicePath, interface: Self.serviceInterface, member: "Tick")
         let witnessing = try client.subscribe(witnessRule, handler: Self.collect(into: witness))
 
@@ -140,7 +141,7 @@ struct BusConnectionTests {
         try sync(client)
         try service.send(Self.tick("after cancel"))
         try sync(service)
-        let after = Inbox<String>()
+        let after = BlockingInbox<String>()
         let second = try client.subscribe(Self.tickRule, handler: Self.collect(into: after))
         try service.send(Self.tick("second"))
         #expect(try after.next() == "second")
@@ -152,7 +153,7 @@ struct BusConnectionTests {
     func noOwnerYet() throws {
         let bus = try PrivateBus()
         let client = try bus.connect()
-        let inbox = Inbox<String>()
+        let inbox = BlockingInbox<String>()
         let subscription = try client.subscribe(Self.tickRule, handler: Self.collect(into: inbox))
         let service = try bus.connect(onMethodCall: Self.service)
         try service.send(Self.tick("before"))
@@ -169,7 +170,7 @@ struct BusConnectionTests {
         let first = try bus.connect(onMethodCall: Self.service)
         try requestName(Self.serviceName, on: first)
         let client = try bus.connect()
-        let inbox = Inbox<String>()
+        let inbox = BlockingInbox<String>()
         let subscription = try client.subscribe(Self.tickRule) { signal in
             if case .string(let label)? = try? signal.decodeBody().first {
                 inbox.put(label)
@@ -189,14 +190,15 @@ struct BusConnectionTests {
     /// `service`, plus `Hang`, which reports its arrival to `arrived` and
     /// answers nothing once `release` lets it go, and `Silent`, which answers
     /// nothing at once.
-    static func stalling(arrived: Inbox<String>, release: Inbox<String>)
+    static func stalling(arrived: BlockingInbox<String>, release: BlockingInbox<String>)
         -> @Sendable (DBusReceivedMessage) -> DBusMessage?
     {
-        { call in
+        let waits = OffTaskWaits()
+        return { call in
             switch call.header.member {
             case "Hang":
                 arrived.put("arrived")
-                _ = try? release.next()
+                waits.run { _ = try release.next() }
                 return nil
             case "Silent":
                 return nil
@@ -213,8 +215,8 @@ struct BusConnectionTests {
 
     /// Makes `call` on another thread, putting how it failed into the inbox
     /// returned, or nil if it returned.
-    static func callElsewhere(_ connection: DBusBusConnection, _ call: DBusMessage) -> Inbox<DBusCallError?> {
-        let outcome = Inbox<DBusCallError?>()
+    static func callElsewhere(_ connection: DBusBusConnection, _ call: DBusMessage) -> BlockingInbox<DBusCallError?> {
+        let outcome = BlockingInbox<DBusCallError?>()
         Thread {
             do throws(DBusCallError) {
                 _ = try connection.call(call)
@@ -229,8 +231,8 @@ struct BusConnectionTests {
     @Test("Closing fails a call in progress, and every later one")
     func closeDuringCall() throws {
         let bus = try PrivateBus()
-        let arrived = Inbox<String>()
-        let release = Inbox<String>()
+        let arrived = BlockingInbox<String>()
+        let release = BlockingInbox<String>()
         let service = try bus.connect(onMethodCall: Self.stalling(arrived: arrived, release: release))
         defer { release.put("go") }
         try requestName(Self.serviceName, on: service)
@@ -249,8 +251,8 @@ struct BusConnectionTests {
     @Test("A bus that goes away fails the call in progress with the end of the stream")
     func busGoneDuringCall() throws {
         let bus = try PrivateBus()
-        let arrived = Inbox<String>()
-        let release = Inbox<String>()
+        let arrived = BlockingInbox<String>()
+        let release = BlockingInbox<String>()
         let service = try bus.connect(onMethodCall: Self.stalling(arrived: arrived, release: release))
         defer { release.put("go") }
         try requestName(Self.serviceName, on: service)
@@ -264,8 +266,8 @@ struct BusConnectionTests {
     @Test("A call that times out throws, and the connection still answers the next call with its own reply")
     func timeout() throws {
         let bus = try PrivateBus()
-        let release = Inbox<String>()
-        let service = try bus.connect(onMethodCall: Self.stalling(arrived: Inbox<String>(), release: release))
+        let release = BlockingInbox<String>()
+        let service = try bus.connect(onMethodCall: Self.stalling(arrived: BlockingInbox<String>(), release: release))
         try requestName(Self.serviceName, on: service)
         let client = try bus.connect()
         #expect(throws: DBusCallError.timedOut) {

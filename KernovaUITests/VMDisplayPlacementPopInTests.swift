@@ -29,7 +29,7 @@ struct VMDisplayPlacementPopInTests {
         let requestsBefore = focus.requests
 
         placement.togglePopOut(for: instance)
-        await drainMainQueue()
+        try await drainMainQueue()
 
         if displayWasKey {
             let library = try #require(registry.libraryWindow)

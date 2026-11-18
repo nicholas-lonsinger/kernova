@@ -137,7 +137,7 @@ final class ObservedStream: Sendable {
     /// Writes `chunks` and waits for the completion, checking it never runs inside the call. The write is
     /// issued from a block on the start queue that marks its own end, so on that serial queue the
     /// completion can find the mark unset only if `write` ran it synchronously.
-    func write(_ chunks: [Data], then follow: @escaping @Sendable () -> Void = {}) async
+    func write(_ chunks: [Data], then follow: @escaping @Sendable () -> Void = {}) async throws
         -> (error: ByteStreamError?, insideCall: Bool)
     {
         let returned = Locked(false)
@@ -148,12 +148,12 @@ final class ObservedStream: Sendable {
             follow()
         }
         var waiter = done.waiter()
-        return await waiter.next { _ in true }
+        return try await waiter.next { _ in true }
     }
 
-    func waitForRelease() async {
+    func waitForRelease() async throws {
         var waiter = released.waiter()
-        _ = await waiter.next { _ in true }
+        _ = try await waiter.next { _ in true }
     }
 }
 
@@ -178,14 +178,14 @@ extension SocketTests {
             let received = Recorder<Data>()
             DispatchQueue.global().async { received.record(RawSocket.read(far, total: expected.count)) }
 
-            let result = await observed.write(chunks)
+            let result = try await observed.write(chunks)
             #expect(result.error == nil)
             #expect(!result.insideCall)
             var waiter = received.waiter()
-            let bytes = await waiter.next { _ in true }
+            let bytes = try await waiter.next { _ in true }
             #expect(bytes == expected)
             observed.stream.shutdown()
-            await observed.waitForRelease()
+            try await observed.waitForRelease()
             close(far)
         }
 
@@ -193,12 +193,12 @@ extension SocketTests {
         func shutdownFailsPendingWrite() async throws {
             let (local, far) = try RawSocket.pair(sendBuffer: 4_096)
             let observed = try ObservedStream(adopting: local)
-            let result = await observed.write([Data(count: 1_048_576)]) {
+            let result = try await observed.write([Data(count: 1_048_576)]) {
                 DispatchQueue.global().async { observed.stream.shutdown() }
             }
             #expect(result.error == .shutDown)
             #expect(!result.insideCall)
-            await observed.waitForRelease()
+            try await observed.waitForRelease()
             #expect(observed.events.elements == [.ended(.failed(.shutDown))])
             _ = RawSocket.readToEnd(far)
             close(far)
@@ -209,7 +209,7 @@ extension SocketTests {
             let (local, far) = try RawSocket.pair()
             let observed = try ObservedStream(adopting: local, start: false)
             observed.stream.shutdown()
-            await observed.waitForRelease()
+            try await observed.waitForRelease()
             // No other suite opens a descriptor while this one runs (`SocketTests` is serialized), so the number
             // cannot have been reused.
             let flags = fcntl(local, F_GETFD)
@@ -225,10 +225,10 @@ extension SocketTests {
             let (local, far) = try RawSocket.pair()
             let observed = try ObservedStream(adopting: local)
             observed.stream.shutdown()
-            let result = await observed.write([Data(count: 10)])
+            let result = try await observed.write([Data(count: 10)])
             #expect(result.error == .shutDown)
             #expect(!result.insideCall)
-            await observed.waitForRelease()
+            try await observed.waitForRelease()
             close(far)
         }
 
@@ -239,14 +239,14 @@ extension SocketTests {
             let observed = try ObservedStream(adopting: try RawSocket.refusedDatagram())
             var events = observed.events.waiter()
             // At the time limit, shutdown() ends the wait with `.shutDown`, so the test fails rather than hangs.
-            let end = await withTaskCancellationHandler {
-                await events.next { _ in true }
+            let end = try await withTaskCancellationHandler {
+                try await events.next { _ in true }
             } onCancel: {
                 observed.stream.shutdown()
             }
             #expect(end == .ended(.failed(.system(ECONNREFUSED))))
             observed.stream.shutdown()
-            await observed.waitForRelease()
+            try await observed.waitForRelease()
         }
     }
 }

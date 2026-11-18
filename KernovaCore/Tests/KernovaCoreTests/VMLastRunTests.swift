@@ -30,7 +30,7 @@ struct VMLastRunTests {
             instance.beginSessionContextForTesting()
             context.bindSessionForTesting(session)
             return .rest(.live(.running), ())
-        }.value()
+        }.resolved()
     }
 
     /// Writes `date` over the VM's last run, as an earlier session left it.
@@ -84,7 +84,7 @@ struct VMLastRunTests {
                 instance.beginSessionContextForTesting()
                 context.bindSessionForTesting(UUID())
                 throw Probe()
-            }.value()
+            }.resolved()
         }
 
         #expect(instance.sessionContext == nil)

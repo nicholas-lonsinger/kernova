@@ -26,7 +26,7 @@ struct AgentHubAuthorityTests {
         let items = Recorder<HubItemEvent>()
         let hub: AgentHub
 
-        init() async {
+        init() async throws {
             let items = items
             hub = AgentHub(
                 connector: connector, policy: PolicySnapshot(), payloads: FixedPayloads(bundles: []),
@@ -34,7 +34,7 @@ struct AgentHubAuthorityTests {
                 publishingOn: DispatchQueue(label: "app.kernova.tests.authority-publish")
             ) { _ in }
             hub.attach(transport, policy: PolicySnapshot(), republisher: GuestLogRepublisher(vmLabel: "t"))
-            await flush(hub.queue)
+            try await flush(hub.queue)
         }
     }
 
@@ -51,8 +51,8 @@ struct AgentHubAuthorityTests {
     }
 
     @Test("A connection that never said Hello, or one displaced, hands the owner none of its item events")
-    func strangersAreNotHeard() async {
-        let scripted = await ScriptedHub()
+    func strangersAreNotHeard() async throws {
+        let scripted = try await ScriptedHub()
         let connector = scripted.connector
         _ = scripted.transport.connect()
         _ = scripted.transport.connect()
@@ -67,7 +67,7 @@ struct AgentHubAuthorityTests {
         let take = DragTakeID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 5))
         connector.deliver(.dragTake(.ended(take, .caught(nil))), stranger)
         connector.deliver(.items(.offerReceived(Self.header(3, .clipboard))), first)
-        await flush(scripted.hub.queue)
+        try await flush(scripted.hub.queue)
         #expect(
             scripted.items.elements
                 == Self.console(firstHandle) + [.items(firstHandle, .offerReceived(Self.header(3, .clipboard)))])
@@ -79,7 +79,7 @@ struct AgentHubAuthorityTests {
         connector.deliver(
             .items(.offerEnded(.clipboard, .remote, token: SimItems.token(3), .connectionLost)), first)
         connector.deliver(.items(.offerReceived(Self.header(4, .drag))), first)
-        await flush(scripted.hub.queue)
+        try await flush(scripted.hub.queue)
         #expect(
             scripted.items.elements
                 == Self.console(firstHandle) + [
@@ -103,22 +103,22 @@ struct AgentHubAuthorityTests {
     }
 
     @Test("A pending call ends SHUTTING_DOWN on its connection's .closed, exactly once; a late answer is dropped")
-    func pendingCallEndsOnClose() async {
-        let scripted = await ScriptedHub()
+    func pendingCallEndsOnClose() async throws {
+        let scripted = try await ScriptedHub()
         let connector = scripted.connector
         _ = scripted.transport.connect()
         connector.deliver(.helloReceived(Fixture.peerClaim, Fixture.peerState), 0)
         connector.deliver(.featuresChanged(Self.features), 0)
-        await flush(scripted.hub.queue)
+        try await flush(scripted.hub.queue)
         let answers = Recorder<Result<PeerHandle, WireError>>()
         scripted.hub.offerItems(SimItems.offer(1, []), feature: .clipboard) { answers.record($0) }
         var commands = connector.commands.waiter()
-        let sent = await commands.next { if case .items(.offer) = $0.command { true } else { false } }
+        let sent = try await commands.next { if case .items(.offer) = $0.command { true } else { false } }
         guard case .items(.offer(let id, _, _)) = sent.command else { Issue.record("sent \(sent)"); return }
 
         connector.deliver(.closed(.transportLost), 0)
         connector.deliver(.itemReply(id, .offered(nil)), 0)
-        await flush(scripted.hub.queue)
+        try await flush(scripted.hub.queue)
         guard case .failure(let error) = answers.elements.first, answers.elements.count == 1 else {
             Issue.record("answered \(answers.elements)"); return
         }

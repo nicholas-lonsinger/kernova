@@ -17,62 +17,62 @@ import Testing
 struct PeerLandingTests {
     @Test("A publish that has not reported does not hold back the redial, and its pull ends once when it reports")
     func redialsPastAPublish() async throws {
-        let (harness, sink, link) = await Self.committed()
+        let (harness, sink, link) = try await Self.committed()
         link.stream.deliver(.ended(.eof))
-        await harness.pump(link)
+        try await harness.pump(link)
         var dials = harness.dialer.dials.waiter()
         harness.scheduler.advance(to: Fixture.at(milliseconds: 60_000))
-        _ = await dials.next { $0 == 2 }
+        _ = try await dials.next { $0 == 2 }
         #expect(Self.pullsEnded(harness).isEmpty)
 
         let id = try #require(sink.committed.elements.first)
         sink.publish()
         var events = harness.events.waiter()
-        _ = await events.next { if case .items(.pullEnded) = $0 { true } else { false } }
-        await harness.settle()
+        _ = try await events.next { if case .items(.pullEnded) = $0 { true } else { false } }
+        try await harness.settle()
         #expect(Self.pullsEnded(harness) == [.pullEnded(.clipboard, id, .landed(.named(Data())))])
     }
 
     @Test("A publish that has not reported does not hold back close(), and its pull ends once when it reports")
     func closesPastAPublish() async throws {
-        let (harness, sink, link) = await Self.committed()
+        let (harness, sink, link) = try await Self.committed()
         let completions = Recorder<Int>()
         harness.runtime.close { completions.record(1) }
-        await harness.pump(link)
+        try await harness.pump(link)
         var done = completions.waiter()
-        _ = await done.next { _ in true }
+        _ = try await done.next { _ in true }
         #expect(Self.pullsEnded(harness).isEmpty)
 
         let id = try #require(sink.committed.elements.first)
         sink.publish()
         var events = harness.events.waiter()
-        _ = await events.next { if case .items(.pullEnded) = $0 { true } else { false } }
-        await harness.settle()
+        _ = try await events.next { if case .items(.pullEnded) = $0 { true } else { false } }
+        try await harness.settle()
         #expect(Self.pullsEnded(harness) == [.pullEnded(.clipboard, id, .landed(.named(Data())))])
         #expect(completions.elements == [1])
     }
 
     /// A peer runtime on connection 1 whose sink was told to commit a pull of the far host's clipboard
     /// offer, and has not reported.
-    private static func committed() async -> (PeerRuntimeHarness, HeldPublishSink, RuntimeLink) {
+    private static func committed() async throws -> (PeerRuntimeHarness, HeldPublishSink, RuntimeLink) {
         let sink = HeldPublishSink()
         let harness = PeerRuntimeHarness(
             items: ItemAdapters(source: RegisteredItemAdapters(), sink: sink, features: [.clipboard]),
             far: { FarHost.offeringItems(clock: $0) })
         harness.runtime.start()
-        let link = await harness.connect(1)
+        let link = try await harness.connect(1)
         link.far.command(
             .items(
                 .offer(
                     ItemRequestID(rawValue: 1), SimItems.offer(1, [[SimItems.representation(.inline, size: 64)]]),
                     feature: .clipboard)))
-        await harness.pump(link)
+        try await harness.pump(link)
         var events = harness.events.waiter()
-        _ = await events.next { if case .items(.offerReceived) = $0 { true } else { false } }
+        _ = try await events.next { if case .items(.offerReceived) = $0 { true } else { false } }
         harness.runtime.pullItem(ItemPullOrder(SimItems.request(1), landing: DecodingItemSink.landing)) { _ in }
-        await harness.pump(link)
+        try await harness.pump(link)
         var committed = sink.committed.waiter()
-        _ = await committed.next { _ in true }
+        _ = try await committed.next { _ in true }
         return (harness, sink, link)
     }
 

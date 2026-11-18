@@ -35,18 +35,6 @@ private final class Recorder {
     }
 }
 
-/// Returns once every main-queue block enqueued before this call has run.
-///
-/// An operation publishes through one serial `DispatchQueue.main.async` hop, so
-/// this settles its readout deterministically — no deadline is the pass/fail
-/// criterion and nothing polls.
-@MainActor
-private func settle() async {
-    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-        DispatchQueue.main.async { continuation.resume() }
-    }
-}
-
 @Suite("ClipboardTransferOperation", .caseScoped)
 @MainActor
 struct ClipboardTransferOperationTests {
@@ -71,14 +59,14 @@ struct ClipboardTransferOperationTests {
     // MARK: - Reveal gate
 
     @Test("a refusal inside the reveal gate is still reported")
-    func failureInsideTheGateIsPublished() async {
+    func failureInsideTheGateIsPublished() async throws {
         let recorder = Recorder()
         let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
 
         operation.unitBegan(id: 1, expectedBytes: 100)
         operation.finish(.failed(.timedOut))
-        await settle()
+        try await drainMainQueue()
         #expect(recorder.finish?.failure == .timedOut)
     }
 
@@ -94,7 +82,7 @@ struct ClipboardTransferOperationTests {
 
         operation.unitBegan(id: 0, expectedBytes: 2_048)
         operation.unitEnded(id: 0, succeeded: true)
-        await settle()
+        try await drainMainQueue()
         let running = try #require(recorder.runningSnapshot)
         #expect(!running.bytesKnown)
         #expect(running.bytesTransferred == 0)
@@ -110,7 +98,7 @@ struct ClipboardTransferOperationTests {
     // MARK: - Aggregation
 
     @Test("the readout names the transfer that began most recently")
-    func tracksTheCurrentItemName() async {
+    func tracksTheCurrentItemName() async throws {
         let recorder = Recorder()
         let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
@@ -121,7 +109,7 @@ struct ClipboardTransferOperationTests {
         operation.unitBegan(id: 3, expectedBytes: 100, name: "third.txt")
         // The first ending moves the bar while the other two are still in flight.
         operation.unitEnded(id: 1, succeeded: true)
-        await settle()
+        try await drainMainQueue()
 
         #expect(recorder.runningSnapshot?.currentItemName == "third.txt")
     }
@@ -135,7 +123,7 @@ struct ClipboardTransferOperationTests {
         clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 100)
-        await settle()
+        try await drainMainQueue()
         // One transfer of the three has begun: the whole drop is the denominator.
         #expect(recorder.runningSnapshot?.totalBytes == 500)
         #expect(recorder.runningSnapshot?.fileCount == 3)
@@ -144,7 +132,7 @@ struct ClipboardTransferOperationTests {
         operation.unitBegan(id: 3, expectedBytes: 400)
         operation.unitBegan(id: 4, expectedBytes: 100)
         operation.finish(.completed)
-        await settle()
+        try await drainMainQueue()
 
         let snapshot = try #require(recorder.finish?.finalSnapshot)
         #expect(snapshot.totalBytes == 1_000)
@@ -164,12 +152,12 @@ struct ClipboardTransferOperationTests {
         operation.unitEnded(id: 1, succeeded: true)
         operation.unitBegan(id: 2, expectedBytes: 700)
         operation.finish(.cancelled)
-        await settle()
+        try await drainMainQueue()
         let settled = recorder.reports.count
 
         operation.unitEnded(id: 2, succeeded: true)
         operation.unitBegan(id: 3, expectedBytes: 100)
-        await settle()
+        try await drainMainQueue()
 
         #expect(recorder.reports.count == settled)
         let finish = try #require(recorder.finish)
@@ -179,7 +167,7 @@ struct ClipboardTransferOperationTests {
     }
 
     @Test("a second terminal is dropped")
-    func finishIsIdempotent() async {
+    func finishIsIdempotent() async throws {
         let recorder = Recorder()
         let clock = GatedEngineClock()
         let operation = makeOperation(recorder: recorder, clock: clock)
@@ -188,7 +176,7 @@ struct ClipboardTransferOperationTests {
         operation.unitBegan(id: 1, expectedBytes: 100)
         operation.finish(.failed(.timedOut))
         operation.finish(.completed)
-        await settle()
+        try await drainMainQueue()
 
         #expect(recorder.finish?.failure == .timedOut)
         #expect(!operation.isLive)
@@ -207,7 +195,7 @@ struct ClipboardTransferOperationTests {
         operation.unitBegan(id: 1, expectedBytes: 100)
         operation.unitEnded(id: 1, succeeded: true)
         operation.finishWhenIdle()
-        await settle()
+        try await drainMainQueue()
         // Still running: the gap is what tells the end from the pause between two
         // of the peer's pulls.
         #expect(recorder.finish == nil)
@@ -240,7 +228,7 @@ struct ClipboardTransferOperationTests {
         operation.unitBegan(id: 2, expectedBytes: 100)
         clock.resume(gap)
         await clock.completion(of: gap)
-        await settle()
+        try await drainMainQueue()
 
         #expect(operation.isLive)
         #expect(recorder.finish == nil)
@@ -280,7 +268,7 @@ struct ClipboardTransferOperationTests {
         operation?.unitBegan(id: 1, expectedBytes: 100)
         operation?.unitEnded(id: 1, succeeded: true)
         operation?.finishWhenIdle()
-        await settle()
+        try await drainMainQueue()
         #expect(recorder.runningSnapshot != nil)
         #expect(clock.parked.count == 1)
 

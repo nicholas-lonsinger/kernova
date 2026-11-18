@@ -41,14 +41,11 @@ struct AppBundleProductsTests {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         let packed = scratch.url.appending(path: "agent.payload")
 
-        let pack = Process()
-        pack.executableURL = agent.appending(path: "Contents/MacOS/KernovaMacOSAgent")
-        pack.arguments = ["pack-payload", agent.path(percentEncoded: false), packed.path(percentEncoded: false)]
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            pack.terminationHandler = { _ in continuation.resume() }
-            do { try pack.run() } catch { continuation.resume(throwing: error) }
-        }
-        #expect(pack.terminationStatus == 0)
+        let pack = try await ChildProcess(
+            agent.appending(path: "Contents/MacOS/KernovaMacOSAgent"),
+            ["pack-payload", agent.path(percentEncoded: false), packed.path(percentEncoded: false)]
+        ).exit()
+        #expect(pack.status == 0)
 
         #expect(
             SHA256.hash(data: try Data(contentsOf: packed, options: .mappedIfSafe))

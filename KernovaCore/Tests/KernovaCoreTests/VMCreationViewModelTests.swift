@@ -30,9 +30,9 @@ struct VMCreationViewModelTests {
     // MARK: - Navigation
 
     @Test("goNext advances through all steps in order")
-    func goNextAdvancesThroughSteps() async {
+    func goNextAdvancesThroughSteps() async throws {
         let vm = VMCreationViewModel.overFakeEngine(probeService: MockRestoreImageProbeService())
-        await vm.loadLatestImageDetails()?.value
+        try await vm.loadLatestImageDetails()?.joined()
         #expect(vm.currentStep == .osSelection)
 
         vm.goNext()
@@ -72,7 +72,7 @@ struct VMCreationViewModelTests {
     // MARK: - canAdvance
 
     @Test("Download Latest can't leave its step until the lookup has answered")
-    func downloadLatestWaitsForTheLookup() async {
+    func downloadLatestWaitsForTheLookup() async throws {
         let vm = VMCreationViewModel.overFakeEngine(
             probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
         vm.currentStep = .bootConfig
@@ -83,20 +83,20 @@ struct VMCreationViewModelTests {
         vm.goNext()
         #expect(vm.currentStep == .bootConfig)
 
-        await vm.loadLatestImageDetails()?.value
+        try await vm.loadLatestImageDetails()?.joined()
         #expect(vm.canAdvance)
         #expect(vm.validationMessage == nil)
     }
 
     @Test("A failed lookup lets the step advance with no file named")
-    func failedLookupLetsTheStepAdvance() async {
+    func failedLookupLetsTheStepAdvance() async throws {
         let ipswService = MockIPSWService()
         ipswService.fetchError = URLError(.notConnectedToInternet)
         let vm = VMCreationViewModel.overFakeEngine(
             probeService: MockRestoreImageProbeService(), ipswService: ipswService)
         vm.currentStep = .bootConfig
 
-        await vm.loadLatestImageDetails()?.value
+        try await vm.loadLatestImageDetails()?.joined()
 
         #expect(vm.latestImageLookup == .failed)
         #expect(vm.canAdvance)
@@ -386,10 +386,10 @@ struct VMCreationViewModelTests {
     // MARK: - buildInstallContext
 
     @Test("buildInstallContext snapshots downloadLatest with the looked-up destination")
-    func buildInstallContextDownloadLatest() async {
+    func buildInstallContextDownloadLatest() async throws {
         let vm = VMCreationViewModel.overFakeEngine(
             probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
-        await vm.loadLatestImageDetails()?.value
+        try await vm.loadLatestImageDetails()?.joined()
 
         let context = vm.buildInstallContext()
 
@@ -416,10 +416,10 @@ struct VMCreationViewModelTests {
     }
 
     @Test("buildInstallContext sets requestedFreshDownload when overwrite confirmed")
-    func buildInstallContextSetsFreshOnConfirmedOverwrite() async {
+    func buildInstallContextSetsFreshOnConfirmedOverwrite() async throws {
         let vm = VMCreationViewModel.overFakeEngine(
             probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
-        await vm.loadLatestImageDetails()?.value
+        try await vm.loadLatestImageDetails()?.joined()
         vm.confirmOverwrite()
 
         let context = vm.buildInstallContext()
@@ -438,11 +438,11 @@ struct VMCreationViewModelTests {
     // MARK: - Catalog Version Source
 
     @Test("The looked-up image names Download Latest's destination")
-    func downloadLatestUsesTheLookedUpFilename() async {
+    func downloadLatestUsesTheLookedUpFilename() async throws {
         let vm = VMCreationViewModel.overFakeEngine(
             probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
 
-        await vm.loadLatestImageDetails()?.value
+        try await vm.loadLatestImageDetails()?.joined()
 
         let expected = vm.downloadPath(forFilename: "UniversalMac_26.5.2_25F84_Restore.ipsw")
         #expect(vm.ipswDownloadPath == expected)
@@ -454,7 +454,7 @@ struct VMCreationViewModelTests {
     }
 
     @Test("A lookup landing after another source was picked leaves that pick's destination")
-    func lateLookupLeavesAnotherSourcesDestination() async {
+    func lateLookupLeavesAnotherSourcesDestination() async throws {
         let vm = VMCreationViewModel.overFakeEngine(
             probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
 
@@ -462,7 +462,7 @@ struct VMCreationViewModelTests {
         // so the completion runs strictly after it.
         let lookup = vm.loadLatestImageDetails()
         vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
-        await lookup?.value
+        try await lookup?.joined()
 
         #expect(vm.latestImageLookup.foundImage?.build == "25F84")
         #expect(
@@ -555,7 +555,7 @@ struct VMCreationViewModelTests {
     // MARK: - Local File Selection
 
     @Test("An unsupported pick leaves an unusable verdict and blocks advance")
-    func selectLocalFileUnsupportedLeavesUnusable() async {
+    func selectLocalFileUnsupportedLeavesUnusable() async throws {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "13.0", build: "22A5286j", isSupportedOnThisHost: false)
@@ -564,7 +564,7 @@ struct VMCreationViewModelTests {
         vm.selectedOS = .macOS
 
         vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
-        await vm.localFileInspectionTask?.value
+        try await vm.localFileInspectionTask?.joined()
 
         #expect(
             vm.ipswSelection
@@ -576,7 +576,7 @@ struct VMCreationViewModelTests {
     }
 
     @Test("An inspection error leaves the path unusable and blocks advance")
-    func selectLocalFileInspectionErrorLeavesUnusable() async {
+    func selectLocalFileInspectionErrorLeavesUnusable() async throws {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectError = LocalRestoreImageError.unreadable
         let vm = VMCreationViewModel.overFakeEngine(localImageInspector: inspector)
@@ -584,7 +584,7 @@ struct VMCreationViewModelTests {
         vm.selectedOS = .macOS
 
         vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
-        await vm.localFileInspectionTask?.value
+        try await vm.localFileInspectionTask?.joined()
 
         #expect(
             vm.ipswSelection
@@ -612,7 +612,7 @@ struct VMCreationViewModelTests {
         // ignores cancellation, so an older read racing to completion after a
         // re-pick is the ordinary ordering, not adversarial timing.
         inspector.release(callIndex: 0)
-        await firstTask.value
+        try await firstTask.joined()
 
         // The newer pick's task must still be what the model hands out — a
         // premature clear here is what leaves a re-entered step awaiting
@@ -620,7 +620,7 @@ struct VMCreationViewModelTests {
         #expect(vm.localFileInspectionTask != nil)
 
         inspector.release(callIndex: 1)
-        await secondTask.value
+        try await secondTask.joined()
 
         #expect(vm.localFileInspectionTask == nil)
     }
@@ -711,12 +711,12 @@ struct VMCreationViewModelTests {
         adopt.cancel()
         inspector.release()
 
-        #expect(await adopt.value == .cancelled)
+        #expect(try await adopt.joined() == .cancelled)
         #expect(vm.ipswSelection == .catalogVersion(entry))
     }
 
     @Test("expectedBuild names the build each source is promising")
-    func expectedBuildTracksTheSource() async {
+    func expectedBuildTracksTheSource() async throws {
         let vm = VMCreationViewModel.overFakeEngine(
             probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
         #expect(vm.expectedBuild == nil)
@@ -732,7 +732,7 @@ struct VMCreationViewModelTests {
         #expect(vm.expectedBuild == nil)
         #expect(vm.latestImageLookup == .unanswered)
 
-        await vm.loadLatestImageDetails()?.value
+        try await vm.loadLatestImageDetails()?.joined()
         #expect(vm.expectedBuild == "25F84")
     }
 
@@ -753,13 +753,13 @@ struct VMCreationViewModelTests {
     // MARK: - Latest Image Lookup
 
     @Test("The lookup names the version, build and size Download Latest will fetch")
-    func latestImageLookupPopulatesDetails() async {
+    func latestImageLookupPopulatesDetails() async throws {
         let ipswService = MockIPSWService()
         let probeService = MockRestoreImageProbeService()
         probeService.sizeResult = 19_772_077_142
         let vm = VMCreationViewModel.overFakeEngine(probeService: probeService, ipswService: ipswService)
 
-        await vm.loadLatestImageDetails()?.value
+        try await vm.loadLatestImageDetails()?.joined()
 
         #expect(vm.latestImageLookup == .found(ipswService.fetchResult, sizeBytes: 19_772_077_142))
         // The size is read for the image the lookup named, not for the wizard's
@@ -768,14 +768,14 @@ struct VMCreationViewModelTests {
     }
 
     @Test("A second lookup joins the first instead of re-fetching")
-    func latestImageLookupRunsOnce() async {
+    func latestImageLookupRunsOnce() async throws {
         let ipswService = MockIPSWService()
         let vm = VMCreationViewModel.overFakeEngine(
             probeService: MockRestoreImageProbeService(), ipswService: ipswService)
 
         let first = vm.loadLatestImageDetails()
         #expect(vm.loadLatestImageDetails() == first)
-        await first?.value
+        try await first?.joined()
 
         // Nothing left to look up, so a later call starts nothing at all.
         #expect(vm.loadLatestImageDetails() == nil)
@@ -783,13 +783,13 @@ struct VMCreationViewModelTests {
     }
 
     @Test("A failed lookup says so, and the next call retries through unanswered")
-    func latestImageLookupFailureRetries() async {
+    func latestImageLookupFailureRetries() async throws {
         let ipswService = MockIPSWService()
         ipswService.fetchError = URLError(.notConnectedToInternet)
         let vm = VMCreationViewModel.overFakeEngine(
             probeService: MockRestoreImageProbeService(), ipswService: ipswService)
 
-        await vm.loadLatestImageDetails()?.value
+        try await vm.loadLatestImageDetails()?.joined()
         #expect(vm.latestImageLookup == .failed)
 
         // Back online, the wizard asks again — a failure must not latch.
@@ -797,18 +797,18 @@ struct VMCreationViewModelTests {
         let retry = vm.loadLatestImageDetails()
         #expect(vm.latestImageLookup == .unanswered)
         #expect(vm.ipswDownloadPath == nil)
-        await retry?.value
+        try await retry?.joined()
         #expect(vm.latestImageLookup.foundImage?.build == "25F84")
         #expect(ipswService.fetchCallCount == 2)
     }
 
     @Test("A size that can't be read still leaves the version and build to show")
-    func latestImageLookupSurvivesAnUnknownSize() async {
+    func latestImageLookupSurvivesAnUnknownSize() async throws {
         let probeService = MockRestoreImageProbeService()
         probeService.sizeError = RestoreImageProbeError.unknownSize
         let vm = VMCreationViewModel.overFakeEngine(probeService: probeService, ipswService: MockIPSWService())
 
-        await vm.loadLatestImageDetails()?.value
+        try await vm.loadLatestImageDetails()?.joined()
 
         #expect(vm.latestImageLookup == .found(makeLatestImage(), sizeBytes: nil))
     }
@@ -868,7 +868,7 @@ struct VMCreationViewModelTests {
     // MARK: - Selected Image Version
 
     @Test("Download Latest names no version until the lookup answers")
-    func downloadLatestVersionFollowsTheLookup() async {
+    func downloadLatestVersionFollowsTheLookup() async throws {
         let ipswService = MockIPSWService()
         ipswService.fetchResult = makeLatestImage(version: "27.0", build: "27A100")
         let vm = VMCreationViewModel.overFakeEngine(
@@ -876,7 +876,7 @@ struct VMCreationViewModelTests {
 
         #expect(vm.selectedImageVersion == nil)
 
-        await vm.loadLatestImageDetails()?.value
+        try await vm.loadLatestImageDetails()?.joined()
         #expect(vm.selectedImageVersion == MacOSVersion(major: 27, minor: 0))
     }
 
@@ -893,7 +893,7 @@ struct VMCreationViewModelTests {
     }
 
     @Test("A local file names no version until its inspection lands")
-    func localFileVersionFollowsTheInspection() async {
+    func localFileVersionFollowsTheInspection() async throws {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "27.0", build: "27A100", isSupportedOnThisHost: true, sizeBytes: nil)
@@ -902,7 +902,7 @@ struct VMCreationViewModelTests {
         vm.selectLocalFile(path: "/tmp/Restore.ipsw", bookmark: nil)
         #expect(vm.selectedImageVersion == nil)
 
-        await vm.localFileInspectionTask?.value
+        try await vm.localFileInspectionTask?.joined()
         #expect(vm.selectedImageVersion == MacOSVersion(major: 27, minor: 0))
     }
 
@@ -1029,6 +1029,8 @@ final class OrderedSuspendingMockLocalRestoreImageInspector: LocalRestoreImageIn
     private var calls: [CallState] = []
     /// Notified whenever a new call registers, for ``waitUntilCallCount(_:)``.
     private let callRegisteredGate = AsyncGate()
+    /// Where a hold the test never releases fails the test.
+    private let waits = OffTaskWaits()
 
     nonisolated init() {}
 
@@ -1036,7 +1038,7 @@ final class OrderedSuspendingMockLocalRestoreImageInspector: LocalRestoreImageIn
         let call = CallState()
         calls.append(call)
         callRegisteredGate.notify()
-        try? await call.gate.wait(until: { call.released })
+        await waits.run { try await call.gate.wait(until: { call.released }) }
         return InspectedRestoreImage(
             version: "15.6.1", build: "24G90", isSupportedOnThisHost: true)
     }

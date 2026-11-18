@@ -304,7 +304,7 @@ struct SnapshotSectionViewTests {
     }
 
     @Test("Cancelling a rename renders what arrived while it was open")
-    func cancelRenameRendersTheStoredManifest() async {
+    func cancelRenameRendersTheStoredManifest() async throws {
         let view = SnapshotSectionView()
         let first = makeSnapshot("One")
         render(
@@ -324,7 +324,7 @@ struct SnapshotSectionViewTests {
         // Escape: the field editor's cancel command, which the label turns into
         // `onRenameCancelled`.
         escape(nameLabel(named: "One", in: view))
-        await drainMainQueue()
+        try await drainMainQueue()
 
         #expect(view.activeEdit == nil)
         #expect(findLabel(withText: "Two", in: view) != nil)
@@ -333,7 +333,7 @@ struct SnapshotSectionViewTests {
     // MARK: - Notes
 
     @Test("Cancelling a note edit ends it")
-    func cancelNotesEditEndsIt() async {
+    func cancelNotesEditEndsIt() async throws {
         let view = SnapshotSectionView()
         let first = makeSnapshot("One", notes: "before")
         render(
@@ -343,7 +343,7 @@ struct SnapshotSectionViewTests {
 
         view.beginNotesEditing(first.id)
         escape(nameLabel(named: "before", in: view))
-        await drainMainQueue()
+        try await drainMainQueue()
 
         #expect(view.activeEdit == nil)
     }
@@ -369,7 +369,7 @@ struct SnapshotSectionViewTests {
     }
 
     @Test("Edit Notes on a row with no note starts an edit that commits what is typed")
-    func editNotesCommitsTypedText() async {
+    func editNotesCommitsTypedText() async throws {
         let view = SnapshotSectionView()
         var noted: [(snapshot: VMSnapshot, notes: String)] = []
         view.onSetNotes = { noted.append(($0, $1)) }
@@ -383,7 +383,7 @@ struct SnapshotSectionViewTests {
         let field = allSubviews(InlineEditableLabel.self, in: view) { $0.isEditable }.first
         field?.stringValue = "tools configured"
         field.map { $0.controlTextDidEndEditing(Notification(name: .init("test"), object: $0)) }
-        await drainMainQueue()
+        try await drainMainQueue()
 
         #expect(noted.count == 1)
         #expect(noted.first?.notes == "tools configured")

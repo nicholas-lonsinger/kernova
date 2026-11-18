@@ -244,9 +244,10 @@ swift-toolchain: ## Install swiftly, the swift.org toolchain .swift-version pins
 ubuntu-sdk: ## Generate and install the Ubuntu SDK the Linux half of `make dead-code` cross-builds with (once; minutes)
 	@Tools/install-ubuntu-sdk.sh >/dev/null
 
-# The targets KernovaKit/Package.swift declares off macOS, test targets aside,
-# read from the manifest as Linux evaluates it.
-PORTABLE_TARGETS = $(shell KERNOVA_PORTABLE_ONLY=1 xcrun swift package dump-package --package-path KernovaKit | jq -r '.targets[] | select(.type != "test") | .name')
+# The targets KernovaKit/Package.swift declares off macOS that a shipped binary
+# can link, read from the manifest as Linux evaluates it: test targets and test
+# support, which link only into test bundles, aside.
+PORTABLE_TARGETS = $(shell KERNOVA_PORTABLE_ONLY=1 xcrun swift package dump-package --package-path KernovaKit | jq -r '.targets[] | select(.type != "test" and (.name | endswith("TestSupport") | not)) | .name')
 
 # Its own scratch path keeps the swift.org toolchain's build state apart from
 # the Xcode toolchain's, which `test-unhosted` uses.

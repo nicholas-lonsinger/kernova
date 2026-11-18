@@ -253,7 +253,7 @@ struct VMSettingsSharingPanelTests {
         let panel = try #require(vc.settingsPanelForTesting(.sharing))
         await panel.context.fileMonitor.setPaths(
             Dictionary(uniqueKeysWithValues: paths.map { ($0, Data?.none) }))
-        await drainMainQueue()
+        try await drainMainQueue()
     }
 
     private func sharedRows(in vc: VMSettingsViewController) -> [AttachmentRowView] {
@@ -292,7 +292,7 @@ struct VMSettingsSharingPanelTests {
         vc.showCategory(.sharing)
 
         try await waitForChange { panel.context.fileMonitor.exists(sharePath) }
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(findLabel(containing: "Missing \u{2014} \(sharePath)", in: panel.view) == nil)
     }
 

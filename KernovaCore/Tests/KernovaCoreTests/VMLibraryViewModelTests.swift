@@ -393,7 +393,7 @@ struct VMLibraryViewModelTests {
         case .restartThenForceStop:
             await viewModel.forceStop(instance)
         }
-        await restart.value
+        try await restart.joined()
 
         #expect(presenter.errors.isEmpty)
         #expect(virtService.startCallCount == 0)
@@ -766,7 +766,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("a start that dispatches to macOS guest setup is refused before the installer runs")
-    func macOSSetupStartBlockedByRunningMACAddressTwin() async {
+    func macOSSetupStartBlockedByRunningMACAddressTwin() async throws {
         let virtService = MockVirtualizationService()
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
         let (starting, other) = appendMACAddressPair(
@@ -779,7 +779,7 @@ struct VMLibraryViewModelTests {
         other.activity.placeForTesting(.running(sessionID: UUID()))
 
         await viewModel.start(starting)
-        await starting.setupOperationTask?.value
+        try await starting.setupOperationTask?.joined()
 
         // The installer builds and runs its own VZ virtual machine, so the
         // refusal lands where the setup pipeline leaves rest, before the
@@ -1290,7 +1290,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("An install that hits the running-VM limit explains it and stays in .initialBoot")
-    func installExplainsRunningVMLimit() async {
+    func installExplainsRunningVMLimit() async throws {
         let installService = MockMacOSInstallService()
         installService.installError = makeInstallVMLimitExceededError()
         let storage = MockVMStorageService()
@@ -1324,7 +1324,7 @@ struct VMLibraryViewModelTests {
         instance.activity.placeForTesting(.initialBoot)
 
         await viewModel.start(instance)
-        await instance.setupOperationTask?.value
+        try await instance.setupOperationTask?.joined()
 
         #expect(presenter.errorTitle == "Couldn't Install “Sequoia”")
         #expect(presenter.errorMessage?.contains("at most two macOS virtual machines") == true)
@@ -1433,7 +1433,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("tryForceStop throws on failure")
-    func tryForceStopThrows() async {
+    func tryForceStopThrows() async throws {
         let virtService = MockVirtualizationService()
         virtService.forceStopError = VirtualizationError.noVirtualMachine
         let (viewModel, _, _, _, _) = makeViewModel(virtualizationService: virtService)
@@ -1482,7 +1482,7 @@ struct VMLibraryViewModelTests {
         let wizard = makeAccountCreationWizard(name: "Provisioned VM")
 
         try viewModel.createVM(from: wizard)
-        await viewModel.awaitArrivals()
+        try await viewModel.awaitArrivals()
 
         let created = try #require(viewModel.instances.first)
         // The four non-secret values are the bundle's; the password is not, so
@@ -1501,7 +1501,7 @@ struct VMLibraryViewModelTests {
         let wizard = makeCreationWizard(name: "Auto Start VM")
 
         try viewModel.createVM(from: wizard)
-        await viewModel.awaitArrivals()
+        try await viewModel.awaitArrivals()
         // The start is chained off its own Task, so it can land after the
         // arrival the settle awaited.
         try await waitForChange { viewModel.instances.first?.status == .running }
@@ -1528,7 +1528,7 @@ struct VMLibraryViewModelTests {
         #expect(arrival.displayLabel == "Cancelling\u{2026}")
 
         diskService.resumeCreateDiskImage()
-        await viewModel.awaitArrivals()
+        try await viewModel.awaitArrivals()
 
         #expect(viewModel.entries.isEmpty)
         // Cancelled before publication, so the staged tree is the whole of it.
@@ -1560,7 +1560,7 @@ struct VMLibraryViewModelTests {
                 == VMBundleLayout(bundleURL: staged).diskImageURL)
 
         diskService.resumeCreateDiskImage()
-        await viewModel.awaitArrivals()
+        try await viewModel.awaitArrivals()
 
         #expect(storage.bundles[destination] != nil)
         #expect(try storage.listVMBundles().contains(destination))
@@ -1588,7 +1588,7 @@ struct VMLibraryViewModelTests {
         #expect(arrival.stage == .cancelling)
 
         diskService.resumeCreateDiskImage()
-        #expect(await arrival.settle() == nil)
+        #expect(try await arrival.settle() == nil)
     }
 
     @Test("createVM leaves nothing at the bundle URL when publication fails")
@@ -1602,7 +1602,7 @@ struct VMLibraryViewModelTests {
 
         try viewModel.createVM(from: wizard)
         let destination = try #require(viewModel.arrivals.first).destinationURL
-        await viewModel.awaitArrivals()
+        try await viewModel.awaitArrivals()
 
         #expect(viewModel.entries.isEmpty)
         #expect(storage.bundles[destination] == nil)
@@ -1665,13 +1665,13 @@ struct VMLibraryViewModelTests {
 
         // Wait until the mock install has parked, so the cancel below
         // actually races a running install rather than a not-yet-started one.
-        for await _ in raceInstaller.installStartedStream { break }
+        _ = try await awaitFirst(raceInstaller.installStartedStream)
 
         viewModel.cancelGuestSetup(instance)
 
         // Drain the install task to completion so post-conditions are
         // observable (the catch block runs synchronously after await).
-        await instance.setupOperationTask?.value
+        try await instance.setupOperationTask?.joined()
 
         // The fix routes this case through the cancel outcome: VM is back
         // to .initialBoot, no error dialog, error message cleared.
@@ -1698,7 +1698,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("A Linux download that misses its checksum is titled for the mismatch")
-    func linuxChecksumMismatchIsTitled() async {
+    func linuxChecksumMismatchIsTitled() async throws {
         let expected = ExpectedDigest(
             sha256: String(repeating: "a", count: 64),
             source: .checksumList(URL(string: "https://checksums.example/SHA256SUMS")!))
@@ -1713,7 +1713,7 @@ struct VMLibraryViewModelTests {
         let instance = makePendingLinuxVM(in: viewModel)
 
         await viewModel.start(instance)
-        await instance.setupOperationTask?.value
+        try await instance.setupOperationTask?.joined()
 
         #expect(presenter.errorTitle == "Download Doesn't Match Its Checksum")
         #expect(
@@ -1837,7 +1837,7 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("a keepInMenuBarOnQuit change wakes an observer")
-    func keepInMenuBarOnQuitWakesObservers() async {
+    func keepInMenuBarOnQuitWakesObservers() async throws {
         // The whole reason the preference is mirrored here: `AppDelegate` creates
         // and tears down the status item from an observation, which a bare
         // `UserDefaults` write never wakes.
@@ -1848,7 +1848,7 @@ struct VMLibraryViewModelTests {
             apply: { wakeCount += 1 })
 
         viewModel.keepInMenuBarOnQuit = false
-        await drainMainQueue()
+        try await drainMainQueue()
 
         #expect(wakeCount == 1)
         loop.cancel()
@@ -2071,7 +2071,7 @@ struct VMLibraryViewModelTests {
         }
 
         _ = viewModel.importVMs(fromDroppedURLs: [source.url])
-        await viewModel.awaitArrivals()
+        try await viewModel.awaitArrivals()
 
         let imported = try #require(viewModel.instances.first)
         #expect(imported.hostState.startsAutomaticallyOnLaunch == false)
@@ -2093,7 +2093,7 @@ struct VMLibraryViewModelTests {
         ]
 
         _ = viewModel.importVMs(fromDroppedURLs: sources.map(\.url))
-        await viewModel.awaitArrivals()
+        try await viewModel.awaitArrivals()
 
         // Pre-fix, a synchronous loop over `importVM` only imported the first bundle and
         // rejected the rest with a "preparing operation in progress" error.
@@ -2121,10 +2121,10 @@ struct VMLibraryViewModelTests {
         #expect(viewModel.selectedID == preparing.id)
         #expect(viewModel.entries.count == 2)
 
-        await viewModel.arrivals.first { $0.kind == .importing }?.settle()
+        try await viewModel.arrivals.first { $0.kind == .importing }?.settle()
         #expect(viewModel.selectedID == preparing.id)
         gate.release()
-        await preparing.settle()
+        try await preparing.settle()
     }
 
     // MARK: - Clone
@@ -2164,7 +2164,7 @@ struct VMLibraryViewModelTests {
         try fm.createDirectory(at: layout.restoreStagingURL, withIntermediateDirectories: true)
 
         viewModel.cloneVM(instance, as: .exactCopy)
-        await viewModel.awaitArrivals()
+        try await viewModel.awaitArrivals()
         let clone = try #require(viewModel.instances.first { $0.id != instance.id })
 
         var expectedHostState = sourceHostState
@@ -2201,7 +2201,7 @@ struct VMLibraryViewModelTests {
 
         viewModel.cloneVM(instance)
         let destination = try #require(viewModel.arrivals.first).destinationURL
-        await viewModel.awaitArrivals()
+        try await viewModel.awaitArrivals()
 
         // Every byte the clone wrote went to staging, so a publication that never
         // happened leaves the clone's own bundle URL untouched.
@@ -2246,8 +2246,8 @@ struct VMLibraryViewModelTests {
     /// produced from `source` once its copy task has settled.
     private func clonedMachineID(
         of source: VMInstance, in viewModel: VMLibraryViewModel, guestOS: VMGuestOS
-    ) async -> Data? {
-        await viewModel.awaitArrivals()
+    ) async throws -> Data? {
+        try await viewModel.awaitArrivals()
         let clone = viewModel.instances.first { $0.id != source.id }
         return guestOS == .macOS
             ? clone?.configuration.machineIdentifierData
@@ -2255,24 +2255,24 @@ struct VMLibraryViewModelTests {
     }
 
     @Test("The alternate Clone makes an Exact Copy under the default preference")
-    func cloneVMAsAlternateMakesAnExactCopyByDefault() async {
+    func cloneVMAsAlternateMakesAnExactCopyByDefault() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let source = appendCloneSource(to: viewModel, storage: storage, guestOS: .macOS)
 
         viewModel.cloneVMAsAlternate(source)
-        let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
+        let clonedID = try await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
 
         #expect(clonedID == Self.sourceMachineID)
     }
 
     @Test("An Exact Copy of a macOS VM with no identity at all mints one")
-    func cloneVMKeepModeMintsMissingMachineID() async {
+    func cloneVMKeepModeMintsMissingMachineID() async throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let source = appendCloneSource(
             to: viewModel, storage: storage, guestOS: .macOS, machineID: nil)
 
         viewModel.cloneVM(source, as: .exactCopy)
-        let clonedID = await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
+        let clonedID = try await clonedMachineID(of: source, in: viewModel, guestOS: .macOS)
 
         #expect(source.effectiveMachineIdentifierData == nil)
         #expect(clonedID != nil)
@@ -2281,7 +2281,7 @@ struct VMLibraryViewModelTests {
     // MARK: - Cancel Preparing
 
     @Test("requestCancelPreparing sets state for alert")
-    func requestCancelPreparingSetsState() async {
+    func requestCancelPreparingSetsState() async throws {
         let (viewModel, _, _, _, _) = makeViewModel()
         let gate = GatedStep()
         let arrival = viewModel.library.beginGatedArrival(
@@ -2293,7 +2293,7 @@ struct VMLibraryViewModelTests {
         #expect(presenter.arrivalToCancel === arrival)
 
         gate.release()
-        await arrival.settle()
+        try await arrival.settle()
     }
 
     // MARK: - Force Stop Confirmation

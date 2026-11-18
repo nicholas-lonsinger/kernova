@@ -56,8 +56,8 @@ struct VMDisplayPlacementSessionTests {
         }
         // The window's observation runs behind the first barrier, and a close
         // it requests finishes its deferred phase behind the second.
-        await drainMainQueue()
-        await drainMainQueue()
+        try await drainMainQueue()
+        try await drainMainQueue()
 
         #expect(instance.status == .running)
         #expect(instance.liveSessionID != firstSession)

@@ -59,7 +59,7 @@ struct VMDisplayPlacementBringUpTests {
         #expect(instance.displayMode == .fullscreen)
         #expect(instance.hostState.displayPreference == .fullscreen)
         gate.release()
-        await start.value
+        try await start.joined()
         #expect(instance.status == .running)
         #expect(presenter.errors.isEmpty)
     }

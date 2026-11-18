@@ -140,18 +140,18 @@ struct BundledGuestAgentsTests {
         let agents = BundledGuestAgents(bundle: try bundle([Self.linuxAgent: Self.payload]), versionLabel: "1.2 (34)")
         let provider = BundledGuestAgentPayloads(agents, guestOS: .linux)
         let manifest = Self.manifest(of: Self.payload)
-        let read = await withCheckedContinuation { continuation in
-            provider.read(manifest: manifest, offset: 1000, count: 300) { continuation.resume(returning: $0) }
+        let read = try await Backstop("the provider's read").park { resume in
+            provider.read(manifest: manifest, offset: 1000, count: 300) { resume($0) }
         }
         #expect(try read.get() == Self.payload[1000..<1300])
-        let tail = await withCheckedContinuation { continuation in
-            provider.read(manifest: manifest, offset: 4000, count: 300) { continuation.resume(returning: $0) }
+        let tail = try await Backstop("the provider's read").park { resume in
+            provider.read(manifest: manifest, offset: 4000, count: 300) { resume($0) }
         }
         #expect(try tail.get() == Self.payload[4000...])
 
         let other = Self.manifest(of: Data("other".utf8))
-        let refused = await withCheckedContinuation { continuation in
-            provider.read(manifest: other, offset: 0, count: 10) { continuation.resume(returning: $0) }
+        let refused = try await Backstop("the provider's read").park { resume in
+            provider.read(manifest: other, offset: 0, count: 10) { resume($0) }
         }
         #expect(throws: WireError.self) { try refused.get() }
     }

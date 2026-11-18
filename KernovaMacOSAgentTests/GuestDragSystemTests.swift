@@ -70,10 +70,8 @@ struct GuestDragSystemTests {
         try Data("alpha".utf8).write(to: tree.appendingPathComponent("a.txt"))
         let input = SystemGuestDragInput(measureFolder: { _ in 42 })
 
-        let sizes = await withCheckedContinuation { continuation in
-            input.sizeFiles([file, tree, directory.appendingPathComponent("gone.txt")]) {
-                continuation.resume(returning: $0)
-            }
+        let sizes = try await Backstop("sizeFiles(_:then:)").park { resume in
+            input.sizeFiles([file, tree, directory.appendingPathComponent("gone.txt")]) { resume($0) }
         }
 
         #expect(sizes == [4, 42, nil])

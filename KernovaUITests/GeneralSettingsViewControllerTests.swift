@@ -43,7 +43,7 @@ struct GeneralSettingsViewControllerTests {
     /// The tab container resizes the window from the published size, so a note
     /// appearing or going away while the pane is on screen has to move it.
     @Test("The approval note coming and going changes the published size")
-    func approvalNoteRepublishesTheSize() async {
+    func approvalNoteRepublishesTheSize() async throws {
         let registration = StubRegistration(status: .enabled)
         let controller = makeController(registration: registration)
         defer { controller.viewDidDisappear() }
@@ -55,7 +55,7 @@ struct GeneralSettingsViewControllerTests {
 
         registration.status = .requiresApproval
         viewModel.hostNotifications.appDidBecomeActive.post()
-        await drainMainQueue()
+        try await drainMainQueue()
         let with = controller.preferredContentSize
         #expect(approvalNote(in: controller) != nil)
         #expect(with.height > without.height)
@@ -63,7 +63,7 @@ struct GeneralSettingsViewControllerTests {
 
         registration.status = .enabled
         viewModel.hostNotifications.appDidBecomeActive.post()
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(approvalNote(in: controller) == nil)
         #expect(controller.preferredContentSize == without)
     }

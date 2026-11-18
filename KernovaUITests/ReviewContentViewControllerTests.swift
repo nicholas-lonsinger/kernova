@@ -41,7 +41,7 @@ struct ReviewContentViewControllerTests {
         let probeService = MockRestoreImageProbeService()
         probeService.sizeResult = 19_772_077_142
         let vm = VMCreationViewModel.overEngine(probeService: probeService, ipswService: MockIPSWService())
-        await vm.loadLatestImageDetails()?.value
+        try await vm.loadLatestImageDetails()?.joined()
 
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -60,7 +60,7 @@ struct ReviewContentViewControllerTests {
         let ipswService = MockIPSWService()
         ipswService.fetchError = URLError(.notConnectedToInternet)
         let vm = VMCreationViewModel.overEngine(probeService: MockRestoreImageProbeService(), ipswService: ipswService)
-        await vm.loadLatestImageDetails()?.value
+        try await vm.loadLatestImageDetails()?.joined()
 
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()
@@ -102,13 +102,13 @@ struct ReviewContentViewControllerTests {
     }
 
     @Test("macOS + local file names the version and size once the inspection lands")
-    func macOSLocalFileShowsVersionAndSize() async {
+    func macOSLocalFileShowsVersionAndSize() async throws {
         let inspector = MockLocalRestoreImageInspector()
         inspector.inspectResult = InspectedRestoreImage(
             version: "15.6.1", build: "24G90", isSupportedOnThisHost: true, sizeBytes: 15_500_000_000)
         let vm = VMCreationViewModel.overEngine(localImageInspector: inspector)
         vm.selectLocalFile(path: "/tmp/Restore.ipsw", bookmark: nil)
-        await vm.localFileInspectionTask?.value
+        try await vm.localFileInspectionTask?.joined()
 
         let vc = ReviewContentViewController(creationVM: vm)
         vc.loadViewIfNeeded()

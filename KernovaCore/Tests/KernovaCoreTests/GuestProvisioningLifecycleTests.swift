@@ -105,7 +105,7 @@ struct GuestProvisioningLifecycleTests {
         defer { withExtendedLifetime(library) {} }
         #expect(instance.configuration.installContext != nil)
 
-        try await coordinator.launchGuestSetup(on: instance).value()
+        try await coordinator.launchGuestSetup(on: instance).resolved()
 
         // The version the drop is decided from — the first authoritative reading
         // of what the guest actually is.

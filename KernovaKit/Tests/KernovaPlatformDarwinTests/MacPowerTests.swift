@@ -183,19 +183,20 @@ struct MacPowerTests {
     }
 
     @Test("A cancel while shutdown runs reports nothing: the accepted request ends with shutdown")
-    func cancelWhileShutdownRuns() {
+    func cancelWhileShutdownRuns() throws {
         let running = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
+        let waits = OffTaskWaits()
         let harness = Harness(
             .shutdownCommand(run: { _ in
                 running.signal()
-                release.wait()
+                waits.run { try Backstop("the test's release of the shutdown").wait(for: release) }
                 return 0
             }), console: .off)
         _ = harness.take()
 
         harness.adapter.perform(Self.id, .shutdown, ignoringApps: true)
-        running.wait()
+        try Backstop("the shutdown's start").wait(for: running)
         harness.adapter.cancel(Self.id)
         release.signal()
         #expect(harness.take() == [.accepted(Self.id), .handedOff(Self.id)])
@@ -244,15 +245,16 @@ struct MacPowerTests {
     }
 
     @Test("A cancel while the call is blocked lets the request go unconfirmed, and its late answer reports nothing")
-    func cancelWhileCalling() {
+    func cancelWhileCalling() throws {
         let calling = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
+        let waits = OffTaskWaits()
         let mechanism = MacPowerMechanism(
             graceful: .init(
                 absentDetail: "",
                 call: .answering {
                     calling.signal()
-                    release.wait()
+                    waits.run { try Backstop("the test's release of the call").wait(for: release) }
                     return .tookIt
                 }),
             ignoringApps: nil)
@@ -260,7 +262,7 @@ struct MacPowerTests {
         _ = harness.take()
 
         harness.adapter.perform(Self.id, .shutdown, ignoringApps: false)
-        calling.wait()
+        try Backstop("the call's start").wait(for: calling)
         harness.adapter.cancel(Self.id)
         release.signal()
         #expect(harness.take() == [.unconfirmed(Self.id)])

@@ -254,7 +254,7 @@ struct VMStorageServiceTests {
                 name: "Ours", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
                 memorySizeInGB: VMGuestOS.linux.hostMemorySize))
 
-        await service.reclaimStagedBundles().value
+        try await service.reclaimStagedBundles().joined()
 
         #expect(FileManager.default.fileExists(atPath: theirs.path(percentEncoded: false)))
         #expect(FileManager.default.fileExists(atPath: ours.path(percentEncoded: false)))
@@ -272,7 +272,7 @@ struct VMStorageServiceTests {
                     memorySizeInGB: VMGuestOS.linux.hostMemorySize), in: otherProcess())
         }
 
-        await service.reclaimStagedBundles().value
+        try await service.reclaimStagedBundles().joined()
 
         #expect(!FileManager.default.fileExists(atPath: abandoned.path(percentEncoded: false)))
         #expect(

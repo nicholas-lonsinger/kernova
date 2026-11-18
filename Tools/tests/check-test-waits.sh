@@ -139,6 +139,66 @@ expect marker-two-lines-above 3 '// deadline-under-test - too far away
 let x = 1
 _ = blocked.wait(timeout: .now() + 1)'
 
+# Waits with no deadline.
+
+expect raw-continuations '1 2 3 4' 'await withCheckedContinuation { c in queue.async { c.resume() } }
+let value = try await withCheckedThrowingContinuation { c in start(c) }
+await withUnsafeContinuation { _ in }
+try await withUnsafeThrowingContinuation { c in start(c) }'
+
+expect backstop-park '' 'try await Backstop("close").park { resume in runtime.close { resume(()) } }'
+
+expect detached-tasks '1 2' 'let paste = Task.detached { pasteboard.invokeProvider(forType: type) }
+let served = await Task
+    .detached { exchange.content(id) }.value'
+
+expect other-tasks '' 'let task = Task { await work() }
+let call = BlockingCall { pasteboard.invokeProvider(forType: type) }
+let pasted = try await offCooperativePool { pasteboard.invokeProvider(forType: type) }'
+
+expect blocking-waits '1 2 3 4 6' 'semaphore.wait()
+hold?.wait()
+gates[lane + 1].wait()
+self.condition.wait( )
+_ = group
+    .wait()'
+
+expect forever-waits '1 2 3' '_ = semaphore.wait(timeout: .distantFuture)
+_ = group.wait(timeout: DispatchTime.distantFuture)
+_ = semaphore.wait(wallTimeout: .distantFuture)'
+
+expect child-process-waits '1 2 3 5' 'process.waitUntilExit()
+let data = output.fileHandleForReading.readDataToEndOfFile()
+let rest = try errors.fileHandleForReading.readToEnd()
+codesign
+    .waitUntilExit()'
+
+expect child-process '' 'let ran = try ChildProcess(URL(fileURLWithPath: "/bin/sh"), ["-c", command]).exit()
+let chunk = try handle.read(upToCount: 4_096)'
+
+expect awaited-waits '' 'await readiness.wait()
+try await gate.wait()
+let ready = LibraryReadiness(awaitReady: { await read.wait() })
+_ = await self.parked[0].wait()'
+
+expect waits-with-arguments '' 'try Backstop("the release").wait(for: release)
+_ = blocked.wait(timeout: .now() + testWaitBackstop)
+try await gate.wait { done }'
+
+expect unbounded-in-prose '' '// semaphore.wait() and Task.detached would park with no deadline.
+let s = "withCheckedContinuation { c in c.resume() }"'
+
+expect marker-does-not-exempt-an-unbounded-wait 2 '// deadline-under-test - the wait is the point
+semaphore.wait()'
+
+expect backstop-literal 1 'let backstop = Backstop("the call", timeout: 0.1)'
+
+expect backstop-literal-marked '' '// deadline-under-test - the backstop firing is the asserted outcome
+let backstop = Backstop("the call", timeout: 0.1)'
+
+expect backstop-default '' 'let backstop = Backstop("the call")
+let named = Backstop("the call", timeout: limit)'
+
 # A file the check cannot open fails it, rather than passing unread.
 output=$(bash "$check_script" "$tmp/missing.swift" 2>&1)
 status=$?

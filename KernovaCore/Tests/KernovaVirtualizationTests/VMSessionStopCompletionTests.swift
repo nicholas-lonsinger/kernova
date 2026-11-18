@@ -75,8 +75,8 @@ struct VMSessionStopCompletionTests {
         let events = arrival == .completionFirst ? [completion, delegate] : [delegate, completion]
         for event in events { instance.activity.deliverSessionEvent(event, from: session) }
 
-        try await stop.value()
-        try await boot.outcome.value()
+        try await stop.resolved()
+        try await boot.outcome.resolved()
         #expect(seen.boots == 1)
         #expect(instance.phase == .stopped)
         #expect(instance.activity.lastFailure == nil)

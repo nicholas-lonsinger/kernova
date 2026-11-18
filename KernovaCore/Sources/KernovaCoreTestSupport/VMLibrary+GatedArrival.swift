@@ -73,7 +73,8 @@ extension VMArrival {
     /// Waits for the arrival to settle — its row already replaced by the VM
     /// or removed — answering the VM it became, or `nil` when it became none.
     @discardableResult
-    func settle() async -> VMInstance? {
-        try? await settled.value
+    func settle(fileID: String = #fileID, line: Int = #line) async throws -> VMInstance? {
+        let settled = try await settled.joinedResult(fileID: fileID, line: line)
+        return try? settled.get()
     }
 }

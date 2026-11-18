@@ -134,7 +134,7 @@ struct AppResidencySummonTests {
 
         controller.handleReopen()
         // The reopen's job is already queued, so it runs ahead of the barrier.
-        await drainMainQueue()
+        try await drainMainQueue()
 
         #expect(presentations.count == 1)
         let library = try #require(registry.libraryWindow)
@@ -160,7 +160,7 @@ struct AppResidencySummonTests {
         controller.handleReopen()
         // The unhide belongs to the deferred decision, never to the call itself.
         #expect(focus.requests == requestsBefore)
-        await drainMainQueue()
+        try await drainMainQueue()
 
         #expect(focus.requests == requestsBefore + [.unhideWithoutActivation])
         #expect(presentations.count == 0)
@@ -179,7 +179,7 @@ struct AppResidencySummonTests {
 
         controller.handleReopen()
         // The reopen's job is already queued, so it runs ahead of the barrier.
-        await drainMainQueue()
+        try await drainMainQueue()
 
         #expect(presentations.count == 0)
         #expect(focus.requests == requestsBefore)

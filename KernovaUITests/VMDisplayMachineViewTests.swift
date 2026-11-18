@@ -327,17 +327,17 @@ struct DisplayDragOutSourceTests {
     }
 
     @Test("a promise's name and queue are answered off the main actor, where file coordination asks")
-    func answersOffTheMainActor() async {
+    func answersOffTheMainActor() async throws {
         let (source, _) = makeSource()
 
-        let answers = await Task.detached {
+        let answers = try await offCooperativePool {
             let provider = NSFilePromiseProvider(fileType: "public.plain-text", delegate: source)
             provider.userInfo = DisplayDragOutSource.PromisedItem(index: 0, source: source)
             return (
                 source.filePromiseProvider(provider, fileNameForType: provider.fileType),
                 source.operationQueue(for: provider).maxConcurrentOperationCount
             )
-        }.value
+        }
 
         #expect(answers.0 == "report.txt")
         #expect(answers.1 == 1)

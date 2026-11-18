@@ -57,7 +57,7 @@ struct HubClipboardServiceTests {
     private func acceptLastOffer(_ probe: AgentHubProbe) async throws -> ItemOffer {
         let (id, offer) = try #require(offers(probe).last)
         probe.deliver(.itemReply(id, .offered(nil)), fromConnection: 0)
-        await probe.settle()
+        try await probe.settle()
         return offer
     }
 
@@ -202,13 +202,13 @@ struct HubClipboardServiceTests {
         coordinator.pollHostClipboard()
         try await probe.changed.wait { !offers(probe).isEmpty }
         let offer = try await acceptLastOffer(probe)
-        await probe.settle()
+        try await probe.settle()
         return (offer, pasteboard, coordinator)
     }
 
     /// The guest's pull of representation `index` of `offer`'s first item, as the hub's source asks the exchange
     /// for it.
-    private func pull(_ offer: ItemOffer, representation index: Int = 0, from instance: VMInstance) async
+    private func pull(_ offer: ItemOffer, representation index: Int = 0, from instance: VMInstance) async throws
         -> Result<ItemContent, WireError>
     {
         var request = PullRequest()
@@ -216,7 +216,7 @@ struct HubClipboardServiceTests {
         request.representation = UInt32(index)
         let exchange = instance.hubClipboard.exchange
         let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
-        return await Task.detached { exchange.content(pull, request) }.value
+        return try await offCooperativePool { [request] in exchange.content(pull, request) }
     }
 
     // MARK: - One current clipboard
@@ -231,7 +231,7 @@ struct HubClipboardServiceTests {
         let pasteboard = try hostPasteboard(instance)
 
         let password = Data("hunter2".utf8)
-        let paste = Task.detached {
+        let paste = BlockingCall {
             pasteboard.invokeProvider(forType: NSPasteboard.PasteboardType.string)
         }
         try await probe.changed.wait { !pulls(probe).isEmpty }
@@ -239,7 +239,7 @@ struct HubClipboardServiceTests {
         #expect(order.landing == .memory)
         try land(password, for: order, request: requestID, stream: 3, on: probe)
 
-        #expect(await paste.value == password)
+        #expect(try await paste.returned() == password)
         let exchangeStaging = ClipboardFileStaging.processRoot.url
             .appendingPathComponent("host-\(instance.configuration.id.uuidString)")
         #expect(!FileManager.default.fileExists(atPath: exchangeStaging.path))
@@ -275,8 +275,8 @@ struct HubClipboardServiceTests {
         try await probe.changed.wait { released(crossing, probe) && !offers(probe).isEmpty }
         #expect(reads(probe).isEmpty)
         let offered = try await acceptLastOffer(probe)
-        await probe.settle()
-        #expect(await pull(offered, from: instance) == .success(.inline(Data("copied on the Mac".utf8))))
+        try await probe.settle()
+        #expect(try await pull(offered, from: instance) == .success(.inline(Data("copied on the Mac".utf8))))
     }
 
     @Test(
@@ -292,7 +292,7 @@ struct HubClipboardServiceTests {
 
         probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
         try await waitForChange { !instance.hubClipboard.isConnected }
-        await probe.settle()
+        try await probe.settle()
         #expect(try hostPasteboard(instance).promisedTypes.isEmpty)
         #expect(offers(probe).isEmpty)
         // Passthrough on: nothing is reported.
@@ -302,14 +302,14 @@ struct HubClipboardServiceTests {
         probe.deliver(.peerStateChanged(Self.onConsole), fromConnection: 0)
         try await waitForChange { instance.hubClipboard.isConnected }
         coordinator.pollHostClipboard()
-        await probe.settle()
+        try await probe.settle()
         #expect(offers(probe).isEmpty)
 
         #expect(pasteboard.setString("copied after the return", forType: .string))
         try await probe.changed.wait { !offers(probe).isEmpty }
         let offered = try await acceptLastOffer(probe)
-        await probe.settle()
-        #expect(await pull(offered, from: instance) == .success(.inline(Data("copied after the return".utf8))))
+        try await probe.settle()
+        #expect(try await pull(offered, from: instance) == .success(.inline(Data("copied after the return".utf8))))
     }
 
     @Test("A Mac copy that offers nothing withdraws the host's offer")
@@ -322,7 +322,7 @@ struct HubClipboardServiceTests {
         #expect(pasteboard.setString("copied on the Mac", forType: .string))
         try await probe.changed.wait { !offers(probe).isEmpty }
         let offered = try await acceptLastOffer(probe)
-        await probe.settle()
+        try await probe.settle()
 
         #expect(
             pasteboard.setItem([
@@ -344,14 +344,14 @@ struct HubClipboardServiceTests {
             Self.item(Self.representation("public.data", .file, name: "notes.bin")), on: probe, into: instance)
         _ = instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
         let pasteboard = try #require(instance.hostClipboardPublisher.pasteboard as? FakePasteboard)
-        let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
+        let paste = BlockingCall { pasteboard.invokeProvider(forType: .fileURL) }
         try await probe.changed.wait { !pulls(probe).isEmpty }
         let pull = open(pulls(probe)[0].id, stream: 3, on: probe)
 
         // The guest sends nothing more, and then its clipboard moves on.
         endGuestOffer(on: probe)
 
-        #expect(await paste.value == nil)
+        #expect(try await paste.returned() == nil)
         try await probe.changed.wait { cancels(probe) == [pull] }
     }
 
@@ -421,8 +421,8 @@ struct HubClipboardServiceTests {
         #expect(try hostPasteboard(instance).setString("from the Mac", forType: .string))
         let copy = try await copyToGuest(instance, probe)
 
-        #expect(await pull(copy, from: instance) == .success(.inline(Data("from the Mac".utf8))))
-        guard case .failure(let error) = await pull(copy, from: instance) else {
+        #expect(try await pull(copy, from: instance) == .success(.inline(Data("from the Mac".utf8))))
+        guard case .failure(let error) = try await pull(copy, from: instance) else {
             Issue.record("the copy served its bytes twice")
             return
         }
@@ -541,7 +541,7 @@ struct HubClipboardServiceTests {
                     NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI): Data(),
                 ]
             ])
-        await probe.settle()
+        try await probe.settle()
         #expect(!released(Self.copyToken, probe))
         return pasteboard
     }
@@ -713,10 +713,10 @@ struct HubClipboardServiceTests {
     // MARK: - A clipboard this process wrote
 
     /// Turns passthrough off the way the setting does, once the hub sent what that asks of it.
-    private func stopPassthrough(_ instance: VMInstance, _ probe: AgentHubProbe) async {
+    private func stopPassthrough(_ instance: VMInstance, _ probe: AgentHubProbe) async throws {
         instance.refreshClipboardPassthrough()
         #expect(instance.sessionContext?.clipboardPassthroughCoordinator == nil)
-        await probe.settle()
+        try await probe.settle()
     }
 
     @Test(
@@ -733,10 +733,10 @@ struct HubClipboardServiceTests {
         try await probe.changed.wait { offers(probe).count == 1 }
         let hostOffer = try await acceptLastOffer(probe)
 
-        await stopPassthrough(instance, probe)
+        try await stopPassthrough(instance, probe)
         // The guest hears its clipboard's offer end as passthrough stopping, and retracts what no paste had of it.
         #expect(withdrawal(of: hostOffer.token, probe) == .disabledByPolicy)
-        guard case .failure = await pull(hostOffer, from: instance) else {
+        guard case .failure = try await pull(hostOffer, from: instance) else {
             Issue.record("the withdrawn offer still served A")
             return
         }
@@ -769,11 +769,11 @@ struct HubClipboardServiceTests {
     ) async throws -> Data? {
         let pasteboard = try hostPasteboard(instance)
         let before = pulls(probe).count
-        let paste = Task.detached { pasteboard.invokeProvider(forType: type, itemIndex: item) }
+        let paste = BlockingCall { pasteboard.invokeProvider(forType: type, itemIndex: item) }
         try await probe.changed.wait { pulls(probe).count == before + 1 }
         let (request, order) = pulls(probe)[before]
         try land(content, for: order, request: request, stream: stream, on: probe)
-        return await paste.value
+        return try await paste.returned()
     }
 
     /// Has passthrough write the guest's offer of `items` to the Mac, `concealed` or not.
@@ -809,7 +809,7 @@ struct HubClipboardServiceTests {
             try await paste(Self.textType, item: 1, landing: Data("a.bin".utf8), stream: 5, instance, probe)
                 == Data("a.bin".utf8))
 
-        await stopPassthrough(instance, probe)
+        try await stopPassthrough(instance, probe)
         #expect(pasteboard.promisedTypes.isEmpty)
         #expect(pasteboard.dataByItem == [[Self.textType: Data("text".utf8)]])
         #expect(retractions.outcomes == [.keptPart])
@@ -833,11 +833,11 @@ struct HubClipboardServiceTests {
     ) async throws {
         switch end {
         case .passthroughStops:
-            await stopPassthrough(instance, probe)
+            try await stopPassthrough(instance, probe)
         case .guestLeavesTheConsole:
             probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
             try await waitForChange { !instance.hubClipboard.isConnected }
-            await probe.settle()
+            try await probe.settle()
         case .guestFeatureGoes:
             let pasteboard = try hostPasteboard(instance)
             let standing = pasteboard.changeCount
@@ -848,7 +848,7 @@ struct HubClipboardServiceTests {
                 fromConnection: 0)
             // The retraction rewrites the Mac's pasteboard.
             try await pasteboard.changed.wait { pasteboard.changeCount != standing }
-            await probe.settle()
+            try await probe.settle()
         }
     }
 
@@ -902,7 +902,7 @@ struct HubClipboardServiceTests {
         #expect(pasteboard.dataByItem.first?[.fileURL] == Data(file.absoluteString.utf8))
         #expect(pasteboard.promisedTypes.isEmpty)
         #expect(pulls(probe).isEmpty)
-        await probe.settle()
+        try await probe.settle()
         #expect(released(Self.copyToken, probe))
     }
 
@@ -949,7 +949,7 @@ struct HubClipboardServiceTests {
         let coordinator = try startPassthrough(instance)
         defer { coordinator.stop() }
         coordinator.pollHostClipboard()
-        await probe.settle()
+        try await probe.settle()
         #expect(offers(probe).isEmpty)
         #expect(pasteboard.changeCount == macHolds)
         #expect(pasteboard.items.first?.data(forType: .string) == Data("the Mac's newer copy".utf8))
@@ -967,7 +967,7 @@ struct HubClipboardServiceTests {
         coordinator.pollHostClipboard()
         try await probe.changed.wait { !offers(probe).isEmpty }
         probe.deliver(.itemReply(offers(probe)[0].id, .offered(WireError(.internal))), fromConnection: 0)
-        await probe.settle()
+        try await probe.settle()
         #expect(instance.hubClipboard.exchange.localSource == nil)
 
         try await receive(Self.text, on: probe, into: instance)
@@ -986,10 +986,10 @@ struct HubClipboardServiceTests {
         _ = instance.hostClipboardPublisher.publish(from: instance.hubClipboard)
         let pasteboard = try hostPasteboard(instance)
 
-        let first = Task.detached {
+        let first = BlockingCall {
             pasteboard.invokeProvider(forType: NSPasteboard.PasteboardType.string)
         }
-        let second = Task.detached { pasteboard.invokeProvider(forType: .rtf) }
+        let second = BlockingCall { pasteboard.invokeProvider(forType: .rtf) }
         try await probe.changed.wait { pulls(probe).count == 2 }
         let orders = pulls(probe).map(\.order)
         #expect(orders.allSatisfy { $0.landing == .memory })
@@ -998,8 +998,8 @@ struct HubClipboardServiceTests {
         #expect(budget.limit == UInt64(instance.effectiveClipboardMaxPasteBytes))
 
         endGuestOffer(on: probe)
-        #expect(await first.value == nil)
-        #expect(await second.value == nil)
+        #expect(try await first.returned() == nil)
+        #expect(try await second.returned() == nil)
     }
 
     // MARK: - A pasted file and its staging
@@ -1023,7 +1023,7 @@ struct HubClipboardServiceTests {
 
         probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
         try await waitForChange { !instance.hubClipboard.isConnected }
-        await probe.settle()
+        try await probe.settle()
         #expect(pasteboard.promisedTypes.isEmpty)
         #expect(pasteboard.dataByItem.last?[.fileURL] == served)
         #expect(try Data(contentsOf: file) == Data("the guest's file".utf8))

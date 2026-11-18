@@ -14,7 +14,7 @@ import Testing
 @Suite("Connection driver: landings in flight")
 struct DriverLandingTests {
     @Test("A connection that finishes with a landing in flight ends at once and delivers the pull's end after it")
-    func endsBeforeTheLanding() async {
+    func endsBeforeTheLanding() async throws {
         let stream = ScriptedStream()
         let ended = Recorder<ConnectionClosure>()
         let events = Recorder<String>()
@@ -24,22 +24,22 @@ struct DriverLandingTests {
             handlers: ConnectionDriver<LandingEndpoint>.Handlers(
                 event: { event, _ in events.record(event) }, ended: { closure, _ in ended.record(closure) }))
         driver.start()
-        await flush(driver.queue)
+        try await flush(driver.queue)
 
         driver.handle(.finishWithLandingInFlight)
-        await flush(driver.queue)
+        try await flush(driver.queue)
         #expect(stream.shutdowns == 1)
         #expect(events.elements == ["closed"])
         #expect(ended.elements == [.transportLost])
 
         driver.handle(.publishReported)
-        await flush(driver.queue)
+        try await flush(driver.queue)
         #expect(events.elements == ["closed", "pullEnded"])
         #expect(ended.elements.count == 1)
         #expect(stream.shutdowns == 1)
 
         driver.handle(.publishReported)
-        await flush(driver.queue)
+        try await flush(driver.queue)
         #expect(events.elements.count == 2)
         #expect(ended.elements.count == 1)
     }
