@@ -23,17 +23,24 @@ struct VMGroupIntentTests {
 
     // MARK: - Entity
 
-    @Test("Every group kind and every group action is offered, named, and maps back to itself")
-    func choicesMirrorTheirKitTypes() {
+    @Test("Every group kind and every group action is offered under its name, and does what its name says")
+    func choicesMirrorTheirKitTypes() throws {
+        var kinds: [String: VMGroupKind] = [:]
+        for choice in VMGroupKindChoice.allCases {
+            let representation = try #require(VMGroupKindChoice.caseDisplayRepresentations[choice])
+            kinds[String(localized: representation.title)] = choice.kind
+        }
+        #expect(kinds == ["Smart Group": .smartGroup, "Folder": .folder])
         for kind in VMGroupKind.allCases {
             #expect(VMGroupKindChoice(kind).kind == kind)
-            #expect(VMGroupKindChoice.caseDisplayRepresentations[VMGroupKindChoice(kind)] != nil)
         }
-        #expect(VMGroupActionChoice.allCases.count == VMGroupAction.allCases.count)
-        #expect(Set(VMGroupActionChoice.allCases.map(\.action)) == Set(VMGroupAction.allCases))
+
+        var actions: [String: VMGroupAction] = [:]
         for choice in VMGroupActionChoice.allCases {
-            #expect(VMGroupActionChoice.caseDisplayRepresentations[choice] != nil)
+            let representation = try #require(VMGroupActionChoice.caseDisplayRepresentations[choice])
+            actions[String(localized: representation.title)] = choice.action
         }
+        #expect(actions == ["Start": .start, "Suspend": .suspend, "Stop": .stop, "Restart": .restart])
     }
 
     @Test("A group entity carries its summary, reads its kind in words, and names itself to a command")
