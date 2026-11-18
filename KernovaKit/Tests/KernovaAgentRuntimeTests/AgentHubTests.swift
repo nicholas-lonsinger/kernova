@@ -670,7 +670,7 @@ struct GuestStreamAcceptorTests {
         #expect(!opened.withLock { $0 })
     }
 
-    @Test("A stop landing while a stream is built shuts that stream down, hands it to nothing, and frees its slot")
+    @Test("A stop landing while a stream is built shuts that stream down and hands it to nothing")
     func stoppedWhileBuilding() {
         let probe = Probe()
         let (host, _) = MemoryStream.pair()
