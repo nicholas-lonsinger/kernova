@@ -74,6 +74,12 @@ public final class FakeReadPasteboard: ClipboardReadPasteboard, Sendable {
     /// None: no snapshot on this double carries a file promise.
     @MainActor public var filePromiseReceivers: [any FilePromiseReceiving] { [] }
 
+    /// The grants a read of this double's file URLs is held in, which reading takes none of.
+    public let sandbox = FakeSandbox()
+
+    /// The grants ``sandbox`` counts.
+    public var fileGrants: SandboxFileGrants { sandbox.fileGrants }
+
     /// Stages a single item, as one copy does, bumping the change count.
     public func setItem(_ representations: [(type: NSPasteboard.PasteboardType, data: Data)]) {
         setItems([FakePasteboardItem(representations)])

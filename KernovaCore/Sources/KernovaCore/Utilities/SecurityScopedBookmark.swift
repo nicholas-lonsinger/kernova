@@ -1,4 +1,5 @@
 import Foundation
+import KernovaKit
 import KernovaLogging
 
 /// Creation and resolution of app-scoped security bookmarks — the sandbox's
@@ -161,7 +162,7 @@ final class ScopedAccess {
         }
         self.url = resolution.url
         self.isStale = resolution.isStale
-        self.didStart = resolution.url.startAccessingSecurityScopedResource()
+        self.didStart = SandboxFileGrants.shared.startAccessing(resolution.url)
     }
 
     /// Stops the scoped access if this instance started one; idempotent.
@@ -169,7 +170,7 @@ final class ScopedAccess {
         guard !released else { return }
         released = true
         if didStart {
-            url.stopAccessingSecurityScopedResource()
+            SandboxFileGrants.shared.stopAccessing(url)
         }
     }
 

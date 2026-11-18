@@ -63,6 +63,8 @@ public final class ClipboardOfferSource {
     public let items: [OfferedItem]
     /// The content is confidential: `org.nspasteboard.ConcealedType`.
     public let concealed: Bool
+    /// The grants of access to the files the offer was read from, held while the offer lives.
+    public let fileAccess: PasteboardFileAccess?
 
     private let origins: [[Origin]]
     private let pasteboard: (any ClipboardReadPasteboard)?
@@ -82,11 +84,12 @@ public final class ClipboardOfferSource {
         items: [OfferedItem], origins: [[Origin]], concealed: Bool,
         pasteboard: (any ClipboardReadPasteboard)?, changeCount: Int,
         promises: [any FilePromiseReceiving], promiseDestination: @escaping @MainActor () throws -> URL,
-        readFrom: (any ClipboardReadPasteboard, Int)? = nil
+        readFrom: (any ClipboardReadPasteboard, Int)? = nil, fileAccess: PasteboardFileAccess? = nil
     ) {
         self.items = items
         self.origins = origins
         self.concealed = concealed
+        self.fileAccess = fileAccess
         self.pasteboard = pasteboard
         self.changeCount = changeCount
         self.promises = promises

@@ -259,6 +259,37 @@ struct ClipboardEndTests {
         #expect(requestRefusals(pair).count == 1)
     }
 
+    // MARK: - File grants
+
+    @Test("A copied file's grant lasts while the clipboard holds the copy, past its offer, and goes once it moves on")
+    func copiedFileGrantLastsWhileTheCopyStands() async throws {
+        let pair = ClipboardEndPair(staging: staging.root, gate: .onCommand)
+        let copied = scratch.url.appendingPathComponent("copied.txt")
+        try Data("copied".utf8).write(to: copied)
+        let sandbox = pair.hostPasteboard.sandbox
+        pair.hostPasteboard.setFiles([copied])
+
+        pair.host.offerOnCommand()
+        try await pair.settle()
+        #expect(sandbox.grants(of: copied) == 1)
+
+        // The offer ends with the connection; the copy, read again, can take no grant of its own.
+        pair.linkDown()
+        try await pair.settle()
+        #expect(sandbox.grants(of: copied) == 1)
+        pair.linkUp()
+        pair.host.offerOnCommand()
+        try await pair.settle()
+        #expect(readOutcomes(pair, .host) == [.offered(skipped: 0), .offered(skipped: 0)])
+        #expect(sandbox.grants(of: copied) == 1)
+
+        pair.copy("text", on: .host)
+        pair.poll()
+        try await pair.settle()
+        try await sandbox.changed.wait { sandbox.grants(of: copied) == 0 }
+        #expect(sandbox.unheldGiveBacks.isEmpty)
+    }
+
     // MARK: - The poll
 
     @Test("A copied zero-byte file is offered like any other, with nothing left out")

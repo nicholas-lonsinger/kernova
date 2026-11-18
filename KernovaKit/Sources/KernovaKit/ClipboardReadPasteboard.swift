@@ -33,6 +33,10 @@ public protocol ClipboardReadPasteboard: AnyObject {
     /// `readObjects(forClasses: [NSFilePromiseReceiver.self])` returns them:
     /// the receivers `ClipboardPasteboardReader.readOffer` takes.
     @MainActor var filePromiseReceivers: [any FilePromiseReceiving] { get }
+
+    /// What holds the grants of access to files that reading this pasteboard's `public.file-url`s takes
+    /// (``PasteboardFileAccess``).
+    var fileGrants: SandboxFileGrants { get }
 }
 
 extension NSPasteboard: ClipboardReadPasteboard {
@@ -43,6 +47,9 @@ extension NSPasteboard: ClipboardReadPasteboard {
     @MainActor public var filePromiseReceivers: [any FilePromiseReceiving] {
         readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver] ?? []
     }
+
+    /// This process's grants.
+    public var fileGrants: SandboxFileGrants { .shared }
 }
 
 extension ClipboardReadPasteboard {

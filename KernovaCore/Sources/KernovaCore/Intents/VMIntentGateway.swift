@@ -1,6 +1,7 @@
 import AppIntents
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 import KernovaLogging
 
 /// The App Intents front door: everything Shortcuts and Spotlight ask of
@@ -319,8 +320,8 @@ package final class VMIntentGateway {
     /// drop that authority out from under a copy still reading through it.
     func importVM(from url: URL) async throws -> VMEntity {
         try await perform(.importVM, on: nil) {
-            let accessing = url.startAccessingSecurityScopedResource()
-            defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+            let accessing = SandboxFileGrants.shared.startAccessing(url)
+            defer { if accessing { SandboxFileGrants.shared.stopAccessing(url) } }
             let settled = try await self.commands.importVM(from: url, waitForOutcome: true)
             return VMEntity(try self.commands.info(.id(settled.id)))
         }

@@ -22,7 +22,7 @@ package final class HubDropService: Sendable {
         let peerName: String
         let promises: [CalledInFilePromise]
         let staging: URL?
-        /// The drop's items the offer leaves out: gone or unreadable before it was read.
+        /// The drop's items the offer leaves out: gone, or not openable by this process, when it was read.
         let lost: Int
         /// When the drop was taken.
         let began: Date
@@ -95,7 +95,8 @@ package final class HubDropService: Sendable {
             }
             if lost > 0 {
                 Self.logger.log(
-                    .warning, "\(lost, privacy: .public) dropped item(s) were gone before they were offered")
+                    .warning,
+                    "\(lost, privacy: .public) dropped item(s) were left out: gone, or not openable by this process")
             }
             let token = Data((0..<16).map { _ in UInt8.random(in: .min ... .max) })
             offers.withLock {

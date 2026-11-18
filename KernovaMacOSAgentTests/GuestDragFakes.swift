@@ -24,6 +24,8 @@ final class FakeDragPasteboard: ClipboardReadPasteboard, Sendable {
     /// The watcher reads no promise off the drag pasteboard; the catcher's drop
     /// reads them.
     @MainActor var filePromiseReceivers: [any FilePromiseReceiving] { [] }
+    /// The grants a read of the drag's file URLs is held in, which reading takes none of.
+    let fileGrants = FakeSandbox().fileGrants
 
     /// A source writes a drag of `items`, moving the change count.
     func write(_ items: [FakePasteboardItem]) {
