@@ -7,9 +7,6 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# A hook's children inherit GIT_DIR (githooks(5)), as this suite does under
-# git-isolation.sh, and it outranks SwiftPM's own clones of the package's
-# dependencies.
-# shellcheck disable=SC2046 # one variable name per word
-unset $(git rev-parse --local-env-vars)
-swift test --quiet --package-path "$ROOT/Tools/DeadCode"
+# shellcheck source=../lib/dead-code-tool.sh
+. "$ROOT/Tools/lib/dead-code-tool.sh"
+dead_code_swift test --quiet

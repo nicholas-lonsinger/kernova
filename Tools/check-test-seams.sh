@@ -70,6 +70,8 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
+# shellcheck source=lib/dead-code-tool.sh
+. "$lib_dir/lib/dead-code-tool.sh"
 
 # Test code, by the path convention the header states; each gate takes one side
 # of it.
@@ -94,12 +96,7 @@ report() {
     printf '%s %s\n' "$(printf '%s\n' "$text" | wc -l | tr -d ' ')" "$summary" >&2
 }
 
-# A hook's children inherit GIT_DIR (githooks(5)), and it outranks SwiftPM's own
-# clones of the tool's dependencies.
-# shellcheck disable=SC2046 # one variable name per word
-seam_tool=$(unset $(git rev-parse --local-env-vars) &&
-    swift build --quiet --package-path Tools/DeadCode >&2 &&
-    swift build --package-path Tools/DeadCode --show-bin-path) || {
+seam_tool=$(dead_code_swift build --quiet >&2 && dead_code_swift build --show-bin-path) || {
     echo 'check-test-seams: the dead-code tool does not build, so no file was read' >&2
     exit 1
 }

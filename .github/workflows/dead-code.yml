@@ -144,7 +144,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
-          sparse-checkout: Tools/DeadCode
+          sparse-checkout: |
+            Tools/DeadCode
+            Tools/lib
 
       - name: Download the macOS bundle
         uses: actions/download-artifact@v6
@@ -161,7 +163,8 @@ jobs:
       - name: Combine
         id: combine
         run: |
-          swift build -c release --quiet --package-path Tools/DeadCode
+          . Tools/lib/dead-code-tool.sh
+          dead_code_swift build -c release --quiet
           mkdir -p "$RUNNER_TEMP/report"
           Tools/DeadCode/.build/release/dead-code report \
             --platform macos="$RUNNER_TEMP/macos" \

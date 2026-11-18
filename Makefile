@@ -370,7 +370,7 @@ dead-code-targets: dead-code-tool ## Print the targets only tests reach, which t
 	@$(DEAD_CODE_TOOL) test-only-targets --project $(PROJECT)
 
 dead-code-tool:
-	@swift build -c release --quiet --package-path Tools/DeadCode >&2
+	@bash -c '. Tools/lib/dead-code-tool.sh && dead_code_swift build -c release --quiet' >&2
 
 # Environment sanity check: verifies the local toolchain (macOS, Xcode, Swift,
 # swift-format), signing, optional tooling, and repo setup (git hooks,
