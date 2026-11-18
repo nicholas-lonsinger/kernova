@@ -112,21 +112,21 @@ struct AgentHubItemTests {
     @Test(
         "An offer or request bound to a peer that is not the feature's console peer is refused FEATURE_UNAVAILABLE, and sent nowhere"
     )
-    func boundOpenRefusedOffTheConsolePeer() async {
-        let harness = await harness()
+    func boundOpenRefusedOffTheConsolePeer() async throws {
+        let harness = try await harness()
         let (onEvents, offEvents) = (Recorder<PeerEvent>(), Recorder<PeerEvent>())
         let on = runtime(harness, events: onEvents)
         let off = runtime(harness, claim: Self.offConsole, state: Self.offState, events: offEvents)
-        let ready = await harness.snapshot { $0.peers.count == 2 && $0.consolePeers.count == 3 }
+        let ready = try await harness.snapshot { $0.peers.count == 2 && $0.consolePeers.count == 3 }
         guard let console = ready.peers.first(where: { $0.sessionID == "1" })?.handle,
             let other = ready.peers.first(where: { $0.sessionID == "2" })?.handle
         else { Issue.record("not both sessions"); return }
 
-        let offered = await withCheckedContinuation { continuation in
-            harness.hub.offerItems(Self.offer, feature: .clipboard, on: other) { continuation.resume(returning: $0) }
+        let offered = try await Backstop("harness.hub.offerItems").park { resume in
+            harness.hub.offerItems(Self.offer, feature: .clipboard, on: other) { resume($0) }
         }
-        let requested = await withCheckedContinuation { continuation in
-            harness.hub.requestClipboardOffer(SimItems.token(2), on: other) { continuation.resume(returning: $0) }
+        let requested = try await Backstop("harness.hub.requestClipboardOffer").park { resume in
+            harness.hub.requestClipboardOffer(SimItems.token(2), on: other) { resume($0) }
         }
         for result in [offered, requested] {
             guard case .failure(let refusal) = result else {
@@ -134,7 +134,7 @@ struct AgentHubItemTests {
             }
             #expect(refusal.code == .featureUnavailable)
         }
-        await harness.settled()
+        try await harness.settled()
         #expect(
             !(onEvents.elements + offEvents.elements).contains { event in
                 switch event {
@@ -143,11 +143,11 @@ struct AgentHubItemTests {
                 }
             })
 
-        let bound = await withCheckedContinuation { continuation in
-            harness.hub.offerItems(Self.offer, feature: .clipboard, on: console) { continuation.resume(returning: $0) }
+        let bound = try await Backstop("harness.hub.offerItems").park { resume in
+            harness.hub.offerItems(Self.offer, feature: .clipboard, on: console) { resume($0) }
         }
         #expect(bound == .success(console))
-        await close([on, off], harness)
+        try await close([on, off], harness)
     }
 
     @Test("The snapshot's console peer for each feature follows the console from one session to another")
@@ -331,18 +331,18 @@ struct AgentHubItemTests {
     }
 
     @Test("A clipboard offer request goes to the console peer, its answer names it, and its end reaches the owner")
-    func requestClipboardOffer() async {
-        let harness = await harness()
+    func requestClipboardOffer() async throws {
+        let harness = try await harness()
         let peer = HubPeer(harness, claim: Fixture.peerClaim, items: MemoryItems())
-        let handle = await harness.snapshot { $0.consolePeers.count == 3 }.peers[0].handle
+        let handle = try await harness.snapshot { $0.consolePeers.count == 3 }.peers[0].handle
         let request = SimItems.token(5)
-        let opened = await withCheckedContinuation { continuation in
-            harness.hub.requestClipboardOffer(request) { continuation.resume(returning: $0) }
+        let opened = try await Backstop("harness.hub.requestClipboardOffer").park { resume in
+            harness.hub.requestClipboardOffer(request) { resume($0) }
         }
         #expect(opened == .success(handle))
         var events = peer.events.waiter()
         guard
-            case .items(.offerRequested(let asked)) = await events.next(where: {
+            case .items(.offerRequested(let asked)) = try await events.next(where: {
                 if case .items(.offerRequested) = $0 { true } else { false }
             })
         else { Issue.record("no request received"); return }
@@ -353,12 +353,12 @@ struct AgentHubItemTests {
         peer.send(.offer(ItemRequestID(rawValue: 1), answer, feature: .clipboard))
         peer.send(.release(token: request))
         var log = harness.itemLog.waiter()
-        let received = await log.next { if case .event(.items(_, .offerReceived)) = $0 { true } else { false } }
+        let received = try await log.next { if case .event(.items(_, .offerReceived)) = $0 { true } else { false } }
         guard case .event(.items(handle, .offerReceived(let header))) = received else {
             Issue.record("received \(received)"); return
         }
         #expect(header.token == Self.token && header.request == request)
-        let ended = await log.next {
+        let ended = try await log.next {
             if case .event(.items(_, .requestEnded(.local, request, _))) = $0 { true } else { false }
         }
         guard case .event(.items(handle, .requestEnded(.local, request, .completed))) = ended else {

@@ -119,10 +119,10 @@ final class ClipboardEndPair {
 
     /// `side` pastes its pasteboard's first promised type, the bytes it gets back; nil when it holds no promise, or
     /// the paste got nothing.
-    func paste(on side: Side) async -> Data? {
+    func paste(on side: Side) async throws -> Data? {
         let board = pasteboard(side)
         guard let type = board.promisedTypes.first else { return nil }
-        return await offCooperativePool { board.invokeProvider(forType: type) }
+        return try await offCooperativePool { board.invokeProvider(forType: type) }
     }
 
     /// A fresh connection carries the clipboard on both ends.

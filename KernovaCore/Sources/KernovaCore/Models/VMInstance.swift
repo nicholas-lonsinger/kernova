@@ -1133,12 +1133,6 @@ package final class VMInstance {
 
     // MARK: - Agent Policy
 
-    /// The paste ceiling the user set, which both ends enforce on what lands
-    /// there: the host on guest→host pastes, and the guest agent, which the
-    /// hub's policy carries it to as `ClipboardPolicy.max_paste_bytes`, on
-    /// host→guest ones.
-    package var effectiveClipboardMaxPasteBytes: Int { preferences.clipboardMaxPasteBytes }
-
     /// The paste ceiling may have risen: the guest's clipboard a lower one cut
     /// is written to the Mac again, whole, while it still stands there.
     func clipboardPasteCeilingChanged() {

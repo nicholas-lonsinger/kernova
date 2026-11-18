@@ -61,6 +61,5 @@ struct ClipboardPasteLimitPolicyPushTests {
         let pushed = instance.agentHubPolicy(for: instance.configuration)
         #expect(ClipboardPolicyValue(pushed)?.maxPasteBytes == UInt64(raised))
         try await probe.changed.wait { probe.commands.contains(.setPolicy(pushed)) }
-        #expect(instance.effectiveClipboardMaxPasteBytes == raised)
     }
 }

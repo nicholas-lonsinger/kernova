@@ -150,7 +150,7 @@ struct GuestClipboardTests {
         try await link.changed.wait { link.withdrawals == [first] }
         #expect(link.withdrawalCodes[first] == .disabledByPolicy)
         copy("passthrough off", rig)
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(link.offers.count == 1)
 
         let asked = Self.token(1)
@@ -174,7 +174,7 @@ struct GuestClipboardTests {
         try await link.changed.wait { link.withdrawals == [token] }
         #expect(link.withdrawalCodes[token] == .capabilityWithdrawn)
         copy("off the console", rig)
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(link.offers.count == 1)
 
         rig.clipboard.apply(Self.policy(passthrough: false))
@@ -288,7 +288,7 @@ struct GuestClipboardTests {
         let request = pull
         let end = rig.clipboard.end
         let id = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
-        let served = await offCooperativePool { end.content(id, request) }
+        let served = try await offCooperativePool { end.content(id, request) }
         #expect(served == .success(.inline(Data("copied in the guest".utf8))))
         #expect(rig.clipboard.activity == .sentToHost)
     }
@@ -309,7 +309,7 @@ struct GuestClipboardTests {
         #expect(rig.clipboard.activity == .offeredFromHost)
         // A poll does not read the agent's own write as a copy.
         poll(rig)
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(link.releases.isEmpty)
 
         copy("copied in the guest", rig)
@@ -329,14 +329,14 @@ struct GuestClipboardTests {
         let type = NSPasteboard.PasteboardType.string
 
         // A paste holds its thread until the pull ends, so it fires off the main actor.
-        _ = await offCooperativePool { pasteboard.invokeProvider(forType: type) }
+        _ = try await offCooperativePool { pasteboard.invokeProvider(forType: type) }
         #expect(link.ceilings == [UInt64(first)])
 
         // An offer's pulls land against one budget, the ceiling as its first pull read it.
         let raised = 16 * 1024 * 1024 * 1024
         rig.clipboard.apply(Self.policy(passthrough: false, maxPasteBytes: raised))
         try await receiveHostOffer(rig, link, token: Self.token(8))
-        _ = await offCooperativePool { pasteboard.invokeProvider(forType: type) }
+        _ = try await offCooperativePool { pasteboard.invokeProvider(forType: type) }
         #expect(link.ceilings == [UInt64(first), UInt64(raised)])
     }
 
@@ -369,12 +369,12 @@ struct GuestClipboardTests {
         #expect(rig.clipboard.activity == .offeredFromHost)
 
         let pasteboard = rig.pasteboard
-        let paste = Task.detached { pasteboard.invokeProvider(forType: .fileURL) }
+        let paste = BlockingCall { pasteboard.invokeProvider(forType: .fileURL) }
         try await link.changed.wait { link.opened.count == 1 }
         let limit = ClipboardPasteLimit.defaultBytes
         rig.clipboard.end.pullEnded(link.opened[0], .failed(WireError(.tooLarge, limit: UInt64(limit))))
 
-        #expect(await paste.value == nil)
+        #expect(try await paste.returned() == nil)
         try await rig.noticed.wait {
             rig.clipboard.activity == .pasteRefused(.pasteTooLarge, pasteLimitBytes: limit)
         }
@@ -409,11 +409,11 @@ struct GuestClipboardTests {
         // `pbpaste` in the guest lands the Mac's text; AppKit finishes with the provider, the write standing.
         let text = NSPasteboard.PasteboardType.string
         let pasted = Data("pasted before off".utf8)
-        let paste = Task.detached { pasteboard.invokeProvider(forType: text) }
+        let paste = BlockingCall { pasteboard.invokeProvider(forType: text) }
         try await landPull(pasted, rig, link)
-        #expect(await paste.value == pasted)
+        #expect(try await paste.returned() == pasted)
         pasteboard.finishProvider(itemIndex: 0)
-        await drainMainQueue()
+        try await drainMainQueue()
         #expect(rig.clipboard.activity == .receivedFromHost)
 
         rig.clipboard.end.handle(
@@ -509,11 +509,11 @@ struct GuestClipboardTests {
         func id(_ stream: UInt32) -> ItemPullID {
             ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: stream))
         }
-        func pull(_ stream: UInt32, of offer: ItemOffer) -> Task<Result<ItemContent, WireError>, Never> {
+        func pull(_ stream: UInt32, of offer: ItemOffer) -> BlockingCall<Result<ItemContent, WireError>> {
             var request = PullRequest()
             request.token = offer.token
             let id = id(stream)
-            return Task.detached { end.content(id, request) }
+            return BlockingCall { [request] in end.content(id, request) }
         }
         func failure(_ result: Result<ItemContent, WireError>) -> ErrorCode? {
             if case .failure(let error) = result { error.code } else { nil }
@@ -533,11 +533,11 @@ struct GuestClipboardTests {
         let ended = pull(2, of: offer)
         try await first.calledIn.wait { first.callIns == 1 }
         end.handle(.serveEnded(.clipboard, id(2), .closed(.connectionLost)), on: link)
-        #expect(failure(await ended.value) == .cancelled)
+        #expect(failure(try await ended.returned()) == .cancelled)
 
         // A pull whose end came before its content was asked for is not served at all.
         end.handle(.serveEnded(.clipboard, id(4), .closed(.connectionLost)), on: link)
-        #expect(failure(await pull(4, of: offer).value) == .cancelled)
+        #expect(failure(try await pull(4, of: offer).returned()) == .cancelled)
 
         let second = HeardPromise("b.png")
         let replacing = try await offered(second)
@@ -545,7 +545,7 @@ struct GuestClipboardTests {
         try await second.calledIn.wait { second.callIns == 1 }
         end.handle(
             .offerEnded(.clipboard, .local, token: replacing.token, .resetLocally(WireError(.cancelled))), on: link)
-        #expect(failure(await withdrawn.value) == .itemRepresentationUnavailable)
+        #expect(failure(try await withdrawn.returned()) == .itemRepresentationUnavailable)
     }
 
     // MARK: - One current clipboard

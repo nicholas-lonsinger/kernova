@@ -326,7 +326,7 @@ struct ClipboardEndTests {
         #expect(wire.pulls(.host) == 0)
 
         let board = pair.hostPasteboard
-        let pasted = await offCooperativePool { board.invokeProvider(forType: type) }
+        let pasted = try await offCooperativePool { board.invokeProvider(forType: type) }
         #expect(pasted == Data("words".utf8))
         #expect(wire.pulls(.host) == 1)
     }
@@ -353,7 +353,7 @@ struct ClipboardEndTests {
             let request = pull
             let id = ItemPullID(
                 generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: UInt32(2 * item + 2)))
-            guard case .success(.tree(let path)) = await offCooperativePool({ host.content(id, request) }) else {
+            guard case .success(.tree(let path)) = try await offCooperativePool({ host.content(id, request) }) else {
                 Issue.record("item \(item) was not served")
                 return
             }
@@ -386,8 +386,8 @@ struct ClipboardEndTests {
         #expect(promised.contains(jpeg) && promised.contains(tiff))
         #expect(!promised.contains(.fileURL))
         let board = pair.hostPasteboard
-        #expect(await offCooperativePool { board.invokeProvider(forType: jpeg) } == Data("jpeg".utf8))
-        #expect(await offCooperativePool { board.invokeProvider(forType: tiff) } == Data("tiff".utf8))
+        #expect(try await offCooperativePool { board.invokeProvider(forType: jpeg) } == Data("jpeg".utf8))
+        #expect(try await offCooperativePool { board.invokeProvider(forType: tiff) } == Data("tiff".utf8))
     }
 
     @Test(

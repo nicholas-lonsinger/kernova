@@ -228,7 +228,7 @@ struct ClipboardEndSweepTests {
                 pair.wire?.answerOldestOpen(of: side)
             case .paste(let side):
                 let serves = pasteServes(on: side)
-                paste = (side, serves, await pair.paste(on: side))
+                paste = (side, serves, try await pair.paste(on: side))
             }
             try await pair.settle()
             if case .request = action, let token = pair.wire?.requests.dropFirst(requests).last {
