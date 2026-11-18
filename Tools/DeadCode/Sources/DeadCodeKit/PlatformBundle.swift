@@ -8,7 +8,8 @@ package struct PlatformBundle: Equatable, Sendable {
 
     /// The scan with test targets built.
     package var full: [Finding]
-    /// The scan with every target only tests reach excluded.
+    /// The scan with every target only tests reach excluded, less what only a Debug build compiles: what a Release
+    /// build holds.
     package var production: [Finding]
     /// The index both scans read.
     package var presence: Presence
@@ -21,6 +22,21 @@ package struct PlatformBundle: Equatable, Sendable {
         self.full = sorted(full)
         self.production = sorted(production)
         self.presence = presence
+    }
+
+    /// The bundle of a platform's two scans, its production view less every finding at `DebugOnlyCode`, read from the
+    /// sources the scanned build compiled: `source` returns the text of a repository-relative path.
+    package init(
+        full: [Finding], production: [Finding], presence: Presence, source: (String) throws -> String
+    ) throws {
+        var files: [String: DebugOnlyCode] = [:]
+        let release = try production.filter { finding in
+            let path = finding.location.path
+            let code = try files[path] ?? DebugOnlyCode(path: path, source: source(path))
+            files[path] = code
+            return !code.contains(line: finding.location.line, column: finding.location.column)
+        }
+        self.init(full: full, production: release, presence: presence)
     }
 
     /// Replaces `directory` with this bundle: every file is written beside it first, then the directory is swapped
