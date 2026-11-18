@@ -12,13 +12,12 @@ import Testing
 
 @testable import KernovaKit
 
-/// What the guest pasteboard keeps of the host's clipboard once the file it names in staging goes, and the lines
+/// What the guest pasteboard keeps of the host's clipboard once the file it names in staging goes, and the line
 /// the guest logs as it takes the host's clipboard back.
 @Suite("GuestClipboard staging and retraction lines", .caseScoped)
 @MainActor
 struct GuestClipboardStagingTests {
     private static let hostToken = Data(repeating: 9, count: 16)
-    private static let copyToken = Data(repeating: 6, count: 16)
     nonisolated private static let text = NSPasteboard.PasteboardType.string
 
     private static func representation(_ uti: String, _ storage: Representation.Storage, name: String = "")
@@ -52,11 +51,11 @@ struct GuestClipboardStagingTests {
     private func land(_ bytes: Data, pull index: Int, _ clipboard: GuestClipboard, _ link: RecordingLink) throws {
         let (order, id) = link.pulls[index]
         guard case .staged(let directory, .exactly(let name)) = order.landing else {
-            return clipboard.exchange.pullEnded(id, .landed(.inline(bytes)))
+            return clipboard.end.pullEnded(id, .landed(.inline(bytes)))
         }
         try bytes.write(
             to: URL(fileURLWithPath: directory).appendingPathComponent(String(decoding: name, as: UTF8.self)))
-        clipboard.exchange.pullEnded(id, .landed(.named(name)))
+        clipboard.end.pullEnded(id, .landed(.named(name)))
     }
 
     /// Publishes the host's passthrough offer of a text item and a file item, has a paste in the guest take every
@@ -66,7 +65,7 @@ struct GuestClipboardStagingTests {
         _ clipboard: GuestClipboard, _ pasteboard: FakePasteboard, _ link: RecordingLink
     ) async throws -> URL {
         clipboard.setLink(link)
-        clipboard.exchange.handle(
+        clipboard.end.handle(
             .offerReceived(
                 ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: false, count: 2)),
             on: link)
@@ -95,44 +94,46 @@ struct GuestClipboardStagingTests {
         RecordingLink(items: [Self.textItem, Self.fileItem], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
     }
 
-    /// Has the host send three copies whose one pull fails, each refused unwritten: each takes a staging
-    /// generation of its own, the third evicting the oldest.
-    private func failThreeCopies(_ clipboard: GuestClipboard) async throws {
+    /// Has the host send three offers of text, a paste of each failing its one pull: each takes a staging
+    /// generation of its own, the third evicting the oldest. Returns the guest pasteboard's change count once the
+    /// last is written.
+    private func failThreeOffers(_ clipboard: GuestClipboard, _ pasteboard: FakePasteboard) async throws -> Int {
         let link = RecordingLink(items: [Self.textItem], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
         clipboard.setLink(link)
         for attempt in 0..<3 {
             let token = Data(repeating: UInt8(0x40 + attempt), count: 16)
-            clipboard.exchange.handle(
-                .offerReceived(
-                    ItemSetHeaderValue(
-                        feature: .clipboard, token: token, concealed: false, count: 1, copy: .snapshot)),
+            let before = pasteboard.changeCount
+            clipboard.end.handle(
+                .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: token, concealed: false, count: 1)),
                 on: link)
+            try await pasteboard.changed.wait { pasteboard.changeCount != before }
+            let fired = Task.detached { pasteboard.invokeProvider(forType: Self.text) }
             try await link.changed.wait { link.opened.count == attempt + 1 }
-            clipboard.exchange.pullEnded(link.pulls[attempt].id, .failed(WireError(.readFailed)))
-            try await link.changed.wait { link.refusals.count == attempt + 1 }
+            clipboard.end.pullEnded(link.pulls[attempt].id, .failed(WireError(.readFailed)))
+            #expect(await fired.value == nil)
         }
+        return pasteboard.changeCount
     }
 
     @Test("A guest pasteboard that moved on is left alone when the staging a kept file named is evicted")
     func movedOnPasteboardOutlivesTheEviction() async throws {
         let staging = TestStagingRoot(retirement: ClipboardStagingRetirement())
-        let pasteboard = FakePasteboard()
+        let pasteboard = FakePasteboard(pollsOnlyWhenTold: true)
         let clipboard = GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root)
         let file = try await keepPastedFile(clipboard, pasteboard, pastedLink())
-        #expect(pasteboard.setString("moved on", forType: .string))
-        let movedOn = pasteboard.changeCount
 
-        try await failThreeCopies(clipboard)
+        // The host's next offers move the pasteboard on from the kept file.
+        let movedOn = try await failThreeOffers(clipboard, pasteboard)
         try await staging.removals.wait { !FileManager.default.fileExists(atPath: file.path) }
         #expect(pasteboard.changeCount == movedOn)
-        #expect(pasteboard.items.first?.data(forType: .string) == Data("moved on".utf8))
+        #expect(pasteboard.promisedTypes == [Self.text])
     }
 
     @Test(
         "The agent ending withdraws its kept pasted file whole, its name too, and leaves the file for the next launch")
     func agentEndingWithdrawsTheKeptFile() async throws {
         let staging = TestStagingRoot(retirement: ClipboardStagingRetirement())
-        let pasteboard = FakePasteboard()
+        let pasteboard = FakePasteboard(pollsOnlyWhenTold: true)
         let clipboard = GuestClipboard(pasteboard: pasteboard, stagingRoot: staging.root)
         let file = try await keepPastedFile(clipboard, pasteboard, pastedLink())
 
@@ -161,7 +162,7 @@ struct GuestClipboardStagingTests {
     @Test("The next launch withdraws, whole, the pasted file an exited agent's pasteboard still names, then removes it")
     func nextLaunchWithdrawsAStaleFile() async throws {
         let staging = TestStagingRoot()
-        let pasteboard = FakePasteboard()
+        let pasteboard = FakePasteboard(pollsOnlyWhenTold: true)
         let file = try await exitedAgentKeptAFile(staging, pasteboard)
 
         let relaunched = staging.makeSibling(
@@ -175,7 +176,7 @@ struct GuestClipboardStagingTests {
     @Test("The next launch leaves a pasteboard that moved on since an agent exited alone, and removes its staging")
     func nextLaunchLeavesAMovedOnPasteboard() async throws {
         let staging = TestStagingRoot()
-        let pasteboard = FakePasteboard()
+        let pasteboard = FakePasteboard(pollsOnlyWhenTold: true)
         let file = try await exitedAgentKeptAFile(staging, pasteboard)
         #expect(pasteboard.setString("moved on", forType: .string))
         let movedOn = pasteboard.changeCount
@@ -212,12 +213,12 @@ struct GuestClipboardStagingTests {
     @Test("Passthrough stopping takes back the host's concealed text pasted in the guest, and the guest says so (41e)")
     func passthroughStoppingLogsTheRetraction() async throws {
         let lines = Lines()
-        let pasteboard = FakePasteboard()
+        let pasteboard = FakePasteboard(pollsOnlyWhenTold: true)
         let clipboard = GuestClipboard(
             pasteboard: pasteboard, stagingRoot: TestStagingRoot().root, logger: lines.logger)
         let link = RecordingLink(items: [Self.textItem], sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()))
         clipboard.setLink(link)
-        clipboard.exchange.handle(
+        clipboard.end.handle(
             .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: Self.hostToken, concealed: true, count: 1)),
             on: link)
         try await pasteboard.changed.wait { !pasteboard.promisedTypes.isEmpty }
@@ -226,8 +227,9 @@ struct GuestClipboardStagingTests {
         try land(Data("hunter2-mac".utf8), pull: 0, clipboard, link)
         #expect(try await fired.returned() == Data("hunter2-mac".utf8))
         try await drainMainQueue()
+        let shown = clipboard.activity
 
-        clipboard.exchange.handle(
+        clipboard.end.handle(
             .offerEnded(.clipboard, .remote, token: Self.hostToken, .resetByPeer(WireError(.disabledByPolicy))),
             on: link)
         #expect(pasteboard.items.isEmpty)
@@ -235,38 +237,7 @@ struct GuestClipboardStagingTests {
             lines.retractions == [
                 "Retracted the Mac's clipboard from the guest pasteboard: the clipboard setting changed"
             ])
-    }
-
-    /// Has the host send a copy of a text item and a file item, landing its text, and waits for its write.
-    private func receiveCopy(_ clipboard: GuestClipboard, _ pasteboard: FakePasteboard, _ link: RecordingLink)
-        async throws
-    {
-        clipboard.setLink(link)
-        clipboard.exchange.handle(
-            .offerReceived(
-                ItemSetHeaderValue(
-                    feature: .clipboard, token: Self.copyToken, concealed: false, count: 2, copy: .snapshot)),
-            on: link)
-        try await link.changed.wait { link.opened.count == 2 }
-        for (index, (order, _)) in link.pulls.enumerated() {
-            try land(Data((order.request.item == 0 ? "first" : "a.bin").utf8), pull: index, clipboard, link)
-        }
-        try await pasteboard.changed.wait { pasteboard.promisedTypes == [.fileURL] }
-    }
-
-    @Test("The connection leaving takes back a host copy's unpasted file item, and the guest says so")
-    func copyEndingWithTheLinkLogsTheRetraction() async throws {
-        let lines = Lines()
-        let pasteboard = FakePasteboard()
-        let clipboard = GuestClipboard(
-            pasteboard: pasteboard, stagingRoot: TestStagingRoot().root, logger: lines.logger)
-        try await receiveCopy(clipboard, pasteboard, pastedLink())
-
-        clipboard.setLink(nil)
-        #expect(pasteboard.dataByItem == [[Self.text: Data("first".utf8)]])
-        #expect(
-            lines.retractions == [
-                "Retracted the Mac's copied files from the guest pasteboard, the rest of the copy kept: clipboard sharing with the Mac stopped"
-            ])
+        // Silent to the user.
+        #expect(clipboard.activity == shown)
     }
 }
