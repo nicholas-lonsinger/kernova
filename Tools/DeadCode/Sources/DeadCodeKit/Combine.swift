@@ -176,4 +176,15 @@ package struct DeadCodeReport: Sendable {
         let deadHints = Dictionary(dead.map { ($0.key, $0.hints) }, uniquingKeysWith: { first, _ in first })
         testOnly = try combine(production).filter { deadHints[$0.key] != $0.hints }
     }
+
+    /// Combines each platform's bundle, its views judged against that platform's presence.
+    package init(bundles: [(platform: Platform, bundle: PlatformBundle)]) throws(CombineError) {
+        try self.init(
+            full: bundles.map {
+                PlatformScan(platform: $0.platform, findings: $0.bundle.full, presence: $0.bundle.presence)
+            },
+            production: bundles.map {
+                PlatformScan(platform: $0.platform, findings: $0.bundle.production, presence: $0.bundle.presence)
+            })
+    }
 }

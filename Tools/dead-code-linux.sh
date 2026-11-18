@@ -22,6 +22,8 @@ fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 # shellcheck source=lib/linux-swift.sh
 . "$root/Tools/lib/linux-swift.sh"
+# shellcheck source=lib/dead-code-tool.sh
+. "$root/Tools/lib/dead-code-tool.sh"
 
 scratch="$root/KernovaKit/.build/dead-code-linux"
 build=(--scratch-path "$scratch" --build-tests --enable-index-store)
@@ -39,7 +41,7 @@ mkdir -p "$(dirname "$2")"
 output="$(cd "$(dirname "$2")" && pwd -P)/$(basename "$2")"
 periphery="$("$root/Tools/install-periphery.sh")"
 indexutil="$("$root/Tools/install-periphery.sh" --indexutil-export)"
-swift build -c release --quiet --package-path "$root/Tools/DeadCode" >&2
+dead_code_swift build -c release --quiet >&2
 tool="$root/Tools/DeadCode/.build/release/dead-code"
 
 raw="$(mktemp -d)"

@@ -9,12 +9,16 @@ let usage = """
                        --indexutil-export <path> --test-only-targets <file> [--package-description <json>]
                        --output <dir> [-- <what Periphery scans>...]
           Scans <store> with Periphery, the full view and the production view without the targets <file> lists,
-          and replaces <dir> with one platform's bundle: the two reports, locations repo-relative, and the
-          declaration sites and import lines the store holds under <repo>. With a package's description, as
+          and replaces <dir> with one platform's bundle: the two reports, locations repo-relative and the
+          production one less what only a Debug build compiles of the sources under <repo>, and the declaration
+          sites and import lines the store holds under <repo>. With a package's description, as
           `swift package describe --type json` writes it, every Swift target it declares must be in the store.
       dead-code report --platform <name>=<dir>... [--remedy <text>] [--markdown <file> --rest <text>]
                        [--json <file>] [--summary <file>]
           Combines platform bundles (macos, linux) and prints the report; a partial one opens with <text>.
+      dead-code ungated-seams <file>...
+          Prints each declaration whose name contains ForTesting in <file>s that a Release build compiles, as
+          `<file>:<line> — <line's text>`.
     """
 
 struct Failure: Error, CustomStringConvertible {
@@ -134,7 +138,9 @@ func bundle(_ options: Options) throws {
         try JSONDecoder().decode([Finding].self, from: run(periphery, arguments, in: base))
             .map { try $0.normalized(root: root, base: base) }
     }
-    let bundle = PlatformBundle(full: try view(scan.full), production: try view(scan.production), presence: presence)
+    let bundle = try PlatformBundle(
+        full: try view(scan.full), production: try view(scan.production), presence: presence,
+        source: { try String(contentsOfFile: root + "/" + $0, encoding: .utf8) })
     try bundle.write(to: URL(fileURLWithPath: try options.required("output")))
 }
 
@@ -174,21 +180,18 @@ func presence(exporter: String, store: String, root: String) throws -> Presence 
 }
 
 func report(_ options: Options) throws {
-    var full: [PlatformScan] = []
-    var production: [PlatformScan] = []
+    var bundles: [(platform: Platform, bundle: PlatformBundle)] = []
     for spec in options.all("platform") {
         let parts = spec.split(separator: "=", maxSplits: 1).map(String.init)
         guard parts.count == 2, let platform = Platform(rawValue: parts[0]) else {
             let names = Platform.allCases.map(\.rawValue).joined(separator: ", ")
             throw Failure(description: "--platform takes <name>=<dir>, the name one of \(names): \(spec)")
         }
-        let bundle = try PlatformBundle(contentsOf: URL(fileURLWithPath: parts[1]))
-        full.append(PlatformScan(platform: platform, findings: bundle.full, presence: bundle.presence))
-        production.append(PlatformScan(platform: platform, findings: bundle.production, presence: bundle.presence))
+        bundles.append((platform, try PlatformBundle(contentsOf: URL(fileURLWithPath: parts[1]))))
     }
-    guard !full.isEmpty else { throw Failure(description: "no --platform given\n\n\(usage)") }
+    guard !bundles.isEmpty else { throw Failure(description: "no --platform given\n\n\(usage)") }
 
-    let report = try DeadCodeReport(full: full, production: production)
+    let report = try DeadCodeReport(bundles: bundles)
     print(report.text(remedy: options.optional("remedy")), terminator: "")
     if let path = options.optional("markdown") {
         let rest = try options.required("rest")
@@ -209,14 +212,26 @@ func report(_ options: Options) throws {
     }
 }
 
+func ungatedSeams(_ files: ArraySlice<String>) throws {
+    guard !files.isEmpty else { throw Failure(description: "ungated-seams takes the files to read\n\n\(usage)") }
+    for file in files {
+        let source = try String(contentsOfFile: file, encoding: .utf8)
+        // A seam's name holds this text, so a file without it declares none; a debug build parses slowly.
+        guard source.contains("ForTesting") else { continue }
+        for seam in try DebugOnlyCode(path: file, source: source).ungatedSeams {
+            print("\(file):\(seam.line) — \(seam.text)")
+        }
+    }
+}
+
 do {
     let arguments = CommandLine.arguments.dropFirst()
     guard let command = arguments.first else { throw Failure(description: usage) }
-    let options = try Options(arguments.dropFirst())
     switch command {
-    case "test-only-targets": try testOnlyTargets(options)
-    case "bundle": try bundle(options)
-    case "report": try report(options)
+    case "test-only-targets": try testOnlyTargets(Options(arguments.dropFirst()))
+    case "bundle": try bundle(Options(arguments.dropFirst()))
+    case "report": try report(Options(arguments.dropFirst()))
+    case "ungated-seams": try ungatedSeams(arguments.dropFirst())
     default: throw Failure(description: "unknown command \(command)\n\n\(usage)")
     }
 } catch {
