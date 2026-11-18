@@ -205,6 +205,21 @@ extension HostileRows {
         wrongRole(.dragTake, at: .host, body: HostileItems.take(SimItems.token(7))),
         wrongRole(.dragOffer, at: .peer, body: HostileItems.header(count: 0)),
         wrongRole(.clipboardOfferByPeer, at: .peer, body: HostileItems.header(count: 0)),
+        wrongRole(.clipboardOfferRequest, at: .host, body: HostileItems.header(count: 0)),
+        HostileRow(
+            name: "a CLIPBOARD_OFFER_REQUEST that lists items → RESET MALFORMED_MESSAGE", local: .peer, items: true,
+            outcome: .streamReset(.malformedMessage)
+        ) { run in
+            run.feed(
+                [
+                    WireFrames.hello(role: .host, items: true), WireFrames.session { $0.policy = HostileItems.policy },
+                    WireFrames.open(2, .clipboardOfferRequest, body: HostileItems.header(count: 1)),
+                ], preamble: true)
+        } expect: { run in
+            expectThat(
+                !run.itemOutputs.contains { if case .event(.offerRequested) = $0 { true } else { false } },
+                "the request was received")
+        },
         HostileRow(
             name: "a DRAG_TAKE whose token is not 16 bytes → RESET MALFORMED_MESSAGE", local: .peer, items: true,
             outcome: .streamReset(.malformedMessage)

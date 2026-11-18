@@ -3,14 +3,12 @@ import KernovaKit
 
 /// Clipboard sharing state for display in the menu.
 ///
-/// `enabled` / `disabled` are the host-policy feature state; every other case
-/// records the most recent flow event, each set at the moment it starts rather
-/// than on completion. A flow event overwrites `enabled`, and withdrawing the
-/// offer one left standing returns to it; only host policy sets `disabled`.
+/// `enabled` / `disabled` say whether a connection carries the clipboard; every
+/// other case records the most recent flow event, each set at the moment it
+/// starts rather than on completion. A flow event overwrites `enabled`, and
+/// only the connection's end sets `disabled`.
 enum ClipboardActivity: Equatable, Sendable {
-    /// Sharing is on by host policy and no copy of this guest's stands on the
-    /// host clipboard: nothing has crossed yet this session, or the guest
-    /// clipboard was emptied and the offer it had crossed under withdrawn.
+    /// A connection carries the clipboard, and nothing has crossed on it yet.
     case enabled
     /// The guest's local clipboard was offered to the host (a local copy).
     case offeredToHost
@@ -19,8 +17,9 @@ enum ClipboardActivity: Equatable, Sendable {
     case offeredFromHost
     /// The host pulled the guest's clipboard bytes (an outbound stream started).
     ///
-    /// Any host fetch counts — a clipboard-window preview or an explicit "Copy
-    /// to Mac" — not necessarily a paste; the guest can't tell them apart.
+    /// The host pulls when anything on the Mac reads what the guest's offer
+    /// promised there — a paste, or another app reading the clipboard — and the
+    /// guest can't tell which.
     case sentToHost
     /// An inbound paste from the host was materialized on the guest pasteboard.
     case receivedFromHost
@@ -43,23 +42,19 @@ enum ClipboardActivity: Equatable, Sendable {
     /// The host's readout covers only what the offer carried, so the count the
     /// copy lost is named here or nowhere.
     case copyPartlyCarried(skipped: Int)
-    /// The host withdrew a copy it sent, the connection still up, so what no
-    /// paste had of it was removed from this clipboard: only its files and the
-    /// items holding them when `filesOnly`, the rest staying.
-    case copyWithdrawn(filesOnly: Bool)
-    /// Host policy turned clipboard sharing off.
+    /// No connection carries the clipboard: the host's policy has it off, or
+    /// the connection to the host is down.
     case disabled
 
     /// Whether the status item announces this activity in a callout by itself
     /// rather than leaving it for the next time the user opens the dropdown.
     ///
     /// True for the outcomes of a gesture made in this guest that produces no
-    /// other signal — a paste that yields nothing, a copy that crosses nothing
-    /// or only part of itself — and for a copy the Mac took back from this
-    /// clipboard.
+    /// other signal: a paste that yields nothing, a copy that crosses nothing
+    /// or only part of itself.
     var isNotice: Bool {
         switch self {
-        case .pasteRefused, .copyCarriedNothing, .copyPartlyCarried, .copyWithdrawn:
+        case .pasteRefused, .copyCarriedNothing, .copyPartlyCarried:
             return true
         case .enabled, .offeredToHost, .offeredFromHost, .sentToHost, .receivedFromHost, .disabled:
             return false

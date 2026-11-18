@@ -129,8 +129,6 @@ package enum VMAdmission {
         /// another network of its mode
         /// (``VMConfiguration/savedStateSurvivesMembershipMove``).
         var savedStateSurvivesMembershipMove = false
-        /// ``VMConfiguration/sharesClipboard``.
-        var sharesClipboard: Bool
         /// The session has a channel to a guest agent (``VMInstance/reachesGuestAgent``): what an installer
         /// disk is for.
         var reachesGuestAgent: Bool
@@ -625,7 +623,8 @@ package enum VMAdmission {
             admitted = phase.hasLiveSession
         case .clipboard:
             // A paused guest answers nothing until it resumes.
-            admitted = facts.sharesClipboard && phase.hasLiveSession && !phase.isLivePaused
+            admitted =
+                facts.guestOS.guestAgentSettings.contains(.clipboard) && phase.hasLiveSession && !phase.isLivePaused
         case .guestAgentStatus:
             admitted = phase.hasLiveSession && facts.reachesGuestAgent
         case .guestAgentDisk:
@@ -683,7 +682,8 @@ package enum VMAffordance: Sendable, Equatable {
     case display
     /// Pop out, or go fullscreen.
     case externalDisplay
-    /// Copy one clipboard to the other: the guest running.
+    /// Copy one clipboard to the other: a guest whose agent carries the
+    /// clipboard, running.
     case clipboard
     /// Show the guest agent's status for a session with a channel to one.
     case guestAgentStatus

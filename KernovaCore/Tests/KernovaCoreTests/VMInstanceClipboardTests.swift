@@ -10,28 +10,57 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// Which guests share a VM's clipboard, what carries it, and the policy its agent hears.
+/// Which guests share a VM's clipboard, when its commands are offered, and the policy its agent hears.
 @MainActor
 @Suite("VM clipboard", .caseScoped)
 struct VMInstanceClipboardTests {
     private static let peer = PeerHandle(rawValue: 4)
 
-    private static func snapshot(consolePeer: PeerHandle?) -> AgentHubSnapshot {
-        AgentHubSnapshot(
-            peers: [], features: FeatureStatus.merge([]), consolePeers: consolePeer.map { [.clipboard: $0] } ?? [:])
+    /// Whether each clipboard command is named on `instance`, Copy to Mac's first.
+    private static func commandsNamed(on instance: VMInstance) -> [Bool] {
+        [VMCapability.copyGuestClipboardToMac, .copyMacClipboardToGuest].map { $0.request(on: instance) != nil }
     }
 
-    @Test("A CLIPBOARD console peer gives the VM its clipboard service, and takes it away when it goes")
-    func consolePeerCarriesTheClipboard() {
-        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID()))
-        instance.beginSessionContextForTesting()
-        #expect(instance.clipboardService == nil)
+    /// The hub's clipboard entries a test stands, each with the absence the hub names for no agent at the guest's
+    /// screen carrying it: the entry's own, or `NOT_ON_CONSOLE` where some agent offers it.
+    private static let hubEntries: [(status: Availability<Data>, absence: AbsenceReason)] = [
+        (.absent(.noAgent, debugDetail: ""), .noAgent),
+        (.absent(.versionMismatch, debugDetail: ""), .versionMismatch),
+        (.absent(.notServedByRole, debugDetail: ""), .notServedByRole),
+        (.available(Data()), .notOnConsole),
+    ]
 
-        instance.publishAgentHubSnapshotForTesting(Self.snapshot(consolePeer: Self.peer))
-        #expect(instance.clipboardService === instance.hubClipboard)
-
-        instance.publishAgentHubSnapshotForTesting(Self.snapshot(consolePeer: nil))
-        #expect(instance.clipboardService == nil)
+    @Test("The clipboard commands are held back by sharing, then passthrough, then no agent at the guest's screen")
+    func gapFollowsTheSettingsThenTheAgent() {
+        for sharing in [false, true] {
+            for passthrough in [false, true] {
+                for connected in [false, true] {
+                    for entry in Self.hubEntries {
+                        let instance = VMInstanceFixture.make(guestOS: .macOS, phase: .running(sessionID: UUID())) {
+                            $0.clipboardSharingEnabled = sharing
+                            $0.clipboardPassthroughEnabled = passthrough
+                        }
+                        instance.publishAgentHubSnapshotForTesting(
+                            AgentHubSnapshot(
+                                peers: [], features: FeatureStatusTable([(feature: .clipboard, status: entry.status)])))
+                        instance.hubClipboard.setConsolePeer(connected ? Self.peer : nil)
+                        let expected: ClipboardCommandsGap? =
+                            if !sharing {
+                                .notCarried(.disabledByPolicy)
+                            } else if passthrough {
+                                .passthroughOn
+                            } else if connected {
+                                nil
+                            } else {
+                                .notCarried(entry.absence)
+                            }
+                        let label = "sharing \(sharing), passthrough \(passthrough), connected \(connected), \(entry)"
+                        #expect(instance.clipboardCommandsGap == expected, "\(label)")
+                        #expect(Self.commandsNamed(on: instance) == [expected == nil, expected == nil], "\(label)")
+                    }
+                }
+            }
+        }
     }
 
     @Test("Only a macOS guest shares the clipboard: a Linux guest's stored flags offer and send nothing")

@@ -164,7 +164,7 @@ struct AgentHubState: Sendable {
 
     /// Why no peer is `feature`'s console peer.
     func consoleAbsence(of feature: FeatureID) -> AbsenceReason {
-        Self.absence(of: feature, in: FeatureStatus.merge(visiblePeers.compactMap(\.features)))
+        FeatureStatus.merge(visiblePeers.compactMap(\.features)).consoleAbsence(of: feature)
     }
 
     var snapshot: AgentHubSnapshot {
@@ -196,18 +196,9 @@ struct AgentHubState: Sendable {
         {
             return .agent(role)
         }
-        let absence = Self.absence(of: .power, in: features)
+        let absence = features.consoleAbsence(of: .power)
         guard ignoringApps, absence == .notOnConsole else { return .absent(absence) }
         return .absent(peers.contains { $0.offers(.shutdown, ignoringApps: true) } ? .unspecified : .noAgent)
-    }
-
-    /// Why no console peer serves `feature`: the merged absence, or `NOT_ON_CONSOLE` for a feature some peer
-    /// offers while serving no console session.
-    private static func absence(of feature: FeatureID, in features: FeatureStatusTable) -> AbsenceReason {
-        switch features[feature] {
-        case .absent(let reason, _): reason
-        case .available: .notOnConsole
-        }
     }
 
     private func summary(_ record: PeerRecord) -> PeerSummary {

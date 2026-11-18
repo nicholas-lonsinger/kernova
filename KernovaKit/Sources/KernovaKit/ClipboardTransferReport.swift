@@ -8,14 +8,11 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     /// The peer's user pasted and this side serves the pull. The app pasted into
     /// sits blocked until the bytes land.
     case peerPaste
-    /// This side's clipboard window is filling in a preview of the peer's offer.
-    case preview
-    /// The guest's clipboard written to the Mac's — Copy Guest Clipboard to Mac,
-    /// or the automatic passthrough publish of a guest offer.
+    /// The guest's clipboard written to the Mac's, whether passthrough or
+    /// Copy Guest Clipboard to Mac brought it.
     case copy
-    /// Copy Mac Clipboard to Guest.
-    case send
-    /// Automatic passthrough forwarded this side's copy to the peer.
+    /// This side's clipboard offered to the peer, whether passthrough or
+    /// Copy Mac Clipboard to Guest offered it.
     case forward
     /// Files dropped on the VM display — the host sends, the guest receives.
     case drop
@@ -44,12 +41,12 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     /// The order ``isAwaited`` implies, with the paste that holds an app ahead
     /// of the drop or drag whose files have not landed yet: a drop started
     /// mid-paste never takes the bar off the transfer someone is sitting in
-    /// front of, and a preview fetch never takes it off either.
+    /// front of.
     public var readoutRank: Int {
         switch self {
         case .peerPaste: 2
         case .drop, .dragOut: 1
-        case .paste, .preview, .copy, .forward, .send: 0
+        case .paste, .copy, .forward: 0
         }
     }
 }
@@ -69,18 +66,6 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case tooLarge(limitBytes: Int)
     /// The peer reported a failure of its own.
     case peerReported(ClipboardErrorCode)
-    /// A Copy to Mac still on the host pasteboard was retracted whole because the guest's connection ended, so
-    /// nothing more of it could be pasted.
-    case disconnectedCopyRetracted
-    /// The files of a copy still on the host pasteboard were retracted, each with the item holding it, because
-    /// the guest's connection ended; the rest of the copy stays.
-    case disconnectedFilesRetracted
-    /// A Copy to Mac still on the host pasteboard was retracted whole because the guest withdrew it, its
-    /// connection still up.
-    case withdrawnCopyRetracted
-    /// The files of a copy still on the host pasteboard were retracted, each with the item holding it, because
-    /// the guest withdrew the copy, its connection still up; the rest of the copy stays.
-    case withdrawnFilesRetracted
     /// The session ended mid-transfer. `fileCount` is how many files a drop was
     /// still carrying; `nil` for a paste, which speaks of the clipboard.
     case interrupted(fileCount: Int?)
@@ -96,9 +81,8 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case stagingFailed
     /// Items the sending side did not send whole, and the rest crossed whole;
     /// `count` is how many. A gesture that reads a pasteboard leaves out a file
-    /// it cannot read or that is gone, the rest of its item crossing; a
-    /// snapshot also leaves out what it could not read or pull from another
-    /// offer. A drop's items are its files.
+    /// it cannot read or that is gone, the rest of its item crossing. A drop's
+    /// items are its files.
     case itemsSkipped(count: Int)
     /// None of the gesture's items could be read, so nothing was sent.
     case itemsUnreadable
@@ -106,16 +90,10 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case sendFailed
     /// This side ended a drop the VM had not finished landing, for the reason given.
     case dropStopped(ClipboardDropStop)
-    /// The destination's clipboard changed before a copy to it landed, so it was
-    /// left as it is.
-    case clipboardChanged
     /// The source's clipboard held nothing a copy could carry.
     case nothingToCopy
     /// A copy was written without its `count` files, which together are over the transfer ceiling `limitBytes`.
     case filesLeftOut(count: Int, limitBytes: Int)
-    /// A copy named what the destination had sent, and the destination no longer had some of it, so it was
-    /// left out.
-    case partsGone
 }
 
 /// Why this side ended a drop the VM had not finished landing, as this side observed it.
@@ -133,7 +111,7 @@ extension ClipboardTransferFailure {
     /// missing.
     public var deliveredTheRest: Bool {
         switch self {
-        case .itemsSkipped, .filesLeftOut, .partsGone, .disconnectedFilesRetracted, .withdrawnFilesRetracted: true
+        case .itemsSkipped, .filesLeftOut: true
         default: false
         }
     }

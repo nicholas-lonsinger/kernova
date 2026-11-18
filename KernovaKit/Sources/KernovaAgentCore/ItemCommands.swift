@@ -23,18 +23,27 @@ public struct ItemRequestID: Hashable, Sendable {
 /// stream slot when the connection ends, is never answered; one answered while the connection is closing
 /// follows `.closed`.
 public enum ItemCommand: Sendable, Equatable {
-    /// Offer on `feature`'s offer kind: CLIPBOARD, withdrawing this side's previous clipboard offer, DROP from
-    /// the host, or DRAG from a peer; answered `.offered`, refused `UNSUPPORTED_KIND` for a kind this side
-    /// does not open.
+    /// Offer on `feature`'s offer kind: CLIPBOARD, once it opens releasing every clipboard offer of the far side's
+    /// and withdrawing this side's previous one, DROP from the host, or DRAG from a peer; answered `.offered`, refused
+    /// `UNSUPPORTED_KIND` for a kind this side does not open.
     case offer(ItemRequestID, ItemOffer, feature: FeatureID)
-    /// Withdraw this side's offer of `token`, RESET with `code`; its `.offerEnded` follows.
+    /// Host: ask the peer to offer its clipboard, by a request of `token`, 16 bytes no open offer or request of
+    /// this side holds, which withdraws no clipboard offer; answered `.offered`, refused `UNSUPPORTED_KIND`
+    /// from a peer. The peer answers with a clipboard offer naming `token` in ``ItemOffer/request``; the
+    /// request's one `.requestEnded(.local, token:)` closes `.completed` once the peer released it and that offer,
+    /// if one opened, arrived whole — after its `.offerReceived` — or as that offer's stream closed when it ended
+    /// before it was whole, or `.resetByPeer` with why the peer offers nothing. Withdrawing it before the peer
+    /// released it calls it off.
+    case requestClipboardOffer(ItemRequestID, token: Data)
+    /// Withdraw this side's offer or request of `token`, RESET with `code`; its `.offerEnded` or
+    /// `.requestEnded` follows.
     case withdraw(token: Data, code: ErrorCode)
-    /// Release the far side's offer of `token`: this side pulls nothing more of it. Once the offer is whole
-    /// the release is END with `endBody`, its kind's acceptor END body. Releasing a taken drag offer completes
-    /// the drag.
+    /// Release the far side's offer of `token`: this side pulls nothing more of it — or a peer's answered
+    /// request. Once the offer is whole the release is END with `endBody`, its kind's acceptor END body.
+    /// Releasing a taken drag offer completes the drag.
     case release(token: Data, endBody: Data = Data())
-    /// Refuse the far side's offer of `token`: RESET with `error`, so its opener hears why this side pulls
-    /// nothing of it.
+    /// Refuse the far side's offer or request of `token`: RESET with `error`, so its opener hears why this side
+    /// pulls nothing of it, or offers nothing for it.
     case refuse(token: Data, WireError)
     /// Pull one representation of the far side's open offer, landing it as the order says; answered `.pulled`
     /// when the pull opens — while every stream slot is held, once one frees for it — or cannot.
@@ -72,6 +81,8 @@ extension ItemMachines {
         switch command {
         case .offer(let id, let offer, let feature):
             return (id, .offered(self.offer(offer, feature: feature, connection: &connection)))
+        case .requestClipboardOffer(let id, let token):
+            return (id, .offered(requestClipboardOffer(token, connection: &connection)))
         case .withdraw(let token, let code):
             withdraw(token, code: code, connection: &connection)
         case .release(let token, let endBody):

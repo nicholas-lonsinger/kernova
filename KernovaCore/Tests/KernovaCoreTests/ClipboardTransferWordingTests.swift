@@ -27,35 +27,27 @@ struct ClipboardTransferWordingTests {
     private var everyArm: [(ClipboardTransferFailure, ClipboardTransferGesture)] {
         [
             (.diskFull(needed: 4096, available: 1024), .paste),
-            (.diskFull(needed: nil, available: nil), .preview),
             (.tooLarge(limitBytes: limit), .copy),
             (.tooLarge(limitBytes: limit), .peerPaste),
             (.peerReported(.pasteFailed), .peerPaste),
             (.peerReported(.dropDiskFull), .drop),
             (.peerReported(.dropDownloadsDenied), .drop),
             (.peerReported(.dropFailed), .drop),
-            (.disconnectedCopyRetracted, .copy),
-            (.disconnectedFilesRetracted, .copy),
-            (.withdrawnCopyRetracted, .copy),
-            (.withdrawnFilesRetracted, .copy),
             (.filesLeftOut(count: 1, limitBytes: limit), .copy),
-            (.filesLeftOut(count: 3, limitBytes: limit), .send),
+            (.nothingToCopy, .copy),
+            (.nothingToCopy, .forward),
             (.interrupted(fileCount: nil), .paste),
             (.interrupted(fileCount: 1), .drop),
             (.interrupted(fileCount: 3), .drop),
             (.timedOut, .paste),
-            (.timedOut, .preview),
             (.timedOut, .drop),
             (.transferFailed, .paste),
-            (.transferFailed, .preview),
+            (.transferFailed, .copy),
             (.stagingFailed, .paste),
             (.itemsSkipped(count: 2), .forward),
             (.itemsSkipped(count: 1), .drop),
             (.itemsUnreadable, .forward),
             (.itemsUnreadable, .drop),
-            (.itemsSkipped(count: 1), .copy),
-            (.itemsSkipped(count: 3), .copy),
-            (.itemsSkipped(count: 1), .send),
             (.itemsUnreadable, .copy),
             (.sendFailed, .drop),
             (.dropStopped(.turnedOff), .drop),
@@ -71,7 +63,6 @@ struct ClipboardTransferWordingTests {
             (.sourceUnreadable, .dragOut),
             (.tooLarge(limitBytes: 65_536), .dragOut),
             (.sourceUnreadable, .paste),
-            (.sourceUnreadable, .preview),
             (.sourceUnreadable, .drop),
         ]
     }
@@ -100,9 +91,6 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.sendFailed, .drop)).headline
                 == "Files not copied to \(quotedVM).")
-        #expect(
-            try #require(wording(.transferFailed, .preview)).headline
-                == "Clipboard preview from \(quotedVM) failed.")
     }
 
     @Test("every arm names the VM in its headline")
@@ -144,18 +132,6 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.interrupted(fileCount: nil), .paste)).message
                 .hasPrefix("Clipboard sharing with the VM stopped"))
-    }
-
-    @Test("a failed preview never claims a paste happened")
-    func previewNeverSpeaksOfAPaste() throws {
-        for failure in [
-            ClipboardTransferFailure.timedOut, .transferFailed, .sourceUnreadable,
-        ] {
-            let copy = try #require(wording(failure, .preview))
-            #expect(copy.message == "The preview from the guest couldn't be loaded.", "\(failure)")
-            #expect(!copy.message.contains("paste"), "\(failure)")
-            #expect(!copy.menuLine.contains("paste"), "\(failure)")
-        }
     }
 
     @Test("an interrupted drop counts the files it was carrying, and names only the connection ending")
@@ -226,29 +202,6 @@ struct ClipboardTransferWordingTests {
         #expect(try #require(wording(.itemsSkipped(count: count), gesture)).message == message)
     }
 
-    /// A command's snapshot leaves out an item's file it cannot open or that is gone, the rest of the item
-    /// crossing, or a representation it could not read or pull, and only the count reaches the Mac, so every cause
-    /// reads the same.
-    @Test(
-        "a clipboard command that did not copy items whole says how many, and names no cause: each reaches it alike",
-        arguments: [
-            (
-                ClipboardTransferGesture.copy, 1,
-                "One item on the guest\u{2019}s clipboard wasn\u{2019}t copied to the Mac in full. The rest were."
-            ),
-            (
-                .copy, 3,
-                "3 items on the guest\u{2019}s clipboard weren\u{2019}t copied to the Mac in full. The rest were."
-            ),
-            (.send, 1, "One item on the Mac clipboard wasn\u{2019}t copied to the guest in full. The rest were."),
-            (.send, 3, "3 items on the Mac clipboard weren\u{2019}t copied to the guest in full. The rest were."),
-        ])
-    func commandLeftOutMessage(gesture: ClipboardTransferGesture, count: Int, message: String) throws {
-        let wording = try #require(wording(.itemsSkipped(count: count), gesture))
-        #expect(wording.message == message)
-        #expect(!wording.message.contains("read"))
-    }
-
     // MARK: - Menu lines
 
     @Test("the dropdown line is a compact fragment per outcome")
@@ -263,11 +216,8 @@ struct ClipboardTransferWordingTests {
             (.timedOut, .paste, "Clipboard: paste from the guest timed out"),
             (.transferFailed, .paste, "Clipboard: paste from the guest failed"),
             (.diskFull(needed: 1, available: 0), .paste, "Clipboard: paste from the guest failed"),
-            (.transferFailed, .preview, "Clipboard: preview from the guest failed"),
             (.itemsSkipped(count: 1), .forward, "Clipboard: some files weren't forwarded"),
             (.itemsUnreadable, .forward, "Clipboard: the copy couldn't be read"),
-            (.itemsSkipped(count: 1), .copy, "Clipboard: some items weren't copied in full from the guest"),
-            (.itemsSkipped(count: 1), .send, "Clipboard: some items weren't copied in full to the guest"),
             (.itemsUnreadable, .copy, "Clipboard: the guest's copy couldn't be read"),
             (.peerReported(.dropDiskFull), .drop, "Drop: the VM ran out of disk space"),
             (

@@ -1714,13 +1714,12 @@ package final class VMLibraryViewModel {
     ///
     /// The ceiling lives in `AppPreferences`, so it produces no `VMConfiguration`
     /// diff for `applyLivePolicy` to carry. Two things need it: the guest, which
-    /// enforces host→guest pastes against its own copy, and any passthrough
-    /// session holding an offer the old ceiling refused. Instances with neither
-    /// no-op.
+    /// enforces host→guest pastes against its own copy, and the host's write of
+    /// a guest offer the old ceiling cut. Instances with neither no-op.
     package func applyClipboardPasteLimitChange() {
         for instance in instances {
             instance.resendAgentPolicy()
-            instance.republishPassthroughIfCeilingRaised()
+            instance.clipboardPasteCeilingChanged()
         }
     }
 

@@ -148,3 +148,105 @@ struct ItemMachineRegressionTests {
         #expect(!run.hostEvents.contains { if case .update(.result) = $0 { true } else { false } })
     }
 }
+
+@Suite("Clipboard offers and the host's requests against a far side")
+struct ClipboardOfferRequestTests {
+    static let request = Regression.token(5)
+    static let answer = Regression.token(7)
+
+    /// A host that asked the far peer for its clipboard, and the stream its request is on.
+    static func asking() throws -> (HostileRun, UInt32) {
+        let run = Regression.host()
+        run.item(.requestClipboardOffer(ItemRequestID(rawValue: 1), token: request))
+        let open = try #require(run.written.first { $0.type == .open && $0.streamID != .session })
+        return (run, open.streamID.rawValue)
+    }
+
+    /// The OPEN of the far peer's answer on stream 1, announcing `count` items.
+    static func answerOpen(count: UInt32) -> Frame {
+        var header = HostileItems.header(token: answer, count: count)
+        header.request = request
+        return WireFrames.open(1, .clipboardOfferByPeer, body: header)
+    }
+
+    /// How the host heard its request end, each time it did.
+    static func ends(_ run: HostileRun) -> [StreamClosure] {
+        run.itemOutputs.compactMap {
+            if case .event(.requestEnded(.local, request, let closure)) = $0 { closure } else { nil }
+        }
+    }
+
+    static func received(_ run: HostileRun) -> Bool {
+        run.itemOutputs.contains { if case .event(.offerReceived) = $0 { true } else { false } }
+    }
+
+    @Test("A request whose answer the host's registry resets over budget at its OPEN ends TOO_LARGE once released")
+    func answerOverBudget() throws {
+        let (run, stream) = try Self.asking()
+        let overBudget = UInt32(ItemOfferRegistry.remoteItemByteLimit / ItemOfferRegistry.remoteItemOverhead + 1)
+        run.feed([Self.answerOpen(count: overBudget)])
+        #expect(Regression.resets(run, on: 1) == [.tooLarge])
+        #expect(Self.ends(run).isEmpty)
+        run.feed([Unit.end(stream)])
+        guard case .resetLocally(let error)? = Self.ends(run).first, Self.ends(run).count == 1 else {
+            Issue.record("ends: \(Self.ends(run))")
+            return
+        }
+        #expect(error.code == .tooLarge)
+    }
+
+    @Test("A request released before its answer is whole ends as the answer does: withdrawn by the far side")
+    func answerWithdrawnBeforeWhole() throws {
+        let (run, stream) = try Self.asking()
+        run.feed([Self.answerOpen(count: 2), WireFrames.message(1, HostileItems.offer.items[0]), Unit.end(stream)])
+        #expect(Self.ends(run).isEmpty)
+        run.feed([WireFrames.reset(1, code: ErrorCode.cancelled.rawValue)])
+        #expect(Self.ends(run) == [.resetByPeer(WireError(.cancelled))])
+        #expect(!Self.received(run))
+    }
+
+    @Test("A request released before its answer is whole ends as the answer does: with the connection")
+    func connectionEndsBeforeAnswerWhole() throws {
+        let (run, stream) = try Self.asking()
+        run.feed([Self.answerOpen(count: 2), WireFrames.message(1, HostileItems.offer.items[0]), Unit.end(stream)])
+        #expect(Self.ends(run).isEmpty)
+        run.feed([WireFrames.reset(0, code: ErrorCode.cancelled.rawValue)])
+        guard case .connectionClosedByPeer? = Self.ends(run).first, Self.ends(run).count == 1 else {
+            Issue.record("ends: \(Self.ends(run))")
+            return
+        }
+    }
+
+    @Test("A request released before its answer is whole ends completed after the answer arrives")
+    func answerWholeAfterRelease() throws {
+        let (run, stream) = try Self.asking()
+        run.feed([Self.answerOpen(count: 1), Unit.end(stream)])
+        #expect(Self.ends(run).isEmpty)
+        run.feed([WireFrames.message(1, HostileItems.offer.items[0]), Unit.end(1)])
+        let received = run.itemOutputs.firstIndex { if case .event(.offerReceived) = $0 { true } else { false } }
+        let ended = run.itemOutputs.firstIndex {
+            if case .event(.requestEnded(.local, Self.request, .completed)) = $0 { true } else { false }
+        }
+        #expect(Self.ends(run).count == 1)
+        #expect(received.flatMap { received in ended.map { received < $0 } } == true, "\(run.itemOutputs)")
+    }
+
+    @Test("A clipboard offer refused before it opens releases no far-side offer and withdraws none of this side's")
+    func refusedOfferLeavesEveryOfferStanding() throws {
+        let run = Regression.host()
+        #expect(run.offerItems(SimItems.offer(9, [[SimItems.representation(.file, size: 64)]])) == nil)
+        let own = try #require(run.written.first { $0.type == .open && $0.streamID != .session }).streamID.rawValue
+        run.feed([
+            WireFrames.open(1, .clipboardOfferByPeer, body: HostileItems.header(count: 1)),
+            WireFrames.message(1, HostileItems.offer.items[0]), Unit.end(1),
+        ])
+        #expect(Self.received(run))
+        let written = run.written.count
+
+        let refusal = run.offerItems(SimItems.offer(10, [[HostileItems.misnamed[0].representation]]))
+        #expect(refusal?.code == .internal)
+        let after = run.written.dropFirst(written)
+        #expect(!after.contains { [1, own].contains($0.streamID.rawValue) }, "\(Array(after))")
+        #expect(!run.itemOutputs.contains { if case .event(.offerEnded) = $0 { true } else { false } })
+    }
+}

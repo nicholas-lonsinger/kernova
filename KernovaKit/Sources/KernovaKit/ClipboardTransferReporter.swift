@@ -5,7 +5,7 @@ import KernovaLogging
 /// keeps one per VM.
 ///
 /// Several producers publish here (a VM's clipboard service, its drop service,
-/// its drag out, its passthrough coordinator), and the report is the highest-ranked running
+/// its drag out), and the report is the highest-ranked running
 /// operation, else the last one to finish, else nothing. Whatever the readout
 /// leaves out is counted on it as ``ClipboardProgressSnapshot/pendingBehind``,
 /// so work behind the bar is legible rather than absent. A refusal

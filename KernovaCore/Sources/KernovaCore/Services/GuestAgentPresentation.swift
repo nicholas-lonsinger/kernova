@@ -223,8 +223,7 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         case .agent:
             return CapabilityRow(title: title, isAvailable: true, detail: "Through the session agent")
         case .absent(.notOnConsole):
-            return CapabilityRow(
-                title: title, isAvailable: false, detail: "Available to the session at the guest\u{2019}s screen.")
+            return CapabilityRow(title: title, isAvailable: false, detail: atGuestScreen)
         case .absent(.noAgent) where ignoringApps:
             return CapabilityRow(title: title, isAvailable: false, detail: "No system service is connected.")
         case .absent(let reason):
@@ -250,6 +249,18 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         default: "Unavailable."
         }
     }
+
+    /// What `absence` means, as the user reads it, for a capability only an agent in the session at the guest's
+    /// screen serves: where only a system service or another session's agent is connected, it says where the
+    /// capability is available instead.
+    static func consoleReason(_ absence: AbsenceReason) -> String {
+        switch absence {
+        case .notOnConsole, .notServedByRole: atGuestScreen
+        default: reason(absence)
+        }
+    }
+
+    private static let atGuestScreen = "Available to the session at the guest\u{2019}s screen."
 
     /// The agents' state as one value: an agent that can't take the update in
     /// place first, then another outdated agent that is not updating

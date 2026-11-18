@@ -14,11 +14,10 @@ wait the consumer abandons.
 
 ## Pay on consume
 
-Bytes cross the boundary only when a destination consumes them: a paste,
-or a clipboard command, which takes at the click everything of one side's
-clipboard but its files. The source's own disk is paid the same way: a
-file iCloud Drive or another File Provider evicted is downloaded by the
-pull that reads it (`DatalessMaterialization`). Given an optimization
+Bytes cross the boundary only when a paste consumes them, whether a copy
+or a clipboard command offered them. The source's own disk is paid the
+same way: a file iCloud Drive or another File Provider evicted is
+downloaded by the pull that reads it (`DatalessMaterialization`). Given an optimization
 that reads, hashes, archives or sends a payload earlier for some subset —
 a small payload inlined in the offer, a file pre-staged so the paste is
 instant — reject it: a path that pays early for one case is a second data

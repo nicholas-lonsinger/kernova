@@ -801,7 +801,8 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     /// Whether the clipboard is shared: the flag on, for a guest whose agent
     /// offers clipboard sharing (``VMGuestOS/guestAgentSettings``). On any other
     /// guest the stored flag has no effect. Every surface that offers the
-    /// clipboard reads this, or a key whose `applies` reads the same list.
+    /// clipboard reads this, or reads the flag behind a gate on the same list:
+    /// a key's `applies`, or admission for the clipboard commands.
     package var sharesClipboard: Bool {
         clipboardSharingEnabled && guestOS.guestAgentSettings.contains(.clipboard)
     }

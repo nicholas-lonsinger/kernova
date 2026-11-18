@@ -88,7 +88,7 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
             if idle { logger.log(.notice, "The host withdrew a drop before it finished") }
         case .pullEnded(_, let id, let result):
             pullEnded(id, result)
-        case .offerEnded(_, .local, _, _), .serveEnded:
+        case .offerEnded(_, .local, _, _), .serveEnded, .offerRequested, .requestEnded:
             break
         }
     }

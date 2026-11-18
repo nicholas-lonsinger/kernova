@@ -153,10 +153,11 @@ public final class PeerAgentRuntime: Sendable {
 
     // MARK: Items
 
-    /// Offers `offer` on `feature` — CLIPBOARD, withdrawing the previous clipboard offer, or DRAG — to the host,
-    /// and calls `completion` once, on the runtime's queue, with nil once it opened, whose `.items` events then
-    /// follow, or why it did not. Each item call's answer, like each event, reaches the runtime's queue in the
-    /// order the connection emitted them; with no connection, or once it ends, a call is answered as ended.
+    /// Offers `offer` on `feature` — CLIPBOARD, once it opens releasing the host's clipboard offers and withdrawing
+    /// the previous one of its own, or DRAG — to the host, and calls `completion` once, on the runtime's queue, with
+    /// nil once it opened, whose `.items` events then follow, or why it did not. Each item call's answer, like each
+    /// event, reaches the runtime's queue in the order the connection emitted them; with no connection, or once it
+    /// ends, a call is answered as ended.
     public func offerItems(
         _ offer: ItemOffer, feature: FeatureID, _ completion: @escaping @Sendable (WireError?) -> Void
     ) {
@@ -170,14 +171,14 @@ public final class PeerAgentRuntime: Sendable {
         send(.withdraw(token: token, code: code))
     }
 
-    /// Releases the host's offer of `token`: this side pulls nothing more of it. Once the offer is whole the
-    /// release is END with `endBody`, its kind's acceptor END body.
+    /// Releases the host's offer of `token`: this side pulls nothing more of it — or the host's request of `token`,
+    /// answered. Once the offer is whole the release is END with `endBody`, its kind's acceptor END body.
     public func releaseOffer(_ token: Data, endBody: Data = Data()) {
         send(.release(token: token, endBody: endBody))
     }
 
-    /// Refuses the host's offer of `token` with `error`: this side pulls nothing of it, and the host's
-    /// `.offerEnded` closes `.resetByPeer(error)`.
+    /// Refuses the host's offer or request of `token` with `error`: this side pulls nothing of it, or offers
+    /// nothing for it, and the host's `.offerEnded` or `.requestEnded` closes `.resetByPeer(error)`.
     public func refuseOffer(_ token: Data, _ error: WireError) {
         send(.refuse(token: token, error))
     }

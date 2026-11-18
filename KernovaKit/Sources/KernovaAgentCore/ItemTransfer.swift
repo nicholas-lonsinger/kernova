@@ -30,27 +30,16 @@ public struct ItemOffer: Sendable, Equatable {
     public var concealed: Bool
     /// The items, in the order they are sent.
     public var items: [OfferedItem]
-    /// A peer's CLIPBOARD offer: the token of the last host clipboard offer it received on the connection,
-    /// empty when none (`ItemSetHeader.after`); a copy's, the ask it answers. Empty on every other offer.
-    public var after: Data
-    /// What a CLIPBOARD offer is besides its opener's clipboard offer (`ItemSetHeader.copy`): a copy is not
-    /// this side's clipboard offer, so a later one does not withdraw it.
-    public var copy: ClipboardCopyRole
-    /// A copy's: how many items of its opener's clipboard it does not carry whole
-    /// (`ItemSetHeader.left_out`); 0 on every other offer.
-    public var leftOut: Int
+    /// A peer's CLIPBOARD offer: the token of the host's request it answers (``ItemTransferEvent/offerRequested(token:)``),
+    /// empty when none (`ItemSetHeader.request`). Empty on every other offer.
+    public var request: Data
 
     /// Creates an offer.
-    public init(
-        token: Data, concealed: Bool = false, items: [OfferedItem], after: Data = Data(),
-        copy: ClipboardCopyRole = .notACopy, leftOut: Int = 0
-    ) {
+    public init(token: Data, concealed: Bool = false, items: [OfferedItem], request: Data = Data()) {
         self.token = token
         self.concealed = concealed
         self.items = items
-        self.after = after
-        self.copy = copy
-        self.leftOut = leftOut
+        self.request = request
     }
 }
 
@@ -64,60 +53,22 @@ public struct ItemSetHeaderValue: Sendable, Equatable {
     public var concealed: Bool
     /// The items the offer sends.
     public var count: Int
-    /// ``ItemOffer/after``, as the OPEN carried it.
-    public var after: Data
-    /// ``ItemOffer/copy``, as the OPEN carried it.
-    public var copy: ClipboardCopyRole
-    /// ``ItemOffer/leftOut``, as the OPEN carried it.
-    public var leftOut: Int
+    /// ``ItemOffer/request``, as the OPEN carried it.
+    public var request: Data
 
     /// A header announcing `count` items of `feature`'s offer `token`.
-    public init(
-        feature: FeatureID, token: Data, concealed: Bool, count: Int, after: Data = Data(),
-        copy: ClipboardCopyRole = .notACopy, leftOut: Int = 0
-    ) {
+    public init(feature: FeatureID, token: Data, concealed: Bool, count: Int, request: Data = Data()) {
         self.feature = feature
         self.token = token
         self.concealed = concealed
         self.count = count
-        self.after = after
-        self.copy = copy
-        self.leftOut = leftOut
+        self.request = request
     }
 
     init(_ header: Kernova_V2_ItemSetHeader, feature: FeatureID) {
         self.init(
             feature: feature, token: header.token, concealed: header.concealed, count: Int(header.count),
-            after: header.after, copy: ClipboardCopyRole(header.copy), leftOut: Int(header.leftOut))
-    }
-}
-
-/// What a CLIPBOARD offer is besides its opener's clipboard offer, sent because the user asked for a clipboard
-/// on the far side.
-public enum ClipboardCopyRole: Sendable, Equatable {
-    /// The opener's clipboard offer, and every offer of another feature.
-    case notACopy
-    /// A snapshot of the opener's clipboard.
-    case snapshot
-    /// The host's ask for a snapshot of the peer's clipboard, of no items.
-    case ask
-
-    /// The role `wire` names; an unrecognized one is no copy.
-    init(_ wire: Kernova_V2_ClipboardCopy) {
-        switch wire {
-        case .snapshot: self = .snapshot
-        case .ask: self = .ask
-        case .unspecified, .UNRECOGNIZED: self = .notACopy
-        }
-    }
-
-    /// The wire's spelling.
-    var wire: Kernova_V2_ClipboardCopy {
-        switch self {
-        case .notACopy: .unspecified
-        case .snapshot: .snapshot
-        case .ask: .ask
-        }
+            request: header.request)
     }
 }
 
@@ -267,16 +218,26 @@ public enum ItemTransferEvent: Sendable, Equatable {
     case offerReceived(ItemSetHeaderValue)
     /// An offer of `FeatureID`'s is no longer valid. Once per offer.
     case offerEnded(FeatureID, ItemOfferOrigin, token: Data, StreamClosure)
+    /// A peer: the host asks this side to offer its clipboard (`CLIPBOARD_OFFER_REQUEST`), by a request of
+    /// `token` that is no offer: nothing pulls or reads it, and no clipboard offer withdraws it. This side
+    /// answers once, by offering its clipboard naming `token` in ``ItemOffer/request`` and then releasing the
+    /// request, or by refusing it with why it offers nothing.
+    case offerRequested(token: Data)
+    /// A request that the peer offer its clipboard ended: the host's own (`.local`), as
+    /// ``ItemCommand/requestClipboardOffer(_:token:)`` says, or the host's to this side (`.remote`). Once per
+    /// request.
+    case requestEnded(ItemOfferOrigin, token: Data, StreamClosure)
     /// A pull this side opened, of an offer of `FeatureID`'s, ended. Once per pull `pull` returned; a committed
     /// pull's follows its sink's publish report, and may follow the connection's `.closed`.
     case pullEnded(FeatureID, ItemPullID, ItemPullResult)
     /// A pull this side served, of an offer of `FeatureID`'s, ended. Once per `.serve`.
     case serveEnded(FeatureID, ItemPullID, ItemServeResult)
 
-    /// The feature of the offer this event is about.
+    /// The feature of the offer or request this event is about.
     public var feature: FeatureID {
         switch self {
         case .offerReceived(let header): header.feature
+        case .offerRequested, .requestEnded: .clipboard
         case .offerEnded(let feature, _, _, _), .pullEnded(let feature, _, _), .serveEnded(let feature, _, _): feature
         }
     }
@@ -383,18 +344,24 @@ struct ItemTransfer: Sendable {
         offers.offer(offer, kind: kind, connection: &connection)
     }
 
-    /// Withdraws this side's offer of `token`, resetting it with `code`.
+    /// Host: asks the peer to offer its clipboard, by a request of `token`; nil when sent, or why not.
+    mutating func requestClipboardOffer(_ token: Data, connection: inout Connection) -> WireError? {
+        offers.request(token, connection: &connection)
+    }
+
+    /// Withdraws this side's offer or request of `token`, resetting it with `code`.
     mutating func withdraw(_ token: Data, code: ErrorCode = .cancelled, connection: inout Connection) {
         offers.withdraw(token, code: code, connection: &connection)
     }
 
-    /// Releases the far side's offer of `token`: this side pulls nothing more of it. Once the offer is whole
-    /// the release is END with `endBody`, its kind's acceptor END body.
+    /// Releases the far side's offer or request of `token`: this side pulls nothing more of it, or has answered
+    /// it. Once the offer is whole the release is END with `endBody`, its kind's acceptor END body.
     mutating func release(_ token: Data, endBody: Data = Data(), connection: inout Connection) {
         offers.release(token, endBody: endBody, connection: &connection)
     }
 
-    /// Refuses the far side's offer of `token` with `error`: this side pulls nothing of it, and says why.
+    /// Refuses the far side's offer or request of `token` with `error`: this side pulls nothing of it, or
+    /// offers nothing for it, and says why.
     mutating func refuse(_ token: Data, _ error: WireError, connection: inout Connection) {
         offers.refuse(token, error, connection: &connection)
     }

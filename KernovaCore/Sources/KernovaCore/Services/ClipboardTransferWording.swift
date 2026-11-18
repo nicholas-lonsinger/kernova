@@ -55,34 +55,13 @@ package struct ClipboardTransferWording: Equatable {
             return ClipboardTransferWording(
                 headline: headline(for: gesture, vm: vm),
                 message: detail.isEmpty ? base : "\(base) (\(detail))",
-                menuLine: inboundFailureLine(for: gesture))
+                menuLine: "Clipboard: paste from the guest failed")
 
         case (.tooLarge(let limitBytes), .copy):
             return ClipboardTransferWording(
                 headline: "Clipboard not copied from \(vm).",
                 message: overCopyBudgetMessage(limitBytes: limitBytes),
                 menuLine: "Clipboard: too large to copy to your Mac")
-
-        case (.tooLarge(let limitBytes), .send):
-            return ClipboardTransferWording(
-                headline: "Clipboard not copied to \(vm).",
-                message:
-                    "Too large to copy to the guest — over the \(ClipboardPasteLimit.displayLimit(limitBytes)) clipboard transfer limit.",
-                menuLine: "Clipboard: too large to copy to the guest")
-
-        case (.clipboardChanged, .copy):
-            return ClipboardTransferWording(
-                headline: "Clipboard not copied from \(vm).",
-                message:
-                    "The Mac clipboard changed before the guest\u{2019}s clipboard arrived, so it was left as it is.",
-                menuLine: "Clipboard: the Mac clipboard changed first")
-
-        case (.clipboardChanged, _):
-            return ClipboardTransferWording(
-                headline: "Clipboard not copied to \(vm).",
-                message:
-                    "The guest\u{2019}s clipboard changed before the Mac\u{2019}s arrived, so it was left as it is.",
-                menuLine: "Clipboard: the guest\u{2019}s clipboard changed first")
 
         case (.nothingToCopy, .copy):
             return ClipboardTransferWording(
@@ -130,33 +109,6 @@ package struct ClipboardTransferWording: Equatable {
                 headline: "Clipboard not pasted into \(vm).", message: "Clipboard transfer failed on the guest side",
                 menuLine: "Clipboard: paste into the guest failed")
 
-        case (.disconnectedCopyRetracted, _):
-            return ClipboardTransferWording(
-                headline: "Clipboard sharing stopped in \(vm).",
-                message:
-                    "Clipboard sharing with the VM stopped, so the earlier copy was removed from the Mac clipboard.",
-                menuLine: "Clipboard: earlier copy was removed")
-
-        case (.disconnectedFilesRetracted, _):
-            return ClipboardTransferWording(
-                headline: "Clipboard sharing stopped in \(vm).",
-                message:
-                    "Clipboard sharing with the VM stopped, so the copied files were removed from the Mac clipboard. The rest of the copy is still there.",
-                menuLine: "Clipboard: copied files were removed")
-
-        case (.withdrawnCopyRetracted, _):
-            return ClipboardTransferWording(
-                headline: "Clipboard copy withdrawn by \(vm).",
-                message: "The VM withdrew the earlier copy, so it was removed from the Mac clipboard.",
-                menuLine: "Clipboard: earlier copy was withdrawn")
-
-        case (.withdrawnFilesRetracted, _):
-            return ClipboardTransferWording(
-                headline: "Clipboard copy withdrawn by \(vm).",
-                message:
-                    "The VM withdrew the earlier copy, so its files were removed from the Mac clipboard. The rest of the copy is still there.",
-                menuLine: "Clipboard: copied files were withdrawn")
-
         case (.filesLeftOut(let count, let limitBytes), .copy):
             return ClipboardTransferWording(
                 headline: "Clipboard copied from \(vm) without its files.",
@@ -168,20 +120,6 @@ package struct ClipboardTransferWording: Equatable {
                 headline: "Clipboard copied to \(vm) without its files.",
                 message: filesLeftOutMessage(count: count, limitBytes: limitBytes),
                 menuLine: "Clipboard: files left out, too large to copy to the guest")
-
-        case (.partsGone, .copy):
-            return ClipboardTransferWording(
-                headline: "Clipboard copied from \(vm) without some of it.",
-                message:
-                    "Part of the guest\u{2019}s clipboard was what the Mac sent it, and the Mac no longer has it, so it was left out.",
-                menuLine: "Clipboard: part of the copy was no longer on the Mac")
-
-        case (.partsGone, _):
-            return ClipboardTransferWording(
-                headline: "Clipboard copied to \(vm) without some of it.",
-                message:
-                    "Part of the Mac clipboard was what the guest sent it, and the guest no longer has it, so it was left out.",
-                menuLine: "Clipboard: part of the copy was no longer in the guest")
 
         case (.interrupted(let fileCount), .drop):
             // The connection ending is all a drop observes: the VM stopping, the
@@ -222,35 +160,17 @@ package struct ClipboardTransferWording: Equatable {
                 message: "The VM stopped taking the files, so the drop was called off.",
                 menuLine: "Drop: the VM stopped taking the files")
 
-        case (.timedOut, .preview):
-            return ClipboardTransferWording(
-                headline: "Clipboard preview from \(vm) failed.",
-                message: "The preview from the guest couldn't be loaded.",
-                menuLine: "Clipboard: preview from the guest failed")
-
         case (.timedOut, _):
             return ClipboardTransferWording(
                 headline: "Clipboard not pasted from \(vm).",
                 message: "The transfer from the guest timed out, so the paste didn't finish.",
                 menuLine: "Clipboard: paste from the guest timed out")
 
-        case (.transferFailed, .preview), (.stagingFailed, .preview), (.sourceUnreadable, .preview):
-            return ClipboardTransferWording(
-                headline: "Clipboard preview from \(vm) failed.",
-                message: "The preview from the guest couldn't be loaded.",
-                menuLine: "Clipboard: preview from the guest failed")
-
         case (.transferFailed, .copy):
             return ClipboardTransferWording(
                 headline: "Clipboard not copied from \(vm).",
                 message: "The guest\u{2019}s clipboard couldn\u{2019}t be copied to the Mac.",
                 menuLine: "Clipboard: copy from the guest failed")
-
-        case (.transferFailed, .send):
-            return ClipboardTransferWording(
-                headline: "Clipboard not copied to \(vm).",
-                message: "The Mac clipboard couldn\u{2019}t be copied to the guest.",
-                menuLine: "Clipboard: copy to the guest failed")
 
         case (.transferFailed, _):
             return ClipboardTransferWording(
@@ -280,26 +200,8 @@ package struct ClipboardTransferWording: Equatable {
                     : "\(count) items couldn't be read, so they weren't sent to the VM. The rest were.",
                 menuLine: "Drop: some files weren't sent")
 
-        // A snapshot leaves a file out of an item when it cannot open it or it is gone, and a representation
-        // when it cannot read or pull it, the item dropped once nothing of it is left; the count alone crosses,
-        // so neither command names what of an item was left out.
-        case (.itemsSkipped(let count), .copy):
-            return ClipboardTransferWording(
-                headline: "Clipboard partly copied from \(vm).",
-                message: count == 1
-                    ? "One item on the guest\u{2019}s clipboard wasn\u{2019}t copied to the Mac in full. The rest were."
-                    : "\(count) items on the guest\u{2019}s clipboard weren\u{2019}t copied to the Mac in full. The rest were.",
-                menuLine: "Clipboard: some items weren't copied in full from the guest")
-
-        case (.itemsSkipped(let count), .send):
-            return ClipboardTransferWording(
-                headline: "Clipboard partly copied to \(vm).",
-                message: count == 1
-                    ? "One item on the Mac clipboard wasn\u{2019}t copied to the guest in full. The rest were."
-                    : "\(count) items on the Mac clipboard weren\u{2019}t copied to the guest in full. The rest were.",
-                menuLine: "Clipboard: some items weren't copied in full to the guest")
-
-        // Passthrough's offer leaves out only a file it cannot open or that is gone, the rest of its item offered.
+        // A read of the Mac's clipboard leaves out only a file it cannot open or that is gone, the rest of its
+        // item offered.
         case (.itemsSkipped(let count), _):
             return ClipboardTransferWording(
                 headline: "Clipboard partly copied to \(vm).",
@@ -338,9 +240,8 @@ package struct ClipboardTransferWording: Equatable {
     /// asked for the bytes.
     private static func headline(for gesture: ClipboardTransferGesture, vm: String) -> String {
         switch gesture {
-        case .preview: return "Clipboard preview from \(vm) failed."
         case .copy: return "Clipboard not copied from \(vm)."
-        case .forward, .send: return "Clipboard not copied to \(vm)."
+        case .forward: return "Clipboard not copied to \(vm)."
         case .drop: return "Files not copied to \(vm)."
         case .dragOut: return "Files not copied from \(vm)."
         case .peerPaste: return "Clipboard not pasted into \(vm)."
@@ -386,9 +287,8 @@ package struct ClipboardTransferWording: Equatable {
         case .tooLarge:
             message = "The drag holds more items than can be dragged out of the VM at once."
             menuLine = "Drag: too many items to drag out at once"
-        case .disconnectedCopyRetracted, .disconnectedFilesRetracted, .withdrawnCopyRetracted,
-            .withdrawnFilesRetracted, .transferFailed, .itemsSkipped, .itemsUnreadable, .sendFailed, .dropStopped,
-            .clipboardChanged, .nothingToCopy, .filesLeftOut, .partsGone:
+        case .transferFailed, .itemsSkipped, .itemsUnreadable, .sendFailed, .dropStopped, .nothingToCopy,
+            .filesLeftOut:
             message = "The transfer from the VM failed, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"
         }
@@ -401,8 +301,8 @@ package struct ClipboardTransferWording: Equatable {
         switch gesture {
         case .drop: "the drop"
         case .dragOut: "the drag"
-        case .copy, .forward, .send: "the copy"
-        case .paste, .peerPaste, .preview: "the paste"
+        case .copy, .forward: "the copy"
+        case .paste, .peerPaste: "the paste"
         }
     }
 
@@ -417,12 +317,6 @@ package struct ClipboardTransferWording: Equatable {
         .joined(separator: ", ")
     }
 
-    /// The dropdown line for a failure pulling bytes from the guest.
-    private static func inboundFailureLine(for gesture: ClipboardTransferGesture) -> String {
-        gesture == .preview
-            ? "Clipboard: preview from the guest failed" : "Clipboard: paste from the guest failed"
-    }
-
     private static func quoted(_ name: String) -> String { "\u{201C}\(name)\u{201D}" }
 }
 
@@ -431,8 +325,8 @@ extension ClipboardTransferGesture {
     /// them — rather than in the VM.
     fileprivate var readsOnThisMac: Bool {
         switch self {
-        case .drop, .forward, .send, .peerPaste: true
-        case .paste, .preview, .copy, .dragOut: false
+        case .drop, .forward, .peerPaste: true
+        case .paste, .copy, .dragOut: false
         }
     }
 }

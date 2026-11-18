@@ -46,7 +46,7 @@ struct ClipboardTransferOperationTests {
     private func makeOperation(
         recorder: Recorder,
         clock: GatedEngineClock,
-        gesture: ClipboardTransferGesture = .preview,
+        gesture: ClipboardTransferGesture = .paste,
         direction: ClipboardProgressSnapshot.Direction = .inbound,
         expectedBytes: UInt64? = 0,
         expectedItems: Int = 0

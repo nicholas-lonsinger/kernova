@@ -138,6 +138,6 @@ struct ClipboardProgressAutoRevealTests {
             reveal.secondsUntilEarned(
                 readout(elapsed: 0.25, secondsRemaining: nil, bytesTransferred: 1_000)) == nil)
         // Nobody is waiting on it.
-        #expect(reveal.secondsUntilEarned(readout(elapsed: 0.25, gesture: .preview)) == nil)
+        #expect(reveal.secondsUntilEarned(readout(elapsed: 0.25, gesture: .paste)) == nil)
     }
 }

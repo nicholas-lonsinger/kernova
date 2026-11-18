@@ -8,7 +8,7 @@ struct ClipboardTransferGestureTests {
     @Test("every gesture someone waits on outranks every gesture they can leave")
     func awaitedGesturesOutrankTheRest() {
         let every: [ClipboardTransferGesture] = [
-            .paste, .peerPaste, .preview, .copy, .forward, .drop, .dragOut,
+            .paste, .peerPaste, .copy, .forward, .drop, .dragOut,
         ]
         for gesture in every where gesture.isAwaited {
             for other in every where !other.isAwaited {

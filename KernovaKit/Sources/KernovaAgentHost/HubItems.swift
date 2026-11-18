@@ -34,8 +34,9 @@ extension ItemFeatureRouter where Peer == PeerHandle {
 }
 
 /// What the owner of the hub's item events holds open on one connection, each in the order it opened: the host's
-/// offers, the peer's offers the hub forwarded, and the pulls and takes the owner opened. The hub hands on an
-/// event ending one of these only while it is held, so each ends toward the owner exactly once.
+/// offers and its clipboard offer requests, the peer's offers the hub forwarded, and the pulls and takes the owner
+/// opened. The hub hands on an event ending one of these only while it is held, so each ends toward the owner
+/// exactly once.
 struct HubOpenItems: Sendable {
     struct Offer: Sendable, Equatable {
         var token: Data
@@ -43,6 +44,8 @@ struct HubOpenItems: Sendable {
     }
 
     var hostOffers: [Offer] = []
+    /// The tokens of the host's requests that the peer offer its clipboard.
+    var hostRequests: [Data] = []
     var forwardedOffers: [Offer] = []
     var pulls: [(id: ItemPullID, feature: FeatureID)] = []
     var takes: [DragTakeID] = []
@@ -73,6 +76,11 @@ extension AgentHubState {
             return (entry.items.hostOffers.removeFirst(where: { $0.token == token }), nil)
         case .offerEnded(_, .remote, let token, _):
             return (entry.items.forwardedOffers.removeFirst(where: { $0.token == token }), nil)
+        case .requestEnded(.local, let token, _):
+            return (entry.items.hostRequests.removeFirst(where: { $0 == token }), nil)
+        case .offerRequested, .requestEnded(.remote, _, _):
+            // A peer's request: the connection refuses a peer opening one before it reaches here.
+            return (false, nil)
         case .pullEnded(_, let id, _):
             return (entry.items.pulls.removeFirst(where: { $0.id == id }), nil)
         case .serveEnded:
@@ -108,6 +116,8 @@ extension AgentHubState {
         switch (pending.command, reply) {
         case (.offer(_, let offer, let feature), .offered(nil)):
             connections[handle]?.items.hostOffers.append(HubOpenItems.Offer(token: offer.token, feature: feature))
+        case (.requestClipboardOffer(_, let token), .offered(nil)):
+            connections[handle]?.items.hostRequests.append(token)
         case (.pull, .pulled(.success(let id))):
             guard let feature = pending.feature else { break }
             connections[handle]?.items.pulls.append((id, feature))
@@ -131,26 +141,33 @@ extension AgentHubState {
         for handle in connections.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
             guard var items = connections[handle]?.items else { continue }
             let isPeer = connections[handle]?.peer != nil
-            func held(_ offer: HubOpenItems.Offer) -> Bool { console[offer.feature] == handle }
-            func closure(_ offer: HubOpenItems.Offer) -> StreamClosure {
-                guard (console[offer.feature] ?? nil) == nil else { return Self.endedByHub }
-                return .resetLocally(WireError(.featureUnavailable, absence: consoleAbsence(of: offer.feature)))
+            func held(_ feature: FeatureID) -> Bool { console[feature] == handle }
+            func closure(_ feature: FeatureID) -> StreamClosure {
+                guard (console[feature] ?? nil) == nil else { return Self.endedByHub }
+                return .resetLocally(WireError(.featureUnavailable, absence: consoleAbsence(of: feature)))
             }
-            func code(_ offer: HubOpenItems.Offer) -> ErrorCode {
-                guard (console[offer.feature] ?? nil) == nil else { return .capabilityWithdrawn }
-                let absence = consoleAbsence(of: offer.feature)
+            func code(_ feature: FeatureID) -> ErrorCode {
+                guard (console[feature] ?? nil) == nil else { return .capabilityWithdrawn }
+                let absence = consoleAbsence(of: feature)
                 return absence == .disabledByPolicy ? .disabledByPolicy : .capabilityWithdrawn
             }
-            for offer in items.hostOffers where !held(offer) {
-                let end = ItemTransferEvent.offerEnded(offer.feature, .local, token: offer.token, closure(offer))
-                ended.append((handle, .withdraw(token: offer.token, code: code(offer)), .items(handle, end)))
+            for offer in items.hostOffers where !held(offer.feature) {
+                let end = ItemTransferEvent.offerEnded(
+                    offer.feature, .local, token: offer.token, closure(offer.feature))
+                ended.append((handle, .withdraw(token: offer.token, code: code(offer.feature)), .items(handle, end)))
             }
-            for offer in items.forwardedOffers where !held(offer) {
-                let end = ItemTransferEvent.offerEnded(offer.feature, .remote, token: offer.token, closure(offer))
+            for token in items.hostRequests where !held(.clipboard) {
+                let end = ItemTransferEvent.requestEnded(.local, token: token, closure(.clipboard))
+                ended.append((handle, .withdraw(token: token, code: code(.clipboard)), .items(handle, end)))
+            }
+            for offer in items.forwardedOffers where !held(offer.feature) {
+                let end = ItemTransferEvent.offerEnded(
+                    offer.feature, .remote, token: offer.token, closure(offer.feature))
                 ended.append((handle, .release(token: offer.token), .items(handle, end)))
             }
-            items.hostOffers.removeAll { !held($0) }
-            items.forwardedOffers.removeAll { !held($0) }
+            items.hostOffers.removeAll { !held($0.feature) }
+            if !held(.clipboard) { items.hostRequests = [] }
+            items.forwardedOffers.removeAll { !held($0.feature) }
             if !isPeer {
                 for pull in items.pulls {
                     let end = ItemTransferEvent.pullEnded(pull.feature, pull.id, .closed(Self.endedByHub))

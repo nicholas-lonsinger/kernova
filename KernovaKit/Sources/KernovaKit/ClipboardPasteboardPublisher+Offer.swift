@@ -23,13 +23,9 @@ public protocol ClipboardItemPulling: Sendable {
     /// item `item`; `completion` gets the URL it landed at, under the name the
     /// receiver chose, or nil when the pull failed.
     func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void)
-
-    /// Runs `handler` once, on any thread, when the offer ends and can be pulled no more: at once when it has
-    /// already. A puller whose offer never ends never runs it.
-    func whenEnded(_ handler: @escaping @Sendable () -> Void)
 }
 
-/// What publishing a peer's offer (``ClipboardPasteboardPublisher/publish(_:concealed:pasteCeiling:puller:serving:)``)
+/// What publishing a peer's offer (``ClipboardPasteboardPublisher/publish(_:concealed:pasteCeiling:puller:serving:onReleased:)``)
 /// did to the pasteboard.
 public enum ClipboardOfferPublishOutcome: Equatable, Sendable {
     /// The offer promises nothing the pasteboard carries: the pasteboard is untouched.
@@ -55,17 +51,18 @@ extension ClipboardPasteboardPublisher {
     /// that is left to do.
     nonisolated static let pasteRequesterDeadline: TimeInterval = 120
 
-    /// Publishes a peer's offer as its ``ClipboardPromisePolicy/copyPlan(_:room:)`` within `limitBytes` decides:
+    /// Publishes a peer's offer as its ``ClipboardPromisePolicy/writePlan(_:limit:)`` within `limitBytes` decides:
     /// one pasteboard item per offered item, every type promised and pulled through `puller` only when a paste
     /// asks for it. Files over the ceiling are left out, and an offer that is nothing else is not written.
     ///
-    /// A concealed offer marks each item with `org.nspasteboard.ConcealedType`. The write serves `offer`, so
-    /// ``retractWrite(servingOffer:withdrawing:)`` withdraws it once that offer ends.
+    /// A concealed offer marks each item with `org.nspasteboard.ConcealedType`. The write serves the offer
+    /// `token`, so ``retractWrite(servingOffer:withdrawing:)`` withdraws it once that offer ends; `onReleased`
+    /// runs once the write no longer stands (``write(_:source:onReleased:)``).
     public func publish(
         _ items: [OfferedItem], concealed: Bool, pasteCeiling limitBytes: Int, puller: any ClipboardItemPulling,
-        serving offer: ClipboardWriteSource.Serving
+        serving token: Data, onReleased: (@MainActor @Sendable () -> Void)? = nil
     ) -> ClipboardOfferPublishOutcome {
-        let plan = ClipboardPromisePolicy.copyPlan(items, room: UInt64(clamping: limitBytes))
+        let plan = ClipboardPromisePolicy.writePlan(items, limit: limitBytes)
         let filesLeftOut: Int
         switch plan {
         case .tooLarge:
@@ -83,9 +80,8 @@ extension ClipboardPasteboardPublisher {
             return .nothingToWrite
         }
         let source = ClipboardWriteSource(
-            serving: offer,
-            parts: [.init(items: items, concealed: concealed, servingFileURLs: plan.servesFileURLs, puller: puller)])
-        guard write(specs, source: source) else {
+            offer: token, items: items, concealed: concealed, servingFileURLs: plan.servesFileURLs, puller: puller)
+        guard write(specs, source: source, onReleased: onReleased) else {
             Self.logger.log(.error, "The pasteboard refused an offer's write")
             return .writeFailed
         }
@@ -99,85 +95,7 @@ extension ClipboardPasteboardPublisher {
         return .written
     }
 
-    /// Writes a peer's copy: each kept INLINE representation as the data
-    /// `held` holds for it, now, each FILE or FOLDER `held` holds as the file
-    /// URL it is, now, and every other FILE or FOLDER promised through `puller`,
-    /// so only those transfer when pasted. A representation that names this
-    /// side's own offer (`Representation.reference`) and that `held` does not
-    /// hold is left out: nothing of it can be pulled.
-    ///
-    /// The write serves the copy `copy`. One that promises a file, or is
-    /// concealed, which the copy's end withdraws whole, holds the copy until
-    /// something replaces it, when `onReleased` runs. Returns whether the
-    /// pasteboard took the write, and whether it holds the copy; one it does
-    /// not hold is the caller's to let go now.
-    public func publishCopy(
-        _ items: [OfferedItem], concealed: Bool, servingFileURLs: Bool,
-        held: @escaping @Sendable (_ item: Int, _ rep: Int) -> ClipboardWriteSource.Held?,
-        puller: any ClipboardItemPulling, serving copy: ClipboardWriteSource.Serving,
-        onReleased: @escaping @MainActor @Sendable () -> Void
-    ) -> (written: Bool, holdsCopy: Bool) {
-        // What is held now, read once: the write's source holds what landed, never a closure over the copy.
-        var table: [[ClipboardWriteSource.Held?]] = []
-        for (index, item) in items.enumerated() {
-            table.append(item.representations.indices.map { held(index, $0) })
-        }
-        let heldNow = table
-        let lookup: @Sendable (Int, Int) -> ClipboardWriteSource.Held? = { item, representation in
-            heldNow.indices.contains(item) && heldNow[item].indices.contains(representation)
-                ? heldNow[item][representation] : nil
-        }
-        let specs = Self.copySpecs(
-            for: items, concealed: concealed, servingFileURLs: servingFileURLs, holding: lookup, puller: puller,
-            eventLoopWait: { NestedEventLoopWait.current() })
-        guard !specs.isEmpty else { return (false, false) }
-        let source = ClipboardWriteSource(
-            serving: copy,
-            parts: [
-                .init(
-                    items: items, concealed: concealed, servingFileURLs: servingFileURLs, puller: puller, held: lookup)
-            ])
-        let record = place(specs, source: source, onReleased: onReleased)
-        return (record != nil, record?.withdrawable == true)
-    }
-
-    /// The item specs ``publishCopy(_:concealed:servingFileURLs:held:puller:serving:onReleased:)``
-    /// writes. A type whose held content is missing is left off its item, and an item left with nothing is
-    /// dropped.
-    nonisolated static func copySpecs(
-        for items: [OfferedItem], concealed: Bool, servingFileURLs: Bool,
-        holding heldContent: (Int, Int) -> ClipboardWriteSource.Held?,
-        puller: any ClipboardItemPulling, eventLoopWait: @escaping @Sendable () -> NestedEventLoopWait?
-    ) -> [ItemSpec] {
-        items.enumerated().compactMap { index, item -> ItemSpec? in
-            var data: [(type: String, bytes: Data)] = []
-            var files: [Int] = []
-            for promised in ClipboardPromisePolicy.promisedTypes(for: item, servingFileURLs: servingFileURLs) {
-                switch heldContent(index, promised.representation) {
-                case .bytes(let bytes) where !promised.isFileURL:
-                    data.append((promised.pasteboardType, bytes))
-                case .file(let url) where promised.isFileURL:
-                    data.append((ItemSpec.fileURLType, Data(url.absoluteString.utf8)))
-                case nil where promised.isFileURL && !item.representations[promised.representation].hasReference:
-                    files.append(promised.representation)
-                case .bytes, .file, nil:
-                    break
-                }
-            }
-            guard !data.isEmpty || !files.isEmpty else { return nil }
-            if concealed { data.append((ClipboardSnapshotPolicy.concealedMarkerUTI, Data())) }
-            guard let file = files.first else { return ItemSpec(data: data, types: []) { _ in nil } }
-            return ItemSpec(data: data, types: [ItemSpec.fileURLType]) { type in
-                guard type == ItemSpec.fileURLType else { return nil }
-                return held(eventLoopWait) {
-                    puller.pullFile(item: index, representation: file, completion: $0)
-                }
-                .map { Data($0.absoluteString.utf8) }
-            }
-        }
-    }
-
-    /// The item specs promising `items`, as ``publish(_:concealed:pasteCeiling:puller:serving:)``
+    /// The item specs promising `items`, as ``publish(_:concealed:pasteCeiling:puller:serving:onReleased:)``
     /// writes them.
     ///
     /// An item none of whose representations is kept is left out, so a paste

@@ -77,7 +77,6 @@ package final class MacOSInstallService {
         // Short of `bringUpSession`: an installer boot runs no vsock
         // listeners, since no guest agent can be there to meet them.
         instance.startSerialReading()
-        instance.refreshClipboardPassthrough()
 
         try Task.checkCancellation()
 

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import KernovaSynchronization
 import KernovaTestSupport
 import KernovaWire
 import Testing
@@ -28,7 +29,7 @@ struct ClipboardPasteboardReaderTests {
     private func offer(
         _ pasteboard: FakeReadPasteboard
     ) async -> (source: ClipboardOfferSource, lost: Int)? {
-        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, sizeOf: nil)
+        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
         guard case .offer(let source, let lost) = outcome else {
             Issue.record("expected an offer, got \(outcome)")
             return nil
@@ -55,7 +56,7 @@ struct ClipboardPasteboardReaderTests {
 
         guard
             case .suppressed(let reason) = await ClipboardPasteboardReader.readOffer(
-                from: pasteboard, sizeOf: nil)
+                from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
         else {
             Issue.record("Expected .suppressed")
             return
@@ -99,7 +100,7 @@ struct ClipboardPasteboardReaderTests {
 
         guard
             case .nothingOfferable(let lost) = await ClipboardPasteboardReader.readOffer(
-                from: pasteboard, sizeOf: nil)
+                from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
         else {
             Issue.record("Expected .nothingOfferable")
             return
@@ -121,12 +122,147 @@ struct ClipboardPasteboardReaderTests {
 
         guard
             case .nothingOfferable(let lost) = await ClipboardPasteboardReader.readOffer(
-                from: pasteboard, sizeOf: nil)
+                from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
         else {
             Issue.record("Expected .nothingOfferable")
             return
         }
         #expect(lost == 0)
+    }
+
+    /// A file in the scratch directory this process cannot open.
+    private func unreadableFile(_ name: String) throws -> URL {
+        let file = scratch.url.appendingPathComponent(name)
+        try Data("locked".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0], ofItemAtPath: file.path)
+        return file
+    }
+
+    @Test("a file this process cannot open is left out and counted, and the files it can are offered")
+    func unreadableFileIsLeftOut() async throws {
+        let readable = scratch.url.appendingPathComponent("open.txt")
+        let locked = try unreadableFile("locked.txt")
+        try Data("open".utf8).write(to: readable)
+        let pasteboard = FakePasteboard()
+        #expect(pasteboard.setFiles([readable, locked]))
+        guard
+            case .offer(let source, let lost) = await ClipboardPasteboardReader.readOffer(
+                from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
+        else { throw TestFailure("no offer") }
+        #expect(lost == 1)
+        #expect(
+            source.items.flatMap(\.representations).map { String(decoding: $0.name, as: UTF8.self) } == ["open.txt"])
+    }
+
+    /// Guest Photos' ⌘C, its file URL naming a derivative in the Photos library that the agent cannot open.
+    static func photosCopy(naming file: URL) -> [(type: NSPasteboard.PasteboardType, data: Data)] {
+        let url = Data(file.absoluteString.utf8)
+        let names: [(String, Data)] = [
+            ("com.apple.photos.object-reference.asset", Data("asset".utf8)),
+            ("public.jpeg", Data("jpeg".utf8)),
+            ("CorePasteboardFlavorType 0x4A504547", Data("jpeg".utf8)),
+            ("public.file-url", url),
+            ("CorePasteboardFlavorType 0x6675726C", url),
+            ("dyn.ah62d4rv4gu8y6y4grf0gn5xbrzw1gydcr7u1e3cytf2gn", url),
+            ("NSFilenamesPboardType", url),
+            ("dyn.ah62d4rv4gu8yc6durvwwaznwmuuha2pxsvw0e55bsmwca7d3sbwu", url),
+            ("Apple URL pasteboard type", url),
+            ("dyn.ah62d4rv4gu8za0cuqf31k3pcr7u1e3cmsvw04vdbsvuyq4pqqznzexcdr71004pfnv61a3k", Data("cookie".utf8)),
+            ("PXPasteboardItemDataFileURLCookieType", Data("cookie".utf8)),
+            ("public.tiff", Data("tiff".utf8)),
+            ("NeXT TIFF v4.0 pasteboard type", Data("tiff".utf8)),
+        ]
+        return names.map { (NSPasteboard.PasteboardType($0.0), $0.1) }
+    }
+
+    /// The types of ``photosCopy(naming:)`` that cross as data: all but those naming its file.
+    static let photosCrossing = [
+        "com.apple.photos.object-reference.asset", "public.jpeg", "CorePasteboardFlavorType 0x4A504547",
+        "dyn.ah62d4rv4gu8za0cuqf31k3pcr7u1e3cmsvw04vdbsvuyq4pqqznzexcdr71004pfnv61a3k",
+        "PXPasteboardItemDataFileURLCookieType", "public.tiff", "NeXT TIFF v4.0 pasteboard type",
+    ]
+
+    @Test(
+        "an item whose file cannot be opened, with no promise, crosses as its other types, its file and aliases left out"
+    )
+    func unreadableFileItemCrossesAsItsData() async throws {
+        let pasteboard = FakePasteboard()
+        #expect(pasteboard.setItem(Self.photosCopy(naming: try unreadableFile("derivative.jpeg"))))
+        guard
+            case .offer(let source, let lost) = await ClipboardPasteboardReader.readOffer(
+                from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
+        else { throw TestFailure("no offer") }
+        #expect(lost == 1)
+        let item = try #require(source.items.first)
+        #expect(source.items.count == 1)
+        #expect(item.representations.compactMap(\.type.appleUTI) == Self.photosCrossing)
+        #expect(item.representations.allSatisfy { $0.storage == .inline })
+        #expect(try await source.serve(item: 0, representation: 1) == .bytes(Data("jpeg".utf8)))
+    }
+
+    @Test("a readable file item crosses as its file and every type not naming it, its plain text included, as data")
+    func readableFileItemCrossesItsOtherTypes() async throws {
+        let file = scratch.url.appendingPathComponent("notes.txt")
+        try Data("notes".utf8).write(to: file)
+        let url = Data(file.absoluteString.utf8)
+        // Finder's ⌘C of a file, its plain text the file's name, with a private type beside its icon.
+        let finderCopy: [(type: NSPasteboard.PasteboardType, data: Data)] = [
+            (.fileURL, url),
+            (NSPasteboard.PasteboardType("NSFilenamesPboardType"), Data("<plist/>".utf8)),
+            (NSPasteboard.PasteboardType("public.utf8-plain-text"), Data("notes.txt".utf8)),
+            (NSPasteboard.PasteboardType("com.apple.icns"), Data("icns".utf8)),
+            (NSPasteboard.PasteboardType("com.example.private-state"), Data("private".utf8)),
+        ]
+        let pasteboard = FakePasteboard()
+        #expect(pasteboard.setItem(finderCopy))
+        guard
+            case .offer(let source, let lost) = await ClipboardPasteboardReader.readOffer(
+                from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
+        else { throw TestFailure("no offer") }
+        #expect(lost == 0)
+        let item = try #require(source.items.first)
+        #expect(source.items.count == 1)
+        #expect(
+            item.representations.map(\.type.appleUTI) == [
+                "public.plain-text", "public.utf8-plain-text", "com.apple.icns", "com.example.private-state",
+            ])
+        #expect(item.representations.map(\.storage) == [.file, .inline, .inline, .inline])
+        guard case .file(let served) = try await source.serve(item: 0, representation: 0) else {
+            throw TestFailure("the file was not served")
+        }
+        #expect(served.lastPathComponent == "notes.txt")
+        #expect(try await source.serve(item: 0, representation: 1) == .bytes(Data("notes.txt".utf8)))
+        #expect(try await source.serve(item: 0, representation: 2) == .bytes(Data("icns".utf8)))
+        #expect(try await source.serve(item: 0, representation: 3) == .bytes(Data("private".utf8)))
+    }
+
+    @Test(
+        "an item whose file cannot be opened crosses as its promise and every type not naming a file or the promise, as data"
+    )
+    func unreadableFileItemCrossesItsPromiseAndItsData() async throws {
+        let pasteboard = FakePasteboard()
+        let receiver = FakeFilePromiseReceiver(
+            name: "photo.jpeg", fileType: "public.jpeg", contents: .file(Data("jpeg".utf8)))
+        // The types a file promise of the source's places, beside `NSFilePromiseReceiver`'s readable ones.
+        let promiseTypes: [(type: NSPasteboard.PasteboardType, data: Data)] = [
+            (Self.promisedFileURLType, Data("file:///tmp/photo.jpeg".utf8)),
+            (NSPasteboard.PasteboardType("com.apple.NSFilePromiseItemMetaData"), Data("meta".utf8)),
+        ]
+        #expect(
+            pasteboard.setItem(
+                Self.photosCopy(naming: try unreadableFile("derivative.jpeg")) + promiseTypes, promising: receiver))
+        guard
+            case .offer(let source, let lost) = await ClipboardPasteboardReader.readOffer(
+                from: pasteboard, publisher: .elsewhere(), promises: pasteboard.filePromiseReceivers, sizeOf: nil)
+        else { throw TestFailure("no offer") }
+        #expect(lost == 0)
+        #expect(receiver.callIns == 0)
+        let item = try #require(source.items.first)
+        #expect(source.items.count == 1)
+        #expect(item.representations.compactMap(\.type.appleUTI) == ["public.jpeg"] + Self.photosCrossing)
+        #expect(item.representations.map(\.storage) == [.file] + Self.photosCrossing.map { _ in .inline })
+        #expect(item.representations.first?.promised == true)
+        #expect(try await source.serve(item: 0, representation: 2) == .bytes(Data("jpeg".utf8)))
     }
 
     // MARK: - Empty
@@ -136,11 +272,114 @@ struct ClipboardPasteboardReaderTests {
         let pasteboard = FakeReadPasteboard()
 
         guard
-            case .empty = await ClipboardPasteboardReader.readOffer(from: pasteboard, sizeOf: nil)
+            case .empty = await ClipboardPasteboardReader.readOffer(
+                from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
         else {
             Issue.record("Expected .empty")
             return
         }
+    }
+
+    // MARK: - A promised write of this process
+
+    /// A far side's offer: answers each INLINE pull with `bytes` and each file pull with `url`, counting both.
+    private final class CountingPuller: ClipboardItemPulling {
+        let bytes: Data
+        let url: URL
+        private let counts = Locked<(bytes: Int, files: Int)>((0, 0))
+        init(bytes: Data, url: URL) {
+            self.bytes = bytes
+            self.url = url
+        }
+        var pulls: (bytes: Int, files: Int) { counts.withLock { $0 } }
+        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+            counts.withLock { $0.bytes += 1 }
+            completion(bytes)
+        }
+        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
+            counts.withLock { $0.files += 1 }
+            completion(url)
+        }
+    }
+
+    /// Two VMs' publishers over the Mac's one pasteboard, the first holding its write of a far-side offer of one
+    /// item of `representation`, served through `puller`.
+    private func twoPublishers(
+        writing representation: Representation, through puller: CountingPuller, registry: LazyClipboardProviderRegistry
+    ) -> (pasteboard: FakePasteboard, writer: ClipboardPasteboardPublisher, other: ClipboardPasteboardPublisher) {
+        let pasteboard = FakePasteboard()
+        let ledger = ClipboardWriteLedger()
+        let writer = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        let other = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        var item = OfferedItem()
+        item.representations = [representation]
+        let outcome = writer.publish(
+            [item], concealed: false, pasteCeiling: .max, puller: puller, serving: Data(repeating: 1, count: 16))
+        #expect(outcome == .written)
+        return (pasteboard, writer, other)
+    }
+
+    @Test("another publisher's promised file is offered through its puller, none of its promises read")
+    func anotherPublishersFileIsPulledUpstream() async throws {
+        let file = scratch.url.appendingPathComponent("a.bin")
+        try Data("upstream file".utf8).write(to: file)
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let puller = CountingPuller(bytes: Data(), url: file)
+        let (pasteboard, _, other) = twoPublishers(
+            writing: .make(TypeDescriptor(appleUTI: "public.data"), .file, size: 13, name: "a.bin"),
+            through: puller, registry: registry)
+
+        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, publisher: other, sizeOf: nil)
+        #expect(pasteboard.promiseReads.isEmpty)
+        guard case .offer(let source, let lost) = outcome else {
+            Issue.record("expected an offer, got \(outcome)")
+            return
+        }
+        #expect(lost == 0)
+        #expect(source.items.map { $0.representations.map(\.storage) } == [[.file]])
+        #expect(source.items.first?.representations.first?.promised == true)
+        #expect(try await source.serve(item: 0, representation: 0) == .file(file))
+        #expect(puller.pulls.files == 1)
+        #expect(pasteboard.promiseReads.isEmpty)
+    }
+
+    @Test("another publisher's promised text is offered through its puller, none of its promises read")
+    func anotherPublishersTextIsPulledUpstream() async throws {
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let puller = CountingPuller(bytes: Data("upstream text".utf8), url: scratch.url)
+        let (pasteboard, _, other) = twoPublishers(
+            writing: .make(TypeDescriptor(appleUTI: NSPasteboard.PasteboardType.string.rawValue), .inline, size: 0),
+            through: puller, registry: registry)
+
+        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, publisher: other, sizeOf: nil)
+        guard case .offer(let source, _) = outcome else {
+            Issue.record("expected an offer, got \(outcome)")
+            return
+        }
+        #expect(source.items.first?.representations.first?.promised == true)
+        #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("upstream text".utf8)))
+        #expect(puller.pulls.bytes == 1)
+        #expect(pasteboard.promiseReads.isEmpty)
+    }
+
+    @Test("the reader's own publisher's promised write offers nothing, none of its promises read")
+    func ownPromisedWriteIsHeldByTheFarSide() async {
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let puller = CountingPuller(bytes: Data("upstream text".utf8), url: scratch.url)
+        let (pasteboard, writer, _) = twoPublishers(
+            writing: .make(TypeDescriptor(appleUTI: NSPasteboard.PasteboardType.string.rawValue), .inline, size: 0),
+            through: puller, registry: registry)
+
+        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, publisher: writer, sizeOf: nil)
+        guard case .heldByFarSide = outcome else {
+            Issue.record("expected .heldByFarSide, got \(outcome)")
+            return
+        }
+        #expect(pasteboard.promiseReads.isEmpty)
+        #expect(puller.pulls.bytes == 0)
     }
 
     // MARK: - Sizing files

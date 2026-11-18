@@ -2,11 +2,11 @@ import AppKit
 import Foundation
 import KernovaLogging
 
-/// How clipboard staging goes: every pasteboard item naming a file in what goes is withdrawn whole first, on the
-/// main actor, and only then is it removed, off it — so no item a write of this side placed ever names a staged
-/// file that is gone.
+/// How a process's clipboard staging is given up — the process ending, and the next launch removing what it left:
+/// every pasteboard item naming a file in it is withdrawn whole first, on the main actor, so no item a write of
+/// this side placed ever names a staged file that is gone.
 ///
-/// - This process's own staging (``retire(_:then:)``, ``processEnding(_:)``): the withdrawal goes through the
+/// - This process's own staging, as the process ends (``processEnding(_:)``): the withdrawal goes through the
 ///   publisher whose write the pasteboard still holds, which knows which of its types are data, so none of its
 ///   promises is fired.
 /// - An exited process's (``retireAbandoned(_:then:)``): nothing of that process's is left to ask, so the items of
@@ -26,16 +26,6 @@ struct ClipboardStagingRetirement: StagedContentRetirement {
     ) {
         self.ledger = ledger
         self.pasteboard = pasteboard
-    }
-
-    /// Withdraws every item a write of this process names under `directories` with, on the main actor, then runs
-    /// `remove` off it.
-    func retire(_ directories: [URL], then remove: @escaping @Sendable () -> Void) {
-        let ledger = ledger
-        MainActorBridge.async {
-            ledger.withdrawItems(namingFilesUnder: directories)
-            DispatchQueue.global(qos: .utility).async(execute: remove)
-        }
     }
 
     /// Withdraws every item of the pasteboard naming a file under `roots`, on the main actor, then runs `remove` off

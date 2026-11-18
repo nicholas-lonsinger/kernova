@@ -4,13 +4,10 @@ import KernovaLogging
 import KernovaSynchronization
 import System
 
-/// What a staging root's removals go through when something outside the staging may name a file in what goes: a
-/// pasteboard item never outlives the file it names, so every one naming a file in it is withdrawn first.
+/// What a staging root's process end and the next launch's reclaim go through when something outside the staging
+/// may name a file in what is left or goes: a pasteboard item never outlives the file it names, so every one naming
+/// a file there is withdrawn.
 public protocol StagedContentRetirement: Sendable {
-    /// This process's own staging at `directories` is going: withdraws every pasteboard item this process wrote
-    /// that names a file there, then runs `remove`, both off the caller's stack. Called from any thread.
-    func retire(_ directories: [URL], then remove: @escaping @Sendable () -> Void)
-
     /// Exited processes' staging roots at `roots` are going: withdraws every item of the pasteboard that names a
     /// file there, then runs `remove`, both off the caller's stack. Called from any thread.
     func retireAbandoned(_ roots: [URL], then remove: @escaping @Sendable () -> Void)
@@ -51,14 +48,6 @@ public final class ProcessStagingRoot: Sendable {
         self.parent = parent
         self.retirement = retirement
         url = parent.appendingPathComponent(UUID().uuidString, isDirectory: true)
-    }
-
-    /// Removes `directory`, staged under this root, once nothing this process wrote names a file in it
-    /// (``StagedContentRetirement/retire(_:then:)``): at once with no retirement. What is already gone is not a
-    /// failure.
-    func remove(_ directory: URL) {
-        guard let retirement else { return Self.discard(directory) }
-        retirement.retire([directory]) { Self.discard(directory) }
     }
 
     /// This process is ending: every pasteboard item it wrote that names a file under ``url`` is withdrawn now,

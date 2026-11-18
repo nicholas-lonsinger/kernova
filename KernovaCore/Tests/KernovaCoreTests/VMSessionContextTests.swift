@@ -74,7 +74,6 @@ struct VMSessionContextTests {
 
         #expect(instance.sessionContext == nil)
         #expect(instance.session == nil)
-        #expect(instance.clipboardService == nil)
         #expect(instance.networkAttachmentCoordinator == nil)
         #expect(instance.networkAttachmentPending == false)
         #expect(instance.liveRemovableMedia.isEmpty)

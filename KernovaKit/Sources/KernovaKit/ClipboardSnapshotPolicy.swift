@@ -3,10 +3,10 @@ import Foundation
 /// The single policy deciding which pasteboard representations may cross the
 /// clipboard channel.
 ///
-/// Shared by every intake site — the guest agent's pasteboard poll and the host
-/// window's Paste/drag gestures — so both ends apply identical filtering. The
-/// rules are identity skips — representation types that must never be sent or
-/// applied; size is the paste limit's concern.
+/// Shared by every intake site — each end's read of its pasteboard, and a
+/// drop's — so both ends apply identical filtering. The rules are identity
+/// skips — representation types that must never be sent or applied; size is
+/// the paste limit's concern.
 public enum ClipboardSnapshotPolicy {
     /// Why a whole snapshot was dropped.
     public enum SkipReason: Equatable, Sendable {

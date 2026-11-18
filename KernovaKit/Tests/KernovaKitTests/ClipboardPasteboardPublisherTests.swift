@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KernovaTestSupport
+import KernovaWire
 import Testing
 
 @testable import KernovaKit
@@ -11,14 +12,33 @@ import Testing
 @Suite("ClipboardPasteboardPublisher", .caseScoped)
 @MainActor
 struct ClipboardPasteboardPublisherTests {
-    private static let connection = ClipboardConnectionID()
     private let textUTI = NSPasteboard.PasteboardType.string.rawValue
     private let offer = Data(repeating: 1, count: 16)
     private let otherOffer = Data(repeating: 2, count: 16)
-    /// A write serving `offer`.
-    private var servingOffer: ClipboardWriteSource {
-        ClipboardWriteSource(serving: .init(token: offer, connection: Self.connection), parts: [])
+
+    /// Answers every pull with `bytes` and `url`, counting nothing.
+    private final class Puller: ClipboardItemPulling {
+        let bytes: Data?
+        let url: URL?
+        init(bytes: Data? = nil, url: URL? = nil) {
+            self.bytes = bytes
+            self.url = url
+        }
+        func pullBytes(item: Int, representation: Int, completion: @escaping @Sendable (Data?) -> Void) {
+            completion(bytes)
+        }
+        func pullFile(item: Int, representation: Int, completion: @escaping @Sendable (URL?) -> Void) {
+            completion(url)
+        }
     }
+
+    /// A write serving the offer `token`, its specs the test's own.
+    private func serving(_ token: Data) -> ClipboardWriteSource {
+        ClipboardWriteSource(offer: token, items: [], concealed: false, servingFileURLs: true, puller: Puller())
+    }
+
+    /// A write serving `offer`.
+    private var servingOffer: ClipboardWriteSource { serving(offer) }
 
     private func makeSpec(_ uti: String, bytes: Data) -> ClipboardPasteboardPublisher.ItemSpec {
         ClipboardPasteboardPublisher.ItemSpec(types: [uti]) { _ in bytes }
@@ -35,7 +55,7 @@ struct ClipboardPasteboardPublisherTests {
             pasteboard: pasteboard, providerRegistry: registry)
 
         publisher.write([makeSpec(textUTI, bytes: Data("one".utf8))], source: servingOffer)
-        publisher.write([makeSpec(textUTI, bytes: Data("two".utf8))], source: .init(serving: nil, parts: []))
+        publisher.write([makeSpec(textUTI, bytes: Data("two".utf8))], source: serving(otherOffer))
 
         #expect(pasteboard.prepareCount == 2)
         #expect(pasteboard.lastPrepareOptions == .currentHostOnly)
@@ -103,11 +123,6 @@ struct ClipboardPasteboardPublisherTests {
         // Idempotent: the retracted write is forgotten.
         #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) == nil)
 
-        // A write serving no offer survives any offer's end.
-        publisher.write([makeSpec(textUTI, bytes: Data("two".utf8))], source: .init(serving: nil, parts: []))
-        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .everyPromise) == nil)
-        #expect(publisher.holdsLastWrite)
-
         // Another offer's end never reaches a write serving this one.
         publisher.write([makeSpec(textUTI, bytes: Data("two".utf8))], source: servingOffer)
         #expect(publisher.retractWrite(servingOffer: otherOffer, withdrawing: .everyPromise) == nil)
@@ -174,5 +189,103 @@ struct ClipboardPasteboardPublisherTests {
             ], source: servingOffer)
         #expect(publisher.retractWrite(servingOffer: offer, withdrawing: withdrawal) == .keptPart)
         #expect(pasteboard.dataByItem == [[NSPasteboard.PasteboardType(textUTI): Data("plain".utf8)]])
+    }
+
+    // MARK: - What a paste had
+
+    private static func representation(_ uti: String, _ storage: Representation.Storage, name: String = "")
+        -> Representation
+    {
+        var representation = Representation()
+        representation.type = TypeDescriptor(appleUTI: uti)
+        representation.storage = storage
+        representation.name = Data(name.utf8)
+        return representation
+    }
+
+    /// A write of one text item of `offer` through `publisher`, concealed unless `concealed` is false, through a
+    /// puller only it holds, which the returned closure reads.
+    private func writeWatched(_ publisher: ClipboardPasteboardPublisher, concealed: Bool = true) -> () -> Puller? {
+        var item = OfferedItem()
+        item.representations = [Self.representation(textUTI, .inline)]
+        weak var watched: Puller?
+        do {
+            let puller = Puller(bytes: Data("a password".utf8))
+            watched = puller
+            #expect(
+                publisher.publish([item], concealed: concealed, pasteCeiling: .max, puller: puller, serving: offer)
+                    == .written)
+        }
+        return { watched }
+    }
+
+    @Test("a write's carriage ending keeps what a paste had of it as data, reading it back")
+    func unreadWithdrawalKeepsWhatWasRead() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let publisher = ClipboardPasteboardPublisher(
+            pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
+        let watched = writeWatched(publisher, concealed: false)
+        let text = NSPasteboard.PasteboardType.string
+        #expect(pasteboard.promisedTypesByItem == [[text]])
+        #expect(try await offCooperativePool { pasteboard.invokeProvider(forType: text) } == Data("a password".utf8))
+        let fires = pasteboard.providerInvocations
+
+        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .unread) == .keptEverything)
+        #expect(pasteboard.promisedTypes.isEmpty)
+        #expect(pasteboard.dataByItem == [[text: Data("a password".utf8)]])
+        // Read back from what the pasteboard holds: no provider fired again.
+        #expect(pasteboard.providerInvocations == fires)
+        #expect(watched() == nil)
+    }
+
+    @Test("a concealed write's carriage ending withdraws what a paste had of it too, its marker with it")
+    func unreadWithdrawalOfAConcealedWriteClears() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let publisher = ClipboardPasteboardPublisher(
+            pasteboard: pasteboard, providerRegistry: registry, ledger: ClipboardWriteLedger())
+        let watched = writeWatched(publisher)
+        let text = NSPasteboard.PasteboardType.string
+        #expect(try await offCooperativePool { pasteboard.invokeProvider(forType: text) } == Data("a password".utf8))
+
+        #expect(publisher.retractWrite(servingOffer: offer, withdrawing: .unread) == .cleared)
+        #expect(pasteboard.items.isEmpty)
+        #expect(watched() == nil)
+    }
+
+    @Test("a write a reader had every type of is released only once something replaces it")
+    func fullyReadWriteReleasesWhenReplaced() async throws {
+        let pasteboard = FakePasteboard()
+        let registry = LazyClipboardProviderRegistry()
+        defer { registry.releaseAllForTesting() }
+        let ledger = ClipboardWriteLedger()
+        let publisher = ClipboardPasteboardPublisher(pasteboard: pasteboard, providerRegistry: registry, ledger: ledger)
+        var item = OfferedItem()
+        item.representations = [Self.representation("public.data", .file, name: "a.bin")]
+        let released = AsyncGate()
+        var wasReleased = false
+        #expect(
+            publisher.publish(
+                [item], concealed: false, pasteCeiling: .max, puller: Puller(url: URL(fileURLWithPath: "/tmp/a.bin")),
+                serving: offer,
+                onReleased: {
+                    wasReleased = true
+                    released.notify()
+                }) == .written)
+
+        // A paste has the file URL, and AppKit finishes with the provider, the write standing.
+        #expect(try await offCooperativePool { pasteboard.invokeProvider(forType: .fileURL) } != nil)
+        pasteboard.finishProvider(itemIndex: 0)
+        try await drainMainQueue()
+        #expect(!wasReleased)
+        #expect(ledger.standingWrite(on: pasteboard) != nil)
+
+        // Another app's copy replaces it: no provider is left to say so, and the write is released all the same.
+        pasteboard.setString("copied since", forType: .string)
+        try await released.wait { wasReleased }
+        #expect(ledger.standingWrite(on: pasteboard) == nil)
     }
 }

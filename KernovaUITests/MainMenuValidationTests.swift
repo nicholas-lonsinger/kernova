@@ -273,6 +273,29 @@ struct MainMenuValidationTests {
         #expect(!fixture.validate(item))
     }
 
+    @Test("A dimmed clipboard command says why on a running VM, and nothing once enabled or with no VM to act on")
+    func clipboardCommandsSayWhy() {
+        let fixture = makeFixture()
+        let instance = makeMenuInstance(in: fixture.viewModel, guestOS: .macOS, phase: .running(sessionID: UUID())) {
+            $0.clipboardSharingEnabled = true
+        }
+        let items = [
+            #selector(AppDelegate.copyGuestClipboardToMac(_:)), #selector(AppDelegate.copyMacClipboardToGuest(_:)),
+        ].map(makeMenuItem)
+        for item in items {
+            #expect(!fixture.validate(item))
+            #expect(item.toolTip == ClipboardCommandsGap.notCarried(.noAgent).reason)
+            #expect(!fixture.controller.validate(item, workingInstance: nil))
+            #expect(item.toolTip == nil)
+        }
+
+        instance.hubClipboard.setConsolePeer(PeerHandle(rawValue: 1))
+        for item in items {
+            #expect(fixture.validate(item))
+            #expect(item.toolTip == nil)
+        }
+    }
+
     @Test("The passthrough item is unchecked and disabled with no VM to act on")
     func passthroughItemWithoutSelection() {
         let fixture = makeFixture()

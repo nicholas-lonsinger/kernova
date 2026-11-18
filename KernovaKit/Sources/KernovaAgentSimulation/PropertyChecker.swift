@@ -210,7 +210,8 @@ package struct TraceChecker: Sendable {
 ///     pull has effects after its end, and a sink's decoder holds at most one record and one feed.
 /// 12. Each side holds at most one clipboard offer of its own open at any time.
 /// 13. Every item command that carries a request id is answered exactly once, before any event it caused:
-///     an offer's `.offerEnded`, a pull's `.pullEnded`, a take's `.ended`.
+///     an offer's `.offerEnded`, a clipboard offer request's `.requestEnded`, a pull's `.pullEnded`, a take's
+///     `.ended`.
 ///
 /// Beyond these, a conforming run never closes INTERNAL or PROTOCOL_ERROR, and
 /// every injected fault takes effect.
@@ -481,7 +482,7 @@ package final class PropertyChecker {
                     fail("\(where_) served pull \(pull.stream) landed, but the puller's sink published nothing")
                 }
             }
-        case .event(.offerReceived), .event(.offerEnded), .reply:
+        case .event(.offerReceived), .event(.offerEnded), .event(.offerRequested), .event(.requestEnded), .reply:
             break
         }
         let buffered = link.items(side).sink.maxBufferedBytes

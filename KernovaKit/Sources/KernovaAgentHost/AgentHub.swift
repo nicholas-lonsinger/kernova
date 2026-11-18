@@ -298,29 +298,60 @@ public final class AgentHub: Sendable {
 
     // MARK: Items
 
-    /// Offers `offer` on `feature` — CLIPBOARD, withdrawing that peer's previous clipboard offer, or DROP —
-    /// to the peer the snapshot's `consolePeers` names for it now, and calls `completion` once with that
-    /// peer, whose `.items` events then carry the offer, or why it was not opened: `FEATURE_UNAVAILABLE`
-    /// with the absence when no console peer offers `feature`. Once that peer is no longer `feature`'s
-    /// console peer, the hub withdraws the offer, and its `.offerEnded` follows.
+    /// Offers `offer` on `feature` — CLIPBOARD, once it opens releasing that peer's clipboard offers and withdrawing
+    /// the host's previous one there, or DROP — to the peer the snapshot's `consolePeers` names for it now, and calls
+    /// `completion` once with that peer, whose `.items` events then carry the offer, or why it was not opened:
+    /// `FEATURE_UNAVAILABLE` with the absence when no console peer offers `feature`, and without one when `peer`
+    /// is named and is not that console peer. Once the offer's peer is no longer `feature`'s console peer, the hub
+    /// withdraws the offer, and its `.offerEnded` follows.
     public func offerItems(
-        _ offer: ItemOffer, feature: FeatureID,
+        _ offer: ItemOffer, feature: FeatureID, on peer: PeerHandle? = nil,
+        _ completion: @escaping @Sendable (Result<PeerHandle, WireError>) -> Void
+    ) {
+        openOnConsolePeer(of: feature, expecting: peer, { .offer($0, offer, feature: feature) }, completion)
+    }
+
+    /// Asks the peer the snapshot's `consolePeers` names for CLIPBOARD now to offer its clipboard, by a request
+    /// of `token` (``ItemCommand/requestClipboardOffer(_:token:)``), and calls `completion` once with that peer,
+    /// whose `.items` events then carry the request's one `.requestEnded` and the offer answering it, or why it
+    /// was not opened, as ``offerItems(_:feature:on:_:)`` says. Once that peer is no longer CLIPBOARD's console
+    /// peer, the hub withdraws the request, and its `.requestEnded` follows.
+    public func requestClipboardOffer(
+        _ token: Data, on peer: PeerHandle? = nil,
+        _ completion: @escaping @Sendable (Result<PeerHandle, WireError>) -> Void
+    ) {
+        openOnConsolePeer(of: .clipboard, expecting: peer, { .requestClipboardOffer($0, token: token) }, completion)
+    }
+
+    /// Sends the command `command` builds, which opens an offer or request of `feature`'s and is answered
+    /// `.offered`, to `feature`'s console peer now — only when that is `expected`, if named — and calls
+    /// `completion` once with that peer or why it was not opened.
+    private func openOnConsolePeer(
+        of feature: FeatureID, expecting expected: PeerHandle?,
+        _ command: @escaping @Sendable (ItemRequestID) -> ItemCommand,
         _ completion: @escaping @Sendable (Result<PeerHandle, WireError>) -> Void
     ) {
         queue.async { [self] in
-            let route = state.withLock { state in
-                state.consolePeer(for: feature).map { Result.success($0) }
-                    ?? .failure(WireError(.featureUnavailable, absence: state.consoleAbsence(of: feature)))
+            let route = state.withLock { state -> Result<PeerHandle, WireError> in
+                guard let console = state.consolePeer(for: feature) else {
+                    return .failure(WireError(.featureUnavailable, absence: state.consoleAbsence(of: feature)))
+                }
+                guard expected == nil || expected == console else {
+                    return .failure(
+                        WireError(.featureUnavailable, debugDetail: "the peer named is not the feature's console peer"))
+                }
+                return .success(console)
             }
             guard case .success(let peer) = route else { return completion(route) }
             awaitReply(
-                from: peer, { .offer($0, offer, feature: feature) },
+                from: peer, command,
                 { if case .offered(let refusal) = $0 { refusal.map(Result.failure) ?? .success(peer) } else { nil } },
                 unanswered: .failure(Self.connectionEnded), completion)
         }
     }
 
-    /// Withdraws the offer of `token` made to `peer`, RESET with `code`; its `.offerEnded` follows.
+    /// Withdraws the offer or request of `token` made to `peer`, RESET with `code`; its `.offerEnded` or
+    /// `.requestEnded` follows.
     public func withdrawOffer(_ token: Data, code: ErrorCode = .cancelled, from peer: PeerHandle) {
         queue.async { [self] in send(.withdraw(token: token, code: code), to: peer) }
     }

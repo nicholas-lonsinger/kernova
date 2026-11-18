@@ -92,7 +92,7 @@ struct AppClipboardReadoutTests {
     func readoutRanksAwaitedGesturesFirst() throws {
         let pasting = makeInstance(name: "Paste VM")
         let dropping = makeInstance(name: "Drop VM")
-        let fetching = makeInstance(name: "Preview VM")
+        let fetching = makeInstance(name: "Paste VM 2")
         // Reverse rank order in time, so recency alone would pick the loser at
         // each step.
         let paste = runTransfer(
@@ -100,7 +100,7 @@ struct AppClipboardReadoutTests {
         let drop = runTransfer(
             on: dropping, gesture: .drop, since: Date(timeIntervalSince1970: 200))
         let preview = runTransfer(
-            on: fetching, gesture: .preview, since: Date(timeIntervalSince1970: 300))
+            on: fetching, gesture: .paste, since: Date(timeIntervalSince1970: 300))
 
         #expect(try shownID(in: [pasting, dropping, fetching]) == paste.operation.id)
         #expect(try shownID(in: [dropping, fetching]) == drop.operation.id)

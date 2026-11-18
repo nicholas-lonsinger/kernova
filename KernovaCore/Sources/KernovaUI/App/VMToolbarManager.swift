@@ -299,6 +299,7 @@ final class VMToolbarManager: NSObject {
         for capability in VMCapability.allCases {
             _ = capabilities.isAvailable(capability, on: instance)
         }
+        _ = capabilities.clipboardCommandsGap(on: instance)
         // Read unconditionally: a predicate above can short-circuit before
         // reaching one of these, and each one also feeds a label.
         _ = instance.status
@@ -460,11 +461,16 @@ final class VMToolbarManager: NSObject {
             .restart, on: instance)
     }
 
+    /// Enables each clipboard command's button, its tooltip saying why one is unavailable where the VM's
+    /// settings or guest agent are why.
     private func updateClipboardItems(in toolbar: NSToolbar, instance: VMInstance?) {
+        let gap = instance.flatMap { capabilities.clipboardCommandsGap(on: $0) }
         updateItem(
-            in: toolbar, configuration.copyToMacID, isEnabled: isAvailable(.copyGuestClipboardToMac, on: instance))
+            in: toolbar, configuration.copyToMacID, isEnabled: isAvailable(.copyGuestClipboardToMac, on: instance)
+        )?.view?.toolTip = gap?.reason ?? Self.copyToMacToolTip
         updateItem(
-            in: toolbar, configuration.copyToGuestID, isEnabled: isAvailable(.copyMacClipboardToGuest, on: instance))
+            in: toolbar, configuration.copyToGuestID, isEnabled: isAvailable(.copyMacClipboardToGuest, on: instance)
+        )?.view?.toolTip = gap?.reason ?? Self.copyToGuestToolTip
 
         // Re-arm the transfer-progress observation onto the current VM, so the buttons' bars track in-flight
         // transfers without re-running the whole toolbar update on every chunk.

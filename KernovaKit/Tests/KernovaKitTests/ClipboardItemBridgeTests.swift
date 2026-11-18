@@ -13,7 +13,6 @@ import Testing
 @Suite("Clipboard item bridge", .caseScoped)
 @MainActor
 struct ClipboardItemBridgeTests {
-    private static let connection = ClipboardConnectionID()
     private let scratch = TestScratchDirectory(prefix: "item-bridge")
     private let concealedType = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
     private let rtfType = NSPasteboard.PasteboardType("public.rtf")
@@ -22,7 +21,6 @@ struct ClipboardItemBridgeTests {
     /// Serves a destination's pulls from the source's offer, landing a file or
     /// folder as a receiver does: under the offer's name, in a landing folder.
     private final class OfferPuller: ClipboardItemPulling {
-        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
         let source: ClipboardOfferSource
         let items: [OfferedItem]
         let landing: URL
@@ -79,7 +77,6 @@ struct ClipboardItemBridgeTests {
     /// Completes every pull with `bytes`, counting the pulls it was asked to
     /// start.
     private final class FixedPuller: ClipboardItemPulling {
-        func whenEnded(_ handler: @escaping @Sendable () -> Void) {}
         let bytes: Data
         let starts = Locked(0)
 
@@ -127,7 +124,7 @@ struct ClipboardItemBridgeTests {
     ) async throws -> ClipboardOfferSource {
         let promiseFolder = try directory("promises")
         let outcome = await ClipboardPasteboardReader.readOffer(
-            from: pasteboard, promises: promises,
+            from: pasteboard, publisher: .elsewhere(), promises: promises,
             promiseDestination: {
                 let folder = promiseFolder.appendingPathComponent(UUID().uuidString)
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -154,7 +151,7 @@ struct ClipboardItemBridgeTests {
             publisher.publish(
                 source.items, concealed: source.concealed, pasteCeiling: pasteCeiling,
                 puller: OfferPuller(source: source, landing: landing),
-                serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection)) == outcome)
+                serving: Data(repeating: 1, count: 16)) == outcome)
         return Published(destination: destination, registry: registry, landing: landing)
     }
 
@@ -464,7 +461,7 @@ struct ClipboardItemBridgeTests {
             (type: .init(marker), data: Data()),
         ])
 
-        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, sizeOf: nil)
+        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
 
         guard case .suppressed(let suppressed) = outcome else {
             Issue.record("expected suppression, got \(outcome)")
@@ -538,7 +535,7 @@ struct ClipboardItemBridgeTests {
         _ = ClipboardPasteboardPublisher(pasteboard: destination, providerRegistry: registry)
             .publish(
                 [item], concealed: false, pasteCeiling: .max, puller: FixedPuller(bytes: bytes),
-                serving: .init(token: Data(repeating: 1, count: 16), connection: Self.connection)
+                serving: Data(repeating: 1, count: 16)
             )
         return try await offCooperativePool { destination.invokeProvider(forType: .init(uti)) }
     }

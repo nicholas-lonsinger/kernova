@@ -77,8 +77,8 @@ package enum VMCapability: CaseIterable, Hashable {
     case showInFinder
     case togglePopOut
     case toggleFullscreen
-    /// Copy the guest's clipboard to the Mac's: named only while passthrough
-    /// is off and an agent carries the clipboard.
+    /// Copy the guest's clipboard to the Mac's: named only while the VM's
+    /// settings and guest agent leave no ``ClipboardCommandsGap``.
     case copyGuestClipboardToMac
     /// Copy the Mac's clipboard to the guest's, named as
     /// ``copyGuestClipboardToMac`` is.
@@ -233,10 +233,7 @@ package enum VMCapability: CaseIterable, Hashable {
         case .togglePopOut, .toggleFullscreen:
             return .affordance(.externalDisplay)
         case .copyGuestClipboardToMac, .copyMacClipboardToGuest:
-            // With passthrough on the clipboards are one already, and with no
-            // agent carrying the clipboard there is nothing to copy over.
-            guard !instance.configuration.clipboardPassthroughEnabled, instance.clipboardService?.isConnected == true
-            else { return nil }
+            guard instance.clipboardCommandsGap == nil else { return nil }
             return .affordance(.clipboard)
         case .showGuestAgentStatus:
             return .affordance(.guestAgentStatus)
@@ -330,6 +327,17 @@ package struct VMCapabilityCatalog {
     /// `isEnabled` and every menu- or toolbar-validation reads.
     package func isAvailable(_ capability: VMCapability, on instance: VMInstance) -> Bool {
         decision(capability, on: instance, posture: .offer) == .admit
+    }
+
+    /// Why the clipboard commands can't be invoked on `instance`, for a
+    /// surface to say beside them: the VM's
+    /// ``VMInstance/clipboardCommandsGap`` while its state takes the clipboard
+    /// (a running, unpaused guest whose agent carries one), and `nil`
+    /// otherwise — where they can be invoked, and where the VM's state
+    /// already shows why not.
+    package func clipboardCommandsGap(on instance: VMInstance) -> ClipboardCommandsGap? {
+        guard instance.activity.decide(.affordance(.clipboard), posture: .offer) == .admit else { return nil }
+        return instance.clipboardCommandsGap
     }
 
     /// Whether writing `value` to `key` on `instance` can be invoked right now:

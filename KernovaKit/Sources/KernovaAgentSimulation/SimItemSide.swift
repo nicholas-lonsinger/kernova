@@ -28,10 +28,21 @@ package final class SimItemSide {
     package private(set) var offersReceived: [(time: SimTime, header: ItemSetHeaderValue)] = []
     package private(set) var offersEnded:
         [(time: SimTime, feature: FeatureID, origin: ItemOfferOrigin, token: Data, closure: StreamClosure)] = []
+    /// Peer: every request the host made that it offer its clipboard.
+    package private(set) var requestsReceived: [(time: SimTime, token: Data)] = []
+    /// Every request that the peer offer its clipboard that ended, the host's own (`.local`) or the host's to
+    /// this side (`.remote`).
+    package private(set) var requestsEnded:
+        [(time: SimTime, origin: ItemOfferOrigin, token: Data, closure: StreamClosure)] = []
     /// Peer: how its owner ends each take, after 20 µs; nil leaves takes unanswered.
     package var takeAnswer: DragTakeAnswer? = .caught(sizes: nil)
     /// Peer: the items its owner's first `TARGETED` lists, just before it ends a take `CAUGHT`; nil sends none.
     package var takeItems: [OfferedItem]?
+    /// Peer: how its owner answers each request that it offer its clipboard, after 20 µs; nil leaves requests
+    /// unanswered.
+    package var offerRequestAnswer: OfferRequestAnswer?
+    /// Peer: the clipboard offers its owner answered requests with, each naming the request it answers.
+    package private(set) var requestAnswers: [ItemOffer] = []
     /// Every take `takeDrag` asked for, and what it returned.
     package private(set) var takes: [(time: SimTime, token: Data, result: Result<DragTakeID, WireError>)] = []
     /// Peer: every take its owner was asked about.
@@ -46,6 +57,14 @@ package final class SimItemSide {
     package private(set) var takesCancelled: [(time: SimTime, id: DragTakeID)] = []
     /// Every item `.read` answered, by the token and item it named.
     package private(set) var reads: [(time: SimTime, token: Data, item: UInt32, result: OfferedItem?)] = []
+
+    /// How a peer's owner answers a request that it offer its clipboard.
+    package enum OfferRequestAnswer: Sendable, Equatable {
+        /// Offers these items as its clipboard, naming the request, then releases the request.
+        case offer([OfferedItem])
+        /// Refuses the request.
+        case refuse(WireError)
+    }
 
     /// What an item command's answer is recorded as.
     fileprivate enum Awaited {
@@ -126,6 +145,14 @@ package final class SimItemSide {
             }
         case .event(let event):
             switch event {
+            case .offerRequested(let token):
+                requestsReceived.append((world.now, token))
+                answer(token, link: link, side: side, world: world)
+            case .requestEnded(let origin, let token, let closure):
+                requestsEnded.append((world.now, origin, token, closure))
+                if origin == .local {
+                    answered(token, in: &answeredOffers, "request", link: link, side: side, world: world)
+                }
             case .offerReceived(let header):
                 offersReceived.append((world.now, header))
                 // The owner reads each item as the offer arrives.
@@ -152,6 +179,30 @@ package final class SimItemSide {
         case .reply:
             // The endpoint hands a reply out as its `.itemReply` event, which `reply` records.
             break
+        }
+    }
+
+    /// Answers the host's request `token` as ``offerRequestAnswer`` says, after 20 µs: the answering offer's
+    /// token is the request's with its first byte inverted.
+    private func answer(_ token: Data, link: SimLink, side: SimSide, world: SimWorld) {
+        guard let offerRequestAnswer else { return }
+        let index = world.links.firstIndex { $0 === link } ?? 0
+        world.at(world.now + .us(20)) { world in
+            world.itemCommand(side, link: index) { items in
+                switch offerRequestAnswer {
+                case .offer(let offered):
+                    var answering = token
+                    answering[answering.startIndex] = ~answering[answering.startIndex]
+                    let offer = ItemOffer(token: answering, items: offered, request: token)
+                    items.requestAnswers.append(offer)
+                    return [
+                        items.command(.offer(token: answering)) { .offer($0, offer, feature: .clipboard) },
+                        .release(token: token),
+                    ]
+                case .refuse(let error):
+                    return [.refuse(token: token, error)]
+                }
+            }
         }
     }
 
@@ -252,6 +303,13 @@ extension SimWorld {
     ) {
         itemCommand(side, link: index) { items in
             [items.command(.offer(token: offer.token)) { .offer($0, offer, feature: feature) }]
+        }
+    }
+
+    /// `side` asks the far side to offer its clipboard, by a request of `token` on link `index`.
+    package func requestClipboardOffer(_ token: Data, by side: SimSide = .host, link index: Int = 0) {
+        itemCommand(side, link: index) { items in
+            [items.command(.offer(token: token)) { .requestClipboardOffer($0, token: token) }]
         }
     }
 

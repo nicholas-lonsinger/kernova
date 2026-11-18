@@ -23,6 +23,7 @@ struct ItemTransferSchemaTests {
         #expect(StreamKind.dragOffer.rawValue == 1004)
         #expect(StreamKind.dragTake.rawValue == 1005)
         #expect(StreamKind.clipboardOfferByPeer.rawValue == 1006)
+        #expect(StreamKind.clipboardOfferRequest.rawValue == 1007)
         #expect(ErrorCode.dragNotCurrent.rawValue == 1005)
         #expect(ErrorCode.dragPressOver.rawValue == 1006)
         #expect(Kernova_V2_DragTakeOutcome.Kind.caught.rawValue == 1)
@@ -101,6 +102,9 @@ struct ItemTransferSchemaTests {
         setHeader.count = 1
         setHeader.token = Data([0xAA])
         #expect(try setHeader.serializedBytes() == [0x08, 1, 0x18, 1, 0x22, 1, 0xAA])
+        var answering = Kernova_V2_ItemSetHeader()
+        answering.request = Data([0xBB])
+        #expect(try answering.serializedBytes() == [0x42, 1, 0xBB])
 
         var type = TypeDescriptor()
         type.mime = "a"
