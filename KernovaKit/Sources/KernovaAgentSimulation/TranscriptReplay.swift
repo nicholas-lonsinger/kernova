@@ -275,7 +275,7 @@ package final class SoloReplay {
     private func apply(_ input: TranscriptInput) {
         let faultsBefore = localFaults.count
         switch input {
-        case .host(let command): host?.handle(command, now: instant)
+        case .host(let command): host?.handle(.hub(command), now: instant)
         case .peer(let input): peer?.handle(input, now: instant)
         case .pull(let report):
             guard peer != nil else { break }
@@ -313,8 +313,9 @@ package final class SoloReplay {
             while let effect = host?.pollEffect() {
                 progressed = true
                 switch effect {
-                case .read(let id, let manifest, let offset, let maxBytes):
-                    host?.handle(source.answer(id, manifest, offset: offset, maxBytes: maxBytes), now: instant)
+                case .role(.read(let id, let manifest, let offset, let maxBytes)):
+                    let answer = source.answer(id, manifest, offset: offset, maxBytes: maxBytes)
+                    host?.handle(.payload(answer), now: instant)
                 case .itemSource, .itemSink:
                     failures.append("t=\(now): the host asked an item adapter, which no frozen transcript carries")
                 }
@@ -323,11 +324,11 @@ package final class SoloReplay {
                 progressed = true
                 if let text = TranscriptEvents.describe(effect) { events.append(text) }
                 switch effect {
-                case .update(.payload(let id, let bytes)):
+                case .role(.update(.payload(let id, let bytes))):
                     peer?.handle(.update(.consumed(id, bytes.count)), now: instant)
                 case .itemSource, .itemSink:
                     failures.append("t=\(now): the peer asked an item adapter, which no frozen transcript carries")
-                case .power, .logs, .update:
+                case .role:
                     break
                 }
             }

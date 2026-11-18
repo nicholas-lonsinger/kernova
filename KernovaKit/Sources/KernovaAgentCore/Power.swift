@@ -113,7 +113,7 @@ public struct PowerLedger: Sendable, Equatable {
 }
 
 /// The peer's power machine: one request at a time on this peer.
-struct PowerResponder: Sendable {
+package struct PowerResponder: FeatureMachine {
     private enum Phase: Sendable, Equatable {
         case asked, cancelling, accepted
     }
@@ -134,7 +134,7 @@ struct PowerResponder: Sendable {
     private var ledger: PowerLedger
     private var request: Request?
     private let generation: ConnectionGeneration
-    private(set) var outbox: [PeerEffect] = []
+    private(set) var outbox: [PeerRoleEffect] = []
     private(set) var diagnostics: [Diagnostic] = []
 
     /// A responder over the adapter's last reported availability and the
@@ -146,16 +146,16 @@ struct PowerResponder: Sendable {
     }
 
     /// The `PowerCapability` advert, or the adapter's absence.
-    var localAdvert: LocalAdvert {
+    package var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: Availability(availability) { $0.encoded })
     }
 
     /// The acceptance deadline of a request still asked.
-    func nextDeadline(on clock: JudgedClock) -> CoreInstant? {
+    package func nextDeadline(on clock: JudgedClock) -> CoreInstant? {
         request?.deadline?.wake(clock)
     }
 
-    mutating func takeOutputs() -> (effects: [PeerEffect], diagnostics: [Diagnostic]) {
+    mutating func takeOutputs() -> (effects: [PeerRoleEffect], diagnostics: [Diagnostic]) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
@@ -164,7 +164,7 @@ struct PowerResponder: Sendable {
     }
 
     /// Handles a stream event for POWER_REQUEST.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
+    package mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .opened(let stream, let body):
             opened(stream, body: body, connection: &connection)
@@ -347,7 +347,7 @@ extension PowerInput {
 // MARK: - Host
 
 /// The host's power machine: one entry per open request stream.
-struct PowerRequester: Sendable {
+package struct PowerRequester: FeatureMachine {
     /// The acceptance deadline the host sends.
     static let peerDeadline: UInt32 = 10_000
     /// How long the host waits for ACCEPTED or END.
@@ -366,7 +366,7 @@ struct PowerRequester: Sendable {
 
     private var entries: [Entry] = []
     private let generation: ConnectionGeneration
-    private(set) var outbox: [HostEvent] = []
+    private(set) var outbox: [HostRoleEvent] = []
     private(set) var diagnostics: [Diagnostic] = []
 
     /// A requester for one connection.
@@ -375,16 +375,16 @@ struct PowerRequester: Sendable {
     }
 
     /// The host advertises POWER available with empty params.
-    var localAdvert: LocalAdvert {
+    package var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: .available(Data()))
     }
 
     /// The soonest acceptance wait of a request still waiting.
-    func nextDeadline(on clock: JudgedClock) -> CoreInstant? {
+    package func nextDeadline(on clock: JudgedClock) -> CoreInstant? {
         entries.compactMap { $0.deadline?.wake(clock) }.min()
     }
 
-    mutating func takeOutputs() -> (events: [HostEvent], diagnostics: [Diagnostic]) {
+    mutating func takeOutputs() -> (events: [HostRoleEvent], diagnostics: [Diagnostic]) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
@@ -418,7 +418,7 @@ struct PowerRequester: Sendable {
     }
 
     /// Handles a stream event for POWER_REQUEST.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
+    package mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .message(let stream, let payload):
             guard let index = entries.firstIndex(where: { $0.stream == stream }) else { return }

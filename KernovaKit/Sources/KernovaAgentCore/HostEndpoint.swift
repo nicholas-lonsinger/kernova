@@ -50,17 +50,18 @@ public enum HostCommand: Sendable, Equatable {
     case items(ItemCommand)
 }
 
-/// What a host endpoint asks of its update payload source and its item adapters.
-public enum HostEffect: Sendable, Equatable {
-    /// Read 1 … `maxBytes` bytes of `manifest`'s payload from `offset`, and answer with `.bytes` or `.failed`.
-    case read(UpdatePullID, UpdateManifestValue, offset: UInt64, maxBytes: Int)
-    /// For the item source.
-    case itemSource(ItemSourceEffect)
-    /// For the item sink.
-    case itemSink(ItemSinkEffect)
+/// What a host endpoint's driver feeds it: the hub's commands, and the payload source's and item adapters'
+/// answers to the endpoint's effects. The hub can send only the first.
+public enum HostInput: Sendable, Equatable {
+    /// A hub command.
+    case hub(HostCommand)
+    /// The payload source's answer.
+    case payload(PayloadInput)
+    /// The item source's answer or the item sink's report; one naming another generation is dropped.
+    case items(ItemTransferInput)
 }
 
-/// The update payload source's answer to the outstanding `.read`.
+/// The update payload source's answer to the outstanding `.read`; one naming another generation is dropped.
 public enum PayloadInput: Sendable, Equatable {
     /// The bytes read: 1 … `maxBytes` of them. None, short of the payload's size, fails the pull.
     case bytes(UpdatePullID, Data)
@@ -69,316 +70,131 @@ public enum PayloadInput: Sendable, Equatable {
 }
 
 /// What a host endpoint tells the hub.
-public enum HostEvent: Sendable, Equatable {
+public typealias HostEvent = EndpointEvent<HostRoleEvent>
+
+/// What only a host endpoint tells the hub.
+public enum HostRoleEvent: Sendable, Equatable {
     /// The peer's Hello was read.
     case helloReceived(PeerClaim, PeerSessionState)
     /// The peer's state changed (coalesced).
     case peerStateChanged(PeerSessionState)
     /// Some feature's usability changed (coalesced).
     case featuresChanged(FeatureStatusTable)
-    /// A liveness verdict about the peer.
-    case liveness(LivenessChange)
     /// A power request's progress or result.
     case power(PowerRequestID, PowerRequestResult)
     /// Forwarded guest log records.
     case log(LogDelivery)
     /// An update pull's progress.
     case update(UpdateServeEvent)
-    /// An offer or pull of item transfer changed.
-    case items(ItemTransferEvent)
-    /// A take of the peer's drag ended.
-    case dragTake(DragTakeEvent)
-    /// The answer to the `.items` command of this id.
-    case itemReply(ItemRequestID, ItemReply)
-    /// A note for the runtime's log.
-    case diagnostic(Diagnostic)
-    /// The connection ended.
-    case closed(ConnectionClosure)
+}
+
+/// What a host endpoint asks of its update payload source and its item adapters.
+public typealias HostEffect = EndpointEffect<HostRoleEffect>
+
+/// What a host endpoint asks of its update payload source.
+public enum HostRoleEffect: Sendable, Equatable {
+    /// Read 1 … `maxBytes` bytes of `manifest`'s payload from `offset`, and answer with `.bytes` or `.failed`.
+    case read(UpdatePullID, UpdateManifestValue, offset: UInt64, maxBytes: Int)
 }
 
 /// One accepted connection's whole state, owned by its driver.
-public struct HostEndpoint: Sendable {
-    package private(set) var connection: Connection
-    private var power: PowerRequester
-    private var logs = LogReceiver()
-    private var update: UpdateServer
-    private var items: ItemMachines
-    #if DEBUG
-    package var testSink = TestBulkSink()
-    #endif
-    /// The connection this endpoint runs.
-    public let generation: ConnectionGeneration
-    private var events = OutputQueue<HostEvent, HostEventSlot>()
-    private var effects = OutputQueue<HostEffect, NoSlot>()
+package typealias HostEndpoint = Endpoint<HostMachines>
+
+extension HostConfiguration: EndpointConfiguration {
+    /// The connection's configuration, before the endpoint adds its machines' adverts.
+    package var connectionConfiguration: ConnectionConfiguration {
+        ConnectionConfiguration(
+            claim: claim, adverts: [], sessionToken: sessionToken, hostPolicy: policy, hostBundles: bundles,
+            policy: receiverPolicy)
+    }
+}
+
+/// A host endpoint's power, logs and update machines, and the feature table the hub last heard.
+package struct HostMachines: RoleMachines {
+    package var power: PowerRequester
+    package var logs = LogReceiver()
+    package var update: UpdateServer
+    private let generation: ConnectionGeneration
     private var lastStatus: FeatureStatusTable?
 
-    /// Creates the endpoint of a connection just accepted.
-    public init(_ configuration: HostConfiguration, generation: ConnectionGeneration, now: CoreInstant) {
+    /// The machines of a connection just accepted.
+    package init(_ configuration: HostConfiguration, generation: ConnectionGeneration) {
         self.generation = generation
         power = PowerRequester(generation: generation)
         update = UpdateServer(generation: generation)
-        items = ItemMachines(configuration.items, role: configuration.claim.role, generation: generation)
-        var connectionConfiguration = ConnectionConfiguration(
-            claim: configuration.claim, adverts: [], sessionToken: configuration.sessionToken,
-            hostPolicy: configuration.policy, hostBundles: configuration.bundles, policy: configuration.receiverPolicy)
-        connectionConfiguration.adverts =
-            [(.power, power.localAdvert), (.update, update.localAdvert), (.logs, logs.localAdvert)] + items.adverts
-        #if DEBUG
-        configuration.tweakForTesting(&connectionConfiguration)
-        #endif
-        connection = Connection(connectionConfiguration, now: now)
     }
 
-    /// The connection's phase.
-    public var state: ConnectionState { connection.state }
-
-    /// Whether a committed pull's `.pullEnded` is still owed, which its sink's publish report brings, though
-    /// the connection may have finished.
-    public var hasLandingsInFlight: Bool { items.hasLandingsInFlight }
-
-    /// When the driver must next call `handleTimeout`: the soonest of the
-    /// connection's deadline and the power machine's, each computed from the clock now.
-    public var nextDeadline: CoreInstant? {
-        guard connection.state != .finished else { return nil }
-        let clock = connection.clock
-        return [connection.nextDeadline, clock.external(power.nextDeadline(on: clock))].compactMap { $0 }.min()
-    }
-
-    // MARK: Inputs
-
-    /// Bytes from the transport.
-    public mutating func receive(_ bytes: Data, now: CoreInstant) {
-        connection.ingest(bytes, now: now)
-        route()
-        while connection.processNextFrame() {
-            route()
+    /// The peer's state and the feature table coalesce.
+    package static func slot(of event: HostRoleEvent) -> HostEventSlot? {
+        switch event {
+        case .peerStateChanged: .peerState
+        case .featuresChanged: .features
+        case .helloReceived, .power, .log, .update: nil
         }
-        connection.finishReceive()
-        route()
     }
 
-    /// The transmit marked `isFinal` was written in full.
-    public mutating func finalTransmitWritten(now: CoreInstant) {
-        connection.finalTransmitWritten(now: now)
-        route()
+    /// The update server's reads, and the three machines' events and diagnostics.
+    package mutating func takeOutputs() -> (
+        effects: [HostRoleEffect], events: [HostRoleEvent], diagnostics: [Diagnostic]
+    ) {
+        let power = power.takeOutputs()
+        let logs = logs.takeOutputs()
+        let served = update.takeOutputs()
+        return (
+            served.effects, power.events + logs.events + served.events,
+            power.diagnostics + logs.diagnostics + served.diagnostics
+        )
     }
 
-    /// The transport ended.
-    public mutating func transportEnded(now: CoreInstant) {
-        connection.transportEnded(now: now)
-        route()
-    }
-
-    /// The timer fired.
-    public mutating func handleTimeout(now: CoreInstant) {
-        connection.handleTimeout(now: now)
-        route()
-        notifyAll(.deadline)
-        route()
-    }
-
-    /// A hub command.
-    public mutating func handle(_ command: HostCommand, now: CoreInstant) {
-        connection.tick(now)
-        route()
-        switch command {
-        case .setPeerFrozen(let frozen):
+    /// Carries out a hub command or a payload answer; leaves item commands, item answers and a policy change to the
+    /// endpoint.
+    package mutating func handle(_ input: HostInput, connection: inout Connection, now: CoreInstant) -> SharedInput? {
+        switch input {
+        case .hub(.setPeerFrozen(let frozen)):
             connection.setPeerFrozen(frozen, now: now)
-        case .requestPower(let id, let action, let ignoringApps):
+        case .hub(.requestPower(let id, let action, let ignoringApps)):
             power.request(id, action, ignoringApps: ignoringApps, connection: &connection)
-        case .setPolicy(let policy):
+        case .hub(.setPolicy(let policy)):
             connection.setPolicy(policy)
-            notifyAll(.policyChanged)
-            notifyAll(.usabilityChanged)
-            refreshStatus()
-        case .setBundles(let bundles):
+            return .policyChanged
+        case .hub(.setBundles(let bundles)):
             connection.setBundles(bundles)
             update.offerChanged(connection.offeredUpdate, connection: &connection)
-        case .close(let code, let retryAfter):
+        case .hub(.close(let code, let retryAfter)):
             connection.close(code, retryAfter: retryAfter, now: now)
-        case .items(let command):
-            // Queued before the route below collects what the command caused, so the answer comes first.
-            if let (id, reply) = items.perform(command, connection: &connection) {
-                events.append(.itemReply(id, reply))
-            }
-        }
-        route()
-    }
-
-    /// The payload source's answer; one naming another generation is dropped.
-    public mutating func handle(_ input: PayloadInput, now: CoreInstant) {
-        connection.tick(now)
-        route()
-        switch input {
-        case .bytes(let id, let data):
+        case .hub(.items(let command)):
+            return .itemCommand(command)
+        case .payload(.bytes(let id, let data)):
             if id.generation == generation { update.bytes(id, data, connection: &connection) }
-        case .failed(let id, let error):
+        case .payload(.failed(let id, let error)):
             if id.generation == generation { update.failed(id, error, connection: &connection) }
+        case .items(let input):
+            return .items(input)
         }
-        route()
+        return nil
     }
 
-    // MARK: Items
-
-    /// The item source's answer or the item sink's report; one naming another generation is dropped.
-    public mutating func handle(_ input: ItemTransferInput, now: CoreInstant) {
-        connection.tick(now)
-        route()
-        items.handle(input, connection: &connection)
-        route()
-    }
-
-    // MARK: Outputs
-
-    /// The next frames to write.
-    public mutating func pollTransmit(maxBytes: Int) -> Transmit? {
-        let transmit = connection.pollTransmit(maxBytes: maxBytes)
-        route()
-        return transmit
-    }
-
-    /// The next event for the hub.
-    public mutating func pollEvent() -> HostEvent? {
-        events.poll()
-    }
-
-    /// The next ask of the payload source or an item adapter.
-    public mutating func pollEffect() -> HostEffect? {
-        effects.poll()
-    }
-
-    #if DEBUG
-    // MARK: Testing
-
-    /// Opens a bulk test stream.
-    package mutating func openTestBulk(_ kind: StreamKind, consumes: Bool, now: CoreInstant) -> StreamID? {
-        connection.tick(now)
-        route()
-        let stream = testSink.open(kind, consumes: consumes, connection: &connection)
-        route()
-        return stream
-    }
-
-    /// Starts or stops consuming on the bulk test stream `stream`.
-    package mutating func setTestConsumes(_ consumes: Bool, on stream: StreamID, now: CoreInstant) {
-        connection.tick(now)
-        testSink.setConsumes(consumes, on: stream, connection: &connection)
-        route()
-    }
-
-    /// The item offers both sides hold open.
-    package var itemOffersForTesting: ItemOfferRegistry { items.transfer.offers }
-
-    /// Events not yet polled.
-    package var pendingEventCountForTesting: Int { events.countForTesting }
-
-    /// Takes the connection's trace, emptying it.
-    package mutating func takeTraceForTesting() -> [ConnectionTrace] {
-        connection.takeTraceForTesting()
-    }
-    #endif
-
-    // MARK: Routing
-
-    private mutating func route() {
-        while true {
-            collect()
-            guard let routed = connection.pollRoutedEvent() else { break }
-            dispatch(routed)
+    /// The hub hears the peer's Hello and each change of its state.
+    package func report(_ event: ConnectionEvent, connection: inout Connection) -> HostRoleEvent? {
+        switch event {
+        case .helloReceived(let hello): .helloReceived(hello.claim, hello.state ?? PeerSessionState())
+        case .peerStateChanged(let state): .peerStateChanged(state)
+        default: nil
         }
     }
 
-    private mutating func notifyAll(_ event: FeatureEvent) {
-        power.handle(event, connection: &connection)
-        logs.handle(event, connection: &connection)
-        update.handle(event, connection: &connection)
-        items.notify(event, connection: &connection)
-    }
-
-    private mutating func refreshStatus() {
-        guard connection.remoteHello != nil else { return }
+    /// The feature table, once the peer's Hello is read and whenever it changed; the hub hears a connection's end
+    /// from `.closed`.
+    package mutating func reportUsability(of connection: Connection, closed: Bool) -> [HostRoleEvent] {
+        guard !closed, connection.remoteHello != nil else { return [] }
         let status = connection.featureStatus
-        guard status != lastStatus else { return }
+        guard status != lastStatus else { return [] }
         lastStatus = status
-        events.append(.featuresChanged(status), coalescing: .features)
-    }
-
-    private mutating func dispatch(_ routed: RoutedEvent) {
-        switch routed.event {
-        case .helloReceived(let hello):
-            events.append(.helloReceived(hello.claim, hello.state ?? PeerSessionState()))
-            notifyAll(.sessionEstablished)
-            refreshStatus()
-        case .remoteAdvertsChanged:
-            notifyAll(.usabilityChanged)
-            refreshStatus()
-        case .peerStateChanged(let state):
-            events.append(.peerStateChanged(state), coalescing: .peerState)
-        case .policyChanged, .updateAvailable:
-            break
-        case .liveness(let change):
-            events.append(.liveness(change))
-        case .diagnostic(let diagnostic):
-            events.append(.diagnostic(diagnostic))
-        case .closed(let closure):
-            events.append(.closed(closure))
-        case .opened(let id, _, let body):
-            deliver(.opened(id, body: body), to: routed.owner)
-        case .message(let id, let payload):
-            deliver(.message(id, payload), to: routed.owner)
-        case .data(let id, let payload):
-            deliver(.data(id, payload), to: routed.owner)
-        case .remoteEnded(let id, let body):
-            deliver(.remoteEnded(id, body: body), to: routed.owner)
-        case .writable(let id):
-            deliver(.writable(id), to: routed.owner)
-        case .streamClosed(let id, let closure):
-            deliver(.streamClosed(id, closure), to: routed.owner)
-        case .slotFreed:
-            // The slots are shared across kinds, so every opener re-checks.
-            notifyAll(.slotFreed)
-        }
-    }
-
-    private mutating func deliver(_ event: FeatureEvent, to owner: KindOwner?) {
-        guard let owner else { return }
-        switch owner {
-        case .power: power.handle(event, connection: &connection)
-        case .update: update.handle(event, connection: &connection)
-        case .logs: logs.handle(event, connection: &connection)
-        case .itemTransfer, .itemOffer, .dragTake: items.deliver(event, to: owner, connection: &connection)
-        #if DEBUG
-        case .testBulk: testSink.handle(event, connection: &connection)
-        #endif
-        }
-    }
-
-    private mutating func collect() {
-        let served = update.takeOutputs()
-        for effect in served.effects { effects.append(effect) }
-        let outputs = items.takeOutputs()
-        for output in outputs.items {
-            switch output {
-            case .source(let effect): effects.append(.itemSource(effect))
-            case .sink(let effect): effects.append(.itemSink(effect))
-            case .event(let event): events.append(.items(event))
-            case .reply(let id, let reply): events.append(.itemReply(id, reply))
-            }
-        }
-        for event in outputs.drag { events.append(.dragTake(event)) }
-        for diagnostic in outputs.diagnostics { connection.diagnose(diagnostic) }
-        for output in [
-            power.takeOutputs(), logs.takeOutputs(), (events: served.events, diagnostics: served.diagnostics),
-        ] {
-            for event in output.events { events.append(event) }
-            for diagnostic in output.diagnostics {
-                connection.diagnose(diagnostic)
-            }
-        }
+        return [.featuresChanged(status)]
     }
 }
 
 /// The host's events that coalesce.
-enum HostEventSlot: Hashable, Sendable {
+package enum HostEventSlot: Hashable, Sendable {
     case peerState, features
 }

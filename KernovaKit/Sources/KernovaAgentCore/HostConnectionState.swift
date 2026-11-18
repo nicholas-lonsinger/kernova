@@ -10,10 +10,12 @@ public enum HostConnectionState: Sendable, Equatable {
     /// The state after `event`; an event that says nothing about the connection leaves it unchanged.
     public func after(_ event: PeerEvent) -> HostConnectionState {
         switch event {
-        case .established, .hostLiveness(.responsive): .connected
-        case .hostLiveness(.unresponsive): .unresponsive
+        case .role(.established), .liveness(.responsive): .connected
+        case .liveness(.unresponsive): .unresponsive
         case .closed: .connecting
-        case .policyReceived, .updateAvailable, .items, .dragTake, .itemFeatureUsable, .itemReply, .diagnostic: self
+        case .role(.policyReceived), .role(.updateAvailable), .role(.itemFeatureUsable), .items, .dragTake, .itemReply,
+            .diagnostic:
+            self
         }
     }
 }

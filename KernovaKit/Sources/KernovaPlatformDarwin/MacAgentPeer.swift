@@ -85,7 +85,7 @@ public final class MacAgentPeer: Sendable {
             handlers: PeerAgentRuntime.Handlers(
                 event: { event in
                     // A PolicyUpdate follows the host's Hello: this version is connected, so it keeps itself.
-                    if case .policyReceived = event { installer?.confirm() }
+                    if case .role(.policyReceived) = event { installer?.confirm() }
                     itemRouter.deliver(event)
                 },
                 hostConnectionChanged: hostConnectionChanged,

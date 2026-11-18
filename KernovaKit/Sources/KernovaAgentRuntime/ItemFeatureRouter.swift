@@ -165,10 +165,10 @@ extension ItemFeatureRouter where Peer == Void {
         switch event {
         case .items(let event): deliver(event, from: ())
         case .dragTake(let event): deliver(event, from: ())
-        case .itemFeatureUsable(let feature, let usable): deliver(feature, usableOn: usable ? () : nil)
-        case .policyReceived(let policy):
+        case .role(.itemFeatureUsable(let feature, let usable)): deliver(feature, usableOn: usable ? () : nil)
+        case .role(.policyReceived(let policy)):
             for owner in [clipboard, drop, drag?.items].compactMap({ $0 }) { owner.policy(policy) }
-        case .established, .hostLiveness, .updateAvailable, .itemReply, .diagnostic, .closed:
+        case .role(.established), .role(.updateAvailable), .liveness, .itemReply, .diagnostic, .closed:
             break
         }
     }

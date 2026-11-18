@@ -80,7 +80,7 @@ package final class SimHub {
         var endpoint = HostEndpoint(configuration, generation: link.generation, now: world.localNow(.host))
         endpoint.testSink.bytesPerStream = options.testBulkBytes
         endpoints.append(link)
-        if peersFrozen { endpoint.handle(.setPeerFrozen(true), now: world.localNow(.host)) }
+        if peersFrozen { endpoint.handle(.hub(.setPeerFrozen(true)), now: world.localNow(.host)) }
         return endpoint
     }
 
@@ -154,7 +154,7 @@ package final class SimHub {
 
     func handle(_ event: HostEvent, link: SimLink, world: SimWorld) {
         switch event {
-        case .helloReceived(let claim, let state):
+        case .role(.helloReceived(let claim, let state)):
             helloCount += 1
             order += 1
             connected.append(Peer(link: link, claim: claim, state: state, order: order))
@@ -162,15 +162,15 @@ package final class SimHub {
             let key = Self.key(claim, state)
             let holders = connected.filter { !$0.closing && Self.key($0.claim, $0.state) == key }.count
             if holders > 1 { world.checker.fail("property 9: the hub holds \(holders) connections for \(key)") }
-        case .peerStateChanged(let state):
+        case .role(.peerStateChanged(let state)):
             update(link) { $0.state = state }
-        case .featuresChanged(let status):
+        case .role(.featuresChanged(let status)):
             update(link) { $0.status = status }
         case .liveness(let change):
             update(link) {
                 if case .unresponsive = change { $0.unresponsive = true } else { $0.unresponsive = false }
             }
-        case .power(let id, let result):
+        case .role(.power(let id, let result)):
             powerResults.append((world.now, link.hubHandle, result))
             guard let handle = pending[id] else { return }
             routingLog.append(.result(handle, result))
@@ -180,12 +180,12 @@ package final class SimHub {
             }
             routing.handle(result, from: handle, peers: routingPeers)
             drainRouting(world)
-        case .log(let delivery):
+        case .role(.log(let delivery)):
             switch delivery {
             case .records(let records): logRecords += records
             case .dropped(let count): logDropped += count
             }
-        case .update(let serve):
+        case .role(.update(let serve)):
             handleUpdate(serve, world: world)
         case .items(let event):
             world.itemOutput(.event(event), link: link, side: .host)
@@ -257,7 +257,7 @@ package final class SimHub {
     /// The payload source, each read served from the content its manifest names, and the link's item side.
     func handle(_ effect: HostEffect, link: SimLink, world: SimWorld) {
         switch effect {
-        case .read(let id, let manifest, let offset, let maxBytes):
+        case .role(.read(let id, let manifest, let offset, let maxBytes)):
             let bytes = FixturePayloadSource.read(world.content(of: manifest), offset: offset, maxBytes: maxBytes)
             world.hostPayload(.bytes(id, bytes), link: link, after: options.payloadSourceDelay)
         case .itemSource(let effect):

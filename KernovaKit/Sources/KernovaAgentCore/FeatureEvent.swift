@@ -7,7 +7,7 @@ import Foundation
 import KernovaWire
 
 /// What an endpoint tells a feature machine.
-enum FeatureEvent: Sendable, Equatable {
+package enum FeatureEvent: Sendable, Equatable {
     /// The far side's Hello was read.
     case sessionEstablished
     /// Some input to `Connection.usability(_:)` changed.
@@ -31,6 +31,21 @@ enum FeatureEvent: Sendable, Equatable {
     case slotFreed
     /// A timer passed: some machine's `nextDeadline`, or the connection's.
     case deadline
+}
+
+/// A role's feature machine, as its endpoint drives it.
+package protocol FeatureMachine: Sendable {
+    /// The machine's advert.
+    var localAdvert: LocalAdvert { get }
+    /// When the machine next needs `.deadline`; nil when it waits on none.
+    func nextDeadline(on clock: JudgedClock) -> CoreInstant?
+    /// Handles a connection-wide event, or an event of one of the machine's streams.
+    mutating func handle(_ event: FeatureEvent, connection: inout Connection)
+}
+
+extension FeatureMachine {
+    /// None: the machine waits on no deadline.
+    package func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 }
 
 extension Connection {

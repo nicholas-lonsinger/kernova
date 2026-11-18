@@ -33,7 +33,7 @@ public enum LogDelivery: Sendable, Equatable {
 // MARK: - Peer
 
 /// The peer's log forwarder: at most one LOG_FORWARD per connection.
-struct LogForwarder: Sendable {
+package struct LogForwarder: FeatureMachine {
     private var availability: Availability<NoParams>
     private var stream: StreamID?
     private var ending = false
@@ -43,7 +43,7 @@ struct LogForwarder: Sendable {
     private var recordsMayWait = true
     private var modeSent: LogRingMode?
     private var lastUsable = false
-    private(set) var outbox: [PeerEffect] = []
+    private(set) var outbox: [PeerRoleEffect] = []
     private(set) var diagnostics: [Diagnostic] = []
 
     /// A forwarder; `availability` is absent when the build forwards no logs.
@@ -52,11 +52,11 @@ struct LogForwarder: Sendable {
     }
 
     /// The `LogCapability` advert, or the absence.
-    var localAdvert: LocalAdvert {
+    package var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: Availability(availability) { _ in Data() })
     }
 
-    mutating func takeOutputs() -> (effects: [PeerEffect], diagnostics: [Diagnostic]) {
+    mutating func takeOutputs() -> (effects: [PeerRoleEffect], diagnostics: [Diagnostic]) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
@@ -65,7 +65,7 @@ struct LogForwarder: Sendable {
     }
 
     /// Handles a connection event.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
+    package mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .policyChanged:
             if let policy = connection.currentPolicy {
@@ -155,23 +155,23 @@ struct LogForwarder: Sendable {
 // MARK: - Host
 
 /// The host's log receiver.
-struct LogReceiver: Sendable {
+package struct LogReceiver: FeatureMachine {
     /// The credit-return cap: bytes per second, and the burst.
     static let returnRate = (bytesPerSecond: 1_048_576, burst: 262_144)
 
     private var streams: [StreamID] = []
-    private(set) var outbox: [HostEvent] = []
+    private(set) var outbox: [HostRoleEvent] = []
     private(set) var diagnostics: [Diagnostic] = []
 
     /// A receiver for one connection.
     init() {}
 
     /// The host advertises LOGS available.
-    var localAdvert: LocalAdvert {
+    package var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: .available(Kernova_V2_LogCapability().encoded))
     }
 
-    mutating func takeOutputs() -> (events: [HostEvent], diagnostics: [Diagnostic]) {
+    mutating func takeOutputs() -> (events: [HostRoleEvent], diagnostics: [Diagnostic]) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
@@ -180,7 +180,7 @@ struct LogReceiver: Sendable {
     }
 
     /// Handles a connection event.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
+    package mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .opened(let id, _):
             streams.append(id)

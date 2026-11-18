@@ -189,8 +189,8 @@ struct BundledGuestAgentsTests {
             payloadHash: Data(repeating: 0xEE, count: 32), versionLabel: "1.2 (33)",
             instanceID: Data(repeating: 1, count: 16))
         #expect((BundledPayload.offer(from: bundles, for: claim) != nil) == teamSigned)
-        probe.deliver(.helloReceived(claim, PeerSessionState(console: .off, sessionID: "")), fromConnection: 0)
-        probe.deliver(.featuresChanged(FeatureStatusTable()), fromConnection: 0)
+        probe.deliver(.role(.helloReceived(claim, PeerSessionState(console: .off, sessionID: ""))), fromConnection: 0)
+        probe.deliver(.role(.featuresChanged(FeatureStatusTable())), fromConnection: 0)
         try await waitForChange { !instance.agentHubSnapshot.peers.isEmpty }
 
         let standing = try #require(instance.agentHubSnapshot.peers.first).standing

@@ -11,8 +11,8 @@ import Testing
 extension CoreUnits {
     @Suite("HostConnectionState")
     struct HostConnectionStateUnitTests {
-        static let unresponsive = PeerEvent.hostLiveness(.unresponsive(silentFor: .seconds(30)))
-        static let responsive = PeerEvent.hostLiveness(.responsive)
+        static let unresponsive = PeerEvent.liveness(.unresponsive(silentFor: .seconds(30)))
+        static let responsive = PeerEvent.liveness(.responsive)
         static let closures: [ConnectionClosure] = [
             .closedLocally(WireError(.shuttingDown)), .closedByPeer(WireError(.shuttingDown)), .transportLost,
             .notThisProtocol,

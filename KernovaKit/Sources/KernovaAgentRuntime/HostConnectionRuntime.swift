@@ -59,7 +59,7 @@ public final class HostConnectionRuntime: Sendable {
             handlers: ConnectionDriver<HostEndpoint>.Handlers(
                 effect: { effect, driver in
                     switch effect {
-                    case .read(let id, let manifest, let offset, let maxBytes):
+                    case .role(.read(let id, let manifest, let offset, let maxBytes)):
                         source.read(manifest: manifest, offset: offset, count: maxBytes) { result in
                             switch result {
                             case .success(let bytes): driver.handle(.payload(.bytes(id, bytes)))

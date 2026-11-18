@@ -557,13 +557,13 @@ public final class AgentHub: Sendable {
     private func receive(_ event: HostEvent, from handle: PeerHandle) {
         dispatchPrecondition(condition: .onQueue(queue))
         switch event {
-        case .helloReceived(let claim, let peerState):
+        case .role(.helloReceived(let claim, let peerState)):
             let outcome = state.withLock { $0.helloReceived(handle, claim: claim, state: peerState) }
             logHello(claim, peerState, outcome)
             resolve(outcome, incoming: handle)
-        case .peerStateChanged(let peerState):
+        case .role(.peerStateChanged(let peerState)):
             state.withLock { $0.connections[handle]?.peer?.state = peerState }
-        case .featuresChanged(let table):
+        case .role(.featuresChanged(let table)):
             state.withLock { $0.connections[handle]?.peer?.features = table }
         case .liveness(let change):
             state.withLock { $0.connections[handle]?.peer?.isResponsive = change == .responsive }
@@ -576,10 +576,10 @@ public final class AgentHub: Sendable {
             state.withLock { [now = scheduler.now] in $0.closed(handle, at: now) }
             endPowerRequests(of: handle)
             endItemRequests(of: handle)
-        case .log(let delivery):
+        case .role(.log(let delivery)):
             // Records change no peer state, so the snapshot is not rebuilt.
             return republish(delivery, from: handle)
-        case .update(let event):
+        case .role(.update(let event)):
             logUpdate(event, from: handle)
             state.withLock { $0.updateServed(event, from: handle) }
         case .items(let event):
@@ -594,7 +594,7 @@ public final class AgentHub: Sendable {
         case .itemReply(let id, let reply):
             itemReply(id, reply, from: handle)
             return settleItems()
-        case .power(let id, let result):
+        case .role(.power(let id, let result)):
             return powerResult(id, result)
         case .diagnostic:
             // The driver logs diagnostics itself.

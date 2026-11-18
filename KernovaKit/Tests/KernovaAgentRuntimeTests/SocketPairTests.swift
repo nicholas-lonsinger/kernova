@@ -104,22 +104,22 @@ final class SocketPair: Sendable {
 
 extension HostEvent {
     var isHello: Bool {
-        if case .helloReceived = self { return true }
+        if case .role(.helloReceived) = self { return true }
         return false
     }
 
     var isPower: Bool {
-        if case .power = self { return true }
+        if case .role(.power) = self { return true }
         return false
     }
 
     var isUpdateResult: Bool {
-        if case .update(.result) = self { return true }
+        if case .role(.update(.result)) = self { return true }
         return false
     }
 
     var powerUsable: Bool {
-        if case .featuresChanged(let table) = self { return table[.power].isAvailable }
+        if case .role(.featuresChanged(let table)) = self { return table[.power].isAvailable }
         return false
     }
 }
@@ -140,7 +140,7 @@ extension SocketTests {
             var host = pair.hostEvents.waiter()
             var peer = pair.peerEvents.waiter()
             let hello = try await host.next { $0.isHello }
-            guard case .helloReceived(let claim, let state) = hello else {
+            guard case .role(.helloReceived(let claim, let state)) = hello else {
                 Issue.record("no Hello")
                 return
             }
@@ -149,10 +149,10 @@ extension SocketTests {
             #expect(claim.instanceID != Fixture.peerClaim.instanceID)
             #expect(state.sessionID == "1")
             let established = try await peer.next {
-                if case .established = $0 { return true }
+                if case .role(.established) = $0 { return true }
                 return false
             }
-            #expect(established == .established(host: Fixture.hostClaim))
+            #expect(established == .role(.established(host: Fixture.hostClaim)))
             try await pair.finish()
         }
 
@@ -166,9 +166,9 @@ extension SocketTests {
             var performed = pair.power.performed.waiter()
             _ = try await performed.next { _ in true }
             let accepted = try await host.next(where: \.isPower)
-            #expect(accepted == .power(id, .accepted))
+            #expect(accepted == .role(.power(id, .accepted)))
             let finished = try await host.next(where: \.isPower)
-            #expect(finished == .power(id, .finished(.handedOff)))
+            #expect(finished == .role(.power(id, .finished(.handedOff))))
             try await pair.finish()
         }
 
@@ -177,7 +177,7 @@ extension SocketTests {
             let pair = try SocketPair()
             var host = pair.hostEvents.waiter()
             let result = try await host.next(where: \.isUpdateResult)
-            guard case .update(.result(_, let value)) = result else {
+            guard case .role(.update(.result(_, let value))) = result else {
                 Issue.record("no result")
                 return
             }
@@ -191,12 +191,12 @@ extension SocketTests {
             let pair = try SocketPair(bundled: .notInBand)
             var peer = pair.peerEvents.waiter()
             let available = try await peer.next {
-                if case .updateAvailable = $0 { return true }
+                if case .role(.updateAvailable) = $0 { return true }
                 return false
             }
-            #expect(available == .updateAvailable(nil))
+            #expect(available == .role(.updateAvailable(nil)))
             try await pair.finish()
-            #expect(!pair.hostEvents.elements.contains { if case .update = $0 { true } else { false } })
+            #expect(!pair.hostEvents.elements.contains { if case .role(.update) = $0 { true } else { false } })
             #expect(pair.installer.calls.elements.isEmpty)
         }
 

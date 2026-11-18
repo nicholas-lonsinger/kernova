@@ -155,7 +155,7 @@ struct AgentHubTests {
         let snapshot = try await harness.snapshot { Self.inBandUpdate($0) == .updating }
         #expect(snapshot.features[.update].isAvailable)
         var events = harness.connector.events.waiter()
-        let pulled = try await events.next { if case .update(.pullRequested) = $0.event { true } else { false } }
+        let pulled = try await events.next { if case .role(.update(.pullRequested)) = $0.event { true } else { false } }
         #expect(pulled.connection == 1)
         peer.driver.close(.shuttingDown)
         harness.hub.close()
@@ -199,7 +199,8 @@ struct AgentHubTests {
         try await harness.attached()
         let peer = HubPeer(harness, claim: .session(.user, instance: 1), update: .available(offer))
         _ = try await harness.snapshot { Self.inBandUpdate($0) == expected }
-        #expect(!harness.connector.events.elements.contains { if case .update = $0.event { true } else { false } })
+        #expect(
+            !harness.connector.events.elements.contains { if case .role(.update) = $0.event { true } else { false } })
         peer.driver.close(.shuttingDown)
         harness.hub.close()
     }
@@ -216,8 +217,8 @@ struct AgentHubTests {
             harness, claim: .session(.user, instance: 1), update: .available(UpdateOffer(formats: [.executable])),
             refuses: code)
         var events = harness.connector.events.waiter()
-        let result = try await events.next { if case .update(.result) = $0.event { true } else { false } }
-        guard case .update(.result(_, let value)) = result.event else {
+        let result = try await events.next { if case .role(.update(.result)) = $0.event { true } else { false } }
+        guard case .role(.update(.result(_, let value))) = result.event else {
             Issue.record("no result")
             return
         }
@@ -303,7 +304,7 @@ struct AgentHubTests {
             installs: true)
         var events = harness.connector.events.waiter()
         _ = try await events.next {
-            if case .update(.result(_, let result)) = $0.event { result.kind == .staged } else { false }
+            if case .role(.update(.result(_, let result))) = $0.event { result.kind == .staged } else { false }
         }
         peer.driver.close(.shuttingDown)
         let gone = try await harness.snapshot { $0.peers.isEmpty && !$0.away.isEmpty }
@@ -575,16 +576,16 @@ struct AgentHubTests {
         append("appended while off")
 
         harness.hub.setPolicy(Fixture.logsEnabled)
-        _ = try await policies.next { $0 == .policyReceived(Fixture.logsEnabled) }
+        _ = try await policies.next { $0 == .role(.policyReceived(Fixture.logsEnabled)) }
         append("appended while on")
         var guestLogs = harness.guestLogs.waiter()
         _ = try await guestLogs.next { $0.segments.contains { $0.text == "appended while on" } }
 
         harness.hub.setPolicy(PolicySnapshot())
-        _ = try await policies.next { $0 == .policyReceived(PolicySnapshot()) }
+        _ = try await policies.next { $0 == .role(.policyReceived(PolicySnapshot())) }
         append("appended while off again")
         harness.hub.setPolicy(Fixture.logsEnabled)
-        _ = try await policies.next { $0 == .policyReceived(Fixture.logsEnabled) }
+        _ = try await policies.next { $0 == .role(.policyReceived(Fixture.logsEnabled)) }
         append("appended while on again")
         _ = try await guestLogs.next { $0.segments.contains { $0.text == "appended while on again" } }
 
@@ -712,6 +713,6 @@ extension ConnectionClosure {
 
 extension HostEvent {
     fileprivate var isFeaturesChanged: Bool {
-        if case .featuresChanged = self { true } else { false }
+        if case .role(.featuresChanged) = self { true } else { false }
     }
 }

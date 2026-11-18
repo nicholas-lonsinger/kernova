@@ -43,7 +43,7 @@ struct HostileRow: Sendable, CustomTestStringConvertible {
 
     /// The peer aborted the pull and recorded its hash rejected, once each.
     static func rejectedRecorded(_ run: HostileRun) -> [String] {
-        let effects = run.peerEffects.compactMap { if case .update(let effect) = $0 { effect } else { nil } }
+        let effects = run.peerEffects.compactMap { if case .role(.update(let effect)) = $0 { effect } else { nil } }
         let id = UpdatePullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 1))
         return effects.suffix(2) == [.abort(id), .recordRejected(pulled.payloadHash)] ? [] : ["effects: \(effects)"]
     }
@@ -391,9 +391,8 @@ enum HostileRows {
                 .requestPower(PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 1), .shutdown))
             run.feed(WireFrames.bytes([power(2, .askingApps)], preamble: false))
         } expect: { run in
-            let indeterminate = run.hostEvents.contains {
-                $0 == .power(PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 1), .indeterminate)
-            }
+            let id = PowerRequestID(generation: ConnectionGeneration(rawValue: 1), rawValue: 1)
+            let indeterminate = run.hostEvents.contains { $0 == .role(.power(id, .indeterminate)) }
             return indeterminate ? [] : ["the request did not end indeterminate"]
         },
         HostileRow(
@@ -484,7 +483,7 @@ enum HostileRows {
             }
             run.feed(WireFrames.bytes(snapshots, preamble: false), maxSplit: 1 << 20)
         } expect: { run in
-            let count = run.hostEvents.filter { if case .peerStateChanged = $0 { true } else { false } }.count
+            let count = run.hostEvents.filter { if case .role(.peerStateChanged) = $0 { true } else { false } }.count
             return count <= 600 ? [] : ["\(count) peerStateChanged events"]
         },
     ]

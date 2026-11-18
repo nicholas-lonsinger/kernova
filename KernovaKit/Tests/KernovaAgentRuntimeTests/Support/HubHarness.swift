@@ -73,7 +73,7 @@ final class RecordingConnector: HostConnectionMaking {
             stream, policy: policy, bundles: bundles, deliveringOn: queue
         ) { event in
             events.record((number, event))
-            if case .featuresChanged = event {
+            if case .role(.featuresChanged) = event {
                 let held = heldFeatures.withLock { held in
                     guard held[number] != nil else { return false }
                     held[number]?.append { queue.async { handler(event) } }
@@ -307,11 +307,11 @@ final class HubPeer: Sendable {
             handlers: ConnectionDriver<PeerEndpoint>.Handlers(
                 effect: { effect, driver in
                     switch effect {
-                    case .update(.payload(let id, let bytes)) where installs || refuses != nil:
+                    case .role(.update(.payload(let id, let bytes))) where installs || refuses != nil:
                         driver.handle(.update(.consumed(id, bytes.count)))
-                    case .update(.complete(let id, _)) where installs:
+                    case .role(.update(.complete(let id, _))) where installs:
                         driver.handle(.update(.installed(id)))
-                    case .update(.complete(let id, _)):
+                    case .role(.update(.complete(let id, _))):
                         if let refuses { driver.handle(.update(.rejected(id, WireError(refuses)))) }
                     case .itemSource(let effect):
                         if let input = items?.serve(effect) { driver.handle(.items(.source(input))) }

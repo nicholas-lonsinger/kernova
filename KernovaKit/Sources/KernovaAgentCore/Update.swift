@@ -78,7 +78,7 @@ public struct UpdateResultValue: Sendable, Equatable {
 }
 
 /// What the host's update server tells the hub. The payload's bytes pass between the endpoint and its
-/// payload source as `HostEffect.read` and `PayloadInput`, never through the hub.
+/// payload source as `HostRoleEffect.read` and `PayloadInput`, never through the hub.
 public enum UpdateServeEvent: Sendable, Equatable {
     /// The peer pulls the offered payload.
     case pullRequested(UpdatePullID, UpdateManifestValue)
@@ -92,7 +92,7 @@ public enum UpdateServeEvent: Sendable, Equatable {
 
 /// The peer's update client: decides when to pull and checks the
 /// byte count; the rejected hash comes from the installer's reports only.
-struct UpdateClient: Sendable {
+package struct UpdateClient: FeatureMachine {
     private struct Pull: Sendable {
         var id: UpdatePullID
         var manifest: UpdateManifestValue
@@ -110,7 +110,7 @@ struct UpdateClient: Sendable {
     /// Hashes pulled on this connection; none is pulled twice on one connection.
     private var attempted: [Data] = []
     private var pull: Pull?
-    private(set) var outbox: [PeerEffect] = []
+    private(set) var outbox: [PeerRoleEffect] = []
     private(set) var diagnostics: [Diagnostic] = []
 
     /// A client for an install whose payload hash is `ownHash`.
@@ -121,11 +121,11 @@ struct UpdateClient: Sendable {
     }
 
     /// The `UpdateCapability` advert, or the installer's absence.
-    var localAdvert: LocalAdvert {
+    package var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: Availability(availability) { $0.encodedCapability })
     }
 
-    mutating func takeOutputs() -> (effects: [PeerEffect], diagnostics: [Diagnostic]) {
+    mutating func takeOutputs() -> (effects: [PeerRoleEffect], diagnostics: [Diagnostic]) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
@@ -140,7 +140,7 @@ struct UpdateClient: Sendable {
     }
 
     /// Handles a connection event.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
+    package mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .sessionEstablished, .usabilityChanged, .slotFreed:
             consider(&connection)
@@ -249,7 +249,7 @@ struct UpdateClient: Sendable {
 /// more than a read asked for, or bytes no read asked for has failed: the pull
 /// is RESET `READ_FAILED`, which the next connection retries, rather than
 /// reaching the peer as a payload of the wrong size.
-struct UpdateServer: Sendable {
+package struct UpdateServer: FeatureMachine {
     private struct Pull: Sendable {
         var id: UpdatePullID
         var manifest: UpdateManifestValue
@@ -263,8 +263,8 @@ struct UpdateServer: Sendable {
 
     private let generation: ConnectionGeneration
     private var pull: Pull?
-    private(set) var outbox: [HostEvent] = []
-    private(set) var reads: [HostEffect] = []
+    private(set) var outbox: [HostRoleEvent] = []
+    private(set) var reads: [HostRoleEffect] = []
     private(set) var diagnostics: [Diagnostic] = []
 
     /// A server for one connection.
@@ -273,11 +273,11 @@ struct UpdateServer: Sendable {
     }
 
     /// The host advertises UPDATE available with empty params.
-    var localAdvert: LocalAdvert {
+    package var localAdvert: LocalAdvert {
         LocalAdvert(version: 1, availability: .available(Data()))
     }
 
-    mutating func takeOutputs() -> (events: [HostEvent], effects: [HostEffect], diagnostics: [Diagnostic]) {
+    mutating func takeOutputs() -> (events: [HostRoleEvent], effects: [HostRoleEffect], diagnostics: [Diagnostic]) {
         defer {
             outbox.removeAll()
             reads.removeAll()
@@ -287,7 +287,7 @@ struct UpdateServer: Sendable {
     }
 
     /// Handles a connection event.
-    mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
+    package mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
         case .opened(let stream, let body):
             let request = (try? Kernova_V2_UpdatePull(serializedBytes: body)) ?? Kernova_V2_UpdatePull()

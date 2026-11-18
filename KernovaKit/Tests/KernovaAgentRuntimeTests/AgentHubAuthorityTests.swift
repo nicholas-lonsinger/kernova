@@ -55,8 +55,8 @@ struct AgentHubAuthorityTests {
         _ = scripted.transport.connect()
         let (stranger, first) = (0, 1)
         let firstHandle = PeerHandle(rawValue: 2)
-        connector.deliver(.helloReceived(Fixture.peerClaim, Fixture.peerState), first)
-        connector.deliver(.featuresChanged(Self.features), first)
+        connector.deliver(.role(.helloReceived(Fixture.peerClaim, Fixture.peerState)), first)
+        connector.deliver(.role(.featuresChanged(Self.features)), first)
         connector.deliver(.items(.offerReceived(Self.header(1, .clipboard))), stranger)
         connector.deliver(.items(.offerEnded(.clipboard, .local, token: SimItems.token(2), .connectionLost)), stranger)
         let pull = ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 3))
@@ -71,8 +71,8 @@ struct AgentHubAuthorityTests {
 
         // The same claim again supersedes the first connection: what the owner held there ends at once.
         _ = scripted.transport.connect()
-        connector.deliver(.helloReceived(Fixture.peerClaim, Fixture.peerState), 2)
-        connector.deliver(.featuresChanged(Self.features), 2)
+        connector.deliver(.role(.helloReceived(Fixture.peerClaim, Fixture.peerState)), 2)
+        connector.deliver(.role(.featuresChanged(Self.features)), 2)
         connector.deliver(
             .items(.offerEnded(.clipboard, .remote, token: SimItems.token(3), .connectionLost)), first)
         connector.deliver(.items(.offerReceived(Self.header(4, .drag))), first)
@@ -104,8 +104,8 @@ struct AgentHubAuthorityTests {
         let scripted = try await ScriptedHub()
         let connector = scripted.connector
         _ = scripted.transport.connect()
-        connector.deliver(.helloReceived(Fixture.peerClaim, Fixture.peerState), 0)
-        connector.deliver(.featuresChanged(Self.features), 0)
+        connector.deliver(.role(.helloReceived(Fixture.peerClaim, Fixture.peerState)), 0)
+        connector.deliver(.role(.featuresChanged(Self.features)), 0)
         try await flush(scripted.hub.queue)
         let answers = Recorder<Result<PeerHandle, WireError>>()
         scripted.hub.offerItems(SimItems.offer(1, []), feature: .clipboard) { answers.record($0) }

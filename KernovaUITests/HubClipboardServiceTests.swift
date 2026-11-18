@@ -46,8 +46,8 @@ struct HubClipboardServiceTests {
         instance.attachAgentTransport(probe)
         try await probe.changed.wait { probe.isStarted }
         #expect(probe.connect())
-        probe.deliver(.helloReceived(Self.claim, Self.onConsole), fromConnection: 0)
-        probe.deliver(.featuresChanged(Self.clipboard), fromConnection: 0)
+        probe.deliver(.role(.helloReceived(Self.claim, Self.onConsole)), fromConnection: 0)
+        probe.deliver(.role(.featuresChanged(Self.clipboard)), fromConnection: 0)
         try await waitForChange { instance.hubClipboard.isConnected }
         return (instance, pasteboard)
     }
@@ -326,7 +326,7 @@ struct HubClipboardServiceTests {
         let (instance, pasteboard) = try await connected(probe, passthrough: true)
         try await written(Self.text, to: pasteboard, on: probe)
 
-        probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
+        probe.deliver(.role(.peerStateChanged(Self.offConsole)), fromConnection: 0)
         try await waitForChange { !instance.hubClipboard.isConnected }
         try await probe.settle()
         #expect(pasteboard.promisedTypes.isEmpty)
@@ -335,7 +335,7 @@ struct HubClipboardServiceTests {
         #expect(instance.clipboardTransferReport == .idle)
 
         #expect(pasteboard.setString("copied during the outage", forType: .string))
-        probe.deliver(.peerStateChanged(Self.onConsole), fromConnection: 0)
+        probe.deliver(.role(.peerStateChanged(Self.onConsole)), fromConnection: 0)
         try await waitForChange { instance.hubClipboard.isConnected }
         poll(pasteboard)
         try await probe.settle()
@@ -570,7 +570,7 @@ struct HubClipboardServiceTests {
         case .passthroughStops:
             try await setPassthrough(false, instance, probe)
         case .guestLeavesTheConsole:
-            probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
+            probe.deliver(.role(.peerStateChanged(Self.offConsole)), fromConnection: 0)
             try await waitForChange { !instance.hubClipboard.isConnected }
             try await probe.settle()
         case .guestFeatureGoes:
@@ -603,9 +603,9 @@ struct HubClipboardServiceTests {
 
     /// Ends the console peer's connection and brings it back.
     private func bounceLink(_ instance: VMInstance, _ probe: AgentHubProbe) async throws {
-        probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
+        probe.deliver(.role(.peerStateChanged(Self.offConsole)), fromConnection: 0)
         try await waitForChange { !instance.hubClipboard.isConnected }
-        probe.deliver(.peerStateChanged(Self.onConsole), fromConnection: 0)
+        probe.deliver(.role(.peerStateChanged(Self.onConsole)), fromConnection: 0)
         try await waitForChange { instance.hubClipboard.isConnected }
     }
 
@@ -753,7 +753,7 @@ struct HubClipboardServiceTests {
         try await copyToGuestOpens("from the Mac", instance, pasteboard, probe)
         #expect(released(Self.guestToken, probe))
         // A request still held when the connection leaves is refused.
-        probe.deliver(.peerStateChanged(Self.offConsole), fromConnection: 0)
+        probe.deliver(.role(.peerStateChanged(Self.offConsole)), fromConnection: 0)
         try await waitForChange { !instance.hubClipboard.isConnected }
         try await probe.settle()
         #expect(instance.clipboardTransferReport == .idle, "\(instance.clipboardTransferReport)")

@@ -592,7 +592,7 @@ package final class Duet {
             }
         }
         switch input {
-        case .host(let command): host.handle(command, now: instant)
+        case .host(let command): host.handle(.hub(command), now: instant)
         case .peer(let input): peer.handle(input, now: instant)
         case .pull(let report):
             guard let stream = kinds.filter({ $0.value == .updatePull && $0.key % 2 == 1 }).keys.max() else {
@@ -664,7 +664,7 @@ package final class Duet {
 
     private func item(_ side: SimSide, _ command: ItemCommand) {
         switch side {
-        case .host: host.handle(.items(command), now: instant)
+        case .host: host.handle(.hub(.items(command)), now: instant)
         case .peer: peer.handle(.itemCommand(command), now: instant)
         }
     }
@@ -692,12 +692,12 @@ package final class Duet {
             while let effect = host.pollEffect() {
                 progressed = true
                 switch effect {
-                case .read(let id, let manifest, let offset, let maxBytes):
-                    host.handle(source.answer(id, manifest, offset: offset, maxBytes: maxBytes), now: instant)
+                case .role(.read(let id, let manifest, let offset, let maxBytes)):
+                    host.handle(.payload(source.answer(id, manifest, offset: offset, maxBytes: maxBytes)), now: instant)
                 case .itemSource(let effect):
-                    if let input = itemSource.handle(effect) { host.handle(.source(input), now: instant) }
+                    if let input = itemSource.handle(effect) { host.handle(.items(.source(input)), now: instant) }
                 case .itemSink(let effect):
-                    if let input = itemSink.handle(effect) { host.handle(.sink(input), now: instant) }
+                    if let input = itemSink.handle(effect) { host.handle(.items(.sink(input)), now: instant) }
                 }
             }
             while let event = host.pollEvent() {
@@ -714,10 +714,10 @@ package final class Duet {
                     items.append(.event(time: now, side: .peer, text: text))
                 }
                 switch effect {
-                case .update(.payload(let id, let bytes)):
+                case .role(.update(.payload(let id, let bytes))):
                     peer.handle(.update(.consumed(id, bytes.count)), now: instant)
-                case .logs(.mode(let mode)): ring.setMode(mode)
-                case .logs(.ready):
+                case .role(.logs(.mode(let mode))): ring.setMode(mode)
+                case .role(.logs(.ready)):
                     if let batch = ring.takeBatch() { peer.handle(.logs(.batch(batch)), now: instant) }
                 case .itemSource(let effect):
                     if let input = itemSource.handle(effect) { peer.handle(.items(.source(input)), now: instant) }
@@ -925,10 +925,10 @@ package final class Duet {
 package enum TranscriptEvents {
     package static func describe(_ event: HostEvent) -> String? {
         switch event {
-        case .power(let id, let result): "host power id=\(id.rawValue) \(describe(result))"
-        case .update(.result(_, let result)):
+        case .role(.power(let id, let result)): "host power id=\(id.rawValue) \(describe(result))"
+        case .role(.update(.result(_, let result))):
             "host update result kind=\(result.kind == .staged ? 1 : 2) code=\(result.error?.code.rawValue ?? 0)"
-        case .update(.closed(_, let closure)): "host update closed \(describe(closure))"
+        case .role(.update(.closed(_, let closure))): "host update closed \(describe(closure))"
         case .closed(let closure): "host closed \(describe(closure))"
         case .items(let event): describe(event, side: .host)
         case .dragTake(let event): describe(event, side: .host)
@@ -938,13 +938,13 @@ package enum TranscriptEvents {
 
     package static func describe(_ effect: PeerEffect) -> String? {
         switch effect {
-        case .power(.perform(let id, let action, let ignoringApps)):
+        case .role(.power(.perform(let id, let action, let ignoringApps))):
             "peer power perform id=\(id.rawValue) action=\(action.rawValue)\(ignoringApps ? " ignoreApps=1" : "")"
-        case .power(.cancel(let id)): "peer power cancel id=\(id.rawValue)"
-        case .update(.complete(let id, let manifest)):
+        case .role(.power(.cancel(let id))): "peer power cancel id=\(id.rawValue)"
+        case .role(.update(.complete(let id, let manifest))):
             "peer update complete id=\(id.stream.rawValue) size=\(manifest.payloadSize)"
-        case .update(.recordRejected(let hash)): "peer update recordRejected hash=\(FrozenFields.hex(hash))"
-        case .update(.abort(let id)): "peer update abort id=\(id.stream.rawValue)"
+        case .role(.update(.recordRejected(let hash))): "peer update recordRejected hash=\(FrozenFields.hex(hash))"
+        case .role(.update(.abort(let id))): "peer update abort id=\(id.stream.rawValue)"
         default: nil
         }
     }
