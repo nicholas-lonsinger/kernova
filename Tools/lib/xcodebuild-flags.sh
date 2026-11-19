@@ -10,11 +10,19 @@ kernova_scheme=Kernova
 # shellcheck disable=SC2034
 kernova_destination=platform=macOS
 
+# xcodebuild_project_flags [<project>] — one flag per line: the project
+# (Kernova's by default), and every xcodebuild of it builds the packages the
+# tracked Package.resolved pins, or fails.
+xcodebuild_project_flags() {
+    printf '%s\n' -project "${1:-$kernova_project}" -onlyUsePackageVersionsFromResolvedFile
+}
+
 # xcodebuild_flags <configuration> — one flag per line. The configuration is
 # passed explicitly rather than left to the scheme's per-action default. With
 # CI set, the CI-only settings follow; `CI=1 make test` reproduces a CI build.
 xcodebuild_flags() {
-    printf '%s\n' -project "$kernova_project" -scheme "$kernova_scheme" \
+    xcodebuild_project_flags
+    printf '%s\n' -scheme "$kernova_scheme" \
         -destination "$kernova_destination" -configuration "$1"
     [ -n "${CI:-}" ] || return 0
     # -derivedDataPath only under CI, so artifacts land at a fixed path: on a

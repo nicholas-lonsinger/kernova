@@ -104,8 +104,9 @@ if ! git -C "$tmp_dir/periphery" apply "$PATCH" >&2; then
     exit 1
 fi
 detail "Building Periphery $PERIPHERY_VERSION with $(basename "$PATCH") (minutes)" >&2
-swift build -c release --package-path "$tmp_dir/periphery" --product periphery >&2
-cp "$(swift build -c release --package-path "$tmp_dir/periphery" --show-bin-path)/periphery" "$BINARY"
+build=(swift build -c release --package-path "$tmp_dir/periphery" --only-use-versions-from-resolved-file)
+"${build[@]}" --product periphery >&2
+cp "$("${build[@]}" --show-bin-path)/periphery" "$BINARY"
 
 if ! installed_version="$("$BINARY" version 2>&1)"; then
     printf 'install-periphery.sh: the installed binary does not run: %s\n' "$installed_version" >&2

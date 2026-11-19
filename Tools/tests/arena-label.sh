@@ -25,11 +25,11 @@ clone="$tmp/clone"
 git init -q -b main "$clone" && git -C "$clone" commit -q --allow-empty -m init
 mkdir -p "$clone/Tools/lib"
 cp "$ROOT/Tools/arena-label.sh" "$ROOT/Tools/derived-data-path.sh" "$clone/Tools/"
-cp "$ROOT/Tools/lib/worktrees.sh" "$ROOT/Tools/lib/holders.sh" "$clone/Tools/lib/"
+cp "$ROOT/Tools/lib/worktrees.sh" "$ROOT/Tools/lib/holders.sh" "$ROOT/Tools/lib/xcodebuild-flags.sh" "$clone/Tools/lib/"
 git -C "$clone" worktree add -q --detach "$clone/.claude/worktrees/live"
 
 export HOME="$tmp/home"
-dd_root=$("$clone/Tools/derived-data-path.sh" --root)
+dd_root=$("$clone/Tools/derived-data-path.sh" --root) || { echo "arena-label fixtures: derived-data-path.sh --root failed" >&2; exit 1; }
 case "$dd_root" in
     "$tmp"/*) ;;
     *)

@@ -23,14 +23,15 @@ CONFIGURATION ?= Debug
 
 # Tools/lib/xcodebuild-flags.sh owns the flags; CI is passed in so a
 # command-line `CI=1` reaches it as an environment one does.
+XCODEBUILD_PROJECT_FLAGS := $(shell bash -c '$(XCODEBUILD_LIB) && xcodebuild_project_flags')
 XCODEBUILD_FLAGS = $(shell CI='$(CI)' bash -c '$(XCODEBUILD_LIB) && xcodebuild_flags "$$1"' _ '$(CONFIGURATION)')
 
 # Every command that runs xcodebuild against this checkout — Periphery's
 # included, which resolves packages into the checkout's shared files — runs
 # under the checkout's build lock (Tools/checkout-lock.sh), so a second run
 # waits for the first rather than sharing its build arena; a Tools script that
-# runs xcodebuild takes the lock itself. `test-unhosted` runs without it:
-# SwiftPM serializes runs on .build itself. A recipe with several such commands
+# runs xcodebuild takes the lock itself. `test-unhosted` runs no xcodebuild,
+# so it runs without it. A recipe with several such commands
 # holds the lock across all of them by running its `locked-` twin under it, so
 # no other run starts in between.
 LOCKED       := Tools/checkout-lock.sh
@@ -162,7 +163,7 @@ test-unhosted: ## Run only the unhosted lanes: each local package's tests under 
 	@test -n '$(strip $(PACKAGE_DIRS))' || { echo 'No tracked Package.swift found — not a git checkout?' >&2; exit 1; }
 	@failed=''; \
 	for package in $(PACKAGE_DIRS); do \
-		xcrun swift test $(SWIFT_TEST_FLAGS) --package-path "$$package" || failed="$$failed $$package"; \
+		bash -c '. Tools/lib/package-pins.sh && with_package_pins "$$1" xcrun swift test -- "$${@:2}"' _ "$$package" $(SWIFT_TEST_FLAGS) || failed="$$failed $$package"; \
 	done; \
 	if [ -n "$$failed" ]; then echo "test-unhosted: tests failed in:$$failed" >&2; exit 1; fi
 
@@ -173,6 +174,14 @@ test-unhosted: ## Run only the unhosted lanes: each local package's tests under 
 # runtime in that child.
 test-unhosted-tsan: ## Run the unhosted lanes under Thread Sanitizer
 	@TSAN_OPTIONS='strip_env=0 $(TSAN_OPTIONS)' $(MAKE) --no-print-directory test-unhosted SWIFT_TEST_FLAGS=--sanitize=thread
+
+# Every other target builds only the tracked pins and fails once a manifest's
+# requirement no longer admits them; this rewrites the tracked pin files — the
+# Xcode workspace's, which every top-level package takes, and Tools/DeadCode's.
+.PHONY: resolve-packages
+resolve-packages: ## Re-resolve the tracked Package.resolved files after a package requirement changes
+	$(LOCKED) xcodebuild -project $(PROJECT) -resolvePackageDependencies
+	xcrun swift package resolve --disable-experimental-prebuilts --package-path Tools/DeadCode
 
 swift-toolchain: ## Install swiftly, the swift.org toolchain .swift-version pins, and its Static Linux SDK
 	@Tools/install-swift-toolchain.sh >/dev/null
@@ -236,7 +245,7 @@ locked-dead-code: dead-code-tool
 	mkdir -p "$$raw" || exit 1; \
 	$(DEAD_CODE_TOOL) test-only-targets --project $(PROJECT) > "$$raw/test-only-targets.txt" || exit 1; \
 	for scheme in $(PERIPHERY_SCHEMES); do \
-		xcodebuild -project $(PROJECT) -scheme "$$scheme" -destination '$(DESTINATION)' \
+		xcodebuild $(XCODEBUILD_PROJECT_FLAGS) -scheme "$$scheme" -destination '$(DESTINATION)' \
 			-derivedDataPath $(PERIPHERY_DERIVED_DATA) -parallelizeTargets -quiet \
 			build-for-testing \
 			CODE_SIGNING_ALLOWED=NO DEBUG_INFORMATION_FORMAT=dwarf \

@@ -2,9 +2,9 @@
 # Fixture tests for Tools/checkout-lock.sh: a second run in one checkout waits
 # and says so, the lock outlives neither its holder nor reaches the holder's
 # descendants, a descendant of the holder runs at once, separate checkouts
-# never wait on each other, and Tools/lsp-config.sh and `make build` take the
-# same lock. Runs copies of the scripts in a fixture clone and a linked
-# worktree of it, with stub xcodebuild and xcode-build-server; every wait is on
+# never wait on each other, and `make build` takes the same lock. Runs copies
+# of the scripts in a fixture clone and a linked worktree of it, with a stub
+# xcodebuild; every wait is on
 # a fifo or a process, never a sleep, and ends if the process under test exits.
 
 set -uo pipefail
@@ -38,7 +38,7 @@ git init -q -b main "$clone" && git -C "$clone" commit -q --allow-empty -m init
 git -C "$clone" worktree add -q --detach "$wt"
 for checkout in "$clone" "$wt"; do
     mkdir -p "$checkout/Tools/lib"
-    cp "$ROOT/Tools/checkout-lock.sh" "$ROOT/Tools/lsp-config.sh" "$ROOT/Tools/built-app.sh" "$checkout/Tools/"
+    cp "$ROOT/Tools/checkout-lock.sh" "$ROOT/Tools/built-app.sh" "$checkout/Tools/"
     cp "$ROOT/Tools/lib/output.sh" "$ROOT/Tools/lib/swift-roots.sh" "$ROOT/Tools/lib/xcodebuild-flags.sh" "$checkout/Tools/lib/"
     cp "$ROOT/Makefile" "$checkout/"
 done
@@ -156,19 +156,12 @@ fi
 echo >"$tmp/other.release"
 check "the other holder's status" "$(exit_status other)" 0
 
-# ---- lsp-config.sh and `make build` share the lock -----------------------------
+# ---- `make build` takes the lock -------------------------------------------------
 
 stubs="$tmp/stubs"
 mkdir -p "$stubs"
-# xcode-build-server reports it is running, then holds until released.
-cat >"$stubs/xcode-build-server" <<'EOF'
-#!/bin/bash
-echo "lsp $PPID" >"$FIXTURE/lsp.events"
-read -r _ <"$FIXTURE/lsp.release"
-touch "$FIXTURE/lsp.done"
-EOF
 # xcodebuild answers a settings query, and records whether a build ran after
-# xcode-build-server finished.
+# the holder let go.
 cat >"$stubs/xcodebuild" <<'EOF'
 #!/bin/bash
 case " $* " in
@@ -176,23 +169,16 @@ case " $* " in
         printf 'Build settings for action build and target Kernova:\n    TARGET_BUILD_DIR = /b\n    FULL_PRODUCT_NAME = K.app\n    EXECUTABLE_PATH = K\n'
         ;;
     *)
-        if [ -e "$FIXTURE/lsp.done" ]; then echo after; else echo during; fi >"$FIXTURE/build.ran"
+        if [ -e "$FIXTURE/builder.done" ]; then echo after; else echo during; fi >"$FIXTURE/build.ran"
         ;;
 esac
 EOF
-chmod +x "$stubs/xcode-build-server" "$stubs/xcodebuild"
-mkfifo "$tmp/lsp.events" "$tmp/lsp.release" "$tmp/make.err"
+chmod +x "$stubs/xcodebuild"
+mkfifo "$tmp/make.err"
 export FIXTURE="$tmp"
 export PATH="$stubs:$PATH"
 
-(
-    "$clone/Tools/lsp-config.sh" >/dev/null
-    echo "exited $?" >"$tmp/lsp.events"
-) &
-children+=("$!")
-read -r state lsp_holder <"$tmp/lsp.events"
-check "lsp-config.sh's xcode-build-server" "$state" lsp
-children+=("$lsp_holder")
+hold "$clone" builder
 CI=1 make -C "$clone" --no-print-directory build >/dev/null 2>"$tmp/make.err" &
 make_pid=$!
 children+=("$make_pid")
@@ -201,10 +187,10 @@ make_notice=''
 while read -r line <&7; do
     case "$line" in *'waiting for another xcodebuild'*) make_notice=$line; break ;; esac
 done
-check "make build's notice while lsp-config.sh holds the lock" "$make_notice" "$(notice_for "$clone")"
-check "make build's xcodebuild while lsp-config.sh holds the lock" "$(cat "$tmp/build.ran" 2>/dev/null)" ''
-echo >"$tmp/lsp.release"
-check "lsp-config.sh's status" "$(exit_status lsp)" 0
+check "make build's notice while another command holds the lock" "$make_notice" "$(notice_for "$clone")"
+check "make build's xcodebuild while another command holds the lock" "$(cat "$tmp/build.ran" 2>/dev/null)" ''
+echo >"$tmp/builder.release"
+check "the builder's status" "$(exit_status builder)" 0
 wait "$make_pid"
 check "make build's status" "$?" 0
 check "make build's xcodebuild" "$(cat "$tmp/build.ran" 2>/dev/null)" after

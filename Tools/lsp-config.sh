@@ -33,5 +33,10 @@ if ! command -v xcode-build-server >/dev/null 2>&1; then
     exit 0
 fi
 
-Tools/checkout-lock.sh xcode-build-server config -project "$project" -scheme "$scheme" || exit 1
+# Given the build root, `config` writes it without asking xcodebuild, whose
+# settings query would resolve packages without the tracked pins
+# (xcode-build-server 1.3.0, config/cmd.py).
+arena="$(Tools/derived-data-path.sh "$project")" || exit 1
+workspace="$(cd "$project" && pwd)/project.xcworkspace" || exit 1
+xcode-build-server config -workspace "$workspace" -scheme "$scheme" --build_root "$arena" || exit 1
 pass "buildServer.json written for the $scheme scheme"
