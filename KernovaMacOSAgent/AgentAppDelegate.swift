@@ -127,6 +127,11 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.async {
                     self?.statusItemController?.clipboardNoticeRaised()
                 }
+            },
+            onActivityChanged: { [weak self] in
+                DispatchQueue.main.async {
+                    self?.statusItemController?.clipboardActivityChanged()
+                }
             })
         let state = DarwinSessionState.sessionPeer()
         clipboard.setOnConsole(state.console == .on)

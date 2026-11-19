@@ -145,6 +145,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                 self.transferReportsChanged()
                 self.heldAlertsChanged()
                 self.syncMenuIfOpen()
+                self.transientPopover.failuresChanged()
                 self.presentPendingNotices()
             }
         )
@@ -204,7 +205,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     // MARK: - Clipboard notice
 
     /// Presents each VM's newly raised refusal where ``ClipboardNoticeLedger``
-    /// routes it, as an error: up until the user clicks it or the status item.
+    /// routes it, as an error: up until the user clicks it or the status item,
+    /// or the VM's report stops carrying it.
     ///
     /// A notice the status item can't carry is dropped rather than deferred:
     /// the dropdown's own line is the fallback, and a refusal replayed later
@@ -221,7 +223,12 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                     == .notice
             else { continue }
             let content = ClipboardNoticeViewController(wording: wording)
-            let lifetime = CalloutLifetime.error(announcement: "\(wording.headline) \(wording.message)")
+            let lifetime = CalloutLifetime.error(
+                announcement: "\(wording.headline) \(wording.message)",
+                stands: { [weak instance] in
+                    guard case .finished(let standing)? = instance?.clipboardTransferReport else { return false }
+                    return standing.date == finish.date
+                })
             if case .skipped(let reason) = transientPopover.show(content, as: lifetime) {
                 Self.logger.log(
                     .info,
@@ -235,10 +242,19 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         }
     }
 
+    /// Runs `change`, an activation-policy change, which re-hosts the status
+    /// item: whatever callout is up goes back up after it.
+    func rehostingStatusItem(_ change: () -> Void) {
+        transientPopover.rehost(change)
+    }
+
     // MARK: - Soft-quit reminder
 
     /// Shows a transient reminder popover anchored to the status item after a soft
     /// quit — unless the user has silenced it.
+    ///
+    /// An error notice still up outranks it, so it is skipped and nothing
+    /// records it shown: the next soft quit shows it again.
     func showSoftQuitReminder() {
         guard !viewModel.menuBarQuitReminderDismissed else { return }
 

@@ -115,7 +115,9 @@ struct ClipboardProgressStatusItemPresenterTests {
 
     @Test(
         "information or an error already up holds the reveal back until it ends",
-        arguments: [CalloutLifetime.informational(seconds: 4.5), .error(announcement: "Files not copied.")])
+        arguments: [
+            CalloutLifetime.informational(seconds: 4.5), .error(announcement: "Files not copied.", stands: { true }),
+        ])
     func anotherCalloutHoldsTheRevealBack(_ lifetime: CalloutLifetime) throws {
         let presenter = makePresenter()
         let notice = try #require(slot.showOther(lifetime))

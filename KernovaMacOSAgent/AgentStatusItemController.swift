@@ -69,8 +69,9 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     /// other signal — the paste simply yields nothing, the copy simply crosses
     /// short — so the line is shown rather than left for whenever the menu is
     /// next opened, as an error: up until the user clicks it or the status
-    /// item. The dropdown keeps the same line, which is the fallback when the
-    /// status item can't carry the callout.
+    /// item, or the clipboard's activity moves on from it. The dropdown keeps
+    /// the same line, which is the fallback when the status item can't carry
+    /// the callout.
     func clipboardNoticeRaised() {
         let activity = clipboardActivity()
         // Delivered asynchronously, so a later activity may already have
@@ -78,12 +79,20 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         guard activity.isNotice else { return }
         let line = AgentMenuText.clipboardLine(activity)
         let content = AgentClipboardNoticeViewController(line: line)
-        if case .skipped(let reason) = calloutSlot.show(content, as: .error(announcement: line)) {
+        let lifetime = CalloutLifetime.error(
+            announcement: line, stands: { [weak self] in self?.clipboardActivity() == activity })
+        if case .skipped(let reason) = calloutSlot.show(content, as: lifetime) {
             Self.logger.log(
                 .info, "Clipboard notice skipped — \(String(describing: reason), privacy: .public)")
             return
         }
         Self.logger.log(.info, "Showing a clipboard notice")
+    }
+
+    /// The clipboard's activity changed: a notice up for an activity it moved
+    /// on from goes.
+    func clipboardActivityChanged() {
+        calloutSlot.failuresChanged()
     }
 
     private static func symbolName(for state: HostConnectionState) -> String {

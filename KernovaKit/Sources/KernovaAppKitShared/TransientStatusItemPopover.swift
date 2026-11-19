@@ -3,14 +3,16 @@ import KernovaKit
 
 /// How long a callout stays in the status item's slot, which follows from the
 /// kind of thing it says.
-public enum CalloutLifetime: Equatable, Sendable {
+public enum CalloutLifetime: Sendable {
     /// Up until its owner dismisses it: a transfer's live readout.
     case heldByOwner
     /// Information, which goes away by itself after `seconds`.
     case informational(seconds: TimeInterval)
-    /// An error, which stays until the user clicks it or the status item.
-    /// `announcement` is what VoiceOver speaks as it goes up.
-    case error(announcement: String)
+    /// An error, which stays until the user clicks it or the status item, or
+    /// until the failure it reports stops standing, which `stands` reads from
+    /// wherever that failure is held. `announcement` is what VoiceOver speaks
+    /// as it goes up.
+    case error(announcement: String, stands: @MainActor @Sendable () -> Bool)
 
     /// Where the kind stands when callouts compete for the slot: a callout
     /// takes the slot from one of the same or a lower standing, and is skipped
@@ -43,16 +45,45 @@ public protocol StatusItemCalloutSlot: AnyObject {
     func dismiss(_ showing: TransientStatusItemPopover.Showing) -> Bool
 }
 
+/// What a callout slot anchors to: a menu-bar status item.
+@MainActor
+protocol CalloutAnchor: AnyObject {
+    /// Whether the app shows the item.
+    var isVisible: Bool { get }
+    /// Whether the item's button is on a screen right now.
+    var isButtonOnScreen: Bool { get }
+    var button: NSStatusBarButton? { get }
+    var menu: NSMenu? { get set }
+}
+
+extension NSStatusItem: CalloutAnchor {}
+
+/// What puts a callout's popover up and takes it down.
+@MainActor
+protocol CalloutPresenting: AnyObject {
+    /// Called after a popover this presenter showed closed by any means.
+    var onClose: (() -> Void)? { get set }
+    /// Whether a popover is up.
+    var isShown: Bool { get }
+    func show(
+        content: NSViewController, from anchor: NSView, preferredEdge: NSRectEdge, behavior: NSPopover.Behavior,
+        contentSize: NSSize?)
+    func close()
+}
+
+extension PopoverPresenter: CalloutPresenting {}
+
 /// The menu-bar status item's one popover slot: a callout anchored to the
 /// item's button, for whatever Kernova shows there without the user asking.
 ///
 /// Every callout shares the anchor, so they share the slot, and which callout
 /// holds it follows ``CalloutLifetime``'s standing. A callout is non-modal and
-/// stays up through clicks elsewhere, which go to whatever was clicked; the
-/// status item's menu opens only from the user's own click. The menu is
-/// detached for as long as a callout is up and reattached on every dismissal
-/// path, and a click on the status item while a callout is up dismisses it and
-/// opens the menu.
+/// stays up through clicks elsewhere, which go to whatever was clicked, and
+/// through Kernova re-hosting the status item (``rehost(_:)``); the status
+/// item's menu opens only from the user's own click. The menu is detached for
+/// as long as a callout is up and reattached on every dismissal path, and a
+/// click on the status item while a callout is up dismisses it and opens the
+/// menu.
 @MainActor
 public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
     /// One callout's time in the slot, handed to whoever showed it.
@@ -93,6 +124,8 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
         private(set) var current: Showing?
         /// The standing of `current`'s lifetime.
         private var currentStanding = 0
+        /// What `current`'s failure stands by, when it reports one.
+        private var currentStands: (@MainActor @Sendable () -> Bool)?
 
         /// Hands the slot to a new showing of `lifetime`, replacing whichever
         /// held it — or `nil`, leaving the slot as it was, when one of a higher
@@ -103,7 +136,14 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
             let showing = Showing(serial: lastSerial)
             current = showing
             currentStanding = lifetime.standing
+            if case .error(_, let stands) = lifetime { currentStands = stands } else { currentStands = nil }
             return showing
+        }
+
+        /// The showing up whose failure no longer stands, or `nil`.
+        @MainActor func retired() -> Showing? {
+            guard let current, let currentStands, !currentStands() else { return nil }
+            return current
         }
 
         /// Ends `showing`'s tenancy; `false` when it no longer holds the slot,
@@ -120,13 +160,18 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
         }
     }
 
-    private let statusItem: NSStatusItem
+    private let anchor: any CalloutAnchor
     /// The dropdown detached while a popover is up.
     private let menu: NSMenu
     private let isDropdownOpenProvider: () -> Bool
 
-    private let presenter = PopoverPresenter()
+    private let presenter: any CalloutPresenting
     private var tenancy = Tenancy()
+    /// What the popover up shows, so a re-host can put it back up.
+    private var presented: NSViewController?
+    /// Whether the status item is being re-hosted, whose close of the popover
+    /// up ends nothing.
+    private var rehosting = false
     /// Auto-dismiss timer for the popover currently up; cancelled when it closes
     /// earlier or a newer callout takes the slot.
     private var dismissTask: Task<Void, Never>?
@@ -135,16 +180,25 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
     ///
     /// `isDropdownOpen` reports whether that dropdown is on screen, which
     /// `NSMenu` doesn't expose.
-    public init(statusItem: NSStatusItem, menu: NSMenu, isDropdownOpen: @escaping () -> Bool) {
-        self.statusItem = statusItem
+    public convenience init(statusItem: NSStatusItem, menu: NSMenu, isDropdownOpen: @escaping () -> Bool) {
+        self.init(anchor: statusItem, menu: menu, presenter: PopoverPresenter(), isDropdownOpen: isDropdownOpen)
+    }
+
+    init(
+        anchor: any CalloutAnchor, menu: NSMenu, presenter: any CalloutPresenting,
+        isDropdownOpen: @escaping () -> Bool
+    ) {
+        self.anchor = anchor
         self.menu = menu
+        self.presenter = presenter
         self.isDropdownOpenProvider = isDropdownOpen
         super.init()
         // The backstop for a close this type didn't initiate; a close that a
         // newer callout has already replaced leaves the detachment in place.
         presenter.onClose = { [weak self] in
-            guard let self, !self.presenter.isShown else { return }
+            guard let self, !self.rehosting, !self.presenter.isShown else { return }
             self.tenancy.endAny()
+            self.presented = nil
             self.reattachMenu()
         }
     }
@@ -161,10 +215,10 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
     /// Logs nothing: the caller logs the outcome at the level its own rate
     /// calls for.
     public func show(_ content: NSViewController, as lifetime: CalloutLifetime) -> ShowResult {
-        let visible = statusItem.isVisible
-        let onScreen = statusItem.isButtonOnScreen
+        let visible = anchor.isVisible
+        let onScreen = anchor.isButtonOnScreen
         let dropdownOpen = isDropdownOpen
-        guard let button = statusItem.button, visible, onScreen, !dropdownOpen else {
+        guard let button = anchor.button, visible, onScreen, !dropdownOpen else {
             return .skipped(.unreachable(visible: visible, onScreen: onScreen, menuOpen: dropdownOpen))
         }
         guard let showing = tenancy.begin(lifetime) else {
@@ -180,17 +234,10 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
         // on every soft quit, the cursor nowhere near the item), and that open
         // dismisses the popover through the controller's `menuNeedsUpdate` within
         // a frame. Every dismissal path restores the menu.
-        statusItem.menu = nil
+        anchor.menu = nil
         button.target = self
         button.action = #selector(statusItemTapped)
 
-        // A `.transient` popover closes when the app deactivates (see
-        // `PopoverPresenter`'s `onClose` doc), and a callout outlives that: a
-        // soft quit deactivates the app moments after the reminder shows, acting
-        // on a clipboard refusal means switching to another app to retry the
-        // paste, and a transfer's readout runs while the user works elsewhere.
-        // `lifetime`, a click on the status item, and the content's own
-        // controls bound the lifetime instead.
         let shown: NSViewController
         switch lifetime {
         case .heldByOwner:
@@ -202,13 +249,12 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
                 guard !Task.isCancelled else { return }
                 self?.dismiss(showing)
             }
-        case .error(let announcement):
+        case .error(let announcement, _):
             shown = ClickToDismissCalloutController(
                 content: content, label: announcement, onDismiss: { [weak self] in self?.dismiss(showing) })
         }
-        presenter.show(
-            content: shown, from: button, preferredEdge: .minY, behavior: .applicationDefined)
-        if case .error(let announcement) = lifetime {
+        present(shown, from: button)
+        if case .error(let announcement, _) = lifetime {
             NSAccessibility.post(
                 element: shown.view, notification: .announcementRequested,
                 userInfo: [
@@ -217,6 +263,44 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
                 ])
         }
         return .shown(showing)
+    }
+
+    /// Puts `content`'s popover up from `button`.
+    private func present(_ content: NSViewController, from button: NSView) {
+        // A `.transient` popover closes when the app deactivates (see
+        // `PopoverPresenter`'s `onClose` doc), and a callout outlives that: a
+        // soft quit deactivates the app moments after the reminder shows, acting
+        // on a clipboard refusal means switching to another app to retry the
+        // paste, and a transfer's readout runs while the user works elsewhere.
+        // The lifetime, a click on the status item, and the content's own
+        // controls bound the lifetime instead.
+        presenter.show(
+            content: content, from: button, preferredEdge: .minY, behavior: .applicationDefined, contentSize: nil)
+        presented = content
+    }
+
+    /// Runs `change`, which re-hosts the status item's button — an activation
+    /// policy change does — and puts whatever holds the slot back up after it.
+    ///
+    /// A popover closes once its anchor moves to another window, and the close
+    /// a re-host brings ends nothing: the callout goes back up from the
+    /// re-hosted button, its showing and its timer unchanged.
+    public func rehost(_ change: () -> Void) {
+        rehosting = true
+        defer { rehosting = false }
+        change()
+        guard tenancy.current != nil, let presented else { return }
+        guard let button = anchor.button else { return dismiss() }
+        presenter.close()
+        present(presented, from: button)
+    }
+
+    /// Dismisses the error up when the failure it reports no longer stands.
+    ///
+    /// Call whenever what an error's `stands` reads may have changed.
+    public func failuresChanged() {
+        guard let retired = tenancy.retired() else { return }
+        dismiss(retired)
     }
 
     /// Closes `showing`'s callout if it still holds the slot, so an owner never
@@ -242,16 +326,17 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
     private func close() {
         dismissTask?.cancel()
         dismissTask = nil
+        presented = nil
         presenter.close()
         reattachMenu()
     }
 
     /// Restores the dropdown, clearing the temporary button action.
     private func reattachMenu() {
-        guard statusItem.menu == nil else { return }
-        statusItem.button?.target = nil
-        statusItem.button?.action = nil
-        statusItem.menu = menu
+        guard anchor.menu == nil else { return }
+        anchor.button?.target = nil
+        anchor.button?.action = nil
+        anchor.menu = menu
     }
 
     /// Handles a click on the status item while a popover is up and the dropdown
@@ -262,7 +347,7 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
         // inside the button-action callback the same click is still delivering
         // re-enters menu tracking mid-event.
         performOnMainRunLoop { [weak self] in
-            self?.statusItem.button?.performClick(nil)
+            self?.anchor.button?.performClick(nil)
         }
     }
 }
