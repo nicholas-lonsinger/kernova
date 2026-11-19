@@ -80,6 +80,8 @@ struct ClipboardPasteboardReaderTests {
                 (type: Self.promisedFileURLType, data: Data(file.absoluteString.utf8))
             ])
         ])
+        // Reached without a grant from the read, as by a guest agent, which has no sandbox.
+        pasteboard.sandbox.grant(file)
 
         let offered = try #require(await offer(pasteboard))
         #expect(offered.lost == 0)
@@ -197,7 +199,7 @@ struct ClipboardPasteboardReaderTests {
         #expect(source.items.count == 1)
         #expect(item.representations.compactMap(\.type.appleUTI) == Self.photosCrossing)
         #expect(item.representations.allSatisfy { $0.storage == .inline })
-        #expect(try await source.serve(item: 0, representation: 1) == .bytes(Data("jpeg".utf8)))
+        #expect(try await source.serve(item: 0, representation: 1).representation == .bytes(Data("jpeg".utf8)))
     }
 
     @Test("a readable file item crosses as its file and every type not naming it, its plain text included, as data")
@@ -227,13 +229,13 @@ struct ClipboardPasteboardReaderTests {
                 "public.plain-text", "public.utf8-plain-text", "com.apple.icns", "com.example.private-state",
             ])
         #expect(item.representations.map(\.storage) == [.file, .inline, .inline, .inline])
-        guard case .file(let served) = try await source.serve(item: 0, representation: 0) else {
+        guard case .file(let served) = try await source.serve(item: 0, representation: 0).representation else {
             throw TestFailure("the file was not served")
         }
         #expect(served.lastPathComponent == "notes.txt")
-        #expect(try await source.serve(item: 0, representation: 1) == .bytes(Data("notes.txt".utf8)))
-        #expect(try await source.serve(item: 0, representation: 2) == .bytes(Data("icns".utf8)))
-        #expect(try await source.serve(item: 0, representation: 3) == .bytes(Data("private".utf8)))
+        #expect(try await source.serve(item: 0, representation: 1).representation == .bytes(Data("notes.txt".utf8)))
+        #expect(try await source.serve(item: 0, representation: 2).representation == .bytes(Data("icns".utf8)))
+        #expect(try await source.serve(item: 0, representation: 3).representation == .bytes(Data("private".utf8)))
     }
 
     @Test(
@@ -262,7 +264,7 @@ struct ClipboardPasteboardReaderTests {
         #expect(item.representations.compactMap(\.type.appleUTI) == ["public.jpeg"] + Self.photosCrossing)
         #expect(item.representations.map(\.storage) == [.file] + Self.photosCrossing.map { _ in .inline })
         #expect(item.representations.first?.promised == true)
-        #expect(try await source.serve(item: 0, representation: 2) == .bytes(Data("jpeg".utf8)))
+        #expect(try await source.serve(item: 0, representation: 2).representation == .bytes(Data("jpeg".utf8)))
     }
 
     // MARK: - Empty
@@ -339,7 +341,7 @@ struct ClipboardPasteboardReaderTests {
         #expect(lost == 0)
         #expect(source.items.map { $0.representations.map(\.storage) } == [[.file]])
         #expect(source.items.first?.representations.first?.promised == true)
-        #expect(try await source.serve(item: 0, representation: 0) == .file(file))
+        #expect(try await source.serve(item: 0, representation: 0).representation == .file(file))
         #expect(puller.pulls.files == 1)
         #expect(pasteboard.promiseReads.isEmpty)
     }
@@ -359,7 +361,7 @@ struct ClipboardPasteboardReaderTests {
             return
         }
         #expect(source.items.first?.representations.first?.promised == true)
-        #expect(try await source.serve(item: 0, representation: 0) == .bytes(Data("upstream text".utf8)))
+        #expect(try await source.serve(item: 0, representation: 0).representation == .bytes(Data("upstream text".utf8)))
         #expect(puller.pulls.bytes == 1)
         #expect(pasteboard.promiseReads.isEmpty)
     }

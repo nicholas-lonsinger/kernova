@@ -17,6 +17,38 @@ public enum ClipboardServedRepresentation: Equatable, Sendable {
     case folder(URL)
 }
 
+/// A served representation, and the grant its file or folder is read under: whatever reads it holds the grant
+/// until it has, which for a pull's FILE or FOLDER is until its serve ends.
+public struct ClipboardServed: Sendable {
+    /// What is served.
+    public let representation: ClipboardServedRepresentation
+    /// The grant the file or folder is read under; nil when the offer holds what reaches it, or for bytes.
+    public let access: SandboxFileGrants.Grant?
+
+    init(_ representation: ClipboardServedRepresentation, access: SandboxFileGrants.Grant? = nil) {
+        self.representation = representation
+        self.access = access
+    }
+}
+
+/// How an offer reaches a file or folder it offers.
+enum ClipboardFileReach: Sendable {
+    /// At the URL a read named, through the grant that read took, which the offer holds.
+    case granted(URL)
+    /// Through a security-scoped bookmark a copy's read made, wherever the file or folder has moved since, under
+    /// a grant started for each use (docs/research/2026-11-18-pasteboard-file-grants.md).
+    case bookmarked(Data)
+
+    /// The file or folder now, and the grant that reaches it, which the caller holds while it reads; nil when a
+    /// bookmark no longer resolves.
+    func reached(through grants: SandboxFileGrants) -> (url: URL, grant: SandboxFileGrants.Grant?)? {
+        switch self {
+        case .granted(let url): (url, nil)
+        case .bookmarked(let bookmark): grants.reach(bookmark)
+        }
+    }
+}
+
 /// Why a representation cannot be served.
 public enum ClipboardServeError: Error, Equatable, Sendable {
     /// What the offer was read from is gone: the pasteboard moved on, the
@@ -44,11 +76,11 @@ public final class ClipboardOfferSource {
         /// Bytes already in memory.
         case bytes(Data)
         /// A file's bytes, served INLINE.
-        case fileContents(URL)
+        case fileContents(ClipboardFileReach)
         /// A regular file.
-        case file(URL)
+        case file(ClipboardFileReach)
         /// A directory.
-        case folder(URL)
+        case folder(ClipboardFileReach)
         /// A file promise, by its index in ``ClipboardOfferSource/promises``,
         /// called in on its first pull.
         case promise(Int)
@@ -63,6 +95,11 @@ public final class ClipboardOfferSource {
     public let items: [OfferedItem]
     /// The content is confidential: `org.nspasteboard.ConcealedType`.
     public let concealed: Bool
+    /// The grants of access to the files the offer reaches by their paths, held while the offer lives: a drop's
+    /// every file, a copy's each it couldn't bookmark.
+    public let fileAccess: PasteboardFileAccess?
+    /// What starts the grant each pull of a bookmarked file or folder is read under.
+    private let fileGrants: SandboxFileGrants
 
     private let origins: [[Origin]]
     private let pasteboard: (any ClipboardReadPasteboard)?
@@ -82,11 +119,14 @@ public final class ClipboardOfferSource {
         items: [OfferedItem], origins: [[Origin]], concealed: Bool,
         pasteboard: (any ClipboardReadPasteboard)?, changeCount: Int,
         promises: [any FilePromiseReceiving], promiseDestination: @escaping @MainActor () throws -> URL,
-        readFrom: (any ClipboardReadPasteboard, Int)? = nil
+        readFrom: (any ClipboardReadPasteboard, Int)? = nil, fileAccess: PasteboardFileAccess? = nil,
+        fileGrants: SandboxFileGrants = .shared
     ) {
         self.items = items
         self.origins = origins
         self.concealed = concealed
+        self.fileAccess = fileAccess
+        self.fileGrants = fileGrants
         self.pasteboard = pasteboard
         self.changeCount = changeCount
         self.promises = promises
@@ -160,11 +200,12 @@ public final class ClipboardOfferSource {
     /// its source takes, or until the task serving the pull is cancelled. An
     /// image file's INLINE bytes are read off the main actor, downloading the
     /// file when it is dataless (``DatalessMaterialization/on``); a FILE or
-    /// FOLDER is read by the item source serving the pull. What another
-    /// connection promised is pulled through that connection's puller now.
-    public func serve(item: Int, representation: Int) async throws(ClipboardServeError)
-        -> ClipboardServedRepresentation
-    {
+    /// FOLDER is read by the item source serving the pull, under the grant
+    /// served beside it. A copied file or folder is served from wherever its
+    /// bookmark resolves now; one whose bookmark no longer resolves is gone.
+    /// What another connection promised is pulled through that connection's
+    /// puller now.
+    public func serve(item: Int, representation: Int) async throws(ClipboardServeError) -> ClipboardServed {
         guard origins.indices.contains(item), origins[item].indices.contains(representation) else {
             throw .unavailable
         }
@@ -176,24 +217,33 @@ public final class ClipboardOfferSource {
             guard pasteboardItems.indices.contains(index),
                 let data = pasteboardItems[index].data(forType: NSPasteboard.PasteboardType(type))
             else { throw .unavailable }
-            return .bytes(data)
+            return ClipboardServed(.bytes(data))
         case .bytes(let data):
-            return .bytes(data)
-        case .fileContents(let url):
-            guard (try? url.checkResourceIsReachable()) == true else { throw .unavailable }
-            let data = await Task.detached {
-                DatalessMaterialization.on.during { try? Data(contentsOf: url, options: .mappedIfSafe) }
+            return ClipboardServed(.bytes(data))
+        case .fileContents(let reach):
+            let grants = fileGrants
+            let read = await Task.detached { () -> Result<Data, ClipboardServeError> in
+                guard let reached = reach.reached(through: grants),
+                    (try? reached.url.checkResourceIsReachable()) == true
+                else { return .failure(.unavailable) }
+                let data = withExtendedLifetime(reached.grant) {
+                    DatalessMaterialization.on.during { try? Data(contentsOf: reached.url, options: .mappedIfSafe) }
+                }
+                return data.map { .success($0) } ?? .failure(.readFailed)
             }.value
-            guard let data else { throw .readFailed }
-            return .bytes(data)
-        case .file(let url):
-            return try Self.served(url, as: .file)
-        case .folder(let url):
-            return try Self.served(url, as: .folder)
+            return ClipboardServed(.bytes(try read.get()))
+        case .file(let reach), .folder(let reach):
+            let grants = fileGrants
+            return try await Task.detached { () -> Result<ClipboardServed, ClipboardServeError> in
+                guard let reached = reach.reached(through: grants) else { return .failure(.unavailable) }
+                return Result { () throws(ClipboardServeError) in
+                    ClipboardServed(try Self.served(reached.url, as: storage), access: reached.grant)
+                }
+            }.value.get()
         case .promise(let index):
-            return try await Self.served(landing: callIn(index), as: storage)
+            return ClipboardServed(try await Self.served(landing: callIn(index), as: storage))
         case .landing(let file):
-            return try await Self.served(landing: file, as: storage)
+            return ClipboardServed(try await Self.served(landing: file, as: storage))
         case .upstream(let puller, let upstreamItem, let upstreamRepresentation) where storage == .inline:
             let bytes = await withCheckedContinuation { continuation in
                 puller.pullBytes(item: upstreamItem, representation: upstreamRepresentation) {
@@ -201,7 +251,7 @@ public final class ClipboardOfferSource {
                 }
             }
             guard let bytes else { throw .unavailable }
-            return .bytes(bytes)
+            return ClipboardServed(.bytes(bytes))
         case .upstream(let puller, let upstreamItem, let upstreamRepresentation):
             let landed = await withCheckedContinuation { continuation in
                 puller.pullFile(item: upstreamItem, representation: upstreamRepresentation) {
@@ -209,7 +259,7 @@ public final class ClipboardOfferSource {
                 }
             }
             guard let landed else { throw .unavailable }
-            return try Self.served(landed, as: storage)
+            return ClipboardServed(try Self.served(landed, as: storage))
         }
     }
 
@@ -269,7 +319,7 @@ public final class ClipboardOfferSource {
     }
 
     /// `url` served as `storage` names it, or why it cannot be.
-    private static func served(_ url: URL, as storage: Representation.Storage) throws(ClipboardServeError)
+    nonisolated private static func served(_ url: URL, as storage: Representation.Storage) throws(ClipboardServeError)
         -> ClipboardServedRepresentation
     {
         guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey]) else {

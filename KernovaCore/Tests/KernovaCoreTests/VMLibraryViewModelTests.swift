@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import KernovaAgentHost
 import KernovaCommandModel
+import KernovaKit
 import KernovaTestSupport
 import Testing
 
@@ -2100,6 +2101,28 @@ struct VMLibraryViewModelTests {
         #expect(importedIDs == Set(sources.map(\.config.id)))
         #expect(viewModel.arrivals.isEmpty)
         #expect(presenter.showError == false)
+    }
+
+    @Test("A dropped batch's imports hold the drop's grants until they have copied, then give each back once")
+    func droppedImportsHoldTheDropsGrants() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let sources = try [
+            makeImportSource(name: "Dropped VM 1", storage: storage),
+            makeImportSource(name: "Dropped VM 2", storage: storage),
+        ]
+        let pasteboard = FakePasteboard()
+        pasteboard.setFiles(sources.map(\.url))
+        let sandbox = pasteboard.sandbox
+
+        var read: (urls: [URL], access: PasteboardFileAccess)? = PasteboardFileAccess.readFileURLs(from: pasteboard)
+        #expect(viewModel.importVMs(fromDroppedURLs: read?.urls ?? [], holding: read?.access))
+        read = nil
+        #expect(sources.map { sandbox.grants(of: $0.url) } == [1, 1])
+
+        try await viewModel.awaitArrivals()
+        #expect(viewModel.instances.count == 2)
+        try await sandbox.changed.wait { sources.allSatisfy { sandbox.grants(of: $0.url) == 0 } }
+        #expect(sandbox.unheldGiveBacks.isEmpty)
     }
 
     @Test("A second arrival keeps the selection on the one the user is already watching (#487)")

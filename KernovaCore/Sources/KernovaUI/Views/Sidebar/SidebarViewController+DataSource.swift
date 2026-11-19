@@ -205,12 +205,9 @@ extension SidebarViewController: NSOutlineViewDataSource {
         case .moveSection(let section, let index):
             return acceptSectionMove(section, toSectionIndex: index)
         case .importBundles(let folder):
-            guard
-                let urls = info.draggingPasteboard.readObjects(
-                    forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]
-                ) as? [URL]
-            else { return false }
-            return viewModel.importVMs(fromDroppedURLs: urls, intoFolder: folder?.id.folderID)
+            let read = PasteboardFileAccess.readFileURLs(from: info.draggingPasteboard)
+            return viewModel.importVMs(
+                fromDroppedURLs: read.urls, intoFolder: folder?.id.folderID, holding: read.access)
         }
     }
 

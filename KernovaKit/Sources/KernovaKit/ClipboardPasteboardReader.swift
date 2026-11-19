@@ -97,13 +97,14 @@ public enum ClipboardPasteboardReader {
     }
 
     /// Classifies an item's file URLs, separating a copy that lost its file
-    /// from one that never named a file.
+    /// from one that never named a file. Its `public.file-url` is read by
+    /// `fileURL`.
     ///
     /// `.vanished` needs a `public.file-url` that *decoded* and then missed:
     /// declaring the type is not enough, because a lazy provider may vend no
     /// URL at all while the item's inline flavors remain readable.
     static func fileURLResolution(
-        in item: any ClipboardPasteboardItemReading
+        in item: any ClipboardPasteboardItemReading, readingFileURL fileURL: () -> String?
     ) -> FileURLResolution {
         let candidates: [NSPasteboard.PasteboardType] = [
             .fileURL,
@@ -113,7 +114,7 @@ public enum ClipboardPasteboardReader {
         // Only a declared type is read, so an item naming no file is never read at all.
         let declared = Set(item.types)
         for type in candidates where declared.contains(type) {
-            guard let string = item.string(forType: type),
+            guard let string = type == .fileURL ? fileURL() : item.string(forType: type),
                 let url = URL(string: string), url.isFileURL
             else { continue }
             if FileManager.default.fileExists(atPath: url.path) { return .resolved(url) }

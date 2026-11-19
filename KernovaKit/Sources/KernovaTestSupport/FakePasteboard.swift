@@ -32,6 +32,9 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     private let state = Locked(State())
     /// Whether only the test polls it (``ClipboardTestPolledPasteboard``).
     public let pollsOnlyWhenToldForTesting: Bool
+    /// The grants reading a resident item's `public.file-url` takes, as ``FakeSandbox/read(fileURL:ofItem:at:)``
+    /// says.
+    public let sandbox = FakeSandbox()
 
     /// Creates an empty pasteboard double, which no timer polls when `pollsOnlyWhenTold`: its test polls it.
     public init(pollsOnlyWhenTold: Bool = false) {
@@ -62,10 +65,22 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
                 }
             }
         }
-        return state.withLock { $0.residents }.map { representations in
-            FakePasteboardItem(representations) { type in state.withLock { $0.reads.append(type) } }
+        let writer = writer
+        let sandbox = sandbox
+        return state.withLock { $0.residents }.enumerated().map { index, representations in
+            let file = representations.first { $0.type == .fileURL }.flatMap {
+                URL(string: String(decoding: $0.data, as: UTF8.self))
+            }
+            return FakePasteboardItem(representations) { type in
+                state.withLock { $0.reads.append(type) }
+                guard type == .fileURL, let file else { return }
+                sandbox.read(fileURL: file, ofItem: index, at: writer.changeCount)
+            }
         }
     }
+
+    /// The grants ``sandbox`` counts.
+    public var fileGrants: SandboxFileGrants { sandbox.fileGrants }
 
     /// The receiver ``setFilePromise(_:)`` placed last, or none.
     @MainActor public var filePromiseReceivers: [any FilePromiseReceiving] { promiseReceivers }
