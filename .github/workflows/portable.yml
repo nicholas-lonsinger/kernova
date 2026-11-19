@@ -13,6 +13,7 @@ on:
       - 'Tools/check-linux-guest-agent.sh'
       - 'Tools/lib/static-linux-sdk.sh'
       - 'Tools/lib/linux-swift.sh'
+      - 'Tools/lib/package-pins.sh'
       - 'Tools/lib/linux-agent.sh'
       - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
   pull_request:
@@ -24,6 +25,7 @@ on:
       - 'Tools/check-linux-guest-agent.sh'
       - 'Tools/lib/static-linux-sdk.sh'
       - 'Tools/lib/linux-swift.sh'
+      - 'Tools/lib/package-pins.sh'
       - 'Tools/lib/linux-agent.sh'
       - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
   workflow_dispatch:
@@ -74,12 +76,14 @@ jobs:
         run: apt-get update && apt-get install --yes --no-install-recommends dbus file xorriso
 
       - name: Build
-        run: swift build --package-path KernovaKit
+        shell: bash
+        run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift build --
 
       # The static SDK has no Testing module, so the tests run on the
       # container's glibc toolchain.
       - name: Test
-        run: swift test --package-path KernovaKit
+        shell: bash
+        run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift test --
 
       - name: Install the Static Linux SDK
         shell: bash
@@ -141,8 +145,12 @@ jobs:
       - name: Show the toolchain
         run: swift --version
 
+      # Git for Windows' bash, so the build takes its pins the way every
+      # other platform does.
       - name: Build
-        run: swift build --package-path KernovaKit
+        shell: bash
+        run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift build --
 
       - name: Test
-        run: swift test --package-path KernovaKit
+        shell: bash
+        run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift test --

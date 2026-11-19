@@ -170,8 +170,7 @@ while [ -n "$dir" ] && [ "$dir" != "/" ]; do
 done
 
 # An arena that has only resolved packages — `xcodebuild -showBuildSettings`
-# does that, and worktree setup runs it through `xcode-build-server config` —
-# carries neither record. Its name is still a pure function of its project's
+# does that — carries neither record. Its name is still a pure function of its project's
 # path (Tools/derived-data-path.sh), so it is matched forwards against every
 # checkout this clone registers.
 [[ ${target##*/} =~ ^Kernova-[a-z]{28}$ ]] && [ -d "$target" ] || exit 1
