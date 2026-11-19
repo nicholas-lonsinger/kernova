@@ -1,5 +1,7 @@
 import AppKit
 import Foundation
+import KernovaFileTree
+import KernovaLogging
 
 /// The grants of access to files and folders this process took reading one pasteboard generation's
 /// `public.file-url`s, held while anything holds this and let go once nothing does.
@@ -7,9 +9,10 @@ import Foundation
 /// Only the first read of an item's `public.file-url` in a generation takes a grant: a later one takes none, even once
 /// that grant is given back (docs/research/2026-11-18-pasteboard-file-grants.md). So every read of a generation
 /// shares this one access while it lives, and whatever reaches a file by its path holds the access as long as it
-/// does. An item's grant is held until a read keeps a bookmark of its file, which reaches the file from then on
-/// wherever it moves, for every later read of the generation too: a copy's read bookmarks each file it can, a drop's
-/// none. A grant is given back by path, so one whose path's folder is gone stays with the process when let go.
+/// does. An item's grant is held until a bookmark of its file is made, which reaches the file from then on wherever
+/// it moves, for every later read of the generation too: a copy's read bookmarks each file it can, once whichever
+/// reads ask, and a drop's none. A grant is given back by path, so one whose path's folder is gone stays with the
+/// process when let go.
 @MainActor
 public final class PasteboardFileAccess {
     /// What this process read of one pasteboard generation.
@@ -18,9 +21,8 @@ public final class PasteboardFileAccess {
         let changeCount: Int
         /// The items whose `public.file-url` this process has read in the generation, granted or not.
         var read: Set<Int> = []
-        /// A bookmark of each item's file or folder a read made while its grant lasted, by item: how a later read of
-        /// the generation reaches it once its grant is given back.
-        var bookmarks: [Int: Data] = [:]
+        /// Where the generation's reads are in bookmarking each item's file or folder, by item.
+        var bookmarks: [Int: Bookmarking] = [:]
         /// The access holding the generation's grants, while anything holds it.
         weak var access: PasteboardFileAccess?
 
@@ -28,6 +30,23 @@ public final class PasteboardFileAccess {
             self.pasteboard = pasteboard
             self.changeCount = changeCount
         }
+    }
+
+    /// Where the generation's reads are in bookmarking one item's file or folder.
+    private enum Bookmarking {
+        /// A pass is making the bookmark, while the access that started it holds the item's grant.
+        case making(Task<Void, Never>)
+        /// Made while the item's grant lasted: how a later read of the generation reaches the file or folder once
+        /// the grant is given back.
+        case made(Data)
+        /// It couldn't be made.
+        case refused
+    }
+
+    /// Why a bookmark couldn't be made, as the error said.
+    private struct Refusal: Error {
+        let domain: String
+        let code: Int
     }
 
     /// Each pasteboard's generation this process read last, by the pasteboard's identity.
@@ -85,14 +104,68 @@ public final class PasteboardFileAccess {
 
     /// The bookmark a read of the generation made of item `index`'s file or folder, if one did.
     func bookmark(ofItem index: Int) -> Data? {
-        generation.bookmarks[index]
+        guard case .made(let bookmark) = generation.bookmarks[index] else { return nil }
+        return bookmark
     }
 
-    /// Keeps `bookmark`, of item `index`'s file or folder, for every later read of the generation, and gives the
-    /// item's grant back.
-    func keep(_ bookmark: Data, forItem index: Int) {
-        generation.bookmarks[index] = bookmark
-        granted.removeValue(forKey: index)?.release()
+    /// Bookmarks each of `files`, the generation's items' files or folders by item, that no read of the generation
+    /// has bookmarked or is bookmarking: off the main actor, while this access holds the grants the reads took, in
+    /// one pass whichever reads ask. The task ends once every one of `files` is bookmarked or refused one; a bookmark
+    /// made gives its item's grant back, and an item refused one keeps it, reached by its path.
+    func bookmarking(_ files: [(item: Int, url: URL)]) -> Task<Void, Never> {
+        var passes: [Task<Void, Never>] = files.compactMap {
+            guard case .making(let pass) = generation.bookmarks[$0.item] else { return nil }
+            return pass
+        }
+        let unmarked = files.filter { generation.bookmarks[$0.item] == nil }
+        if !unmarked.isEmpty {
+            let grants = grants
+            let pass = Task { [self] in
+                let made = await Task.detached { Self.bookmarks(of: unmarked, through: grants) }.value
+                for (file, made) in zip(unmarked, made) { settle(item: file.item, made) }
+            }
+            for file in unmarked { generation.bookmarks[file.item] = .making(pass) }
+            passes.append(pass)
+        }
+        return Task {
+            for pass in passes { await pass.value }
+        }
+    }
+
+    /// Settles item `index`'s bookmarking with `made`: a bookmark is kept for every later read of the generation and
+    /// gives the item's grant back; a refusal leaves the grant held.
+    private func settle(item index: Int, _ made: Result<Data, Refusal>) {
+        switch made {
+        case .success(let bookmark):
+            generation.bookmarks[index] = .made(bookmark)
+            granted.removeValue(forKey: index)?.release()
+        case .failure(let refusal):
+            generation.bookmarks[index] = .refused
+            guard granted[index] != nil else { return }
+            grants.logger.log(
+                .notice,
+                "Copied item \(index, privacy: .public)'s file couldn't be bookmarked (\(refusal.domain, privacy: .public) \(refusal.code, privacy: .public)), so its offer reaches it by its path, holding its access"
+            )
+        }
+    }
+
+    /// A bookmark of each of `files`, or why it couldn't be made, made through `grants` without downloading a
+    /// dataless file.
+    nonisolated private static func bookmarks(
+        of files: [(item: Int, url: URL)], through grants: SandboxFileGrants
+    ) -> [Result<Data, Refusal>] {
+        DatalessMaterialization.off.during {
+            files.map { file in
+                // A link is bookmarked as what it resolves to, which is what is read.
+                let isLink = (try? file.url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
+                do {
+                    return .success(try grants.bookmark(of: isLink ? file.url.resolvingSymlinksInPath() : file.url))
+                } catch {
+                    let error = error as NSError
+                    return .failure(Refusal(domain: error.domain, code: error.code))
+                }
+            }
+        }
     }
 
     /// Whether this holds any grant.

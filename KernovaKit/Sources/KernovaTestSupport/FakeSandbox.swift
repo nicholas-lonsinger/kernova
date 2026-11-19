@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaLogging
 import KernovaSynchronization
 
 /// The App Sandbox's grants of access to paths, counted as a Mac counts them: one count per exact path, which every
@@ -19,6 +20,7 @@ public final class FakeSandbox: Sendable {
         var bookmarksAsked = 0
         /// The paths whose file or folder refuses a bookmark.
         var refusingBookmarks: Set<String> = []
+        var logged: [String] = []
     }
 
     private let state: Locked<State>
@@ -65,6 +67,11 @@ public final class FakeSandbox: Sendable {
                 resolve: { bookmark in
                     var stale = false
                     return try? URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &stale)
+                }),
+            logger: KernovaLogger(
+                subsystem: "app.kernova", category: "SandboxFileGrants",
+                sink: KernovaLogger.ForwardingSink { _, _, _, segments in
+                    state.withLock { $0.logged.append(segments.map(\.text).joined()) }
                 }))
     }
 
@@ -99,6 +106,9 @@ public final class FakeSandbox: Sendable {
 
     /// Each path given back while it held no grant, in order.
     public var unheldGiveBacks: [String] { state.withLock { $0.unheldGiveBacks } }
+
+    /// The text of each record the grants logged, in order.
+    public var logged: [String] { state.withLock { $0.logged } }
 
     /// How many bookmarks were asked for, made or not.
     public var bookmarksAsked: Int { state.withLock { $0.bookmarksAsked } }

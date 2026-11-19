@@ -1,14 +1,10 @@
 import AppKit
 import Foundation
 import KernovaFileTree
-import KernovaLogging
 import KernovaWire
 import UniformTypeIdentifiers
 
 extension ClipboardPasteboardReader {
-    nonisolated private static let offerLogger = KernovaLogger(
-        subsystem: "app.kernova", category: "ClipboardPasteboardReader")
-
     /// What a pasteboard offers.
     public enum OfferOutcome {
         /// The pasteboard holds no item at all.
@@ -197,7 +193,7 @@ extension ClipboardPasteboardReader {
                 }
             }
 
-            if rule == .clipboard { pending = await bookmarkingFiles(of: pending, in: access, grants: grants) }
+            if rule == .clipboard { pending = await bookmarkingFiles(of: pending, in: access) }
             // The offer holds the grant of each file it reaches by its path: a drop's every one, a copy's each it
             // couldn't bookmark.
             fileAccess = access.holdsGrants ? access : nil
@@ -236,38 +232,17 @@ extension ClipboardPasteboardReader {
         }
     }
 
-    /// `pending`, each file no read of its generation has bookmarked yet bookmarked now, off the main actor and
-    /// while `access` holds the grants the reads took; `access` keeps each bookmark for later reads of the
-    /// generation, and gives its file's grant back. A file whose bookmark can't be made is reached by its path, under
-    /// the grant `access` keeps for it.
-    private static func bookmarkingFiles(
-        of pending: [PendingItem], in access: PasteboardFileAccess, grants: SandboxFileGrants
-    ) async -> [PendingItem] {
+    /// `pending`, each copied file reached by the bookmark the generation's reads made of it, once one is, or else
+    /// by its path, under the grant `access` keeps for it.
+    private static func bookmarkingFiles(of pending: [PendingItem], in access: PasteboardFileAccess) async
+        -> [PendingItem]
+    {
         let unmarked = pending.compactMap { entry -> (item: Int, url: URL)? in
             guard case .file(let url, nil, _, _, let others) = entry else { return nil }
             return (others.item, url)
         }
         guard !unmarked.isEmpty else { return pending }
-        let made = await Task.detached {
-            DatalessMaterialization.off.during {
-                unmarked.map { file -> (item: Int, bookmark: Data?) in
-                    // A link is bookmarked as what it resolves to, which is what is read.
-                    let isLink = (try? file.url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
-                    let read = isLink ? file.url.resolvingSymlinksInPath() : file.url
-                    do {
-                        return (file.item, try grants.bookmark(of: read))
-                    } catch {
-                        let error = error as NSError
-                        offerLogger.log(
-                            .notice,
-                            "Copied item \(file.item, privacy: .public)'s file couldn't be bookmarked (\(error.domain, privacy: .public) \(error.code, privacy: .public)), so its offer holds its access"
-                        )
-                        return (file.item, nil)
-                    }
-                }
-            }
-        }.value
-        for case (let item, let bookmark?) in made { access.keep(bookmark, forItem: item) }
+        await access.bookmarking(unmarked).value
         return pending.map { entry in
             guard case .file(let url, nil, let inliningImage, let promise, let others) = entry else { return entry }
             return .file(

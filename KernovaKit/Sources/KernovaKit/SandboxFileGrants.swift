@@ -1,4 +1,5 @@
 import Foundation
+import KernovaLogging
 import KernovaSynchronization
 
 /// The grants of sandbox access to files and folders this process starts and takes, counted by path: a
@@ -96,10 +97,16 @@ public final class SandboxFileGrants: Sendable {
 
     private let platform: Platform
     private let paths = Locked<[String: Holders]>([:])
+    /// Where a grant held for a file that couldn't be bookmarked is reported.
+    let logger: KernovaLogger
 
-    /// Grants that `platform` takes and gives back.
-    public init(_ platform: Platform) {
+    /// Grants that `platform` takes and gives back, reported through `logger`.
+    public init(
+        _ platform: Platform,
+        logger: KernovaLogger = KernovaLogger(subsystem: "app.kernova", category: "SandboxFileGrants")
+    ) {
         self.platform = platform
+        self.logger = logger
     }
 
     /// Starts access to the security-scoped `url`: the grant it took, or nil when it took none.

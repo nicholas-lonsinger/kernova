@@ -112,6 +112,8 @@ struct PasteboardFileAccessTests {
         var source = await offer(pasteboard, drop: false)
         #expect(source?.items.count == 2)
         #expect(files.map(sandbox.grants(of:)) == [1, 0])
+        #expect(sandbox.logged.count == 1)
+        #expect(sandbox.logged.first?.contains("item 0") == true)
         let pulled = try await servedFile(of: source)
         #expect(pulled.url.resolvingSymlinksInPath().path == files[0].resolvingSymlinksInPath().path)
         #expect(pulled.served.access == nil)
@@ -170,6 +172,29 @@ struct PasteboardFileAccessTests {
         #expect(pulls.map { $0.url.resolvingSymlinksInPath().path } == [path, path])
         #expect(sandbox.grants(of: copied) == 2)
         #expect(sandbox.bookmarksAsked == 1)
+    }
+
+    @Test("Two reads of one copy, the second while the first bookmarks, bookmark each file once and hold nothing")
+    func readsOfOneCopyBookmarkEachFileOnce() async throws {
+        let files = [try file("a.txt"), try file("b.txt")]
+        let pasteboard = FakePasteboard()
+        pasteboard.setFiles(files)
+        let sandbox = pasteboard.sandbox
+
+        // Both reads wait on the main actor before either runs, so the second reads while the first bookmarks.
+        let first = Task { await offer(pasteboard, drop: false) }
+        let second = Task { await offer(pasteboard, drop: false) }
+        let sources = [await first.value, await second.value]
+
+        #expect(sandbox.bookmarksAsked == files.count)
+        #expect(sandbox.logged.isEmpty)
+        #expect(sources.map { $0?.fileAccess == nil } == [true, true])
+        #expect(files.map(sandbox.grants(of:)) == [0, 0])
+        let path = files[0].resolvingSymlinksInPath().path
+        for source in sources {
+            #expect(try await servedFile(of: source).url.resolvingSymlinksInPath().path == path)
+        }
+        #expect(sandbox.unheldGiveBacks.isEmpty)
     }
 
     @Test("A copy read again after its first offer went serves its file through the bookmark the first read made")
