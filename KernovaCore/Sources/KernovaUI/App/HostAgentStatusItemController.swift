@@ -105,11 +105,9 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// Which surface presents each VM's refusal.
     private var noticeLedger = ClipboardNoticeLedger()
 
-    /// How long a clipboard notice stays up unattended.
-    private static let clipboardNoticeDuration: TimeInterval = 6
-
-    /// How long the soft-quit reminder stays up unattended.
-    private static let softQuitReminderDuration: TimeInterval = 4.5
+    /// How long the soft-quit reminder, which is information, stays up
+    /// unattended.
+    private static let softQuitReminderLifetime = CalloutLifetime.informational(seconds: 4.5)
 
     init(
         viewModel: VMLibraryViewModel,
@@ -139,6 +137,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                 _ = self.currentRows()
                 for instance in self.viewModel.instances {
                     _ = instance.clipboardTransferReport
+                    _ = instance.clipboardRefusal
                 }
                 _ = self.heldCounts
             },
@@ -147,6 +146,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                 self.transferReportsChanged()
                 self.heldAlertsChanged()
                 self.syncMenuIfOpen()
+                self.transientPopover.failuresChanged()
                 self.presentPendingNotices()
             }
         )
@@ -205,27 +205,29 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Clipboard notice
 
-    /// Presents each VM's newly raised refusal where ``ClipboardNoticeLedger``
-    /// routes it.
+    /// Presents each VM's newly raised refusal (``VMInstance/clipboardRefusal``)
+    /// where ``ClipboardNoticeLedger`` routes it, as an error: up until the user
+    /// clicks it or the status item, or the refusal stops standing.
     ///
     /// A notice the status item can't carry is dropped rather than deferred:
-    /// the dropdown's own line is the fallback, and a refusal replayed later
+    /// the dropdown's line, which reads the same refusal for as long as it
+    /// stands, is the fallback, and a refusal replayed later
     /// would interrupt for something the user has moved past. A refusal the
     /// *guest* user's gesture produced is not presented here at all — the
     /// guest's own status item announces it over there.
     private func presentPendingNotices() {
         for instance in viewModel.instances {
-            guard case .finished(let finish) = instance.clipboardTransferReport,
-                finish.failure != nil, finish.gesture.isMadeHere,
+            guard let finish = instance.clipboardRefusal, finish.gesture.isMadeHere,
                 let wording = ClipboardTransferWording.wording(
                     for: finish, vmName: instance.name),
                 noticeLedger.route(finish.date, for: instance.instanceID, dropdownIsOpen: isMenuOpen)
                     == .notice
             else { continue }
             let content = ClipboardNoticeViewController(wording: wording)
-            if case .skipped(let reason) = transientPopover.show(
-                content, for: Self.clipboardNoticeDuration)
-            {
+            let lifetime = CalloutLifetime.error(
+                announcement: "\(wording.headline) \(wording.message)",
+                stands: { [weak instance] in instance?.clipboardRefusal == finish })
+            if case .skipped(let reason) = transientPopover.show(content, as: lifetime) {
                 Self.logger.log(
                     .info,
                     "Clipboard notice for '\(instance.name, privacy: .public)' skipped — \(String(describing: reason), privacy: .public)"
@@ -238,10 +240,19 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
         }
     }
 
+    /// Runs `change`, an activation-policy change, which re-hosts the status
+    /// item: whatever callout is up goes back up after it.
+    func rehostingStatusItem(_ change: () -> Void) {
+        transientPopover.rehost(change)
+    }
+
     // MARK: - Soft-quit reminder
 
     /// Shows a transient reminder popover anchored to the status item after a soft
     /// quit — unless the user has silenced it.
+    ///
+    /// An error notice still up outranks it, so it is skipped and nothing
+    /// records it shown: the next soft quit shows it again.
     func showSoftQuitReminder() {
         guard !viewModel.menuBarQuitReminderDismissed else { return }
 
@@ -251,9 +262,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             Self.logger.log(.info, "Soft-quit menu-bar reminder silenced by the user")
             self.transientPopover.dismiss()
         })
-        if case .skipped(let reason) = transientPopover.show(
-            content, for: Self.softQuitReminderDuration)
-        {
+        if case .skipped(let reason) = transientPopover.show(content, as: Self.softQuitReminderLifetime) {
             Self.logger.log(
                 .info,
                 "Soft-quit reminder skipped — \(String(describing: reason), privacy: .public)")
@@ -332,8 +341,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         // Opening the dropdown means the user found the icon — the soft-quit
-        // reminder has done its job, and the notice's line and the readout are
-        // in the menu below.
+        // reminder has done its job, and the refusal's line, while it stands,
+        // and the readout are in the menu below.
         transientPopover.dismiss()
 
         menu.removeAllItems()

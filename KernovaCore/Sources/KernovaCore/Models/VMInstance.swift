@@ -137,6 +137,11 @@ package final class VMInstance {
     /// macOS 12 and cannot be `@Observable` itself.
     package private(set) var clipboardTransferReport: ClipboardTransferReport = .idle
 
+    /// The clipboard refusal that stands for this VM, which a running readout
+    /// can hide from ``clipboardTransferReport``; mirrored from
+    /// ``clipboardTransfers`` for the same reason.
+    package private(set) var clipboardRefusal: ClipboardTransferFinish?
+
     /// `true` while the absence watchdog warns about some agent scope
     /// (``warnedMissingAgents``).
     var agentExpectedButMissing: Bool { !warnedMissingAgents.isEmpty }
@@ -492,6 +497,9 @@ package final class VMInstance {
         snapshots.instance = self
         clipboardTransfers.onReportChanged = { [weak self] report in
             self?.clipboardTransferReport = report
+        }
+        clipboardTransfers.onRefusalChanged = { [weak self] refusal in
+            self?.clipboardRefusal = refusal
         }
         hubClipboard.hub = agentHub
         hubClipboard.label = { [weak self] in self?.name ?? "VM" }

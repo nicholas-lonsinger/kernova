@@ -127,6 +127,11 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
                 DispatchQueue.main.async {
                     self?.statusItemController?.clipboardNoticeRaised()
                 }
+            },
+            onActivityChanged: { [weak self] in
+                DispatchQueue.main.async {
+                    self?.statusItemController?.clipboardActivityChanged()
+                }
             })
         let state = DarwinSessionState.sessionPeer()
         clipboard.setOnConsole(state.console == .on)
@@ -170,6 +175,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             connectionState: { peer.hostConnection },
             logForwardingEnabled: { logs.isForwarding },
             clipboardActivity: { [weak clipboard] in clipboard?.activity ?? .disabled },
+            clipboardNotice: { [weak clipboard] in clipboard?.standingNotice },
             onQuit: stop
         )
 

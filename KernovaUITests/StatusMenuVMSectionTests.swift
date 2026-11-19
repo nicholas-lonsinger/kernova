@@ -88,6 +88,31 @@ struct StatusMenuVMSectionTests {
         #expect(rows.map(\.noticeText) == ["Clipboard: too large to copy to your Mac", nil])
     }
 
+    @Test("A refusal's dropdown line stays while another transfer's bar runs over it")
+    func theLineOutlivesARunningBar() throws {
+        let instance = makeInstance(name: "Build VM", phase: .running(sessionID: UUID()))
+        reportRefusal(.diskFull(needed: 4096, available: 0), gesture: .drop, on: instance)
+        let line = try #require(StatusMenuVMSection.rows(for: [.vm(instance)]).first?.noticeText)
+
+        let drag = ClipboardTransferOperation(
+            gesture: .dragOut, direction: .inbound, peerName: instance.name, revealDelay: 0, idleGap: 0,
+            clock: GatedEngineClock(), reporter: instance.clipboardTransfers)
+        instance.clipboardTransfers.publish(
+            from: drag,
+            .running(
+                ClipboardProgressSnapshot(
+                    direction: .inbound, peerName: instance.name, currentItemName: nil, filesCompleted: 0,
+                    fileCount: 2, bytesTransferred: 10, totalBytes: 100, bytesPerSecond: nil,
+                    secondsRemaining: nil, gesture: .dragOut, elapsedSeconds: 1),
+                since: Date()))
+        guard case .running = instance.clipboardTransferReport else {
+            Issue.record("the drag's bar did not take the report")
+            return
+        }
+
+        #expect(StatusMenuVMSection.rows(for: [.vm(instance)]).first?.noticeText == line)
+    }
+
     @Test("An arrival's row shows its operation, not a status")
     func rowModelPreparing() {
         let configuration = VMConfiguration(

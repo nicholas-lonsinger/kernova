@@ -49,7 +49,22 @@ public final class ClipboardTransferReporter {
 
     /// The last operation to finish, until something displaces it, the dwell
     /// retires it, or a caller clears it.
-    private var lastFinish: ClipboardTransferFinish?
+    private var lastFinish: ClipboardTransferFinish? {
+        didSet {
+            let held = refusal
+            refusal = lastFinish?.failure == nil ? nil : lastFinish
+            if refusal != held { onRefusalChanged?(refusal) }
+        }
+    }
+
+    /// The refusal that stands, whether or not a running readout hides it from
+    /// ``report``: from the moment it is recorded until a newer refusal
+    /// replaces it, or an operation of this side's gesture begun after it
+    /// completes or is cancelled.
+    public private(set) var refusal: ClipboardTransferFinish?
+
+    /// Called on each distinct value of ``refusal``.
+    public var onRefusalChanged: ((ClipboardTransferFinish?) -> Void)?
 
     /// Whether a repeat of ``lastFinish`` should collapse into it rather than be
     /// announced again.

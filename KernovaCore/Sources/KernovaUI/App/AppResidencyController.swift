@@ -208,7 +208,7 @@ final class AppResidencyController: WindowResidencyHosting {
             // the auto-start pass rides along with it.
             presentSummonedInterface()
         case .headless:
-            focus.setActivationPolicy(.accessory)
+            setActivationPolicy(.accessory)
             host?.armAutoStartPass()
         }
     }
@@ -323,7 +323,7 @@ final class AppResidencyController: WindowResidencyHosting {
         // Only a windowless app is ever `.accessory`, and a windowless reopen
         // presents, so this is the policy any show lands on — asserted a tick
         // ahead of it for the menu-bar quirk (FB7743313).
-        focus.setActivationPolicy(.regular)
+        setActivationPolicy(.regular)
         Task { @MainActor in
             // A reopen can arrive before the system's own unhide (Chromium's
             // `FocusWindowSetOnCurrentSpace`: "this call races with the system
@@ -396,7 +396,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// Puts `target` on screen, and for a summon asks for activation once it is
     /// ordered front.
     private func presentSummonedInterface(showing target: SummonTarget, arrival: Arrival) {
-        focus.setActivationPolicy(.regular)
+        setActivationPolicy(.regular)
         // Defer the show to the next runloop tick so the menu bar has refreshed
         // (the .accessory→.regular menu-bar quirk, FB7743313).
         Task { @MainActor in
@@ -470,7 +470,7 @@ final class AppResidencyController: WindowResidencyHosting {
     /// ``ActivationRequester/requestActivation()``, once the verb has passed
     /// its checks and is about to surface.
     private func prepareForExternalSurface() {
-        focus.setActivationPolicy(.regular)
+        setActivationPolicy(.regular)
         leaveHiddenState()
     }
 
@@ -495,7 +495,7 @@ final class AppResidencyController: WindowResidencyHosting {
         // passes through — a display window an `open` verb asked for, a
         // guest-agent status window, Settings.
         host?.armAutoStartPass()
-        focus.setActivationPolicy(.regular)
+        setActivationPolicy(.regular)
     }
 
     // MARK: - Soft Quit
@@ -516,8 +516,17 @@ final class AppResidencyController: WindowResidencyHosting {
         // `.regular` → `.accessory` flip lands 20–75ms later, which re-hosts the
         // menu-bar status item and tears the just-anchored popover down with it
         // (observed: the reminder flashed for a frame and vanished).
-        focus.setActivationPolicy(.accessory)
+        setActivationPolicy(.accessory)
         statusItemController?.showSoftQuitReminder()
+    }
+
+    /// Sets the activation policy, which re-hosts the menu-bar status item
+    /// when it changes, so the status item's callout is put back up after it.
+    private func setActivationPolicy(_ policy: NSApplication.ActivationPolicy) {
+        guard focus.activationPolicy != policy, let statusItemController else {
+            return focus.setActivationPolicy(policy)
+        }
+        statusItemController.rehostingStatusItem { focus.setActivationPolicy(policy) }
     }
 
     // MARK: - Window Reconcile
@@ -561,9 +570,9 @@ final class AppResidencyController: WindowResidencyHosting {
             hasUninterruptibleWork: viewModel.hasUninterruptibleWork
         ) {
         case .showDockIcon:
-            focus.setActivationPolicy(.regular)
+            setActivationPolicy(.regular)
         case .goHeadless:
-            focus.setActivationPolicy(.accessory)
+            setActivationPolicy(.accessory)
         case .waitForUnhide:
             break
         case .quit:
@@ -594,10 +603,10 @@ final class AppResidencyController: WindowResidencyHosting {
             keepInMenuBar: viewModel.keepInMenuBarOnQuit)
         switch outcome {
         case .showDockIcon:
-            focus.setActivationPolicy(.regular)
+            setActivationPolicy(.regular)
         case .goHeadless:
             Self.logger.log(.notice, "Unhidden with no window left — dropping to the status item")
-            focus.setActivationPolicy(.accessory)
+            setActivationPolicy(.accessory)
         case .presentLibrary:
             Self.logger.log(.notice, "Unhidden with no window left — showing the library")
             presentSummonedInterface()

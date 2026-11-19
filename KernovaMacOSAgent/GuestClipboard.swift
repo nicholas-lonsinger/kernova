@@ -23,23 +23,34 @@ final class GuestClipboard {
     let end: ClipboardEnd<ClipboardGuest>
 
     private let onNotice: @Sendable () -> Void
+    private let onActivityChanged: @Sendable () -> Void
     /// The paste ceiling the host's policy sets: what the end's publishes and pulls read, from any thread.
     private let pasteCeiling: Locked<Int>
 
     /// The latest clipboard activity, for the menu-bar status line.
-    private(set) var activity: ClipboardActivity = .disabled
+    private(set) var activity: ClipboardActivity = .disabled {
+        didSet {
+            standingNotice = ClipboardActivity.standingNotice(standingNotice, after: activity)
+            onActivityChanged()
+        }
+    }
+
+    /// The notice that stands: the latest one, until an activity after it
+    /// ends it (``ClipboardActivity/standingNotice(_:after:)``).
+    private(set) var standingNotice: ClipboardActivity?
 
     /// A clipboard over `pasteboard`, landing the host's representations and calling in copied promises under
-    /// `stagingRoot`, logging through `logger`, and raising `onNotice` when a refusal lands in ``activity``. A paste
-    /// lands no more than `pasteCeiling` bytes, and a copy is offered only at the host's request, until the host's
-    /// policy says otherwise.
+    /// `stagingRoot`, logging through `logger`, raising `onActivityChanged` whenever ``activity`` changes, and
+    /// `onNotice` when a refusal lands in it. A paste lands no more than `pasteCeiling` bytes, and a copy is offered
+    /// only at the host's request, until the host's policy says otherwise.
     init(
         pasteboard: any ClipboardPasteboard, stagingRoot: ProcessStagingRoot,
         pasteCeiling: Int = ClipboardPasteLimit.defaultBytes, logger: KernovaLogger = GuestClipboard.defaultLogger,
-        onNotice: @escaping @Sendable () -> Void = {}
+        onNotice: @escaping @Sendable () -> Void = {}, onActivityChanged: @escaping @Sendable () -> Void = {}
     ) {
         self.logger = logger
         self.onNotice = onNotice
+        self.onActivityChanged = onActivityChanged
         let ceiling = Locked(pasteCeiling)
         self.pasteCeiling = ceiling
         // Its own provider registry: the providers it holds are the guest pasteboard's alone.
@@ -51,8 +62,13 @@ final class GuestClipboard {
     }
 
     /// The general pasteboard's clipboard.
-    convenience init(stagingRoot: ProcessStagingRoot, onNotice: @escaping @Sendable () -> Void) {
-        self.init(pasteboard: NSPasteboard.general, stagingRoot: stagingRoot, onNotice: onNotice)
+    convenience init(
+        stagingRoot: ProcessStagingRoot, onNotice: @escaping @Sendable () -> Void,
+        onActivityChanged: @escaping @Sendable () -> Void
+    ) {
+        self.init(
+            pasteboard: NSPasteboard.general, stagingRoot: stagingRoot, onNotice: onNotice,
+            onActivityChanged: onActivityChanged)
     }
 
     /// CLIPBOARD's owner on the session peer's connection, calling into it through `calls`.

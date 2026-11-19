@@ -60,4 +60,27 @@ enum ClipboardActivity: Equatable, Sendable {
             return false
         }
     }
+
+    /// The notice that stands once `later` follows `standing`: `later` when it
+    /// is a notice, `standing` while `later` leaves it standing, else none.
+    static func standingNotice(_ standing: ClipboardActivity?, after later: ClipboardActivity) -> ClipboardActivity? {
+        if later.isNotice { return later }
+        return later.endsStandingNotice ? nil : standing
+    }
+
+    /// Whether this activity, coming after a notice, ends it: a newer notice
+    /// replaces it, and the connection ending withdraws the offers on both
+    /// sides, so nothing it reports can still be acted on.
+    ///
+    /// Nothing in the guest records whether the failure a notice reports still
+    /// stands — an activity is only the latest event — so no other activity
+    /// ends one; a click does.
+    var endsStandingNotice: Bool {
+        switch self {
+        case .pasteRefused, .copyCarriedNothing, .copyPartlyCarried, .disabled:
+            return true
+        case .enabled, .offeredToHost, .offeredFromHost, .sentToHost, .receivedFromHost:
+            return false
+        }
+    }
 }
