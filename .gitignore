@@ -31,6 +31,7 @@ Packages/
 Package.resolved
 *.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/configuration/
 !*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+!Tools/DeadCode/Package.resolved
 
 # CocoaPods
 Pods/

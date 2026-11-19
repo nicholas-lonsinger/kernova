@@ -7,6 +7,8 @@
 
 # shellcheck source=static-linux-sdk.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/static-linux-sdk.sh"
+# shellcheck source=pinned-swift.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pinned-swift.sh"
 
 # ubuntu_sdk_id <swift version>: the id of the glibc SDK for Ubuntu 24.04 on
 # aarch64 that Tools/install-ubuntu-sdk.sh generates, the system the Linux CI
@@ -42,8 +44,7 @@ stale_kernova_sdks() {
 }
 
 # linux_swift <build|package> <argument>...: runs that SwiftPM command over
-# KernovaKit with the pinned toolchain, its dependencies held to the tracked
-# Package.resolved, the file Xcode builds the host against. The arguments name
+# KernovaKit through pinned_swift with the pinned toolchain. The arguments name
 # the destination's SDK.
 #
 # On macOS the toolchain is swiftly's, run with the environment scrubbed so
@@ -51,20 +52,13 @@ stale_kernova_sdks() {
 # KERNOVA_PORTABLE_ONLY set, so the manifest declares what it declares on Linux.
 # On Linux it is the `swift` on PATH.
 linux_swift() {
-    local command=$1 repo pin
+    local command=$1
     shift
-    repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-    # SwiftPM reads a package's pins from beside its manifest, so the tracked
-    # pin is copied there; rewritten only when it changes, so nothing
-    # re-resolves.
-    pin="$repo/Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
-    cmp -s "$pin" "$repo/KernovaKit/Package.resolved" || cp "$pin" "$repo/KernovaKit/Package.resolved"
-
     local swift=(swift "$command")
     if [ "$(uname -s)" = Darwin ]; then
         swift=(env -i "HOME=$HOME" PATH=/usr/bin:/bin KERNOVA_PORTABLE_ONLY=1)
         [ -z "${SWIFTLY_HOME_DIR:-}" ] || swift+=("SWIFTLY_HOME_DIR=$SWIFTLY_HOME_DIR")
         swift+=("$(swiftly_binary)" run swift "$command" "+$(pinned_swift_version)" --swift-sdks-path "$(swift_sdks_dir)")
     fi
-    "${swift[@]}" --package-path "$repo/KernovaKit" --only-use-versions-from-resolved-file "$@"
+    pinned_swift "$(dirname "${BASH_SOURCE[0]}")/../../KernovaKit" "${swift[@]}" -- "$@"
 }
