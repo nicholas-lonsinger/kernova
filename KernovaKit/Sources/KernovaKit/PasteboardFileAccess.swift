@@ -34,7 +34,7 @@ public final class PasteboardFileAccess {
 
     /// Where the generation's reads are in bookmarking one item's file or folder.
     private enum Bookmarking {
-        /// A pass is making the bookmark, while the access that started it holds the item's grant.
+        /// A pass is making the bookmark.
         case making(Task<Void, Never>)
         /// Made while the item's grant lasted: how a later read of the generation reaches the file or folder once
         /// the grant is given back.

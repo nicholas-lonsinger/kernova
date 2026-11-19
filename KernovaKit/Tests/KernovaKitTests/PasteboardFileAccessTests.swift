@@ -230,6 +230,7 @@ struct PasteboardFileAccessTests {
         #expect(reread.urls == [copied])
         #expect(!reread.access.holdsGrants)
         #expect(sandbox.unheldGiveBacks.isEmpty)
+        #expect(sandbox.logged.isEmpty)
     }
 
     @Test("A read of a drop's file URLs holds their grants while its access lives, and gives each back once after")
