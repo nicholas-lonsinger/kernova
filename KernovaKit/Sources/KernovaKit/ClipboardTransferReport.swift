@@ -79,10 +79,8 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case sourceUnreadable
     /// The bytes arrived but could not be written to a file on this side.
     case stagingFailed
-    /// This side was not permitted (`EPERM`) to write `refused` of the gesture's items where they were to land.
-    /// `landedBeside` is how many others it wrote into a folder one of those was refused in: one or more means
-    /// that folder took this side's writes, so the refusal was of the refused paths alone.
-    case writesRefused(refused: Int, landedBeside: Int)
+    /// Some of a drag out's items did not land, each for a reason of its own, and the others did.
+    case dragOutShortfall(DragOutAccount)
     /// Items the sending side did not send whole, and the rest crossed whole;
     /// `count` is how many. A gesture that reads a pasteboard leaves out a file
     /// it cannot read or that is gone, the rest of its item crossing. A drop's
@@ -98,6 +96,35 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case nothingToCopy
     /// A copy was written without its `count` files, which together are over the transfer ceiling `limitBytes`.
     case filesLeftOut(count: Int, limitBytes: Int)
+}
+
+/// What a drag out of the VM came to, item by item, once some of its items failed: observed counts only.
+public struct DragOutAccount: Equatable, Sendable {
+    /// The items the drag carried.
+    public var items: Int
+    /// The items written where they were dropped.
+    public var landed = 0
+    /// The items this side was not permitted (`EPERM`) to write where they were dropped.
+    public var refused = 0
+    /// The items the VM could not read.
+    public var unreadable = 0
+    /// The items whose bytes arrived but could not be written on this side.
+    public var unwritable = 0
+    /// The items an app in the VM never supplied.
+    public var unsupplied = 0
+    /// The items that failed for a reason with no more specific count.
+    public var failed = 0
+    /// Whether a refused item's folder took another item of the drag: the folder takes this side's writes, so the
+    /// refusal was of the refused paths alone.
+    public var refusedBesideLanded = false
+    /// Whether a refused item was a promise, which its app in the VM writes only when called in, so no folder in
+    /// the VM holds it.
+    public var refusedPromise = false
+
+    /// The account of a drag of `items` items, none of which has landed or failed yet.
+    public init(items: Int) {
+        self.items = items
+    }
 }
 
 /// Why this side ended a drop the VM had not finished landing, as this side observed it.
@@ -116,6 +143,7 @@ extension ClipboardTransferFailure {
     public var deliveredTheRest: Bool {
         switch self {
         case .itemsSkipped, .filesLeftOut: true
+        case .dragOutShortfall(let account): account.landed > 0
         default: false
         }
     }

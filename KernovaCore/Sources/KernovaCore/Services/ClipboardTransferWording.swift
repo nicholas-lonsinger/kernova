@@ -192,8 +192,8 @@ package struct ClipboardTransferWording: Equatable {
                 message: "\(reader) couldn't read one of the items, so \(unfinished(gesture)) didn't finish.",
                 menuLine: "\(prefix): \(reader.lowercasedFirst) couldn't read an item")
 
-        // Only a drag out raises a refused write.
-        case (.stagingFailed, _), (.writesRefused, _):
+        // Only a drag out raises a shortfall account.
+        case (.stagingFailed, _), (.dragOutShortfall, _):
             return ClipboardTransferWording(
                 headline: "Clipboard not pasted from \(vm).",
                 message: "The copied file couldn't be saved to disk, so the paste didn't finish.",
@@ -202,9 +202,8 @@ package struct ClipboardTransferWording: Equatable {
         case (.itemsSkipped(let count), .drop):
             return ClipboardTransferWording(
                 headline: "Some files not copied to \(vm).",
-                message: count == 1
-                    ? "One item couldn't be read, so it wasn't sent to the VM. The rest were."
-                    : "\(count) items couldn't be read, so they weren't sent to the VM. The rest were.",
+                message:
+                    "\(itemCount(count).capitalizedFirst) couldn't be read, so \(count == 1 ? "it wasn't" : "they weren't") sent to the VM. The rest were.",
                 menuLine: "Drop: some files weren't sent")
 
         // A read of the Mac's clipboard leaves out only a file it cannot open or that is gone, the rest of its
@@ -261,30 +260,14 @@ package struct ClipboardTransferWording: Equatable {
     ///
     /// Says the drag did not finish rather than that nothing arrived: a
     /// destination asks for each item in turn, so other items may be there.
-    ///
-    /// A refused write names a step that helps only when a file of the same
-    /// drag landed in the folder the write was refused in: that folder takes
-    /// Kernova's writes, so the refusal was of those paths alone, and a drag of
-    /// fewer items asks this Mac for fewer of them. A refusal with nothing
-    /// landed beside it may be of the folder itself, so it says only that.
     private static func dragOutWording(
         for failure: ClipboardTransferFailure, vm: String
     ) -> ClipboardTransferWording {
-        var title = headline(for: .dragOut, vm: vm)
         let message: String
         let menuLine: String
         switch failure {
-        case .writesRefused(let refused, let landedBeside) where landedBeside > 0:
-            title = "Some files not copied from \(vm)."
-            message =
-                "This Mac didn't allow Kernova to save \(refused.formatted()) of the files where you dropped them, though Kernova saved \(landedBeside.formatted()) others there. Drag the folder that holds them in the VM instead, which goes as one item."
-            menuLine = "Drag: some files not saved; drag their folder instead"
-        case .writesRefused(let refused, _):
-            message =
-                refused == 1
-                ? "This Mac didn't allow Kernova to save the file where you dropped it, so the drag didn't finish."
-                : "This Mac didn't allow Kernova to save the files where you dropped them, so the drag didn't finish."
-            menuLine = "Drag: this Mac didn't allow saving there"
+        case .dragOutShortfall(let account):
+            return shortfallWording(account, vm: vm)
         case .diskFull(let needed, let available):
             let detail = diskFullDetail(needed: needed, available: available)
             let base = "This Mac ran out of disk space receiving the files, so the drag didn't finish"
@@ -296,27 +279,74 @@ package struct ClipboardTransferWording: Equatable {
         case .timedOut:
             message = "The VM stopped sending the files, so the drag was called off."
             menuLine = "Drag: the VM stopped sending the files"
-        case .stagingFailed:
-            message = "The files couldn't be saved where you dropped them, so the drag didn't finish."
-            menuLine = "Drag: the files couldn't be saved"
-        case .peerReported(.dragItemUnavailable):
-            message = "An app in the VM didn't write a dragged item, so the drag didn't finish."
-            menuLine = "Drag: an app in the VM didn't write an item"
-        case .peerReported:
-            message = "The VM couldn't send the files, so the drag didn't finish."
-            menuLine = "Drag: the files didn't reach your Mac"
-        case .sourceUnreadable:
-            message = "The VM couldn't read one of the items, so the drag didn't finish."
-            menuLine = "Drag: the VM couldn't read an item"
         case .tooLarge:
             message = "The drag holds more items than can be dragged out of the VM at once."
             menuLine = "Drag: too many items to drag out at once"
-        case .transferFailed, .itemsSkipped, .itemsUnreadable, .sendFailed, .dropStopped, .nothingToCopy,
-            .filesLeftOut:
+        case .transferFailed, .peerReported, .sourceUnreadable, .stagingFailed, .itemsSkipped, .itemsUnreadable,
+            .sendFailed, .dropStopped, .nothingToCopy, .filesLeftOut:
             message = "The transfer from the VM failed, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"
         }
-        return ClipboardTransferWording(headline: title, message: message, menuLine: menuLine)
+        return ClipboardTransferWording(
+            headline: headline(for: .dragOut, vm: vm), message: message, menuLine: menuLine)
+    }
+
+    /// The wording for a drag out whose items each landed or failed on their
+    /// own: how many landed of how many, how many failed for each reason, and
+    /// what helps when that is known.
+    ///
+    /// A refused write names a step only when another item of the drag
+    /// landed in the folder it was refused in: that folder takes Kernova's
+    /// writes, so the refusal was of those paths alone, and a drag of fewer
+    /// items asks this Mac for fewer of them. A folder in the VM holds only
+    /// items that are not promises, so a refused promise leaves out that hint.
+    private static func shortfallWording(_ account: DragOutAccount, vm: String) -> ClipboardTransferWording {
+        let lead: String
+        if account.landed > 0 {
+            let verb = account.landed == 1 ? "was" : "were"
+            lead = "\(account.landed.formatted()) of the \(account.items.formatted()) items \(verb) copied."
+        } else {
+            lead =
+                account.items == 1
+                ? "The item wasn't copied." : "None of the \(account.items.formatted()) items were copied."
+        }
+        var sentences = [lead]
+        let refused = account.refused == 1 ? "it" : "them"
+        if account.refused > 0 {
+            sentences.append(
+                "This Mac didn't allow Kernova to save \(itemCount(account.refused)) where you dropped \(refused).")
+        }
+        if account.unreadable > 0 {
+            sentences.append("\(itemCount(account.unreadable).capitalizedFirst) couldn't be read in the VM.")
+        }
+        if account.unwritable > 0 {
+            sentences.append("\(itemCount(account.unwritable).capitalizedFirst) couldn't be written on this Mac.")
+        }
+        if account.unsupplied > 0 {
+            sentences.append("An app in the VM didn't supply \(itemCount(account.unsupplied)).")
+        }
+        if account.failed > 0 {
+            sentences.append("\(itemCount(account.failed).capitalizedFirst) failed to transfer.")
+        }
+        let stepHolds = account.refused > 0 && account.refusedBesideLanded
+        if stepHolds {
+            sentences.append(
+                account.refusedPromise
+                    ? "Drag fewer at a time."
+                    : "Drag fewer at a time, or drag a folder that holds \(refused) \u{2014} a folder goes as one item."
+            )
+        }
+        let noun = account.items == 1 ? "item" : "items"
+        return ClipboardTransferWording(
+            headline: account.landed > 0 ? "Some files not copied from \(vm)." : headline(for: .dragOut, vm: vm),
+            message: sentences.joined(separator: " "),
+            menuLine: "Drag: \(account.landed.formatted()) of \(account.items.formatted()) \(noun) copied"
+                + (stepHolds ? "; drag fewer at a time" : ""))
+    }
+
+    /// `count` items, for the middle of a sentence: "one item", or the count.
+    private static func itemCount(_ count: Int) -> String {
+        count == 1 ? "one item" : "\(count.formatted()) items"
     }
 
     /// What the gesture that did not finish is called in the sentence saying so.
@@ -360,5 +390,12 @@ extension String {
     fileprivate var lowercasedFirst: String {
         guard let first else { return self }
         return first.lowercased() + dropFirst()
+    }
+
+    /// The string with its first character uppercased, for a phrase that
+    /// begins a sentence.
+    fileprivate var capitalizedFirst: String {
+        guard let first else { return self }
+        return first.uppercased() + dropFirst()
     }
 }
