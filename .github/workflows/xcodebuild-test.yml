@@ -189,14 +189,13 @@ jobs:
         if: success() || failure()
         run: Tools/brew-install.sh shellcheck
 
-      # The protoc and protoc-gen-swift Tools/check-generated-protos.sh builds
-      # for the pinned swift-protobuf revision; a cold build takes minutes.
-      - name: Restore the protobuf generators
+      # The protoc and protoc-gen-swift Tools/check-generated-protos.sh runs; a
+      # cold build takes minutes.
+      - name: Install the protobuf generators
         if: success() || failure()
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: ./.github/actions/tool-cache
         with:
-          path: ~/Library/Caches/kernova-dev/swift-protobuf-*
-          key: swift-protobuf-tools-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          installer: Tools/install-protoc.sh
 
       - name: make lint
         if: success() || failure()
