@@ -1513,8 +1513,9 @@ package final class VMLibraryViewModel {
     // MARK: - Import
 
     /// Filters `urls` to `.kernova` bundles and imports the batch, unwaited,
-    /// into the folder `folder` identifies, if any
-    /// (``VMCommandCore/beginImports(from:intoFolder:)``).
+    /// into the folder `folder` identifies, if any, each copy holding `access`,
+    /// a drop's grants of `urls`, until it has read its bundle
+    /// (``VMCommandCore/beginImports(from:intoFolder:holding:)``).
     ///
     /// Every import reserves its destination and registers its arrival before
     /// this returns, so two overlapping triggers never collide on a
@@ -1525,11 +1526,13 @@ package final class VMLibraryViewModel {
     /// Returns whether any bundle was handed to an import — `true` means at
     /// least one import was started, not that every one will succeed.
     @discardableResult
-    package func importVMs(fromDroppedURLs urls: [URL], intoFolder folder: UUID? = nil) -> Bool {
+    package func importVMs(
+        fromDroppedURLs urls: [URL], intoFolder folder: UUID? = nil, holding access: PasteboardFileAccess? = nil
+    ) -> Bool {
         let bundles = urls.filter { VMStorageService.isBundleURL($0) }
         guard !bundles.isEmpty else { return false }
         Self.logger.log(.notice, "Importing \(bundles.count, privacy: .public) bundle(s)")
-        let batch = verbs().beginImports(from: bundles, intoFolder: folder)
+        let batch = verbs().beginImports(from: bundles, intoFolder: folder, holding: access)
         for case .failure(let error) in batch.imports { present(error, about: .library) }
         if let failure = batch.membershipFailure {
             surfaceError(

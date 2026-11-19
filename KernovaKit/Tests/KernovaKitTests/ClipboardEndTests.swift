@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import KernovaAgentCore
+import KernovaAgentRuntime
 import KernovaClipboardItems
 import KernovaKit
 import KernovaSynchronization
@@ -257,6 +258,154 @@ struct ClipboardEndTests {
 
         #expect(pair.holding(.host) == .nothing)
         #expect(requestRefusals(pair).count == 1)
+    }
+
+    // MARK: - File grants
+
+    /// A host end whose copy of `copied`, which refuses a bookmark when `refusingBookmark`, the guest's end holds
+    /// open, and that offer.
+    private func openCopy(
+        _ copied: URL, gate: ClipboardOfferGate, refusingBookmark: Bool = false
+    ) async throws -> (ClipboardEndPair, ItemOffer) {
+        try Data("copied".utf8).write(to: copied)
+        let pair = ClipboardEndPair(staging: staging.root, gate: gate)
+        if refusingBookmark { pair.hostPasteboard.sandbox.refuseBookmarks(of: copied) }
+        pair.hostPasteboard.setFiles([copied])
+        if gate == .everyCopy { pair.poll() } else { pair.host.offerOnCommand() }
+        try await pair.settle()
+        return (pair, try #require(pair.wire?.opened(.host).last))
+    }
+
+    /// A pull of `offer`'s first item's first representation, as stream `stream` carries it.
+    private static func pull(of offer: ItemOffer, stream: UInt32 = 1) -> (ItemPullID, PullRequest) {
+        var request = PullRequest()
+        request.token = offer.token
+        return (ItemPullID(generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: stream)), request)
+    }
+
+    @Test("A copy nobody pastes holds no grant while offered, and leaves none held once the clipboard moves on")
+    func unpastedCopyHoldsNoGrant() async throws {
+        let copied = scratch.url.appendingPathComponent("copied.txt")
+        let (pair, _) = try await openCopy(copied, gate: .everyCopy)
+        let sandbox = pair.hostPasteboard.sandbox
+        #expect(readOutcomes(pair, .host) == [.offered(skipped: 0)])
+        #expect(sandbox.grants(of: copied) == 0)
+
+        pair.copy("text", on: .host)
+        pair.poll()
+        try await pair.settle()
+
+        #expect(sandbox.grants(of: copied) == 0)
+        #expect(sandbox.unheldGiveBacks.isEmpty)
+        #expect(sandbox.bookmarksAsked == 1)
+    }
+
+    @Test("A copy offered again after the connection returns serves its file, though its grant went with the read")
+    func copyOfferedAgainServes() async throws {
+        let copied = scratch.url.appendingPathComponent("copied.txt")
+        let (pair, _) = try await openCopy(copied, gate: .onCommand)
+        pair.linkDown()
+        pair.linkUp()
+        pair.host.offerOnCommand()
+        try await pair.settle()
+        #expect(readOutcomes(pair, .host) == [.offered(skipped: 0), .offered(skipped: 0)])
+        let (id, request) = Self.pull(of: try #require(pair.wire?.opened(.host).last))
+
+        let host = pair.host
+        let served = try await offCooperativePool { host.content(id, request) }
+
+        #expect(Self.treePath(served) == copied.resolvingSymlinksInPath().path)
+        #expect(pair.hostPasteboard.sandbox.grants(of: copied) == 1)
+    }
+
+    @Test("A copied file that refuses a bookmark keeps its grant while the copy stands, past its offer, until it goes")
+    func unbookmarkableCopyIsHeldWhileItStands() async throws {
+        let copied = scratch.url.appendingPathComponent("copied.txt")
+        let (pair, _) = try await openCopy(copied, gate: .onCommand, refusingBookmark: true)
+        let sandbox = pair.hostPasteboard.sandbox
+        #expect(sandbox.grants(of: copied) == 1)
+
+        // The offer ends with the connection; the copy, read again, can take no grant of its own.
+        pair.linkDown()
+        try await pair.settle()
+        #expect(sandbox.grants(of: copied) == 1)
+        pair.linkUp()
+        pair.host.offerOnCommand()
+        try await pair.settle()
+        #expect(readOutcomes(pair, .host) == [.offered(skipped: 0), .offered(skipped: 0)])
+        let (id, request) = Self.pull(of: try #require(pair.wire?.opened(.host).last))
+        let host = pair.host
+        let served = try await offCooperativePool { host.content(id, request) }
+        #expect(Self.treePath(served) == copied.resolvingSymlinksInPath().path)
+
+        pair.copy("text", on: .host)
+        pair.poll()
+        try await pair.settle()
+        try await sandbox.changed.wait { sandbox.grants(of: copied) == 0 }
+        #expect(sandbox.unheldGiveBacks.isEmpty)
+    }
+
+    /// The path `content` serves its tree from, its links resolved.
+    private static func treePath(_ content: Result<ItemContent, WireError>) -> String? {
+        guard case .success(.tree(let path)) = content else { return nil }
+        return URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+    }
+
+    /// How a pull's serve comes to its end.
+    enum ServeEnding: CaseIterable, Sendable {
+        /// Its end alone.
+        case served
+        /// Its offer ending first.
+        case offerEndedFirst
+        /// The connection leaving first.
+        case linkDownFirst
+    }
+
+    @Test("A pull of a copied file holds its grant exactly until its serve ends", arguments: ServeEnding.allCases)
+    func pullHoldsItsGrantUntilItsServeEnds(ending: ServeEnding) async throws {
+        let copied = scratch.url.appendingPathComponent("copied.txt")
+        let (pair, offer) = try await openCopy(copied, gate: .everyCopy)
+        let sandbox = pair.hostPasteboard.sandbox
+        let link = try #require(pair.wire).hostLink
+        let (id, request) = Self.pull(of: offer)
+        let host = pair.host
+
+        let served = try await offCooperativePool { host.content(id, request) }
+        #expect(Self.treePath(served) == copied.resolvingSymlinksInPath().path)
+        #expect(sandbox.grants(of: copied) == 1)
+        switch ending {
+        case .served:
+            break
+        case .offerEndedFirst:
+            host.handle(
+                .offerEnded(.clipboard, .local, token: offer.token, .resetLocally(WireError(.cancelled))), on: link)
+        case .linkDownFirst:
+            pair.linkDown()
+        }
+        #expect(sandbox.grants(of: copied) == 1)
+
+        host.handle(.serveEnded(.clipboard, id, .landed), on: link)
+
+        #expect(sandbox.grants(of: copied) == 0)
+        #expect(sandbox.unheldGiveBacks.isEmpty)
+    }
+
+    @Test("A pull that ends before its content is asked for takes no grant")
+    func pullEndedFirstTakesNoGrant() async throws {
+        let copied = scratch.url.appendingPathComponent("copied.txt")
+        let (pair, offer) = try await openCopy(copied, gate: .everyCopy)
+        let (id, request) = Self.pull(of: offer)
+        let host = pair.host
+        host.handle(.serveEnded(.clipboard, id, .closed(.connectionLost)), on: try #require(pair.wire).hostLink)
+
+        let served = try await offCooperativePool { host.content(id, request) }
+
+        guard case .failure(let error) = served else {
+            Issue.record("served \(served)")
+            return
+        }
+        #expect(error.code == .cancelled)
+        #expect(pair.hostPasteboard.sandbox.grants(of: copied) == 0)
     }
 
     // MARK: - The poll
