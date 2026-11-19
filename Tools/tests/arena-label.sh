@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Fixture tests for Tools/arena-label.sh on arenas that record no checkout:
-# which one an arena's name matches, and when a match to none reads as
-# `unclaimed`. Runs a copy of the scripts inside a fixture clone, with HOME in
-# the fixture so the default arena root is too.
+# Fixture tests for Tools/arena-label.sh: which checkout an arena that records
+# none matches by name, when a match to none reads as `unclaimed`, and when a
+# worktree git does not list at its path still reads as live. Runs a copy of
+# the scripts inside a fixture clone, with HOME in the fixture so the default
+# arena root is too.
 
 set -uo pipefail
 
@@ -25,7 +26,8 @@ clone="$tmp/clone"
 git init -q -b main "$clone" && git -C "$clone" commit -q --allow-empty -m init
 mkdir -p "$clone/Tools/lib"
 cp "$ROOT/Tools/arena-label.sh" "$ROOT/Tools/derived-data-path.sh" "$clone/Tools/"
-cp "$ROOT/Tools/lib/worktrees.sh" "$ROOT/Tools/lib/holders.sh" "$ROOT/Tools/lib/xcodebuild-flags.sh" "$clone/Tools/lib/"
+cp "$ROOT/Tools/lib/output.sh" "$ROOT/Tools/lib/arena-records.sh" "$ROOT/Tools/lib/worktrees.sh" "$ROOT/Tools/lib/holders.sh" \
+    "$ROOT/Tools/lib/xcodebuild-flags.sh" "$clone/Tools/lib/"
 git -C "$clone" worktree add -q --detach "$clone/.claude/worktrees/live"
 
 export HOME="$tmp/home"
@@ -53,6 +55,18 @@ status_of() { "$clone/Tools/arena-label.sh" --status "$1" 2>/dev/null || printf 
 check "main, packages only" "$(status_of "$(arena_for "$clone" SourcePackages Logs)")" main
 check "live worktree, packages only" \
     "$(status_of "$(arena_for "$clone/.claude/worktrees/live" SourcePackages Logs)")" worktree-live
+git -C "$clone" worktree add -q --detach "$tmp/outside"
+check "registered worktree outside .claude/worktrees, packages only" \
+    "$(status_of "$(arena_for "$tmp/outside" SourcePackages Logs)")" other
+# Moved by hand: git lists the old path, and the project builds at the new one.
+git -C "$clone" worktree add -q --detach "$clone/.claude/worktrees/hand"
+mv "$clone/.claude/worktrees/hand" "$clone/.claude/worktrees/hand moved"
+mkdir -p "$clone/.claude/worktrees/hand moved/Kernova.xcodeproj"
+touch "$clone/.claude/worktrees/hand moved/Kernova.xcodeproj/project.pbxproj"
+moved=$(arena_for "$clone/.claude/worktrees/hand moved" Logs)
+printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>WorkspacePath</key><string>%s</string></dict></plist>\n' \
+    "$clone/.claude/worktrees/hand moved/Kernova.xcodeproj" >"$moved/info.plist"
+check "worktree moved by hand, at its new path" "$(status_of "$moved")" worktree-live
 gone=$(arena_for "$tmp/gone" SourcePackages Logs)
 check "no checkout, packages only" "$(status_of "$gone")" unclaimed
 check "no checkout, packages only: label" "$("$clone/Tools/arena-label.sh" "$gone")" 'packages only, no checkout here'
