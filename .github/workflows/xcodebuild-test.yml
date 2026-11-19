@@ -18,14 +18,20 @@ jobs:
     # Job-level, so a run whose job is skipped never cancels the real run:
     # adding a second label mid-run left the labeled-`ci` run in progress while
     # the new run's job was skipped (observed 2026-10-18).
+    # A pull request's newer push supersedes its older run; every other run
+    # owns its commit's group, because a group holds one pending run and drops
+    # the one it replaces, so a shared main group would leave commits with no
+    # Commit Attestation.
     concurrency:
-      group: ${{ github.workflow }}-${{ github.ref }}
-      cancel-in-progress: true
+      group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: xcode-27
     timeout-minutes: 30
+    outputs:
+      cas-key: ${{ steps.save-cas.outcome == 'success' && steps.restore-cas.outputs.cache-primary-key || '' }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -40,19 +46,18 @@ jobs:
       # would no longer match its key by construction. Checkouts are plain
       # git clones, so the Xcode build is not part of the key.
       - name: Cache SwiftPM checkouts
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: DerivedData/Kernova/SourcePackages
           key: ${{ runner.os }}-spm-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       # The store is content-addressed, so any earlier snapshot is a valid
-      # seed: the per-commit key makes every run save its own, and the prefix
-      # restores the newest one this ref can see. Its on-disk format is the
-      # toolchain's, hence the Xcode build in the key. The Makefile's size
-      # limit rolls the store every build and the prune step below drops the
-      # generation left behind, so what gets saved is one build's live set.
-      - name: Cache compilation cache
-        uses: actions/cache@v5
+      # seed: the prefix restores the newest one main saved, which a pull
+      # request can read too. Its on-disk format is the toolchain's, hence the
+      # Xcode build in the key.
+      - name: Restore the compilation cache
+        id: restore-cas
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: DerivedData/Kernova/CompilationCache*
           key: ${{ runner.os }}-cas-${{ env.XCODE_BUILD }}-${{ github.sha }}
@@ -86,6 +91,19 @@ jobs:
           done
           du -sh DerivedData/Kernova/CompilationCache* 2>/dev/null || echo "No compilation cache store found."
 
+      # The Makefile's size limit rolls the store every build and the prune
+      # step above drops the generation left behind, so what gets saved is one
+      # build's live set. Only main saves, under its commit, and the
+      # prune-compilation-cache job then deletes main's older entries; a re-run
+      # restores its own commit's entry and saves nothing.
+      - name: Save the compilation cache
+        id: save-cas
+        if: github.ref == 'refs/heads/main' && steps.restore-cas.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: DerivedData/Kernova/CompilationCache*
+          key: ${{ steps.restore-cas.outputs.cache-primary-key }}
+
       # The admission width caps concurrent test cases per host process (three
       # hosts run at once, so the machine-wide bound is 3×). It is a herd cap
       # sized for headroom as the suite grows, not a tuning knob: the suite
@@ -102,10 +120,9 @@ jobs:
       # cancels the run outright, leaving the result bundle half-written and
       # nothing to read. It backs up the test plan's per-test timeouts, which
       # fail one stuck test and let the rest of the run finish, so it is sized
-      # for a healthy run plus one test spending its whole allowance. A healthy step
-      # takes about two minutes.
+      # for a healthy run plus one test spending its whole allowance.
       - name: Test without building
-        timeout-minutes: 10
+        timeout-minutes: 12
         env:
           TEST_RUNNER_KERNOVA_TEST_ADMISSION_WIDTH: "32"
         run: make test-without-building 2>&1
@@ -162,7 +179,7 @@ jobs:
 
       - name: Upload test results
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-results
           # upload-artifact roots the archive at the lowest common ancestor of the
@@ -185,7 +202,7 @@ jobs:
       # for the pinned swift-protobuf revision; a cold build takes minutes.
       - name: Restore the protobuf generators
         if: success() || failure()
-        uses: actions/cache@v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/Library/Caches/kernova-dev/swift-protobuf-*
           key: swift-protobuf-tools-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
@@ -200,3 +217,42 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: Tools/attest.sh post "${{ job.status }}" "Lint, Build & Test on Xcode ${XCODE_BUILD}" "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+  # Its own job, so the build that runs the tree's scripts never holds a token
+  # that can delete caches.
+  prune-compilation-cache:
+    needs: build-and-test
+    if: ${{ !cancelled() && needs.build-and-test.outputs.cas-key != '' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      # An entry saved after this run's own stays, so concurrent main runs
+      # never delete each other's newest. Another Xcode build's entries stay
+      # until GitHub evicts them unused, which keeps a runner fleet that is
+      # mid-image-rollout warm on both builds.
+      - name: Delete main's compilation caches saved before this run's
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          KEY: ${{ needs.build-and-test.outputs.cas-key }}
+        run: |
+          set -euo pipefail
+          prefix="${KEY%-*}-"
+          older="$(gh cache list --ref refs/heads/main --key "$prefix" --sort created_at --order desc --limit 100 --json id,key \
+            --jq '(map(.key) | index($ENV.KEY)) as $own | if $own == null then "missing" else .[$own + 1:][].id end')"
+          if [ "$older" = missing ]; then
+            echo "::warning::$KEY is not among main's caches, so none were deleted"
+            exit 0
+          fi
+          for id in $older; do
+            echo "Deleting cache $id"
+            # A concurrent main run's prune deletes the same entries; gone is the goal.
+            if ! error="$(gh api --method DELETE "repos/$GH_REPO/actions/caches/$id" 2>&1)"; then
+              case "$error" in
+                *"HTTP 404"*) echo "Already deleted" ;;
+                *) echo "$error"; exit 1 ;;
+              esac
+            fi
+          done

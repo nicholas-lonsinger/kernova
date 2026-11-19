@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # "/" covers .github/workflows only; each composite action's directory is
+  # scanned only when listed. Workflow `container:` images are in no
+  # ecosystem's scan.
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+    # One pull request, so upload-artifact and download-artifact move together.
+    groups:
+      actions:
+        patterns:
+          - "*"
