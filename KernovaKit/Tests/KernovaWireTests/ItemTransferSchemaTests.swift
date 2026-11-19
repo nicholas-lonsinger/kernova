@@ -162,19 +162,24 @@ struct ItemTransferSchemaTests {
         outcome.error = Kernova_V2_Error()
         #expect(try outcome.serializedBytes() == [0x08, 2, 0x12, 0])
 
-        var caught = Kernova_V2_DragTakeOutcome()
-        caught.kind = .caught
-        caught.sizes = [5]
-        #expect(try caught.serializedBytes() == [0x08, 1, 0x22, 1, 0x05])
-
         var report = Kernova_V2_DragTakeReport()
         report.step = .targeted
         #expect(try report.serializedBytes() == [0x08, 2])
+        report.itemCount = 3
+        #expect(try report.serializedBytes() == [0x20, 3])
+        report.promiseName = Data("a".utf8)
+        #expect(try report.serializedBytes() == [0x32, 1, 0x61])
+        report.size = 300
+        #expect(try report.serializedBytes() == [0x38, 0xAC, 0x02])
+        // A size of 0 is still sent: the oneof gives it presence.
+        report.size = 0
+        #expect(try report.serializedBytes() == [0x38, 0])
+        report.item = Kernova_V2_Item()
+        #expect(try report.serializedBytes() == [0x2A, 0])
 
-        var named = Kernova_V2_DragTakeReport()
-        named.step = .named
-        named.promiseNames = [Data("a".utf8)]
-        #expect(try named.serializedBytes() == [0x08, 6, 0x12, 1, 0x61])
+        var landed = Kernova_V2_DropLanded()
+        landed.landed = 300
+        #expect(try landed.serializedBytes() == [0x10, 0xAC, 0x02])
 
         var shown = Kernova_V2_DragCatcher()
         shown.shown = true

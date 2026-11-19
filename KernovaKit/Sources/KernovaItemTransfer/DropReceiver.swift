@@ -16,7 +16,7 @@ import KernovaWire
 
 /// A peer's DROP owner: it lands each offer the host drops into one directory, one item at a time in offer
 /// order, each item's FILE or FOLDER representation under the offer's name for it, Keep Both-named against
-/// what is already there. Once every item has ended it releases the offer, its END saying which items landed
+/// what is already there. Once every item has ended it releases the offer, its END saying how many items landed
 /// (``DropLanded``), and hands `landed` the names it published.
 ///
 /// An item the host cannot serve is skipped. A landing that fails, or a landing directory this side cannot
@@ -30,8 +30,8 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
         var count: Int
         var next = 0
         var pull: ItemPullID?
-        /// Each landed item's index, and the name it was published under.
-        var landed: [(item: Int, name: Data)] = []
+        /// The name each landed item was published under, in offer order.
+        var landed: [Data] = []
         var withdrawn = false
     }
 
@@ -154,7 +154,7 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
         }
         switch result {
         case .landed(.named(let name)):
-            jobs.withLock { $0[token]?.landed.append((job.next, name)) }
+            jobs.withLock { $0[token]?.landed.append(name) }
             next(token)
         case .closed(.resetByPeer(let error)) where Self.unservable.contains(error.code):
             logger.log(
@@ -187,12 +187,12 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
         if let error {
             runtime?.refuseOffer(token, error)
         } else {
-            runtime?.releaseOffer(token, endBody: DropLanded(items: job.landed.map(\.item)).endBody)
+            runtime?.releaseOffer(token, endBody: DropLanded(landed: job.landed.count).endBody)
         }
         logger.log(
             .notice,
             "A drop finished: \(job.landed.count, privacy: .public) of \(job.count, privacy: .public) items landed")
-        if !job.landed.isEmpty { landed(job.landed.map(\.name)) }
+        if !job.landed.isEmpty { landed(job.landed) }
     }
 }
 #endif

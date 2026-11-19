@@ -12,10 +12,9 @@ import Synchronization
 ///
 /// A dropped file promise is called in as the drop is taken, so the offer carries an item per name its source
 /// gives, and every pull of one waits for its file. Each offer ends once, whichever end ends it: the peer
-/// releasing it once its items have landed or been skipped, saying which landed, or refusing it with why it
+/// releasing it once its items have landed or been skipped, saying how many landed, or refusing it with why it
 /// could not land them, or the hub withdrawing it when DROP's console peer changes. The peer's word is the
-/// only one on what landed: every item the drop carried that it does not name is reported skipped. Nothing is
-/// offered again.
+/// only one on what landed: every other item the drop carried is reported skipped. Nothing is offered again.
 package final class HubDropService: Sendable {
     /// One open offer: what serves its pulls, where its promises land, and what the drop carried.
     private struct Offer {
@@ -134,27 +133,31 @@ package final class HubDropService: Sendable {
             Self.logger.log(.warning, "A drop ended before it landed: \(String(describing: closure), privacy: .public)")
             return report(Self.failure(ending: closure, items: items), to: offer.peerName)
         }
-        guard let landed = DropLanded(endBody: body) else {
-            Self.logger.log(.error, "The guest released a drop with an END body that does not decode")
-            return report(.peerReported(.dropFailed), to: offer.peerName)
+        guard let failure = Self.failure(released: body, items: items, lost: offer.lost) else {
+            Self.logger.log(.notice, "A drop landed all \(items, privacy: .public) item(s)")
+            return reporter.completed(.drop, startedAt: offer.began)
         }
-        let landedCount = Set(landed.items).filter { offer.source.items.indices.contains($0) }.count
-        let skipped = items + offer.lost - landedCount
         Self.logger.log(
             .notice,
-            "A drop landed \(landedCount, privacy: .public) of \(items + offer.lost, privacy: .public) item(s)")
-        if landedCount == 0 {
-            report(.itemsUnreadable, to: offer.peerName)
-        } else if skipped > 0 {
-            report(.itemsSkipped(count: skipped), to: offer.peerName)
-        } else {
-            reporter.completed(.drop, startedAt: offer.began)
-        }
+            "A drop of \(items + offer.lost, privacy: .public) item(s) did not land whole: \(String(describing: failure), privacy: .public)"
+        )
+        report(failure, to: offer.peerName)
+    }
+
+    /// What a drop whose offer of `items` items, leaving `lost` out, reports once the peer released it with
+    /// `body`, its `DropLanded`: nil when every item landed.
+    static func failure(released body: Data, items: Int, lost: Int) -> ClipboardTransferFailure? {
+        guard let landed = DropLanded(endBody: body), landed.landed <= items else { return .peerReported(.dropFailed) }
+        let skipped = items + lost - landed.landed
+        if landed.landed == 0 { return .itemsUnreadable }
+        return skipped > 0 ? .itemsSkipped(count: skipped) : nil
     }
 
     /// What a drop whose offer of `items` items ended by `closure`, before the peer released it, reports.
     static func failure(ending closure: StreamClosure, items: Int) -> ClipboardTransferFailure {
         switch closure {
+        case .resetByPeer(let error) where error.code == .tooLarge:
+            return .tooLarge(limitBytes: Int(clamping: error.limit))
         case .resetByPeer(let error):
             return stop(error).map { .dropStopped($0) } ?? .peerReported(code(landing: error))
         case .resetLocally(let error):

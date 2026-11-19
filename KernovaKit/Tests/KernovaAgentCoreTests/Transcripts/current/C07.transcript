@@ -20,8 +20,12 @@ t=620    in      peer take report armed
 t=620    p>h     00000002 00 01 00000002 0801
 t=621    ev      host drag takeReport id=2 armed
 t=630    in      peer take targeted fixture=promise-folder
-t=630    p>h     00000002 00 01 0000005d 08021a2f0a2d0a1a0a186170706c69636174696f6e2f6f637465742d73747265616d100218012080102a08556e7469746c65641a280a260a1a0a186170706c69636174696f6e2f6f637465742d73747265616d10032a06666f6c646572
-t=631    ev      host drag takeReport id=2 targeted items=2
+t=630    p>h     00000002 00 01 00000002 2002
+t=630    p>h     00000002 00 01 00000031 2a2f0a2d0a1a0a186170706c69636174696f6e2f6f637465742d73747265616d100218012080102a08556e7469746c6564
+t=630    p>h     00000002 00 01 0000002a 2a280a260a1a0a186170706c69636174696f6e2f6f637465742d73747265616d10032a06666f6c646572
+t=630    p>h     00000002 00 01 00000002 0802
+t=631    ev      host drag takeReport id=2 listed items=2
+t=631    ev      host drag takeReport id=2 targeted
 t=650    in      host takeControl catcher shown=0
 t=650    h>p     00000002 00 01 00000002 0a00
 t=651    ev      peer drag takeControl id=2 catcher shown=0
@@ -36,7 +40,7 @@ t=720    p>h     00000002 00 01 00000002 0801
 t=721    ev      host drag takeReport id=2 armed
 t=730    in      peer take report targeted
 t=730    p>h     00000002 00 01 00000002 0802
-t=731    ev      host drag takeReport id=2 targeted items=2
+t=731    ev      host drag takeReport id=2 targeted
 t=750    in      host takeControl deliver
 t=750    h>p     00000002 00 01 00000002 1200
 t=751    ev      peer drag takeControl id=2 deliver
@@ -44,10 +48,13 @@ t=760    in      peer take report delivering
 t=760    p>h     00000002 00 01 00000002 0803
 t=761    ev      host drag takeReport id=2 delivering
 t=800    in      peer take named names=494d475f303034322e6a706567
-t=800    p>h     00000002 00 01 00000011 0806120d494d475f303034322e6a706567
+t=800    p>h     00000002 00 01 0000000f 320d494d475f303034322e6a706567
+t=800    p>h     00000002 00 01 00000002 0806
 t=801    ev      host drag takeReport id=2 named names=494d475f303034322e6a706567
 t=810    in      peer take caught sizes=2048,8192
-t=810    p>h     00000002 02 00 00000008 0801220480108040
+t=810    p>h     00000002 00 01 00000003 388010
+t=810    p>h     00000002 00 01 00000003 388040
+t=810    p>h     00000002 02 00 00000002 0801
 t=811    ev      host drag takeEnded id=2 caught names=494d475f303034322e6a706567 sizes=2048,8192
 t=811    h>p     00000002 02 00 00000000
 t=850    in      host pull token=04040404040404040404040404040404 item=0 representation=0 ceiling=1048576

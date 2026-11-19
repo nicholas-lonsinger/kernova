@@ -44,8 +44,8 @@ package struct DraggedOutItem: Equatable, Sendable {
     /// What a Mac destination is told the item is called.
     package var filename: String { String(decoding: name, as: UTF8.self) }
 
-    /// What a take carries of `items`, which its first `TARGETED` listed and
-    /// the hub checked with `DragItems.carried(_:)`.
+    /// What a take carries of `items`, which it listed and the hub checked
+    /// with `DragItems.carried(_:)`.
     package static func carried(_ items: [OfferedItem]) -> [DraggedOutItem] {
         (DragItems.carried(items) ?? []).map { DraggedOutItem($0.representation, at: $0.index) }
     }
@@ -154,8 +154,8 @@ package protocol GuestDragDisplay: AnyObject {
 @MainActor
 package protocol GuestDragTaking: AnyObject, Sendable {
     /// What the drag carries, in the order the guest's catcher saw it; a
-    /// promised item's name is a stand-in. Empty until the catcher is the
-    /// drag's target, which the Mac session begins after.
+    /// promised item's name is a stand-in. Empty until the take lists them,
+    /// which the catcher's first `TARGETED`, and so the Mac session, follows.
     nonisolated var items: [DraggedOutItem] { get }
 
     /// Whether the Mac session is over the display the take began on,
@@ -254,7 +254,7 @@ package protocol GuestDragTaking: AnyObject, Sendable {
 /// which only this side ends. The first destination to ask a promised item's
 /// name starts that and waits for the names alone; one that took the drop
 /// without asking yet has it started as the session ends. That wait alone has
-/// a wall clock, `GuestDragDelivery.namingDeadline`, past which the take is
+/// a wall clock, the delivery's naming deadline, past which the take is
 /// called off and its writes fail timed out; every other wait ends on the
 /// guest's answer, the take's end, or the user's own release or return.
 ///
@@ -316,7 +316,7 @@ package final class GuestDragTake: GuestDragTaking {
     }
 
     nonisolated package var items: [DraggedOutItem] { carried.withLock { $0 } }
-    /// The drag's items, set once by the take's first `TARGETED`.
+    /// The drag's items, set once by the take's listing.
     nonisolated private let carried = Mutex<[DraggedOutItem]>([])
     /// Where the hand-off stands now; the one observed property.
     package private(set) var phase: Phase = .handingOff(armed: false) {
@@ -429,15 +429,17 @@ package final class GuestDragTake: GuestDragTaking {
     ///
     /// `onFinished` is called once, when the take's stream has closed, its
     /// offers are released or ended, and no write is still pulling;
-    /// `onHostSessionBegan` as its Mac session begins. The delivery's naming
-    /// deadline and each readout's timers run on `clock`. Nothing is sent
-    /// until ``begin()``.
+    /// `onHostSessionBegan` as its Mac session begins. Each readout's timers
+    /// run on `clock`, and the delivery's naming deadline is `naming`, or
+    /// ``GuestDragDelivery/namingDeadline`` on `clock` when nil. Nothing is
+    /// sent until ``begin()``.
     init(
         transport: any GuestDragTransport, display: any GuestDragDisplay,
         reporter: ClipboardTransferReporter, peerName: String,
         progressRevealDelay: TimeInterval = ClipboardTransferOperation.defaultRevealDelay,
         progressIdleGap: TimeInterval = ClipboardTransferOperation.defaultIdleGap,
         clock: any EngineClock = makePlatformEngineClock(),
+        naming: GuestDragDelivery.Deadline? = nil,
         holds: @escaping @MainActor () -> Bool,
         onFinished: @escaping @MainActor (GuestDragTake) -> Void,
         onHostSessionBegan: @escaping @MainActor (GuestDragTake) -> Void
@@ -449,7 +451,8 @@ package final class GuestDragTake: GuestDragTaking {
         self.progressRevealDelay = progressRevealDelay
         self.progressIdleGap = progressIdleGap
         self.clock = clock
-        self.delivery = GuestDragDelivery(clock: clock)
+        self.delivery = GuestDragDelivery(
+            deadline: naming ?? GuestDragDelivery.Deadline(seconds: GuestDragDelivery.namingDeadline, clock: clock))
         self.holds = holds
         self.onFinished = onFinished
         self.onHostSessionBegan = onHostSessionBegan
@@ -617,8 +620,9 @@ package final class GuestDragTake: GuestDragTaking {
             case .handingOff(armed: true), .ready, .carried, .released, .unreleased, .abandoned:
                 break
             }
-        case .targeted(let listed):
-            carried.withLock { if $0.isEmpty { $0 = DraggedOutItem.carried(listed) } }
+        case .listed(let listed):
+            carried.withLock { $0 = DraggedOutItem.carried(listed) }
+        case .targeted:
             // A target for a showing since stood down says nothing about the
             // catcher up now.
             guard catcherArmed else { return }
@@ -646,16 +650,21 @@ package final class GuestDragTake: GuestDragTaking {
     }
 
     /// The take ended: the guest's END, or how the stream closed without one.
-    /// A refusal `TOO_LARGE` is the user's to hear: the drag holds more items
-    /// than one take can list.
+    /// A take ended `TOO_LARGE` is the user's to hear: the guest refused it
+    /// for an item too large to list, or the hub reset it for a listing past
+    /// what it holds of the guest's offers.
     func takeEnded(_ result: DragTakeResult) {
         takeOpen = false
         let reason = Self.describe(result)
-        if case .refused(let error) = result, error.code == .tooLarge {
+        switch result {
+        case .refused(let error) where error.code == .tooLarge,
+            .closed(.resetLocally(let error)) where error.code == .tooLarge:
             reporter.finish(
                 ClipboardTransferFinish(
                     gesture: .dragOut, outcome: .failed(.tooLarge(limitBytes: Int(clamping: error.limit))),
                     peerName: peerName))
+        case .caught, .returned, .refused, .closed:
+            break
         }
         switch phase {
         case .handingOff, .ready:

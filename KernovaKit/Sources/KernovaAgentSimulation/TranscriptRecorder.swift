@@ -39,8 +39,8 @@ package enum TranscriptInput: Sendable, Equatable {
     /// The peer answers the take it was asked about last. The runner addresses it to that take, so a
     /// script never names a stream id the current side chooses.
     case answerTake(DragTakeAnswer)
-    /// The peer reports the first `TARGETED` on the take it was asked about last, listing the items of the
-    /// fixture offer of this name.
+    /// The peer lists the items of the fixture offer of this name on the take it was asked about last, then
+    /// reports it `TARGETED`.
     case targetTake(String)
 
     /// An installer's report on a pull.
@@ -434,7 +434,7 @@ package struct Exchange: Sendable {
         Exchange(
             id: "C05",
             title:
-                "drag: the host takes the peer's drag → ARMED, TARGETED, then CAUGHT; it pulls the FILE → LANDED and releases it",
+                "drag: the host takes the peer's drag → ARMED, its listing, TARGETED, then CAUGHT; it pulls the FILE → LANDED and releases it",
             hostFixture: "host-items", peerFixture: "linux-session-items",
             script: [
                 (500, .offer(.peer, .drag, "drag-1")), (600, .takeDrag(SimItems.token(1))),
@@ -460,7 +460,7 @@ package struct Exchange: Sendable {
                 (620, .answerTake(.report(.armed))), (630, .targetTake("promise-folder")),
                 (650, .controlTake(.catcher(shown: false))), (660, .answerTake(.report(.stoodDown))),
                 (700, .controlTake(.catcher(shown: true))),
-                (720, .answerTake(.report(.armed))), (730, .answerTake(.report(.targeted([])))),
+                (720, .answerTake(.report(.armed))), (730, .answerTake(.report(.targeted))),
                 (750, .controlTake(.deliver)), (760, .answerTake(.report(.delivering))),
                 (800, .answerTake(.report(.named([Data("IMG_0042.jpeg".utf8)])))),
                 (810, .answerTake(.caught(sizes: [2048, 8192]))),
@@ -649,7 +649,8 @@ package final class Duet {
                 failures.append("t=\(now): `\(input.text)` with no take asked")
                 break
             }
-            peer.handle(.dragTake(lastTake, .report(.targeted(offer.items))), now: instant)
+            peer.handle(.dragTake(lastTake, .report(.listed(offer.items))), now: instant)
+            peer.handle(.dragTake(lastTake, .report(.targeted)), now: instant)
         }
         drainAll()
     }
@@ -977,8 +978,8 @@ package enum TranscriptEvents {
             "\(prefix) takeControl id=\(id.stream.rawValue) catcher shown=\(shown ? 1 : 0)"
         case .control(let id, .deliver): "\(prefix) takeControl id=\(id.stream.rawValue) deliver"
         case .cancelled(let id): "\(prefix) takeCancelled id=\(id.stream.rawValue)"
-        case .report(let id, .targeted(let items)):
-            "\(prefix) takeReport id=\(id.stream.rawValue) targeted items=\(items.count)"
+        case .report(let id, .listed(let items)):
+            "\(prefix) takeReport id=\(id.stream.rawValue) listed items=\(items.count)"
         case .report(let id, .named(let names)):
             "\(prefix) takeReport id=\(id.stream.rawValue) named names=\(list(names))"
         case .report(let id, let report): "\(prefix) takeReport id=\(id.stream.rawValue) \(name(report))"
@@ -1000,6 +1001,7 @@ package enum TranscriptEvents {
     static func name(_ report: DragTakeReport) -> String {
         switch report {
         case .armed: "armed"
+        case .listed: "listed"
         case .targeted: "targeted"
         case .delivering: "delivering"
         case .deliverRefused: "deliverRefused"
@@ -1034,7 +1036,7 @@ package enum TranscriptEvents {
 
     /// The step a transcript names `name`.
     static func report(named name: String) -> DragTakeReport? {
-        [DragTakeReport.armed, .targeted([]), .delivering, .deliverRefused, .stoodDown].first { Self.name($0) == name }
+        [DragTakeReport.armed, .targeted, .delivering, .deliverRefused, .stoodDown].first { Self.name($0) == name }
     }
 
     static func describe(_ result: ItemPullResult) -> String {

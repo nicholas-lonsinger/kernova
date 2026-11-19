@@ -75,6 +75,12 @@ package struct ClipboardTransferWording: Equatable {
                 message: "The Mac clipboard holds nothing that can be copied.",
                 menuLine: "Clipboard: nothing to copy to the guest")
 
+        case (.tooLarge, .drop):
+            return ClipboardTransferWording(
+                headline: "Files not copied to \(vm).",
+                message: "The drop holds more items than can be dropped on the VM at once.",
+                menuLine: "Drop: too many items to drop at once")
+
         case (.tooLarge(let limitBytes), _):
             return ClipboardTransferWording(
                 headline: "Clipboard not pasted into \(vm).",

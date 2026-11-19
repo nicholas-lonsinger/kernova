@@ -34,12 +34,14 @@ public enum DragTakeControl: Sendable, Equatable {
 public enum DragTakeReport: Sendable, Equatable {
     /// The catcher is up under the pointer: once for the take and once for each `.catcher(shown: true)`.
     case armed
-    /// The guest's drag manager entered the catcher with the taken drag, whose items are `items`, read off the
-    /// drag as the catcher sees it: a release now drops on it. The take's first `TARGETED` lists them on the
-    /// wire, in one MESSAGE, and they become the taken offer's items; a listing over one MESSAGE refuses the
-    /// take `TOO_LARGE` instead. The host reports the same list for every `TARGETED`, once it passed
-    /// ``DragItems/carried(_:)``, and resets the take `MALFORMED_MESSAGE` for any other.
-    case targeted([OfferedItem])
+    /// The drag's items, read off the drag as the catcher sees it, once per take and before its first
+    /// `.targeted`: they become the taken offer's items. The wire carries each in a MESSAGE of its own, and an
+    /// item whose report does not fit one refuses the take `TOO_LARGE` instead. The host reports them once the
+    /// last arrived, each having passed an offer's item's rules and ``DragItems/carried(_:)``'s, and resets the
+    /// take otherwise.
+    case listed([OfferedItem])
+    /// The guest's drag manager entered the catcher with the taken drag: a release now drops on it.
+    case targeted
     /// Answers `.deliver`: the next drop on the catcher delivers the drag.
     case delivering
     /// Answers `.deliver`: the drag is not on the catcher, and no drop delivers.
@@ -48,8 +50,9 @@ public enum DragTakeReport: Sendable, Equatable {
     /// is.
     case stoodDown
     /// The delivering drop called the drag's promises in: the name each took, one per promised item of the
-    /// taken offer, in its order, which serves each promise from then on. The host reports only names that pass
-    /// ``DragItems/checkedNames(_:of:)``, and resets the take `MALFORMED_MESSAGE` for any others.
+    /// taken offer, in its order, which serves each promise from then on; each one path component. The host
+    /// reports only names that pass ``DragItems/checkedNames(_:of:)``, and resets the take
+    /// `MALFORMED_MESSAGE` for any others.
     case named([Data])
 }
 
@@ -59,17 +62,13 @@ public enum DragTakeAnswer: Sendable, Equatable {
     case report(DragTakeReport)
     /// The drag ended on the catcher. After `.report(.named)`, the drop delivered it, and `sizes` sizes each
     /// item of the taken offer, promised ones included, in its order, 0 where unknown; nil when the drop
-    /// delivered nothing. The taken offer stays open until the host releases it.
+    /// delivered nothing, and only then before `.report(.named)`. The taken offer stays open until the host
+    /// releases it.
     case caught(sizes: [UInt64]?)
     /// The drag ended in the guest, its catcher stood down.
     case returned
     /// The drag stays the guest's: `DRAG_PRESS_OVER`, `DRAG_NOT_CURRENT`, …
     case refused(WireError)
-
-    /// Whether the answer ends the take.
-    var ends: Bool {
-        if case .report = self { false } else { true }
-    }
 }
 
 /// What a delivering drop delivered of a drag, by the index of each item in the taken offer.
@@ -89,8 +88,9 @@ public struct DragDelivery: Sendable, Equatable {
 /// How a take the host opened ended.
 public enum DragTakeResult: Sendable, Equatable {
     /// The drag ended on the catcher; `delivery` is what a delivering drop delivered, which passed
-    /// ``DragItems/checkedNames(_:of:)`` and ``DragItems/checkedSizes(_:of:)``, or nil when it delivered
-    /// nothing or broke either. The taken offer stays open until this side releases it.
+    /// ``DragItems/checkedNames(_:of:)`` and sized every item within ``DragItems/maxTotalEstimate``, or nil
+    /// when it delivered nothing or sized another count of items. The taken offer stays open until this side
+    /// releases it.
     case caught(DragDelivery?)
     /// The drag ended in the guest, its catcher stood down.
     case returned
@@ -108,7 +108,7 @@ public enum DragTakeEvent: Sendable, Equatable {
     /// Peer: the host's word on a take this side has not ended.
     case control(DragTakeID, DragTakeControl)
     /// Peer: a take this side had not ended is over: the host called it off, its offer ended and it was refused,
-    /// its first `TARGETED` listed more than one MESSAGE holds and it was refused `TOO_LARGE`, or the
+    /// its listing held an item whose report does not fit one MESSAGE and it was refused `TOO_LARGE`, or the
     /// connection ended. Once per asked take this side did not end.
     case cancelled(DragTakeID)
     /// Host: a step of the peer's hand-off on a take `takeDrag` opened.
@@ -126,14 +126,23 @@ public enum DragItems {
     /// item, by item; nil unless every item has one and their estimates sum to at most ``maxTotalEstimate``.
     public static func carried(_ items: [OfferedItem]) -> [(index: UInt32, representation: Representation)]? {
         var carried: [(index: UInt32, representation: Representation)] = []
+        var total: UInt64 = 0
         for item in items {
-            guard
-                let index = item.representations.firstIndex(where: { $0.storage == .file || $0.storage == .folder })
+            guard let next = carriedRepresentation(of: item),
+                let sum = adding(next.representation.sizeEstimate, to: total)
             else { return nil }
-            carried.append((UInt32(index), item.representations[index]))
+            carried.append(next)
+            total = sum
         }
-        guard total(carried.map(\.representation.sizeEstimate)) != nil else { return nil }
         return carried
+    }
+
+    /// The representation `item` is carried by, its first FILE or FOLDER one, with its index in the item; nil
+    /// when it has none.
+    static func carriedRepresentation(of item: OfferedItem) -> (index: UInt32, representation: Representation)? {
+        guard let index = item.representations.firstIndex(where: { $0.storage == .file || $0.storage == .folder })
+        else { return nil }
+        return (UInt32(index), item.representations[index])
     }
 
     /// The key two names collide under: a destination's file system ignores case, and Swift's `String`
@@ -154,21 +163,10 @@ public enum DragItems {
         return Dictionary(uniqueKeysWithValues: zip(promised, names))
     }
 
-    /// `sizes`, one per item of `items` in order, by item index; nil unless the count matches and they sum to at
-    /// most ``maxTotalEstimate``.
-    public static func checkedSizes(_ sizes: [UInt64], of items: [Representation]) -> [Int: UInt64]? {
-        guard sizes.count == items.count, total(sizes) != nil else { return nil }
-        return Dictionary(uniqueKeysWithValues: zip(items.indices, sizes))
-    }
-
-    /// The sum of `estimates`, or nil past ``maxTotalEstimate``.
-    private static func total(_ estimates: [UInt64]) -> UInt64? {
-        var sum: UInt64 = 0
-        for estimate in estimates {
-            let (next, overflow) = sum.addingReportingOverflow(estimate)
-            guard !overflow, next <= maxTotalEstimate else { return nil }
-            sum = next
-        }
+    /// `total` plus `estimate`, or nil past ``maxTotalEstimate``.
+    static func adding(_ estimate: UInt64, to total: UInt64) -> UInt64? {
+        let (sum, overflow) = total.addingReportingOverflow(estimate)
+        guard !overflow, sum <= maxTotalEstimate else { return nil }
         return sum
     }
 }
@@ -262,27 +260,27 @@ struct DropOffers: Sendable {
     }
 }
 
-/// What a peer's END of a DROP offer says landed: the index of each of the offer's items it landed, ascending.
+/// What a peer's END of a DROP offer says landed: how many of the offer's items it landed, skipping the rest.
 public struct DropLanded: Sendable, Equatable {
-    /// The landed items' indexes.
-    public var items: [Int]
+    /// How many items landed.
+    public var landed: Int
 
-    /// Says `items` landed.
-    public init(items: [Int]) {
-        self.items = items
+    /// Says `landed` items landed.
+    public init(landed: Int) {
+        self.landed = landed
     }
 
     /// What `endBody`, a peer's END body on DROP_OFFER, says landed; nil when it does not decode.
     public init?(endBody: Data) {
         guard let landed = try? Kernova_V2_DropLanded(serializedBytes: endBody) else { return nil }
-        items = landed.items.map(Int.init)
+        self.landed = Int(landed.landed)
     }
 
     /// The END body saying so.
     public var endBody: Data {
-        var landed = Kernova_V2_DropLanded()
-        landed.items = items.map { UInt32(clamping: $0) }
-        return landed.encoded
+        var body = Kernova_V2_DropLanded()
+        body.landed = UInt32(landed)
+        return body.encoded
     }
 }
 
@@ -292,19 +290,44 @@ public struct DropLanded: Sendable, Equatable {
 /// calls it off. A take is valid only while the drag offer it names is open, and each offer is taken at most once:
 /// the peer refuses any other take `DRAG_NOT_CURRENT` itself, asks its owner about the rest, and refuses a take
 /// whose offer ends before the owner ended it.
+///
+/// The peer's reports carry the drag's listing, its promises' names and its items' sizes one fact per MESSAGE, in
+/// the order `DragTakeReport`'s schema gives. The host holds each report to where its take stands, and the
+/// listing to the taken offer's budget, resetting the take on the first that breaks either.
 struct DragOffers: Sendable {
     /// DRAG.
     static let feature = FeatureID.drag
 
     private struct Take: Sendable {
+        /// How far the peer listed the drag's items.
+        enum Listing: Sendable {
+            case unlisted
+            /// Host: `received` of the `expected` items arrived, their size estimates summing to `estimate`.
+            case listing(expected: Int, received: Int, estimate: UInt64)
+            /// All `count` items are listed.
+            case listed(count: Int)
+        }
+
         var id: DragTakeID
         var token: Data
-        /// The drag's items, once the first `TARGETED` listed them.
-        var offered: [OfferedItem]?
-        /// Host: each item of the taken offer as the take carries it.
-        var items: [Representation] = []
-        /// Host: the promises' names the peer's `STEP_NAMED` gave, once it did.
-        var names: [Int: Data]?
+        var listing = Listing.unlisted
+        /// Host: the index of each promised item listed.
+        var promised: [Int] = []
+        /// Host: the promises' names that arrived, in order.
+        var names: [Data] = []
+        /// `STEP_NAMED` went out (peer) or passed its checks (host).
+        var named = false
+        /// Host: the items' sizes that arrived, in order, and their sum.
+        var sizes: [UInt64] = []
+        var sizeTotal: UInt64 = 0
+    }
+
+    /// A take's messages its stream has not taken yet, from `next` on, and the END that waits behind them: a
+    /// stream holds one unsent message at a time.
+    private struct Outbox: Sendable {
+        var messages: [Data] = []
+        var next = 0
+        var end: Data?
     }
 
     private let availability: Availability<NoParams>
@@ -315,9 +338,7 @@ struct DragOffers: Sendable {
     private var taken: [Data] = []
     /// Host: the takes this side opened, until their streams close.
     private var opened: [Take] = []
-    /// Each take's messages a stream did not take yet, and the END that waits
-    /// behind them: a stream holds one unsent message at a time.
-    private var outbox: [StreamID: (messages: [Data], end: Data?)] = [:]
+    private var outbox: [StreamID: Outbox] = [:]
     private var events: [DragTakeEvent] = []
     private var diagnostics: [Diagnostic] = []
 
@@ -341,7 +362,7 @@ struct DragOffers: Sendable {
     }
 
     /// Offers `offer`, a drag in progress, on DRAG_OFFER; nil when opened, or why not. It lists no items: its
-    /// take's first `TARGETED` does.
+    /// take does.
     func offer(_ offer: ItemOffer, items: inout ItemTransfer, connection: inout Connection) -> WireError? {
         if let refusal = connection.openRefusal(.dragOffer) { return refusal }
         guard offer.items.isEmpty else {
@@ -380,7 +401,7 @@ struct DragOffers: Sendable {
         case .deliver:
             message.deliver = Kernova_V2_DragDeliver()
         }
-        send(message.encoded, on: id.stream, &connection)
+        send([message.encoded], on: id.stream, &connection)
     }
 
     /// Host: calls take `id` off, which the peer hears before any release. Dropped once the take has ended.
@@ -390,57 +411,73 @@ struct DragOffers: Sendable {
         connection.reset(id.stream, WireError(.cancelled, debugDetail: "the host called the take off"))
     }
 
-    /// Peer: answers an asked take. An answer to a take already ended is dropped. The first `TARGETED` gives
-    /// the taken offer its items and lists them; a later one lists none.
+    /// Peer: answers an asked take, as ``DragTakeAnswer`` and ``DragTakeReport`` say it must be answered. An
+    /// answer to a take already ended is dropped.
     mutating func answer(
         _ id: DragTakeID, _ answer: DragTakeAnswer, items: inout ItemTransfer, connection: inout Connection
     ) {
         guard id.generation == generation, let index = asked.firstIndex(where: { $0.id == id }) else { return }
-        guard answer.ends else {
-            guard case .report(let step) = answer else { return }
-            var report = Kernova_V2_DragTakeReport()
-            report.step = Self.step(step)
-            switch step {
-            case .named(let names):
-                report.promiseNames = names
-            case .targeted(let offered) where asked[index].offered == nil:
-                report.items = offered
-                let listing = report.encoded
-                guard listing.count <= WireConstants.maxControlPayload else {
-                    let take = asked.remove(at: index)
-                    events.append(.cancelled(take.id))
-                    let detail = "the drag's \(offered.count) items list \(listing.count) bytes"
-                    let error = WireError(
-                        .tooLarge, limit: UInt64(WireConstants.maxControlPayload), debugDetail: detail)
-                    return refuse(take.id.stream, error, &connection)
-                }
-                guard items.carryLocal(asked[index].token, items: offered) else {
-                    return connection.misuse("a TARGETED whose offer is no whole, empty drag offer")
-                }
-                asked[index].offered = offered
-                return send(listing, on: id.stream, &connection)
-            case .armed, .targeted, .delivering, .deliverRefused, .stoodDown:
-                break
-            }
-            return send(report.encoded, on: id.stream, &connection)
-        }
-        let take = asked.remove(at: index)
-        var outcome = Kernova_V2_DragTakeOutcome()
+        let stream = id.stream
         switch answer {
+        case .report(.listed(let offered)):
+            list(offered, at: index, items: &items, connection: &connection)
+        case .report(.targeted):
+            guard case .listed = asked[index].listing else {
+                return connection.misuse("a TARGETED before the drag's items are listed")
+            }
+            send([Self.report(.step(.targeted))], on: stream, &connection)
+        case .report(.named(let names)):
+            guard case .listed = asked[index].listing, !asked[index].named, names.allSatisfy(PathComponent.isValid)
+            else { return connection.misuse("a STEP_NAMED before the listing, after another, or of a non-file name") }
+            asked[index].named = true
+            send(names.map { Self.report(.promiseName($0)) } + [Self.report(.step(.named))], on: stream, &connection)
+        case .report(.armed):
+            send([Self.report(.step(.armed))], on: stream, &connection)
+        case .report(.delivering):
+            send([Self.report(.step(.delivering))], on: stream, &connection)
+        case .report(.deliverRefused):
+            send([Self.report(.step(.deliverRefused))], on: stream, &connection)
+        case .report(.stoodDown):
+            send([Self.report(.step(.stoodDown))], on: stream, &connection)
         case .caught(let sizes):
-            taken.append(take.token)
-            outcome.kind = .caught
-            outcome.sizes = sizes ?? []
+            if let sizes {
+                guard asked[index].named, case .listed(let count) = asked[index].listing, sizes.count == count else {
+                    return connection.misuse("sizes for a take not named, or other than one per item")
+                }
+                send(sizes.map { Self.report(.size($0)) }, on: stream, &connection)
+            }
+            taken.append(asked.remove(at: index).token)
+            end(stream, Self.outcome(.caught), &connection)
         case .returned:
-            taken.append(take.token)
-            outcome.kind = .returned
+            taken.append(asked.remove(at: index).token)
+            end(stream, Self.outcome(.returned), &connection)
         case .refused(let error):
-            outcome.kind = .refused
-            outcome.error = error.proto
-        case .report:
-            return
+            asked.remove(at: index)
+            refuse(stream, error, &connection)
         }
-        end(take.id.stream, outcome.encoded, &connection)
+    }
+
+    /// Peer: lists `offered`, the drag's items, on the asked take at `index`, giving them to its offer; a take
+    /// with an item whose report does not fit one MESSAGE is refused `TOO_LARGE` instead.
+    private mutating func list(
+        _ offered: [OfferedItem], at index: Int, items: inout ItemTransfer, connection: inout Connection
+    ) {
+        guard case .unlisted = asked[index].listing, !offered.isEmpty else {
+            return connection.misuse("a listing of no items, or a second listing")
+        }
+        let reports = offered.map { Self.report(.item($0)) }
+        if let oversize = reports.firstIndex(where: { $0.count > WireConstants.maxControlPayload }) {
+            let take = asked.remove(at: index)
+            events.append(.cancelled(take.id))
+            let detail = "the drag's item \(oversize) lists \(reports[oversize].count) bytes"
+            let error = WireError(.tooLarge, limit: UInt64(WireConstants.maxControlPayload), debugDetail: detail)
+            return refuse(take.id.stream, error, &connection)
+        }
+        guard items.carryLocal(asked[index].token, items: offered) else {
+            return connection.misuse("a listing whose offer is no whole, empty drag offer")
+        }
+        asked[index].listing = .listed(count: offered.count)
+        send([Self.report(.itemCount(UInt32(offered.count)))] + reports, on: asked[index].id.stream, &connection)
     }
 
     /// Resets every drag stream once DRAG is not usable.
@@ -453,7 +490,8 @@ struct DragOffers: Sendable {
         }
     }
 
-    /// Handles a DRAG_TAKE stream's event; a host's first `TARGETED` gives the taken offer its items in `items`.
+    /// Handles a DRAG_TAKE stream's event; a host's take listing the drag gives the taken offer its items in
+    /// `items`.
     mutating func handleTake(_ event: FeatureEvent, items: inout ItemTransfer, connection: inout Connection) {
         switch event {
         case .message(let stream, let payload):
@@ -486,7 +524,9 @@ struct DragOffers: Sendable {
     ) {
         if let take = asked.first(where: { $0.id.stream == stream }) {
             guard let message = try? Kernova_V2_DragTakeControl(serializedBytes: payload) else {
-                return malformed("a DragTakeControl that does not decode", on: stream, &connection)
+                return resetTake(
+                    stream, WireError(.malformedMessage, debugDetail: "a DragTakeControl that does not decode"),
+                    &connection)
             }
             switch message.control {
             case .catcher(let catcher): events.append(.control(take.id, .catcher(shown: catcher.shown)))
@@ -494,50 +534,160 @@ struct DragOffers: Sendable {
             case nil: diagnostics.append(.remoteViolation("a DragTakeControl that sets no control"))
             }
         } else if let index = opened.firstIndex(where: { $0.id.stream == stream }) {
-            let take = opened[index]
             guard let message = try? Kernova_V2_DragTakeReport(serializedBytes: payload) else {
-                return malformed("a DragTakeReport that does not decode", on: stream, &connection)
+                return resetTake(
+                    stream, WireError(.malformedMessage, debugDetail: "a DragTakeReport that does not decode"),
+                    &connection)
             }
-            switch message.step {
-            case .named:
-                guard take.offered != nil, take.names == nil,
-                    let names = DragItems.checkedNames(message.promiseNames, of: take.items)
-                else {
-                    return malformed("a STEP_NAMED its taken offer cannot take", on: stream, &connection)
-                }
-                opened[index].names = names
-                events.append(.report(take.id, .named(message.promiseNames)))
-            case .targeted:
-                guard let offered = take.offered else {
-                    guard let carried = Self.carried(message.items),
-                        items.carryRemote(take.token, items: message.items) == nil
-                    else { return malformed("a first TARGETED its taken offer cannot carry", on: stream, &connection) }
-                    opened[index].offered = message.items
-                    opened[index].items = carried
-                    return events.append(.report(take.id, .targeted(message.items)))
-                }
-                guard message.items.isEmpty else {
-                    return malformed("a later TARGETED that lists items", on: stream, &connection)
-                }
-                events.append(.report(take.id, .targeted(offered)))
-            case .armed: events.append(.report(take.id, .armed))
-            case .delivering: events.append(.report(take.id, .delivering))
-            case .deliverRefused: events.append(.report(take.id, .deliverRefused))
-            case .stoodDown: events.append(.report(take.id, .stoodDown))
-            case .unspecified, .UNRECOGNIZED: break
+            switch message.report {
+            case .itemCount(let count): listing(Int(count), at: index, items: &items, connection: &connection)
+            case .item(let item): listed(item, at: index, items: &items, connection: &connection)
+            case .promiseName(let name): named(name, at: index, &connection)
+            case .size(let size): sized(size, at: index, &connection)
+            case .step(let step): stepped(step, at: index, items: items, connection: &connection)
+            case nil: diagnostics.append(.remoteViolation("a DragTakeReport that reports nothing"))
             }
         }
     }
 
-    private mutating func malformed(_ what: String, on stream: StreamID, _ connection: inout Connection) {
-        diagnostics.append(.remoteViolation(what))
-        if connection.canReset(stream) { connection.reset(stream, WireError(.malformedMessage)) }
+    /// Host: the peer begins listing the drag's `count` items on the take at `index`, which reserves them in its
+    /// taken offer.
+    private mutating func listing(
+        _ count: Int, at index: Int, items: inout ItemTransfer, connection: inout Connection
+    ) {
+        let take = opened[index]
+        guard case .unlisted = take.listing else {
+            return resetTake(take.id.stream, Self.disorder("a second item_count"), &connection)
+        }
+        guard count >= 1 else {
+            return resetTake(
+                take.id.stream, WireError(.malformedMessage, debugDetail: "an item_count of 0"), &connection)
+        }
+        if let refusal = items.reserveCarried(take.token, count: count) {
+            return resetTake(take.id.stream, refusal, &connection)
+        }
+        opened[index].listing = .listing(expected: count, received: 0, estimate: 0)
     }
 
-    /// Queues `payload` on `stream`, behind any message the stream has not
-    /// taken yet.
-    private mutating func send(_ payload: Data, on stream: StreamID, _ connection: inout Connection) {
-        outbox[stream, default: ([], nil)].messages.append(payload)
+    // This handler and the next two read the take in place rather than binding a copy of it: a copy alive
+    // across an append to one of its arrays makes the append copy the whole array, once per report.
+
+    /// Host: the drag's next item arrived on the take at `index`, and its taken offer holds it; the last reports
+    /// them all.
+    private mutating func listed(
+        _ item: OfferedItem, at index: Int, items: inout ItemTransfer, connection: inout Connection
+    ) {
+        let (id, token) = (opened[index].id, opened[index].token)
+        guard case .listing(let expected, let received, let estimate) = opened[index].listing else {
+            return resetTake(id.stream, Self.disorder("an item outside the drag's listing"), &connection)
+        }
+        var carried: Representation?
+        var total = estimate
+        let refusal = items.appendCarried(token, item.encoded) { decoded in
+            guard let representation = DragItems.carriedRepresentation(of: decoded)?.representation,
+                let sum = DragItems.adding(representation.sizeEstimate, to: total)
+            else { return nil }
+            carried = representation
+            total = sum
+            return representation.promised ? ItemOfferRegistry.carriedNameReservation : 0
+        }
+        if let refusal { return resetTake(id.stream, refusal, &connection) }
+        if carried?.promised == true { opened[index].promised.append(received) }
+        guard received + 1 == expected else {
+            opened[index].listing = .listing(expected: expected, received: received + 1, estimate: total)
+            return
+        }
+        opened[index].listing = .listed(count: expected)
+        guard let offer = items.offers.remoteOffer(token) else {
+            return connection.misuse("a drag offer whose last listed item left it short of whole")
+        }
+        events.append(.report(id, .listed(offer.items)))
+    }
+
+    /// Host: a promise's name arrived on the take at `index`.
+    private mutating func named(_ name: Data, at index: Int, _ connection: inout Connection) {
+        let stream = opened[index].id.stream
+        guard case .listed = opened[index].listing, !opened[index].named,
+            opened[index].names.count < opened[index].promised.count
+        else { return resetTake(stream, Self.disorder("a promise_name outside the drag's naming"), &connection) }
+        guard PathComponent.isValid(name) else {
+            return resetTake(
+                stream, WireError(.malformedMessage, debugDetail: "a promise_name that is no path component"),
+                &connection)
+        }
+        opened[index].names.append(name)
+    }
+
+    /// Host: an item's size arrived on the take at `index`.
+    private mutating func sized(_ size: UInt64, at index: Int, _ connection: inout Connection) {
+        let stream = opened[index].id.stream
+        guard opened[index].named, case .listed(let count) = opened[index].listing, opened[index].sizes.count < count
+        else { return resetTake(stream, Self.disorder("a size outside the drag's sizing"), &connection) }
+        guard let total = DragItems.adding(size, to: opened[index].sizeTotal) else {
+            return resetTake(
+                stream, WireError(.malformedMessage, debugDetail: "sizes summing past 2^63-1"), &connection)
+        }
+        opened[index].sizes.append(size)
+        opened[index].sizeTotal = total
+    }
+
+    /// Host: a step of the peer's hand-off arrived on the take at `index`.
+    private mutating func stepped(
+        _ step: Kernova_V2_DragTakeReport.Step, at index: Int, items: ItemTransfer, connection: inout Connection
+    ) {
+        let take = opened[index]
+        switch step {
+        case .targeted:
+            guard case .listed = take.listing else {
+                return resetTake(
+                    take.id.stream, Self.disorder("a TARGETED before the drag's items are listed"), &connection)
+            }
+            events.append(.report(take.id, .targeted))
+        case .named:
+            guard case .listed = take.listing, !take.named else {
+                return resetTake(
+                    take.id.stream, Self.disorder("a STEP_NAMED before the drag's listing, or after another"),
+                    &connection)
+            }
+            guard let carried = items.offers.remoteOffer(take.token).flatMap({ DragItems.carried($0.items) }),
+                DragItems.checkedNames(take.names, of: carried.map(\.representation)) != nil
+            else {
+                return resetTake(
+                    take.id.stream,
+                    WireError(.malformedMessage, debugDetail: "a STEP_NAMED its taken offer cannot take"),
+                    &connection)
+            }
+            opened[index].named = true
+            events.append(.report(take.id, .named(take.names)))
+        case .armed: events.append(.report(take.id, .armed))
+        case .delivering: events.append(.report(take.id, .delivering))
+        case .deliverRefused: events.append(.report(take.id, .deliverRefused))
+        case .stoodDown: events.append(.report(take.id, .stoodDown))
+        case .unspecified, .UNRECOGNIZED: break
+        }
+    }
+
+    /// A report out of the take's order.
+    private static func disorder(_ what: String) -> WireError {
+        WireError(.streamProtocolError, debugDetail: what)
+    }
+
+    /// Resets the take on `stream` with `error`, for a message the take cannot take, diagnosed unless the taken
+    /// offer refused it for its budget or its absence.
+    private mutating func resetTake(_ stream: StreamID, _ error: WireError, _ connection: inout Connection) {
+        if error.code != .tooLarge, error.code != .itemOfferStale {
+            diagnostics.append(.remoteViolation(error.debugDetail))
+        }
+        if connection.canReset(stream) { connection.reset(stream, error) }
+    }
+
+    /// Queues `payloads` on `stream`, behind any message the stream has not taken yet. One over a MESSAGE is a
+    /// misuse, so the outbox never holds a message the stream cannot take.
+    private mutating func send(_ payloads: [Data], on stream: StreamID, _ connection: inout Connection) {
+        guard payloads.allSatisfy({ $0.count <= WireConstants.maxControlPayload }) else {
+            return connection.misuse("a DRAG_TAKE message over one MESSAGE")
+        }
+        outbox[stream, default: Outbox()].messages += payloads
         flush(stream, &connection)
     }
 
@@ -552,16 +702,17 @@ struct DragOffers: Sendable {
 
     /// Hands `stream` what its outbox holds, as far as it takes it.
     private mutating func flush(_ stream: StreamID, _ connection: inout Connection) {
-        guard var waiting = outbox[stream] else { return }
-        while let first = waiting.messages.first, connection.canSendMessage(first.count, on: stream) {
-            connection.send(message: first, on: stream)
-            waiting.messages.removeFirst()
+        guard var waiting = outbox.removeValue(forKey: stream) else { return }
+        while waiting.next < waiting.messages.count,
+            connection.canSendMessage(waiting.messages[waiting.next].count, on: stream)
+        {
+            connection.send(message: waiting.messages[waiting.next], on: stream)
+            waiting.next += 1
         }
-        guard waiting.messages.isEmpty else {
+        guard waiting.next == waiting.messages.count else {
             outbox[stream] = waiting
             return
         }
-        outbox[stream] = nil
         if let body = waiting.end, connection.canQueue(on: stream) { connection.end(stream, body: body) }
     }
 
@@ -589,13 +740,6 @@ struct DragOffers: Sendable {
         asked.removeAll { !open.contains($0.token) }
     }
 
-    /// What `items` carry, each held to an offer Item's rules (`ItemOfferRegistry.isNamedByContract(_:)`);
-    /// nil unless there are some and ``DragItems/carried(_:)`` carries them.
-    private static func carried(_ items: [OfferedItem]) -> [Representation]? {
-        guard !items.isEmpty, items.allSatisfy(ItemOfferRegistry.isNamedByContract) else { return nil }
-        return DragItems.carried(items)?.map(\.representation)
-    }
-
     /// ENDs a take REFUSED with `error`.
     private mutating func refuse(_ stream: StreamID, _ error: WireError, _ connection: inout Connection) {
         var outcome = Kernova_V2_DragTakeOutcome()
@@ -604,19 +748,22 @@ struct DragOffers: Sendable {
         end(stream, outcome.encoded, &connection)
     }
 
-    private static func step(_ report: DragTakeReport) -> Kernova_V2_DragTakeReport.Step {
-        switch report {
-        case .armed: .armed
-        case .targeted: .targeted
-        case .delivering: .delivering
-        case .deliverRefused: .deliverRefused
-        case .stoodDown: .stoodDown
-        case .named: .named
-        }
+    /// One report, encoded.
+    private static func report(_ report: Kernova_V2_DragTakeReport.OneOf_Report) -> Data {
+        var message = Kernova_V2_DragTakeReport()
+        message.report = report
+        return message.encoded
+    }
+
+    /// An outcome of `kind`, encoded.
+    private static func outcome(_ kind: Kernova_V2_DragTakeOutcome.Kind) -> Data {
+        var outcome = Kernova_V2_DragTakeOutcome()
+        outcome.kind = kind
+        return outcome.encoded
     }
 
     /// Take `take`'s end: the peer's `DragTakeOutcome` when it ENDed, a CAUGHT delivered only after
-    /// `STEP_NAMED` and with sizes its taken offer can take; otherwise how the stream closed.
+    /// `STEP_NAMED` and one size per item of its taken offer; otherwise how the stream closed.
     private mutating func result(of take: Take, _ closure: StreamClosure) -> DragTakeResult {
         guard case .completed(let body) = closure else { return .closed(closure) }
         guard let outcome = try? Kernova_V2_DragTakeOutcome(serializedBytes: body) else {
@@ -624,17 +771,15 @@ struct DragOffers: Sendable {
         }
         switch outcome.kind {
         case .caught:
-            guard let names = take.names else {
-                if !outcome.sizes.isEmpty {
-                    diagnostics.append(.remoteViolation("sizes with no STEP_NAMED"))
-                }
+            guard take.named else { return .caught(nil) }
+            guard case .listed(let count) = take.listing, take.sizes.count == count else {
+                diagnostics.append(.remoteViolation("a CAUGHT after sizing \(take.sizes.count) of the items"))
                 return .caught(nil)
             }
-            guard let sizes = DragItems.checkedSizes(outcome.sizes, of: take.items) else {
-                diagnostics.append(.remoteViolation("a CAUGHT's sizes its taken offer cannot take"))
-                return .caught(nil)
-            }
-            return .caught(DragDelivery(names: names, sizes: sizes))
+            return .caught(
+                DragDelivery(
+                    names: Dictionary(uniqueKeysWithValues: zip(take.promised, take.names)),
+                    sizes: Dictionary(uniqueKeysWithValues: zip(take.sizes.indices, take.sizes))))
         case .returned: return .returned
         case .refused, .unspecified, .UNRECOGNIZED:
             return .refused(outcome.hasError ? WireError(received: outcome.error) : WireError(.unspecified))

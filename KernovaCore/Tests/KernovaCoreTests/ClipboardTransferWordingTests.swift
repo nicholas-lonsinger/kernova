@@ -50,6 +50,7 @@ struct ClipboardTransferWordingTests {
             (.itemsUnreadable, .drop),
             (.itemsUnreadable, .copy),
             (.sendFailed, .drop),
+            (.tooLarge(limitBytes: 16_777_216), .drop),
             (.dropStopped(.turnedOff), .drop),
             (.dropStopped(.noAgent), .drop),
             (.dropStopped(.movedToAnotherAgent), .drop),
@@ -142,6 +143,15 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.interrupted(fileCount: 3), .drop)).message
                 == "The files stopped transferring when the connection to the VM ended.")
+    }
+
+    @Test("a drop the VM refuses as too large reads as a drop, never as a clipboard paste")
+    func tooLargeDropReadsAsADrop() throws {
+        let copy = try #require(wording(.tooLarge(limitBytes: 16_777_216), .drop))
+        #expect(copy.headline == "Files not copied to \(quotedVM).")
+        #expect(copy.menuLine.hasPrefix("Drop: "))
+        #expect(!copy.message.lowercased().contains("clipboard"))
+        #expect(!copy.message.contains("paste"))
     }
 
     @Test("a drag out reads as files not copied from the VM, never as a paste or a drop")

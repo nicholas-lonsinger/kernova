@@ -245,7 +245,7 @@ enum ItemFeatureScenarios {
     /// The items a drag's take lists.
     static var dragItems: [OfferedItem] { SimItems.offer(1, [[file]]).items }
 
-    /// One session peer offering a drag at 500 ms whose take's `TARGETED` lists ``dragItems``.
+    /// One session peer offering a drag at 500 ms whose take lists ``dragItems``.
     static func dragOffered(_ world: SimWorld) {
         world.addPeer(.session())
         world.at(.ms(500)) { world in
@@ -367,7 +367,8 @@ enum ItemFeatureScenarios {
             answersByHand(world)
             world.at(.ms(700)) { world in world.takeDrag(SimItems.token(1)) }
             world.at(.ms(800)) { world in answer(.report(.armed), world) }
-            world.at(.ms(850)) { world in answer(.report(.targeted(dragItems)), world) }
+            world.at(.ms(850)) { world in answer(.report(.listed(dragItems)), world) }
+            world.at(.ms(860)) { world in answer(.report(.targeted), world) }
             world.at(.ms(900)) { world in world.controlTakes(.catcher(shown: false)) }
             world.at(.ms(950)) { world in world.controlTakes(.deliver) }
             world.at(.ms(1_000)) { world in answer(.report(.delivering), world) }
@@ -378,7 +379,7 @@ enum ItemFeatureScenarios {
             let host = items(world, .host)
             let peer = items(world, .peer)
             return expectThat(
-                host?.takeReports.map(\.report) == [.armed, .targeted(dragItems), .delivering],
+                host?.takeReports.map(\.report) == [.armed, .listed(dragItems), .targeted, .delivering],
                 "the host heard: \(String(describing: host?.takeReports))")
                 + expectThat(
                     peer?.takeControls.map(\.control) == [.catcher(shown: false), .deliver],
@@ -401,7 +402,9 @@ enum ItemFeatureScenarios {
                 guard let link = world.links.first, let id = link.items(.peer).takesRequested.first?.id else { return }
                 link.peer?.handle(.dragTake(id, .report(.armed)), now: world.localNow(world.process(of: link, .peer)))
                 link.peer?.handle(
-                    .dragTake(id, .report(.targeted(dragItems))), now: world.localNow(world.process(of: link, .peer)))
+                    .dragTake(id, .report(.listed(dragItems))), now: world.localNow(world.process(of: link, .peer)))
+                link.peer?.handle(
+                    .dragTake(id, .report(.targeted)), now: world.localNow(world.process(of: link, .peer)))
                 link.peer?.handle(
                     .dragTake(id, .caught(sizes: nil)), now: world.localNow(world.process(of: link, .peer)))
                 world.drain(link, .peer)
@@ -410,7 +413,7 @@ enum ItemFeatureScenarios {
         expect: { world in
             let host = items(world, .host)
             return expectThat(
-                host?.takeReports.map(\.report) == [.armed, .targeted(dragItems)],
+                host?.takeReports.map(\.report) == [.armed, .listed(dragItems), .targeted],
                 "the host heard: \(String(describing: host?.takeReports))")
                 + expectThat(
                     host?.takesEnded.map(\.result) == [.caught(nil)],

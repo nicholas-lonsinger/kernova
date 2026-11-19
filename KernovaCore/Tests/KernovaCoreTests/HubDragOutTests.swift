@@ -122,7 +122,9 @@ struct HubDragOutTests {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         dragOut = HubDragOut(
             sink: ItemSinkAdapter(fileSystem: POSIXTreeFileSystem()), reporter: reporter, progressRevealDelay: 0,
-            clock: clock, peerName: { "Test VM" })
+            clock: clock,
+            naming: GuestDragDelivery.Deadline(seconds: mainThreadHoldCap, clock: makePlatformEngineClock()),
+            peerName: { "Test VM" })
         dragOut.hub = hub
     }
 
@@ -181,7 +183,8 @@ struct HubDragOutTests {
         // The answer hops to the main queue, ahead of the take's events.
         try await drainMainQueue()
         try await deliver(.report(takeID, .armed))
-        try await deliver(.report(takeID, .targeted(items)))
+        try await deliver(.report(takeID, .listed(items)))
+        try await deliver(.report(takeID, .targeted))
         try #require(take.phase == .ready)
         take.withheldDrag()
         try #require(take.phase == .carried(.outside(targeted: true)))
@@ -199,8 +202,8 @@ struct HubDragOutTests {
 
     // MARK: - The offer
 
-    @Test("a console peer's drag offer is the drag the display may take; its first TARGETED names its items")
-    func targetedNamesTheItems() async throws {
+    @Test("a console peer's drag offer is the drag the display may take; its take's listing names its items")
+    func listingNamesTheItems() async throws {
         offer()
         #expect(dragOut.offer == GuestDragOffer(peer: peer, token: token))
 

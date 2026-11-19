@@ -2542,9 +2542,9 @@ public nonisolated struct Kernova_V2_DropLanded: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// The index of each item the peer landed, ascending. An item not listed
-  /// did not land.
-  public var items: [UInt32] = []
+  /// How many of the offer's items the peer landed; it skipped the rest. A
+  /// count over the offer's items reads as a body that does not decode.
+  public var landed: UInt32 = 0
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -2664,31 +2664,96 @@ public nonisolated struct Kernova_V2_DragDeliver: Sendable {
   public init() {}
 }
 
-/// Peer -> host on DRAG_TAKE, one per MESSAGE frame.
+/// Peer -> host on DRAG_TAKE, one per MESSAGE frame: a step, or one fact of
+/// the drag's listing, naming or sizing.
+///
+/// The peer lists the drag's items before the take's first STEP_TARGETED:
+/// `item_count`, then that many `item`. After a delivering drop it sends one
+/// `promise_name` per promised item of the taken offer, in its order, then
+/// STEP_NAMED, then one `size` per item of the taken offer, in its order, then
+/// its END CAUGHT. A report out of that order resets the take
+/// STREAM_PROTOCOL_ERROR, and one whose content breaks its rule
+/// MALFORMED_MESSAGE; a listing the host cannot hold resets it TOO_LARGE. A
+/// report setting none is ignored.
 public nonisolated struct Kernova_V2_DragTakeReport: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var step: Kernova_V2_DragTakeReport.Step = .unspecified
+  public var report: Kernova_V2_DragTakeReport.OneOf_Report? = nil
 
-  /// With STEP_NAMED: the name each promise took once called in, one per
-  /// promised item of the taken offer, in its order; each one path component
-  /// (Representation.name's rule), and no two alike, nor alike any other
-  /// item's name, ignoring case. The taken offer serves each promise from
-  /// then on. A list breaking any of that resets the take
-  /// MALFORMED_MESSAGE.
-  public var promiseNames: [Data] = []
+  public var step: Kernova_V2_DragTakeReport.Step {
+    get {
+      if case .step(let v)? = report {return v}
+      return .unspecified
+    }
+    set {report = .step(newValue)}
+  }
 
-  /// With the take's first STEP_TARGETED: the drag's items, each held to an
-  /// offer Item's rules and carrying a FILE or FOLDER representation, their
-  /// size estimates summing to at most 2^63-1. They become the taken
-  /// DRAG_OFFER's items. A first TARGETED breaking that, or a later one listing
-  /// any, resets the take MALFORMED_MESSAGE. A drag whose items do not fit one
-  /// MESSAGE frame is not listed: the peer ENDs the take REFUSED TOO_LARGE.
-  public var items: [Kernova_V2_Item] = []
+  /// How many items the drag holds, at least 1.
+  public var itemCount: UInt32 {
+    get {
+      if case .itemCount(let v)? = report {return v}
+      return 0
+    }
+    set {report = .itemCount(newValue)}
+  }
+
+  /// The drag's next item, read off the drag as the catcher, its
+  /// destination, sees it: held to an offer Item's rules and carrying a
+  /// FILE or FOLDER representation, the listing's size estimates summing to
+  /// at most 2^63-1. It becomes the taken DRAG_OFFER's next item. An item
+  /// whose report does not fit one MESSAGE frame is not listed: the peer
+  /// ENDs the take REFUSED TOO_LARGE.
+  public var item: Kernova_V2_Item {
+    get {
+      if case .item(let v)? = report {return v}
+      return Kernova_V2_Item()
+    }
+    set {report = .item(newValue)}
+  }
+
+  /// The name the next promised item took once called in: one path
+  /// component (Representation.name's rule).
+  public var promiseName: Data {
+    get {
+      if case .promiseName(let v)? = report {return v}
+      return Data()
+    }
+    set {report = .promiseName(newValue)}
+  }
+
+  /// The next item's size estimate, under Representation.size_estimate's
+  /// rule (0 when unknown), the sizes summing to at most 2^63-1.
+  public var size: UInt64 {
+    get {
+      if case .size(let v)? = report {return v}
+      return 0
+    }
+    set {report = .size(newValue)}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public nonisolated enum OneOf_Report: Equatable, Sendable {
+    case step(Kernova_V2_DragTakeReport.Step)
+    /// How many items the drag holds, at least 1.
+    case itemCount(UInt32)
+    /// The drag's next item, read off the drag as the catcher, its
+    /// destination, sees it: held to an offer Item's rules and carrying a
+    /// FILE or FOLDER representation, the listing's size estimates summing to
+    /// at most 2^63-1. It becomes the taken DRAG_OFFER's next item. An item
+    /// whose report does not fit one MESSAGE frame is not listed: the peer
+    /// ENDs the take REFUSED TOO_LARGE.
+    case item(Kernova_V2_Item)
+    /// The name the next promised item took once called in: one path
+    /// component (Representation.name's rule).
+    case promiseName(Data)
+    /// The next item's size estimate, under Representation.size_estimate's
+    /// rule (0 when unknown), the sizes summing to at most 2^63-1.
+    case size(UInt64)
+
+  }
 
   public nonisolated enum Step: SwiftProtobuf.Enum, Swift.CaseIterable {
     public typealias RawValue = Int
@@ -2702,9 +2767,7 @@ public nonisolated struct Kernova_V2_DragTakeReport: Sendable {
     case armed // = 1
 
     /// The guest's drag manager entered the catcher with the taken drag and
-    /// was answered copy: a release now drops on the catcher. The take's first
-    /// TARGETED lists the drag's items in `items`, read off the drag as the
-    /// catcher, its destination, sees it; a later one lists none.
+    /// was answered copy: a release now drops on the catcher.
     case targeted // = 2
 
     /// answers DragDeliver: the next drop delivers
@@ -2717,8 +2780,10 @@ public nonisolated struct Kernova_V2_DragTakeReport: Sendable {
     /// catcher is down, so a release now drops where the pointer is.
     case stoodDown // = 5
 
-    /// The delivering drop called the drag's promises in: `promise_names`
-    /// names each, once, before the END.
+    /// The delivering drop called the drag's promises in, and the
+    /// `promise_name`s before this named each, once: one per promised item,
+    /// and no two alike, nor alike any other item's name, ignoring case. The
+    /// taken offer serves each promise from then on.
     case named // = 6
     case UNRECOGNIZED(Int)
 
@@ -2770,6 +2835,11 @@ public nonisolated struct Kernova_V2_DragTakeReport: Sendable {
 
 /// The peer's END body on DRAG_TAKE. A caught drag's offer stays open until
 /// the host releases it.
+///
+/// CAUGHT after STEP_NAMED and one `size` per item of the taken offer, so by a
+/// delivering drop, delivered the drag; after STEP_NAMED with another count of
+/// sizes, it reads as CAUGHT undelivered. CAUGHT with no STEP_NAMED delivered
+/// nothing, and the taken offer carries the drag as offered.
 public nonisolated struct Kernova_V2_DragTakeOutcome: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -2786,14 +2856,6 @@ public nonisolated struct Kernova_V2_DragTakeOutcome: Sendable {
   /// Clears the value of `error`. Subsequent reads from it will return its default value.
   public mutating func clearError() {self._error = nil}
 
-  /// CAUGHT after STEP_NAMED, so by a delivering drop: each item's size
-  /// estimate, one per item of the taken offer, promised ones included, in its
-  /// order, under Representation.size_estimate's rule (0 when unknown), and
-  /// summing to at most 2^63-1. A list breaking that reads as CAUGHT
-  /// undelivered. CAUGHT with no STEP_NAMED delivered nothing, and the
-  /// taken offer carries the drag as offered.
-  public var sizes: [UInt64] = []
-
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum Kind: SwiftProtobuf.Enum, Swift.CaseIterable {
@@ -2805,7 +2867,8 @@ public nonisolated struct Kernova_V2_DragTakeOutcome: Sendable {
     /// the drag ended on the catcher
     case caught // = 1
 
-    /// `error` says why: DRAG_NOT_CURRENT, DRAG_PRESS_OVER or TOO_LARGE
+    /// `error` says why: DRAG_NOT_CURRENT, DRAG_PRESS_OVER, or TOO_LARGE for an
+    /// item whose report does not fit one MESSAGE frame
     case refused // = 2
 
     /// the drag ended in the guest, its catcher stood down
@@ -4918,7 +4981,7 @@ nonisolated extension Kernova_V2_DropPolicy: SwiftProtobuf.Message, SwiftProtobu
 
 nonisolated extension Kernova_V2_DropLanded: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DropLanded"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}items\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\u{2}landed\0\u{b}items\0\u{c}\u{1}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -4926,21 +4989,21 @@ nonisolated extension Kernova_V2_DropLanded: SwiftProtobuf.Message, SwiftProtobu
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeRepeatedUInt32Field(value: &self.items) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.landed) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if !self.items.isEmpty {
-      try visitor.visitPackedUInt32Field(value: self.items, fieldNumber: 1)
+    if self.landed != 0 {
+      try visitor.visitSingularUInt32Field(value: self.landed, fieldNumber: 2)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V2_DropLanded, rhs: Kernova_V2_DropLanded) -> Bool {
-    if lhs.items != rhs.items {return false}
+    if lhs.landed != rhs.landed {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -5132,7 +5195,7 @@ nonisolated extension Kernova_V2_DragDeliver: SwiftProtobuf.Message, SwiftProtob
 
 nonisolated extension Kernova_V2_DragTakeReport: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DragTakeReport"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}step\0\u{3}promise_names\0\u{1}items\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}step\0\u{4}\u{3}item_count\0\u{1}item\0\u{3}promise_name\0\u{1}size\0\u{b}promise_names\0\u{b}items\0\u{c}\u{2}\u{1}\u{c}\u{3}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5140,31 +5203,89 @@ nonisolated extension Kernova_V2_DragTakeReport: SwiftProtobuf.Message, SwiftPro
       // allocates stack space for every case branch when no optimizations are
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
-      case 1: try { try decoder.decodeSingularEnumField(value: &self.step) }()
-      case 2: try { try decoder.decodeRepeatedBytesField(value: &self.promiseNames) }()
-      case 3: try { try decoder.decodeRepeatedMessageField(value: &self.items) }()
+      case 1: try {
+        var v: Kernova_V2_DragTakeReport.Step?
+        try decoder.decodeSingularEnumField(value: &v)
+        if let v = v {
+          if self.report != nil {try decoder.handleConflictingOneOf()}
+          self.report = .step(v)
+        }
+      }()
+      case 4: try {
+        var v: UInt32?
+        try decoder.decodeSingularUInt32Field(value: &v)
+        if let v = v {
+          if self.report != nil {try decoder.handleConflictingOneOf()}
+          self.report = .itemCount(v)
+        }
+      }()
+      case 5: try {
+        var v: Kernova_V2_Item?
+        var hadOneofValue = false
+        if let current = self.report {
+          hadOneofValue = true
+          if case .item(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.report = .item(v)
+        }
+      }()
+      case 6: try {
+        var v: Data?
+        try decoder.decodeSingularBytesField(value: &v)
+        if let v = v {
+          if self.report != nil {try decoder.handleConflictingOneOf()}
+          self.report = .promiseName(v)
+        }
+      }()
+      case 7: try {
+        var v: UInt64?
+        try decoder.decodeSingularUInt64Field(value: &v)
+        if let v = v {
+          if self.report != nil {try decoder.handleConflictingOneOf()}
+          self.report = .size(v)
+        }
+      }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    if self.step != .unspecified {
-      try visitor.visitSingularEnumField(value: self.step, fieldNumber: 1)
-    }
-    if !self.promiseNames.isEmpty {
-      try visitor.visitRepeatedBytesField(value: self.promiseNames, fieldNumber: 2)
-    }
-    if !self.items.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.items, fieldNumber: 3)
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    switch self.report {
+    case .step?: try {
+      guard case .step(let v)? = self.report else { preconditionFailure() }
+      try visitor.visitSingularEnumField(value: v, fieldNumber: 1)
+    }()
+    case .itemCount?: try {
+      guard case .itemCount(let v)? = self.report else { preconditionFailure() }
+      try visitor.visitSingularUInt32Field(value: v, fieldNumber: 4)
+    }()
+    case .item?: try {
+      guard case .item(let v)? = self.report else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    }()
+    case .promiseName?: try {
+      guard case .promiseName(let v)? = self.report else { preconditionFailure() }
+      try visitor.visitSingularBytesField(value: v, fieldNumber: 6)
+    }()
+    case .size?: try {
+      guard case .size(let v)? = self.report else { preconditionFailure() }
+      try visitor.visitSingularUInt64Field(value: v, fieldNumber: 7)
+    }()
+    case nil: break
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V2_DragTakeReport, rhs: Kernova_V2_DragTakeReport) -> Bool {
-    if lhs.step != rhs.step {return false}
-    if lhs.promiseNames != rhs.promiseNames {return false}
-    if lhs.items != rhs.items {return false}
+    if lhs.report != rhs.report {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -5176,7 +5297,7 @@ nonisolated extension Kernova_V2_DragTakeReport.Step: SwiftProtobuf._ProtoNamePr
 
 nonisolated extension Kernova_V2_DragTakeOutcome: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".DragTakeOutcome"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{1}error\0\u{2}\u{2}sizes\0\u{b}reoffer\0\u{c}\u{3}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}kind\0\u{1}error\0\u{b}reoffer\0\u{b}sizes\0\u{c}\u{3}\u{1}\u{c}\u{4}\u{1}")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -5186,7 +5307,6 @@ nonisolated extension Kernova_V2_DragTakeOutcome: SwiftProtobuf.Message, SwiftPr
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularEnumField(value: &self.kind) }()
       case 2: try { try decoder.decodeSingularMessageField(value: &self._error) }()
-      case 4: try { try decoder.decodeRepeatedUInt64Field(value: &self.sizes) }()
       default: break
       }
     }
@@ -5203,16 +5323,12 @@ nonisolated extension Kernova_V2_DragTakeOutcome: SwiftProtobuf.Message, SwiftPr
     try { if let v = self._error {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
     } }()
-    if !self.sizes.isEmpty {
-      try visitor.visitPackedUInt64Field(value: self.sizes, fieldNumber: 4)
-    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Kernova_V2_DragTakeOutcome, rhs: Kernova_V2_DragTakeOutcome) -> Bool {
     if lhs.kind != rhs.kind {return false}
     if lhs._error != rhs._error {return false}
-    if lhs.sizes != rhs.sizes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
