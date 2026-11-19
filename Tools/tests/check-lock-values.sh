@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Fixture tests for Tools/check-lock-values.sh: which lock-box type arguments
-# it flags, and on which line.
+# Fixture tests for the lock-values rule (Tools/swift-rules/lock-values.pm):
+# which lock-box type arguments it flags, and on which line.
 
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-check_script="$ROOT/Tools/check-lock-values.sh"
+run_rule() { bash "$ROOT/Tools/check-swift-sources.sh" --rule lock-values "$@"; }
 
 if [ -t 1 ]; then c_red=$'\033[0;31m'; c_reset=$'\033[0m'; else c_red=''; c_reset=''; fi
 FAIL=0
@@ -24,7 +24,7 @@ expect() {
     local name=$1 path=$2 want=$3 dir="$tmp/$1" output status got
     mkdir -p "$dir/$(dirname "$path")"
     printf '%s\n' "$4" >"$dir/$path"
-    output=$(cd "$dir" && bash "$check_script" "$path" 2>&1)
+    output=$(cd "$dir" && run_rule "$path" 2>&1)
     status=$?
     got=$(printf '%s\n' "$output" | sed -n "s|^check-lock-values: $path:\([0-9]*\) .*|\1|p" | tr '\n' ' ')
     got=${got% }
@@ -77,7 +77,7 @@ let b = registry.Locked<() -> Void>({})'
 
 # An unreadable file fails.
 
-output=$(cd "$tmp" && bash "$check_script" "$source_file" 2>&1)
+output=$(cd "$tmp" && run_rule "$source_file" 2>&1)
 status=$?
 if [ "$status" -eq 0 ] || [[ $output != *"cannot read $source_file"* ]]; then
     fail "missing-file: exited $status without naming the unread file"

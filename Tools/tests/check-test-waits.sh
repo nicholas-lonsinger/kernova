@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Fixture tests for Tools/check-test-waits.sh: which real-clock sleeps and wait
-# deadlines it flags, on which line, and which files it scans.
+# Fixture tests for the test-waits rule (Tools/swift-rules/test-waits.pm):
+# which real-clock sleeps and wait deadlines it flags, on which line, and which
+# files it scans.
 
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-check_script="$ROOT/Tools/check-test-waits.sh"
+run_rule() { bash "$ROOT/Tools/check-swift-sources.sh" --rule test-waits "$@"; }
 
 if [ -t 1 ]; then c_red=$'\033[0;31m'; c_reset=$'\033[0m'; else c_red=''; c_reset=''; fi
 FAIL=0
@@ -23,7 +24,7 @@ isolate_git "$tmp"
 expect() {
     local name=$1 want=$2 file="$tmp/$1.swift" output status got
     printf '%s\n' "$3" >"$file"
-    output=$(bash "$check_script" "$file" 2>&1)
+    output=$(run_rule "$file" 2>&1)
     status=$?
     got=$(printf '%s\n' "$output" | sed -n "s|^check-test-waits: $file:\([0-9]*\) .*|\1|p" | tr '\n' ' ')
     got=${got% }
@@ -200,7 +201,7 @@ expect backstop-default '' 'let backstop = Backstop("the call")
 let named = Backstop("the call", timeout: limit)'
 
 # A file the check cannot open fails it, rather than passing unread.
-output=$(bash "$check_script" "$tmp/missing.swift" 2>&1)
+output=$(run_rule "$tmp/missing.swift" 2>&1)
 status=$?
 if [ "$status" -eq 0 ]; then
     fail "unreadable-file: exited 0 for a file it could not open"
@@ -217,7 +218,7 @@ for file in AppTests/Case.swift AppTests/Support/Helper.swift AppTestSupport/Wai
     printf '%s\n' 'try await Task.sleep(for: .seconds(1))' >"$tmp/repo/$file"
 done
 git -C "$tmp/repo" add .
-output=$(cd "$tmp/repo/App" && bash "$check_script" 2>&1)
+output=$(cd "$tmp/repo/App" && run_rule 2>&1)
 status=$?
 got=$(printf '%s\n' "$output" | sed -n 's|^check-test-waits: \([^ ]*\) .*|\1|p' | sort | tr '\n' ' ')
 if [ "$status" -eq 0 ] || [ "$got" != 'AppTests/Case.swift:1 AppTests/Support/Helper.swift:1 ' ]; then
@@ -225,7 +226,7 @@ if [ "$status" -eq 0 ] || [ "$got" != 'AppTests/Case.swift:1 AppTests/Support/He
 fi
 
 # A relative argument names a file under the caller's working directory.
-output=$(cd "$tmp/repo/AppTests" && bash "$check_script" Case.swift 2>&1)
+output=$(cd "$tmp/repo/AppTests" && run_rule Case.swift 2>&1)
 status=$?
 if [ "$status" -eq 0 ] || ! printf '%s\n' "$output" | grep -q '^check-test-waits: Case.swift:1 '; then
     fail "relative-path: wanted Case.swift:1 flagged, got status $status: $output"
