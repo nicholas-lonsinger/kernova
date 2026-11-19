@@ -17,6 +17,8 @@ public final class FakeSandbox: Sendable {
         /// The items whose file URL was read in `readGeneration`.
         var readItems: Set<Int> = []
         var bookmarksAsked = 0
+        /// The paths whose file or folder refuses a bookmark.
+        var refusingBookmarks: Set<String> = []
     }
 
     private let state: Locked<State>
@@ -25,8 +27,8 @@ public final class FakeSandbox: Sendable {
     public let changed: AsyncGate
 
     /// The process's grants as ``SandboxFileGrants`` holds them over this sandbox: a start takes a grant and
-    /// answers that it did; a bookmark is made only of a path holding a grant, and resolves to wherever its file or
-    /// folder has moved since.
+    /// answers that it did; a bookmark is made only of a path holding a grant whose file or folder doesn't refuse
+    /// one, and resolves to wherever its file or folder has moved since.
     public let fileGrants: SandboxFileGrants
 
     /// A sandbox granting nothing yet.
@@ -52,11 +54,13 @@ public final class FakeSandbox: Sendable {
                     changed.notify()
                 },
                 bookmark: { url in
-                    let granted = state.withLock { state in
+                    let path = Self.path(of: url)
+                    let made = state.withLock { state in
                         defer { state.bookmarksAsked += 1 }
-                        return (state.counts[Self.path(of: url)] ?? 0) > 0
+                        return (state.counts[path] ?? 0) > 0 && !state.refusingBookmarks.contains(path)
                     }
-                    return granted ? try? url.bookmarkData() : nil
+                    guard made else { throw CocoaError(.fileReadUnknown) }
+                    return try url.bookmarkData()
                 },
                 resolve: { bookmark in
                     var stale = false
@@ -80,6 +84,12 @@ public final class FakeSandbox: Sendable {
             return state.readItems.insert(index).inserted
         }
         if first { grant(url) }
+    }
+
+    /// The file or folder at `url` refuses a bookmark from now on, granted or not, as one a Mac can't open for the
+    /// access a bookmark asks does.
+    public func refuseBookmarks(of url: URL) {
+        state.withLock { _ = $0.refusingBookmarks.insert(Self.path(of: url)) }
     }
 
     /// How many grants of `url`'s path the process holds.

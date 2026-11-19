@@ -33,7 +33,7 @@ public struct ClipboardServed: Sendable {
 
 /// How an offer reaches a file or folder it offers.
 enum ClipboardFileReach: Sendable {
-    /// At the URL a drop read, through the grant that read took, which the drop's offer holds.
+    /// At the URL a read named, through the grant that read took, which the offer holds.
     case granted(URL)
     /// Through a security-scoped bookmark a copy's read made, wherever the file or folder has moved since, under
     /// a grant started for each use (docs/research/2026-11-18-pasteboard-file-grants.md).
@@ -95,7 +95,8 @@ public final class ClipboardOfferSource {
     public let items: [OfferedItem]
     /// The content is confidential: `org.nspasteboard.ConcealedType`.
     public let concealed: Bool
-    /// The grants of access to the files a drop's offer was read from, held while the offer lives.
+    /// The grants of access to the files the offer reaches by their paths, held while the offer lives: a drop's
+    /// every file, a copy's each it couldn't bookmark.
     public let fileAccess: PasteboardFileAccess?
     /// What starts the grant each pull of a bookmarked file or folder is read under.
     private let fileGrants: SandboxFileGrants

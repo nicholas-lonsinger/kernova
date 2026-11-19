@@ -1,10 +1,14 @@
 import AppKit
 import Foundation
 import KernovaFileTree
+import KernovaLogging
 import KernovaWire
 import UniformTypeIdentifiers
 
 extension ClipboardPasteboardReader {
+    nonisolated private static let offerLogger = KernovaLogger(
+        subsystem: "app.kernova", category: "ClipboardPasteboardReader")
+
     /// What a pasteboard offers.
     public enum OfferOutcome {
         /// The pasteboard holds no item at all.
@@ -34,11 +38,11 @@ extension ClipboardPasteboardReader {
         /// Inline types of pasteboard item `item`, none of them read; `fileLeftOut` when the item named a file
         /// that is gone.
         case inline(item: Int, types: [String], fileLeftOut: Bool)
-        /// A file or folder on disk, named by the URL pasteboard item `others.item` names and reached by `reach` —
-        /// nil while a copy's file is still to be bookmarked, and for one nothing reaches. Not yet looked at, it is
-        /// offered with the item's `others` types INLINE beside it; an image file also offers its bytes INLINE
-        /// when `inliningImage`. `promise` is the item's file promise, offered in its place when the file cannot be
-        /// opened; with none, the `others` alone are offered, the file left out.
+        /// A file or folder on disk, named by the URL pasteboard item `others.item` names and reached by `reach`,
+        /// nil while a copy's file is still to be bookmarked. Not yet looked at, it is offered with the item's
+        /// `others` types INLINE beside it; an image file also offers its bytes INLINE when `inliningImage`.
+        /// `promise` is the item's file promise, offered in its place when the file cannot be opened; with none, the
+        /// `others` alone are offered, the file left out.
         case file(
             URL, reach: ClipboardFileReach?, inliningImage: Bool,
             promise: (index: Int, representation: Representation)?, others: (item: Int, types: [String]))
@@ -144,7 +148,7 @@ extension ClipboardPasteboardReader {
         var pending: [PendingItem] = []
         var lost = 0
         var fileAccess: PasteboardFileAccess?
-        // The read's access to the generation's files, let go at this block's end unless a drop's offer holds it.
+        // The read's access to the generation's files, let go at this block's end unless the offer holds it.
         do {
             let access = PasteboardFileAccess.reading(pasteboard, at: changeCount)
             var nextPromise = promises.startIndex
@@ -193,12 +197,10 @@ extension ClipboardPasteboardReader {
                 }
             }
 
-            switch rule {
-            // A drop's offer holds the grants its read took for as long as the drop lasts.
-            case .drop: fileAccess = access.holdsGrants ? access : nil
-            // A copy's offer reaches its files through bookmarks, so its read lets the grants go once it has made them.
-            case .clipboard: pending = await bookmarkingFiles(of: pending, in: access, grants: grants)
-            }
+            if rule == .clipboard { pending = await bookmarkingFiles(of: pending, in: access, grants: grants) }
+            // The offer holds the grant of each file it reaches by its path: a drop's every one, a copy's each it
+            // couldn't bookmark.
+            fileAccess = access.holdsGrants ? access : nil
         }
         let resolved = await Task.detached {
             DatalessMaterialization.off.during { pending.map { resolve($0, grants: grants, sizeOf: sizeOf) } }
@@ -235,8 +237,9 @@ extension ClipboardPasteboardReader {
     }
 
     /// `pending`, each file no read of its generation has bookmarked yet bookmarked now, off the main actor and
-    /// while `access`, which keeps each bookmark for later reads of the generation, holds the grants the reads
-    /// took. A file whose bookmark can't be made is reached by nothing.
+    /// while `access` holds the grants the reads took; `access` keeps each bookmark for later reads of the
+    /// generation, and gives its file's grant back. A file whose bookmark can't be made is reached by its path, under
+    /// the grant `access` keeps for it.
     private static func bookmarkingFiles(
         of pending: [PendingItem], in access: PasteboardFileAccess, grants: SandboxFileGrants
     ) async -> [PendingItem] {
@@ -247,10 +250,20 @@ extension ClipboardPasteboardReader {
         guard !unmarked.isEmpty else { return pending }
         let made = await Task.detached {
             DatalessMaterialization.off.during {
-                unmarked.map { file in
+                unmarked.map { file -> (item: Int, bookmark: Data?) in
                     // A link is bookmarked as what it resolves to, which is what is read.
                     let isLink = (try? file.url.resourceValues(forKeys: [.isSymbolicLinkKey]))?.isSymbolicLink == true
-                    return (file.item, grants.bookmark(of: isLink ? file.url.resolvingSymlinksInPath() : file.url))
+                    let read = isLink ? file.url.resolvingSymlinksInPath() : file.url
+                    do {
+                        return (file.item, try grants.bookmark(of: read))
+                    } catch {
+                        let error = error as NSError
+                        offerLogger.log(
+                            .notice,
+                            "Copied item \(file.item, privacy: .public)'s file couldn't be bookmarked (\(error.domain, privacy: .public) \(error.code, privacy: .public)), so its offer holds its access"
+                        )
+                        return (file.item, nil)
+                    }
                 }
             }
         }.value
@@ -258,7 +271,7 @@ extension ClipboardPasteboardReader {
         return pending.map { entry in
             guard case .file(let url, nil, let inliningImage, let promise, let others) = entry else { return entry }
             return .file(
-                url, reach: access.bookmark(ofItem: others.item).map { .bookmarked($0) },
+                url, reach: access.bookmark(ofItem: others.item).map { .bookmarked($0) } ?? .granted(url),
                 inliningImage: inliningImage, promise: promise, others: others)
         }
     }
@@ -298,7 +311,7 @@ extension ClipboardPasteboardReader {
                 return promised(promise.index, promise.representation, others: others)
             }
             let name = url.lastPathComponent
-            // A drop's grant reaches the file as read; a bookmark reaches it wherever it is when pulled.
+            // A grant the offer holds reaches the file as read; a bookmark reaches it wherever it is when pulled.
             let origin: ClipboardFileReach
             if case .bookmarked(let bookmark)? = reach {
                 origin = .bookmarked(bookmark)

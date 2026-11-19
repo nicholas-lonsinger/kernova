@@ -101,6 +101,26 @@ struct PasteboardFileAccessTests {
         #expect(sandbox.unheldGiveBacks.isEmpty)
     }
 
+    @Test("A copied file that refuses a bookmark is offered from its path, under its grant, held until the offer goes")
+    func unbookmarkableCopiedFileIsHeldByItsOffer() async throws {
+        let files = [try file("refusing.txt"), try file("b.txt")]
+        let pasteboard = FakePasteboard()
+        pasteboard.setFiles(files)
+        let sandbox = pasteboard.sandbox
+        sandbox.refuseBookmarks(of: files[0])
+
+        var source = await offer(pasteboard, drop: false)
+        #expect(source?.items.count == 2)
+        #expect(files.map(sandbox.grants(of:)) == [1, 0])
+        let pulled = try await servedFile(of: source)
+        #expect(pulled.url.resolvingSymlinksInPath().path == files[0].resolvingSymlinksInPath().path)
+        #expect(pulled.served.access == nil)
+        source = nil
+
+        try await sandbox.changed.wait { sandbox.grants(of: files[0]) == 0 }
+        #expect(sandbox.unheldGiveBacks.isEmpty)
+    }
+
     @Test("A pull of a copied file is served under a grant of its own, held while the pull holds it")
     func copiedFileIsServedUnderItsOwnGrant() async throws {
         let copied = try file("copied.txt")

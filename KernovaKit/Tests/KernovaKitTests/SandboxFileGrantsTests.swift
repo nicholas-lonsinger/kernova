@@ -1,4 +1,5 @@
 import Foundation
+import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
@@ -91,6 +92,50 @@ struct SandboxFileGrantsTests {
                 }
             }
         }
+    }
+
+    /// A link's grant is counted under the path of what the link names, which a link whose target is gone no
+    /// longer resolves to.
+    @Test(
+        "A grant whose file is deleted before it is let go is given back once, and so is a later grant of its path",
+        arguments: [true, false])
+    func grantOfADeletedFileIsGivenBack(started: Bool) throws {
+        let scratch = TestScratchDirectory(prefix: "sandbox-file-grants")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let target = scratch.url.appendingPathComponent("target.txt")
+        let link = scratch.url.appendingPathComponent("link.txt")
+        try Data("x".utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        let stops = Locked<[URL]>([])
+        let grants = SandboxFileGrants(
+            SandboxFileGrants.Platform(
+                start: { _ in true }, stop: { url in stops.withLock { $0.append(url) } },
+                bookmark: { _ in throw CocoaError(.fileReadUnknown) }, resolve: { _ in nil }))
+        let take = { started ? grants.startAccessing(link) : grants.pasteboardGranted(link) }
+
+        let first = take()
+        try FileManager.default.removeItem(at: target)
+        first?.release()
+        #expect(stops.withLock { $0 } == [link])
+
+        try Data("y".utf8).write(to: target)
+        take()?.release()
+        #expect(stops.withLock { $0 } == [link, link])
+    }
+
+    @Test("A file this process can only read takes a bookmark, which reaches it")
+    func readOnlyFileTakesABookmark() throws {
+        let scratch = TestScratchDirectory(prefix: "sandbox-file-grants")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let file = scratch.url.appendingPathComponent("read-only.txt")
+        try Data("x".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: file.path)
+        let grants = SandboxFileGrants(.system)
+
+        let reached = try #require(grants.reach(try grants.bookmark(of: file)))
+
+        #expect(reached.url.resolvingSymlinksInPath().path == file.resolvingSymlinksInPath().path)
+        #expect(try withExtendedLifetime(reached.grant) { try Data(contentsOf: reached.url) } == Data("x".utf8))
     }
 
     @Test("A grant released again, or let go after its release, is given back once")

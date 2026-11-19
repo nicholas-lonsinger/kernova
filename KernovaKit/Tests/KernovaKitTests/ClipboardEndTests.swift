@@ -262,10 +262,14 @@ struct ClipboardEndTests {
 
     // MARK: - File grants
 
-    /// A host end whose copy of `copied` the guest's end holds open, and that offer.
-    private func openCopy(_ copied: URL, gate: ClipboardOfferGate) async throws -> (ClipboardEndPair, ItemOffer) {
+    /// A host end whose copy of `copied`, which refuses a bookmark when `refusingBookmark`, the guest's end holds
+    /// open, and that offer.
+    private func openCopy(
+        _ copied: URL, gate: ClipboardOfferGate, refusingBookmark: Bool = false
+    ) async throws -> (ClipboardEndPair, ItemOffer) {
         try Data("copied".utf8).write(to: copied)
         let pair = ClipboardEndPair(staging: staging.root, gate: gate)
+        if refusingBookmark { pair.hostPasteboard.sandbox.refuseBookmarks(of: copied) }
         pair.hostPasteboard.setFiles([copied])
         if gate == .everyCopy { pair.poll() } else { pair.host.offerOnCommand() }
         try await pair.settle()
@@ -312,6 +316,33 @@ struct ClipboardEndTests {
 
         #expect(Self.treePath(served) == copied.resolvingSymlinksInPath().path)
         #expect(pair.hostPasteboard.sandbox.grants(of: copied) == 1)
+    }
+
+    @Test("A copied file that refuses a bookmark keeps its grant while the copy stands, past its offer, until it goes")
+    func unbookmarkableCopyIsHeldWhileItStands() async throws {
+        let copied = scratch.url.appendingPathComponent("copied.txt")
+        let (pair, _) = try await openCopy(copied, gate: .onCommand, refusingBookmark: true)
+        let sandbox = pair.hostPasteboard.sandbox
+        #expect(sandbox.grants(of: copied) == 1)
+
+        // The offer ends with the connection; the copy, read again, can take no grant of its own.
+        pair.linkDown()
+        try await pair.settle()
+        #expect(sandbox.grants(of: copied) == 1)
+        pair.linkUp()
+        pair.host.offerOnCommand()
+        try await pair.settle()
+        #expect(readOutcomes(pair, .host) == [.offered(skipped: 0), .offered(skipped: 0)])
+        let (id, request) = Self.pull(of: try #require(pair.wire?.opened(.host).last))
+        let host = pair.host
+        let served = try await offCooperativePool { host.content(id, request) }
+        #expect(Self.treePath(served) == copied.resolvingSymlinksInPath().path)
+
+        pair.copy("text", on: .host)
+        pair.poll()
+        try await pair.settle()
+        try await sandbox.changed.wait { sandbox.grants(of: copied) == 0 }
+        #expect(sandbox.unheldGiveBacks.isEmpty)
     }
 
     /// The path `content` serves its tree from, its links resolved.

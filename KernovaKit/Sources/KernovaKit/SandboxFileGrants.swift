@@ -20,15 +20,16 @@ public final class SandboxFileGrants: Sendable {
         public var start: @Sendable (URL) -> Bool
         /// Gives back one grant of the URL's path.
         public var stop: @Sendable (URL) -> Void
-        /// A security-scoped bookmark of the file or folder at the URL, or nil when this process can't make one.
-        public var bookmark: @Sendable (URL) -> Data?
+        /// A security-scoped bookmark granting read access to the file or folder at the URL, or the error this
+        /// process can't make one for.
+        public var bookmark: @Sendable (URL) throws -> Data
         /// The security-scoped URL of the file or folder a bookmark names now, or nil when it no longer resolves.
         public var resolve: @Sendable (Data) -> URL?
 
         /// Calls that make `start`, `stop`, `bookmark` and `resolve`.
         public init(
             start: @escaping @Sendable (URL) -> Bool, stop: @escaping @Sendable (URL) -> Void,
-            bookmark: @escaping @Sendable (URL) -> Data?, resolve: @escaping @Sendable (Data) -> URL?
+            bookmark: @escaping @Sendable (URL) throws -> Data, resolve: @escaping @Sendable (Data) -> URL?
         ) {
             self.start = start
             self.stop = stop
@@ -39,7 +40,13 @@ public final class SandboxFileGrants: Sendable {
         /// The App Sandbox's.
         public static let system = Platform(
             start: { $0.startAccessingSecurityScopedResource() }, stop: { $0.stopAccessingSecurityScopedResource() },
-            bookmark: { try? $0.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil) },
+            // A bookmark of `.withSecurityScope` alone asks for read-write access, which a file the process can only
+            // read refuses (docs/research/2026-11-18-pasteboard-file-grants.md).
+            bookmark: {
+                try $0.bookmarkData(
+                    options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                    includingResourceValuesForKeys: nil)
+            },
             resolve: { bookmark in
                 var stale = false
                 return try? URL(
@@ -52,12 +59,15 @@ public final class SandboxFileGrants: Sendable {
     public final class Grant: Sendable {
         /// The URL the grant was taken through.
         public let url: URL
+        /// The path the grant was counted under as it was taken, which its give-back is counted under too.
+        private let path: String
         private let grants: SandboxFileGrants
         private let started: Bool
         private let released = Locked(false)
 
-        fileprivate init(url: URL, grants: SandboxFileGrants, started: Bool) {
+        fileprivate init(url: URL, path: String, grants: SandboxFileGrants, started: Bool) {
             self.url = url
+            self.path = path
             self.grants = grants
             self.started = started
         }
@@ -69,7 +79,7 @@ public final class SandboxFileGrants: Sendable {
                 return !released
             }
             guard first else { return }
-            grants.letGo(url, started: started)
+            grants.letGo(url, countedUnder: path, started: started)
         }
 
         deinit {
@@ -94,17 +104,18 @@ public final class SandboxFileGrants: Sendable {
 
     /// Starts access to the security-scoped `url`: the grant it took, or nil when it took none.
     public func startAccessing(_ url: URL) -> Grant? {
-        paths.withLock { paths in
+        let path = Self.path(of: url)
+        return paths.withLock { paths in
             guard platform.start(url) else { return nil }
-            paths[Self.path(of: url), default: Holders()].count += 1
-            return Grant(url: url, grants: self, started: true)
+            paths[path, default: Holders()].count += 1
+            return Grant(url: url, path: path, grants: self, started: true)
         }
     }
 
-    /// A security-scoped bookmark of the file or folder at `url`, which this process makes only while it holds a
-    /// grant of it; nil when it can't make one.
-    public func bookmark(of url: URL) -> Data? {
-        platform.bookmark(url)
+    /// A security-scoped bookmark granting read access to the file or folder at `url`, which this process makes only
+    /// while it holds a grant of it.
+    public func bookmark(of url: URL) throws -> Data {
+        try platform.bookmark(url)
     }
 
     /// The file or folder `bookmark` names now, wherever it has moved since: its URL, and the grant started for it,
@@ -117,15 +128,15 @@ public final class SandboxFileGrants: Sendable {
 
     /// The grant a pasteboard read took of the file or folder `url` names.
     func pasteboardGranted(_ url: URL) -> Grant {
-        paths.withLock { $0[Self.path(of: url), default: Holders()].count += 1 }
-        return Grant(url: url, grants: self, started: false)
+        let path = Self.path(of: url)
+        paths.withLock { $0[path, default: Holders()].count += 1 }
+        return Grant(url: url, path: path, grants: self, started: false)
     }
 
-    /// A grant of `url` was let go: a started access's is given back now, a pasteboard read's once its path has no
-    /// holder, and the last holder gives back every pasteboard read's grant of the path.
-    private func letGo(_ url: URL, started: Bool) {
+    /// A grant of `url`, counted under `path`, was let go: a started access's is given back now, a pasteboard read's
+    /// once its path has no holder, and the last holder gives back every pasteboard read's grant of the path.
+    private func letGo(_ url: URL, countedUnder path: String, started: Bool) {
         paths.withLock { paths in
-            let path = Self.path(of: url)
             guard var holders = paths[path] else { return }
             if started { platform.stop(url) } else { holders.released.append(url) }
             holders.count -= 1
@@ -138,7 +149,7 @@ public final class SandboxFileGrants: Sendable {
         }
     }
 
-    /// `url`'s path, its links resolved, so a bookmark's URL and a pasteboard's name one path alike.
+    /// `url`'s path as it stands, its links resolved, so a bookmark's URL and a pasteboard's name one path alike.
     private static func path(of url: URL) -> String {
         url.resolvingSymlinksInPath().path
     }

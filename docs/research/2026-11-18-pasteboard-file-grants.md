@@ -23,7 +23,9 @@ URL (`file:///.file/id=…`) beside its name and icon types. The readers' steps:
   `readObjects(forClasses: [NSURL.self])`, from the items of an earlier fetch or a fresh `pasteboardItems`;
 - `open(2)` each path read, which fails `EPERM` without a grant, and read its `lstat(2)` and resource values;
 - call `stopAccessingSecurityScopedResource()` on `URL(fileURLWithPath:)` of a path;
-- make a security-scoped bookmark of a path while it was granted, resolve it, and start or stop its access;
+- make a security-scoped bookmark of a path while it was granted, with `.withSecurityScope` alone or with
+  `.securityScopeAllowOnlyReadAccess` too, of files mode 0444 or user-immutable (`chflags uchg`) among others;
+  resolve it, and start or stop its access;
 - read every item's `types`, `canReadObject(forClasses: [NSURL.self])` and
   `readObjects(forClasses: [NSFilePromiseReceiver.self])`;
 - between steps, from outside the sandbox, move or rename the granted files, or move their folder, and move them
@@ -70,9 +72,17 @@ first failed, about 496 KB at path length plus 128 bytes each.
     Only the first reads took pasteboard grants.
 13. Read through a Finder copy's reference URL, `public.file-url` named the file's path at the time of the read.
     Once the pasteboard moved to a new generation, items fetched before it had no types and named nothing.
-14. Per item, reading the URL took 0.4 to 0.6 ms, making the bookmark 1.0 to 1.2 ms and giving the grant back
-    0.02 to 0.03 ms; resolving, starting, opening and stopping took 0.5 to 0.65 ms. 5,000 files took 2.0 s to read,
-    4.8 s to bookmark and 2.6 s to resolve, start, open and stop, cycling one grant at a time.
+14. Per item, reading the URL took 0.4 to 0.6 ms, making the bookmark (`.withSecurityScope`) 1.0 to 1.2 ms and
+    giving the grant back 0.02 to 0.03 ms; resolving, starting, opening and stopping took 0.5 to 0.65 ms. 5,000
+    files took 2.0 s to read, 4.8 s to bookmark and 2.6 s to resolve, start, open and stop, cycling one grant at a
+    time.
+15. Under a pasteboard grant that opened them, a bookmark with `.withSecurityScope` alone failed for the files mode
+    0444 and the user-immutable one, `NSCocoaErrorDomain` 256, "Could not open() the item", and was made for the
+    rest. With `.securityScopeAllowOnlyReadAccess` added, it was made for every file; resolved and started, it
+    opened each for reading, and stopped, closed it again.
+16. A read-only bookmark's started grant and a pasteboard grant of the same path counted as two. For 400 files
+    holding both the meter read 656 files, 800 fewer; with both given back it read 1,456, and making the bookmarks
+    alone cost none. Given back in either order, a path stayed open until the second went.
 
 ## Consequence
 
@@ -84,4 +94,6 @@ in the process remains. A read of a generation whose grants were given back reac
 bookmark made under them does, wherever the file has moved (12), so a read that keeps its files past its grants
 keeps them as bookmarks, and every read of the generation shares those too. Without a grant a file's metadata
 still reads, but only `open` tells a file never granted from one gone missing (8). A grant whose path's folder has
-moved away is given back by nothing (9); a give-back that takes nothing costs nothing later (10).
+moved away is given back by nothing (9); a give-back that takes nothing costs nothing later (10). A bookmark asking
+for read-write access refuses a file the process can only read, and one asking for read alone does not (15); its
+grant counts and is given back like any other (16).
