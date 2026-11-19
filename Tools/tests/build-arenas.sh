@@ -80,7 +80,10 @@ wts="$clone/.claude/worktrees"
 add_worktree() { git -C "$clone" worktree add -q --detach "$1"; }
 
 dd_root="$HOME/Library/Developer/Xcode/DerivedData"
-check "arena root" "$("$clone/Tools/derived-data-path.sh" --root)" "$dd_root"
+if [ "$("$clone/Tools/derived-data-path.sh" --root)" != "$dd_root" ]; then
+    echo "build-arenas fixtures: the arena root is not $dd_root under the fake defaults" >&2
+    exit 1
+fi
 
 # ---- arenas --------------------------------------------------------------------
 
