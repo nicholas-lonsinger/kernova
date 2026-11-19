@@ -91,14 +91,11 @@ jobs:
           done
           du -sh DerivedData/Kernova/CompilationCache* 2>/dev/null || echo "No compilation cache store found."
 
-      # The Makefile's size limit rolls the store every build and the prune
-      # step above drops the generation left behind, so what gets saved is one
-      # build's live set. Only main saves, under its commit, and the
-      # prune-compilation-cache job then deletes main's older entries; a re-run
-      # restores its own commit's entry and saves nothing.
+      # A re-run saves nothing: its entry would postdate entries main saved
+      # since, and prune-compilation-cache would delete those instead.
       - name: Save the compilation cache
         id: save-cas
-        if: github.ref == 'refs/heads/main' && steps.restore-cas.outputs.cache-hit != 'true'
+        if: github.ref == 'refs/heads/main' && github.run_attempt == 1 && steps.restore-cas.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: DerivedData/Kernova/CompilationCache*
