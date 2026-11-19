@@ -7,8 +7,8 @@
 
 # shellcheck source=static-linux-sdk.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/static-linux-sdk.sh"
-# shellcheck source=pinned-swift.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pinned-swift.sh"
+# shellcheck source=package-pins.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/package-pins.sh"
 
 # ubuntu_sdk_id <swift version>: the id of the glibc SDK for Ubuntu 24.04 on
 # aarch64 that Tools/install-ubuntu-sdk.sh generates, the system the Linux CI
@@ -44,8 +44,9 @@ stale_kernova_sdks() {
 }
 
 # linux_swift <build|package> <argument>...: runs that SwiftPM command over
-# KernovaKit through pinned_swift with the pinned toolchain. The arguments name
-# the destination's SDK.
+# KernovaKit with the toolchain .swift-version pins, its dependencies held to
+# the tracked pins by with_package_pins. The arguments name the destination's
+# SDK.
 #
 # On macOS the toolchain is swiftly's, run with the environment scrubbed so
 # Xcode's SDKROOT, TOOLCHAINS and DEVELOPER_DIR cannot reach it, and with
@@ -60,5 +61,5 @@ linux_swift() {
         [ -z "${SWIFTLY_HOME_DIR:-}" ] || swift+=("SWIFTLY_HOME_DIR=$SWIFTLY_HOME_DIR")
         swift+=("$(swiftly_binary)" run swift "$command" "+$(pinned_swift_version)" --swift-sdks-path "$(swift_sdks_dir)")
     fi
-    pinned_swift "$(dirname "${BASH_SOURCE[0]}")/../../KernovaKit" "${swift[@]}" -- "$@"
+    with_package_pins "$(dirname "${BASH_SOURCE[0]}")/../../KernovaKit" "${swift[@]}" -- "$@"
 }

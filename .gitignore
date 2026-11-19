@@ -28,10 +28,9 @@ xcuserdata/
 # Swift Package Manager
 .build/
 Packages/
-Package.resolved
+# A top-level package's copy of the Xcode workspace's pins (Tools/lib/package-pins.sh).
+/*/Package.resolved
 *.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/configuration/
-!*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
-!Tools/DeadCode/Package.resolved
 
 # CocoaPods
 Pods/

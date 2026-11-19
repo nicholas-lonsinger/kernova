@@ -2,8 +2,8 @@
 # so each builds exactly the tracked pins and fails rather than re-resolve.
 # Sourced, never run:
 #
-#     . Tools/lib/pinned-swift.sh
-#     pinned_swift KernovaKit swift build --
+#     . Tools/lib/package-pins.sh
+#     with_package_pins KernovaKit swift build --
 #
 # A top-level package is a peer in Kernova.xcodeproj
 # (Tools/check-package-reference.sh), so its pins are the workspace's
@@ -13,11 +13,11 @@
 
 # shellcheck shell=bash
 
-# pinned_swift <package dir> <swift command>... -- [<argument>...]: runs
+# with_package_pins <package dir> <swift command>... -- [<argument>...]: runs
 # `<swift command>... --package-path <package dir>
 # --only-use-versions-from-resolved-file <argument>...`, where <swift command>
 # runs a SwiftPM subcommand, e.g. `xcrun swift test`.
-pinned_swift() {
+with_package_pins() {
     local package repo invocation=()
     package="$(cd "$1" && pwd -P)" || return
     shift
@@ -26,7 +26,7 @@ pinned_swift() {
         shift
     done
     if [ $# -eq 0 ]; then
-        echo "pinned_swift: no -- after the swift command" >&2
+        echo "with_package_pins: no -- after the swift command" >&2
         return 2
     fi
     shift

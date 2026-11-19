@@ -13,8 +13,8 @@
 
 # shellcheck shell=bash
 
-# shellcheck source=pinned-swift.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/pinned-swift.sh"
+# shellcheck source=package-pins.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/package-pins.sh"
 
 dead_code_package="$(cd "$(dirname "${BASH_SOURCE[0]}")/../DeadCode" && pwd)"
 
@@ -22,5 +22,5 @@ dead_code_package="$(cd "$(dirname "${BASH_SOURCE[0]}")/../DeadCode" && pwd)"
 dead_code_swift() (
     # shellcheck disable=SC2046 # one variable name per word
     unset $(git rev-parse --local-env-vars)
-    pinned_swift "$dead_code_package" swift "$1" --disable-experimental-prebuilts -- "${@:2}"
+    with_package_pins "$dead_code_package" swift "$1" --disable-experimental-prebuilts -- "${@:2}"
 )
