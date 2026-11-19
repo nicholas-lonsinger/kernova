@@ -116,6 +116,13 @@ else
     detail "It ships with Xcode 26+. Confirm your Xcode is selected: xcode-select -p"
 fi
 
+if command -v shellcheck >/dev/null 2>&1; then
+    pass "shellcheck $(shellcheck --version 2>/dev/null | sed -n 's/^version: //p') (make lint)"
+else
+    fail "shellcheck not found — make lint requires it"
+    detail "Install with: make setup"
+fi
+
 # The "Build Linux Guest Agent" phase cross-builds with the swift.org
 # toolchain and Static Linux SDK, and fails on the same check when either is
 # missing.
@@ -305,16 +312,6 @@ while IFS= read -r stale; do
     warn "$stale is not an SDK of the pinned Swift $pinned_swift — unused here, kept while another checkout pins it"
     detail "Remove with: swift sdk remove$sdks_path_flag $stale"
 done < <(stale_kernova_sdks "$pinned_swift")
-
-# Shell static analysis for Tools/ and .githooks/ — `make lint` uses it when
-# present and CI requires it; locally it's optional, with `bash -n` still
-# catching syntax errors without it.
-if command -v shellcheck >/dev/null 2>&1; then
-    pass "shellcheck $(shellcheck --version 2>/dev/null | sed -n 's/^version: //p') — make lint runs full static analysis"
-else
-    warn "shellcheck absent — make lint falls back to bash -n only (CI still enforces shellcheck)"
-    detail "Install with: make setup"
-fi
 
 # Swift language-server context: sourcekit-lsp reads compiler flags from a
 # buildServer.json that xcode-build-server writes. Editor-only, so both halves

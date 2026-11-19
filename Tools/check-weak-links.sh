@@ -14,8 +14,7 @@
 # A framework listed here that no image links at all is a failure rather than a
 # skip, for the same reason — "nothing to check" is what a broken check says.
 #
-# Runs against a BUILT product, so it is not part of `make lint` (which never
-# builds). CI invokes it after the build step in xcodebuild-test.yml.
+# make lint: not run — it reads a built app; Tools/test.sh and CI run it
 #
 # Usage:
 #   Tools/check-weak-links.sh [<path-to-.app>]

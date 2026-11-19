@@ -205,7 +205,7 @@ make setup   # one-time per clone; idempotent, rerun any time
 
 Then open `Kernova.xcodeproj`, pick the `Kernova` scheme, and run (⌘R). `make` alone lists every build, test, format, and lint target.
 
-Every `xcodebuild` invocation lives in the `Makefile` (`make help`). Build settings live in `Config/` — `Base.xcconfig` project-wide, `Config/Targets/<Target>.xcconfig` per target. Lint is the `Tools/check-*.sh` scripts that `make lint` runs, and the hooks `make setup` activates are in `.githooks/`. Each of those files explains itself in its own header.
+The flags of every `xcodebuild` build and test live in the `Makefile` (`make help`). Build settings live in `Config/` — `Base.xcconfig` project-wide, `Config/Targets/<Target>.xcconfig` per target. Lint is `Tools/lint.sh`, which `make lint` runs, and the hooks `make setup` activates are in `.githooks/`. Each of those files explains itself in its own header.
 
 > [!IMPORTANT]
 > **Debug needs no Apple account** — it signs ad-hoc, so a fresh clone builds and runs as-is, minus the features a provisioning profile authorizes and the `kernova` CLI, which reaches the app through an app group an ad-hoc signature doesn't get. With a development certificate, point Debug at it via a gitignored `Config/Local.xcconfig` (from `Config/Local.xcconfig.example`) so privacy grants survive rebuilds and the CLI works. **Distributing** a build needs a paid membership and a distribution identity.

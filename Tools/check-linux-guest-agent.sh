@@ -5,6 +5,8 @@
 # byte-identical.
 #
 # Usage: Tools/check-linux-guest-agent.sh <binary> <binary>
+#
+# make lint: not run — it reads two built agents; portable.yml runs it
 
 set -uo pipefail
 

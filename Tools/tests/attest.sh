@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Fixture tests for Tools/attest.sh: `record` passes its command through and
 # records only a passing run whose fingerprint held, the clean-tree content
-# tree is HEAD's, `attest` refuses a dirty or unpushed HEAD before any run,
-# reuses a lint and a test record or runs `make lint` and `make test` for the
-# ones missing and posts success only on both, and `post` takes only success or
-# failure. Runs in a fixture clone with stub xcodebuild,
-# sw_vers, gh, and make.
+# tree is HEAD's, a lint record's tree leaves untracked files out, the
+# Makefile's `lint` and `test` record only a passing run of Tools/lint.sh and
+# Tools/test.sh whatever flags make is given, `attest` refuses a dirty or
+# unpushed HEAD before any run, reuses a lint and a test record or runs
+# `make lint` and `make test` for the ones missing and posts success only on
+# both, and `post` takes only success or failure. Runs in a fixture clone with
+# stub xcodebuild, sw_vers, gh, the two scripts, and make — the real make for
+# the Makefile's own recipes.
 
 set -uo pipefail
 
@@ -26,14 +29,27 @@ isolate_git "$tmp"
 
 clone="$tmp/clone"
 git init -q -b main "$clone"
-mkdir -p "$clone/Tools" "$clone/Config"
-cp "$ROOT/Tools/attest.sh" "$clone/Tools/"
+mkdir -p "$clone/Tools/lib" "$clone/Config"
+cp "$ROOT/Tools/attest.sh" "$ROOT/Tools/checkout-lock.sh" "$clone/Tools/"
+cp "$ROOT/Tools/lib/swift-roots.sh" "$clone/Tools/lib/"
+cp "$ROOT/Makefile" "$clone/"
+# Tools/lint.sh and Tools/test.sh log their run and exit $FIXTURE/script.status.
+for script in lint test; do
+    cat >"$clone/Tools/$script.sh" <<'EOF'
+#!/bin/bash
+echo "${0##*/}" >>"$FIXTURE/ran.log"
+exit "$(cat "$FIXTURE/script.status")"
+EOF
+done
+printf '#!/bin/bash\n' >"$clone/Tools/hooks-installed.sh"
+chmod +x "$clone/Tools"/*.sh
 printf 'Config/Local.xcconfig\n' >"$clone/.gitignore"
 echo one >"$clone/file"
 git -C "$clone" add -A && git -C "$clone" commit -q -m init
 attest="$clone/Tools/attest.sh"
 records="$clone/.git/kernova-attest"
 
+real_make=$(command -v make)
 stubs="$tmp/stubs"
 mkdir -p "$stubs"
 cat >"$stubs/xcodebuild" <<'EOF'
@@ -67,7 +83,7 @@ chmod +x "$stubs"/*
 export FIXTURE="$tmp" ATTEST="$attest" MAKE="$stubs/make" PATH="$stubs:$PATH"
 
 reset() {
-    rm -rf "$records" "$tmp/gh.log" "$tmp/make.log"
+    rm -rf "$records" "$tmp/gh.log" "$tmp/make.log" "$tmp/ran.log"
     echo record >"$tmp/lint.mode"
     echo record >"$tmp/test.mode"
 }
@@ -113,6 +129,18 @@ check "the real index is untouched" "$(shasum "$clone/.git/index")" "$index_befo
 rm "$clone/untracked"
 
 reset
+echo dirty >"$clone/untracked"
+in_clone "$attest" record lint -- true
+check "a lint record leaves an untracked file out" "$(record_line tree)" "$(git -C "$clone" rev-parse 'HEAD^{tree}')"
+rm "$clone/untracked"
+
+reset
+echo edited >"$clone/file"
+in_clone "$attest" record lint -- true
+check "a lint record takes a tracked file's edit" "$(git -C "$clone" cat-file -p "$(record_line tree):file")" edited
+git -C "$clone" checkout -q -- file
+
+reset
 echo 'DEVELOPMENT_TEAM = X' >"$clone/Config/Local.xcconfig"
 in_clone "$attest" record test -- true
 check "the record with Config/Local.xcconfig" "$(record_line local-xcconfig)" "$(git hash-object "$clone/Config/Local.xcconfig")"
@@ -131,6 +159,33 @@ in_clone "$attest" record test -- true 2>"$tmp/err"
 check "a run whose record cannot be written keeps its status" "$?" 0
 check "a run whose record cannot be written says so" "$(grep -c 'cannot write the record' "$tmp/err")" 1
 rm -f "$records"
+
+# ---- make lint, make test --------------------------------------------------------
+
+# make_in_clone <make argument>... — the clone's Makefile under the real make,
+# with nothing inherited from a make that runs this suite.
+make_in_clone() {
+    (cd "$clone" && env -u MAKE -u MAKEFLAGS -u MFLAGS -u MAKELEVEL "$real_make" --no-print-directory "$@" >/dev/null 2>&1)
+}
+
+for kind in lint test; do
+    reset
+    echo 0 >"$tmp/script.status"
+    make_in_clone "$kind"
+    check "make $kind runs Tools/$kind.sh" "$(calls ran)" "$kind.sh"
+    check "make $kind records a passing run" "$(record_count)" 1
+
+    reset
+    make_in_clone -n "$kind"
+    check "make -n $kind runs Tools/$kind.sh" "$(calls ran)" ''
+    check "make -n $kind records" "$(record_count)" 0
+
+    reset
+    echo 1 >"$tmp/script.status"
+    make_in_clone -i "$kind"
+    check "make -i $kind runs Tools/$kind.sh" "$(calls ran)" "$kind.sh"
+    check "make -i $kind records a failing run" "$(record_count)" 0
+done
 
 # ---- attest ---------------------------------------------------------------------
 

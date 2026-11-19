@@ -13,9 +13,12 @@
 #     Tools/attest.sh post <success|failure> <description> [<target-url>]
 #         Posts the status on HEAD.
 #
-# The fingerprint covers what a run's outcome depends on: the content
-# tree (what `git add -A` would stage), the Xcode and macOS builds, and the
-# gitignored Config/Local.xcconfig, which sets signing and entitlements.
+# The fingerprint covers what a run's outcome depends on: the content tree the
+# run reads, the Xcode and macOS builds, and the gitignored
+# Config/Local.xcconfig, which sets signing and entitlements. A test run
+# builds whatever is in the working tree, so its tree is what `git add -A`
+# would stage; lint covers the files git tracks, so its tree is what
+# `git add -u` would, and an untracked file is not taken as linted.
 # Records live in the common git dir, so every worktree shares them. Statuses
 # on this public repo are world-readable, so a description names no host or
 # user.
@@ -38,14 +41,16 @@ records_dir() { printf '%s/kernova-attest' "$(git rev-parse --path-format=absolu
 xcode_build() { xcodebuild -version 2>/dev/null | awk '/^Build version/ { print $3 }'; }
 macos_build() { sw_vers -buildVersion; }
 
-# content_tree — the tree `git add -A` would stage, built in a copy of the
-# index so its stat data is reused and the real index stays untouched.
+# content_tree <lint|test> — the tree that kind of run reads (see the header),
+# built in a copy of the index so its stat data is reused and the real index
+# stays untouched.
 content_tree() {
-    local index scratch tree
+    local index scratch tree stage
+    case "$1" in lint) stage=-u ;; test) stage=-A ;; esac
     index=$(git rev-parse --path-format=absolute --git-path index) || return 1
     scratch=$(mktemp -d) || return 1
     if [ -e "$index" ]; then cp "$index" "$scratch/index" || { rm -rf "$scratch"; return 1; }; fi
-    tree=$(cd "$(top)" && GIT_INDEX_FILE="$scratch/index" git add -A && GIT_INDEX_FILE="$scratch/index" git write-tree)
+    tree=$(cd "$(top)" && GIT_INDEX_FILE="$scratch/index" git add "$stage" && GIT_INDEX_FILE="$scratch/index" git write-tree)
     local status=$?
     rm -rf "$scratch"
     [ "$status" -eq 0 ] && printf '%s\n' "$tree"
@@ -88,7 +93,7 @@ record() {
     local kind=$1
     shift 2
     local tree inputs='' before='' after='' status
-    if tree=$(content_tree) && inputs=$(fingerprint_inputs "$tree"); then
+    if tree=$(content_tree "$kind") && inputs=$(fingerprint_inputs "$tree"); then
         before=$(fingerprint "$inputs")
     else
         echo 'attest: cannot fingerprint the working tree; this run will not be recorded' >&2
@@ -96,7 +101,7 @@ record() {
     "$@"
     status=$?
     [ "$status" -eq 0 ] && [ -n "$before" ] || return "$status"
-    if tree=$(content_tree) && after=$(fingerprint_inputs "$tree") && [ "$(fingerprint "$after")" = "$before" ]; then
+    if tree=$(content_tree "$kind") && after=$(fingerprint_inputs "$tree") && [ "$(fingerprint "$after")" = "$before" ]; then
         write_record "$kind" "$before" "$inputs" ||
             echo "attest: cannot write the record of this passing run under $(records_dir)" >&2
     else

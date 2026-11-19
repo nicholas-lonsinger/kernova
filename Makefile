@@ -59,42 +59,7 @@ LOCKED_TWIN   = +@$(LOCKED) $(MAKE) --no-print-directory locked-$@
 # command resolves the same binary in CI and locally without a brew install.
 SWIFT_FORMAT := xcrun swift-format
 
-# The fixture suites for the skill scripts, Tools/lib, the lint checks that
-# have one, and the dead-code scan's tool. Each drives its code through every
-# verdict against recorded fixtures, with no Xcode and in seconds, which is
-# what lets `lint` gate them, and the pre-push hook with it. The dead-code
-# tool's swift-syntax is the one exception: SwiftPM clones it once per machine
-# into its cache under ~/Library/Caches, which git-isolation.sh's HOME does not
-# move, and each checkout builds it once, in about 15 s.
-FIXTURE_TESTS := .agents/skills/after-merge/tests/run.sh \
-                 .agents/skills/make-verdict/tests/run.sh \
-                 Tools/tests/worktrees.sh \
-                 Tools/tests/check-core-imports.sh \
-                 Tools/tests/checkout-lock.sh \
-                 Tools/tests/attest.sh \
-                 Tools/tests/arena-label.sh \
-                 Tools/tests/check-config-decoding.sh \
-                 Tools/tests/check-test-waits.sh \
-                 Tools/tests/check-logging.sh \
-                 Tools/tests/check-lock-values.sh \
-                 Tools/tests/check-package-origins.sh \
-                 Tools/tests/check-exit-tests.sh \
-                 Tools/tests/check-self-activation.sh \
-                 Tools/tests/check-portable-imports.sh \
-                 Tools/tests/check-generated-protos.sh \
-                 Tools/tests/githooks.sh \
-                 Tools/tests/dead-code.sh
-
-# Source roots for format/lint, derived from git rather than hand-maintained
-# so a new target directory can't silently escape linting (locally and in CI,
-# which runs `make lint`). Tracked files define the roots: an untracked .swift
-# file inside an existing root is still covered (swift-format recurses), and a
-# top-level .swift file would appear as its own entry, which swift-format
-# accepts as a path argument. Shell sources are the tracked scripts (including
-# the guest agent's double-clickable .command installers) plus the git hooks
-# (shebang'd but extensionless).
-SWIFT_SOURCE_DIRS := $(shell git ls-files '*.swift' | cut -d/ -f1 | sort -u)
-SHELL_SOURCES     := $(shell git ls-files '*.sh' '*.command' .githooks)
+SWIFT_SOURCE_DIRS := $(shell bash -c '. Tools/lib/swift-roots.sh && swift_roots')
 
 .DEFAULT_GOAL := help
 .PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain ubuntu-sdk linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code locked-dead-code dead-code-targets dead-code-tool doctor ghosts clean-ghosts
@@ -160,28 +125,14 @@ build: check-hooks ## Build the app for macOS
 
 locked-build:
 	xcodebuild $(XCODEBUILD_FLAGS) build
-	$(PRINT_BUILD_BINARY)
+	@Tools/built-app.sh $(XCODEBUILD_FLAGS)
 
 build-for-testing: check-hooks ## Compile the app and test bundles without running them
 	$(LOCKED_TWIN)
 
 locked-build-for-testing:
 	xcodebuild $(XCODEBUILD_FLAGS) build-for-testing
-	$(PRINT_BUILD_BINARY)
-
-# Query resolved settings after success: an up-to-date build need not log a
-# link or signing command from which a product path could be recovered.
-define PRINT_BUILD_BINARY
-@settings=$$(xcodebuild $(XCODEBUILD_FLAGS) -showBuildSettings) && \
-printf '%s\n' "$$settings" | awk '\
-    /^Build settings for action / { app = ($$0 ~ / and target Kernova:$$/) } \
-    app && /^ *TARGET_BUILD_DIR = / { sub(/^ *TARGET_BUILD_DIR = /, ""); dir = $$0 } \
-    app && /^ *EXECUTABLE_PATH = / { sub(/^ *EXECUTABLE_PATH = /, ""); executable = $$0 } \
-    END { \
-        if (dir == "" || executable == "") { print "error: could not resolve Kernova executable path" > "/dev/stderr"; exit 1 } \
-        print "binary=" dir "/" executable \
-    }'
-endef
+	@Tools/built-app.sh $(XCODEBUILD_FLAGS)
 
 # Removes both build arenas this checkout can have: the in-worktree
 # DerivedData/ (CI-style explicit-flag builds, and Relative-mode machines) and
@@ -206,8 +157,8 @@ locked-clean:
 		*) Tools/ghosts.sh --evict "$$arena" ;; \
 	esac
 
-test: check-hooks ## Run the full test suite (every test target in Kernova.xctestplan); a passing run is recorded for `make attest`
-	$(LOCKED) Tools/attest.sh record test -- xcodebuild $(XCODEBUILD_FLAGS) test
+test: check-hooks ## Run the full test suite (every test target in Kernova.xctestplan), then check the built app's weak links; a passing run is recorded for `make attest`
+	$(LOCKED) Tools/attest.sh record test -- Tools/test.sh $(XCODEBUILD_FLAGS)
 
 attest: check-hooks ## Post the `Commit Attestation` status on the pushed HEAD, reusing a passing `make lint` and `make test` of the same content or running them
 	@Tools/attest.sh
@@ -247,11 +198,6 @@ swift-toolchain: ## Install swiftly, the swift.org toolchain .swift-version pins
 ubuntu-sdk: ## Generate and install the Ubuntu SDK the Linux half of `make dead-code` cross-builds with (once; minutes)
 	@Tools/install-ubuntu-sdk.sh >/dev/null
 
-# The targets KernovaKit/Package.swift declares off macOS that a shipped binary
-# can link, read from the manifest as Linux evaluates it: test targets and test
-# support, which link only into test bundles, aside.
-PORTABLE_TARGETS = $(shell KERNOVA_PORTABLE_ONLY=1 xcrun swift package dump-package --package-path KernovaKit | jq -r '.targets[] | select(.type != "test" and (.name | endswith("TestSupport") | not)) | .name')
-
 # Its own scratch path keeps the swift.org toolchain's build state apart from
 # the Xcode toolchain's, which `test-unhosted` uses.
 linux-build: ## Cross-build the portable KernovaKit targets for aarch64 Linux (static musl) with the pinned swift.org toolchain
@@ -270,49 +216,8 @@ format: ## Rewrite Swift sources in place via swift-format
 	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
 	$(SWIFT_FORMAT) format --in-place --recursive $(SWIFT_SOURCE_DIRS)
 
-# One lint target for the whole repo.
-#
-# Shell: `bash -n` always (ships with macOS, catches syntax errors); shellcheck
-# for real static analysis when installed — optional locally (brew install
-# shellcheck), REQUIRED on CI ($CI is set by GitHub Actions) so findings gate
-# merges rather than silently skipping. Project-wide directives live in
-# .shellcheckrc. Shell runs first: it is the faster half, so an obvious script
-# error surfaces without waiting on swift-format.
-lint: ## Lint Swift sources (swift-format --strict), shell scripts, the fixture suites, docs, entitlements, the scripting definition and exported types the app and test host both declare, build-setting layering, build phases, the test plan's wait allowance, test-only seam gating, real-clock sleeps and numeric wait deadlines in tests, exit tests in a target of their own, config-field decoding, logging only through KernovaLogger, no lock box storing a function directly, the app's Launch Services self-activation and SessionFocus routing, the local package references, remote packages only from allowed GitHub organizations, KernovaCore's import allowlist, the portable targets' Foundation imports, and the checked-in protobuf Swift against its schemas; a passing run is recorded for `make attest`
-	@Tools/attest.sh record lint -- $(MAKE) --no-print-directory lint-checks
-
-lint-checks:
-	@for f in $(SHELL_SOURCES); do bash -n "$$f" || exit 1; done
-	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck $(SHELL_SOURCES); \
-	elif [ -n "$${CI:-}" ]; then \
-		echo 'lint: shellcheck is required on CI but not installed' >&2; \
-		exit 1; \
-	else \
-		echo 'lint: shellcheck not installed — skipping shell static analysis (brew install shellcheck)'; \
-	fi
-	@bash Tools/tests/git-isolation.sh $(FIXTURE_TESTS)
-	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
-	$(SWIFT_FORMAT) lint --strict --recursive $(SWIFT_SOURCE_DIRS)
-	@bash Tools/check-docs.sh
-	@bash Tools/check-entitlements.sh
-	@bash Tools/check-test-host-declarations.sh
-	@bash Tools/check-agent-deployment-floor.sh
-	@bash Tools/check-test-plan-allowance.sh
-	@bash Tools/check-test-seams.sh
-	@bash Tools/check-test-waits.sh
-	@bash Tools/check-exit-tests.sh
-	@bash Tools/check-config-decoding.sh
-	@bash Tools/check-logging.sh
-	@bash Tools/check-lock-values.sh
-	@bash Tools/check-self-activation.sh
-	@bash Tools/check-build-settings-layering.sh
-	@bash Tools/check-build-phases.sh
-	@bash Tools/check-package-reference.sh
-	@bash Tools/check-package-origins.sh
-	@bash Tools/check-core-imports.sh
-	@bash Tools/check-portable-imports.sh $(PORTABLE_TARGETS)
-	@bash Tools/check-generated-protos.sh
+lint: ## Run Tools/lint.sh: shell analysis, the Tools/check-*.sh checks, swift-format --strict and the fixture suites; a passing run is recorded for `make attest`
+	@Tools/attest.sh record lint -- Tools/lint.sh
 
 # The macOS half of the dead-code scan, reading .periphery.yml, over one fixed
 # arena per checkout. Periphery's own build would go to
