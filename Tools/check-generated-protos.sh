@@ -13,6 +13,8 @@
 #
 # Usage: Tools/check-generated-protos.sh [--write]
 #   --write   replaces each generated file with the regenerated one
+#
+# make lint: runs last — a cold cache builds protoc and protoc-gen-swift (minutes)
 
 set -uo pipefail
 

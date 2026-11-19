@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs the optional Homebrew tools a make target or Tools/ script asks for,
+# Installs the Homebrew tools a make target or Tools/ script asks for,
 # skipping the ones already on PATH. Every such caller goes through it, so
 # there is one answer to "is this tool installed" and one brew invocation per
 # run.

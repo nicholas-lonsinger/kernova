@@ -63,6 +63,8 @@
 # Reports every finding before failing, so one run fixes them all, and fails
 # on a scan that did not complete: a check whose whole value is that it cannot
 # pass in silence must not pass when a file went unread.
+#
+# make lint: runs last — it builds the dead-code tool
 
 set -uo pipefail
 

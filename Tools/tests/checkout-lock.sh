@@ -38,8 +38,8 @@ git init -q -b main "$clone" && git -C "$clone" commit -q --allow-empty -m init
 git -C "$clone" worktree add -q --detach "$wt"
 for checkout in "$clone" "$wt"; do
     mkdir -p "$checkout/Tools/lib"
-    cp "$ROOT/Tools/checkout-lock.sh" "$checkout/Tools/"
-    cp "$ROOT/Tools/lib/output.sh" "$checkout/Tools/lib/"
+    cp "$ROOT/Tools/checkout-lock.sh" "$ROOT/Tools/built-app.sh" "$checkout/Tools/"
+    cp "$ROOT/Tools/lib/output.sh" "$ROOT/Tools/lib/swift-roots.sh" "$ROOT/Tools/lib/xcodebuild-flags.sh" "$checkout/Tools/lib/"
     cp "$ROOT/Makefile" "$checkout/"
 done
 lock_of() { git -C "$1" rev-parse --path-format=absolute --git-path xcodebuild.lock; }
@@ -166,7 +166,7 @@ cat >"$stubs/xcodebuild" <<'EOF'
 #!/bin/bash
 case " $* " in
     *' -showBuildSettings '*)
-        printf 'Build settings for action build and target Kernova:\n    TARGET_BUILD_DIR = /b\n    EXECUTABLE_PATH = K\n'
+        printf 'Build settings for action build and target Kernova:\n    TARGET_BUILD_DIR = /b\n    FULL_PRODUCT_NAME = K.app\n    EXECUTABLE_PATH = K\n'
         ;;
     *)
         if [ -e "$FIXTURE/builder.done" ]; then echo after; else echo during; fi >"$FIXTURE/build.ran"
