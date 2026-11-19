@@ -147,9 +147,8 @@ final class ScopedAccess {
 
     // `startAccessingSecurityScopedResource()` returns false for a path that
     // needs no scope (inside the container, or covered by the downloads
-    // entitlement), so this balances the matching stop call and signals no error.
-    private let didStart: Bool
-    private var released = false
+    // entitlement): no grant, and no error.
+    private let grant: SandboxFileGrants.Grant?
 
     /// Resolves `bookmark` and starts scoped access; `nil` when the
     /// bookmark doesn't resolve.
@@ -162,19 +161,11 @@ final class ScopedAccess {
         }
         self.url = resolution.url
         self.isStale = resolution.isStale
-        self.didStart = SandboxFileGrants.shared.startAccessing(resolution.url)
+        self.grant = SandboxFileGrants.shared.startAccessing(resolution.url)
     }
 
     /// Stops the scoped access if this instance started one; idempotent.
     func release() {
-        guard !released else { return }
-        released = true
-        if didStart {
-            SandboxFileGrants.shared.stopAccessing(url)
-        }
-    }
-
-    deinit {
-        release()
+        grant?.release()
     }
 }

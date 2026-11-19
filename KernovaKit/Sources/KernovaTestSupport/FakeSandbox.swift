@@ -6,8 +6,8 @@ import KernovaSynchronization
 /// grant taken — a pasteboard read's, a security-scoped start's — raises and every grant given back lowers, whichever
 /// holder took it (docs/research/2026-11-18-pasteboard-file-grants.md).
 ///
-/// A give-back of a path holding no grant is recorded rather than counted: on a Mac it takes away a grant another
-/// holder of the path took, or one a later holder takes.
+/// A give-back of a path holding no grant changes nothing, as on a Mac, and is recorded: it gave back more grants of
+/// the path than were taken, so had another holder held the path, it would have taken that holder's grant.
 public final class FakeSandbox: Sendable {
     private struct State: Sendable {
         var counts: [String: Int] = [:]

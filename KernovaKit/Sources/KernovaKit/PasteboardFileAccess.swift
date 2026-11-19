@@ -2,13 +2,15 @@ import AppKit
 import Foundation
 
 /// The grants of access to files and folders this process took reading one pasteboard generation's
-/// `public.file-url`s, held while anything holds this and given back once nothing does.
+/// `public.file-url`s, held while anything holds this and let go once nothing does.
 ///
 /// Only the first read of an item's `public.file-url` in a generation takes a grant: a later one takes none, even once
 /// that grant is given back (docs/research/2026-11-18-pasteboard-file-grants.md). So every read of a generation
-/// shares this one access while it lives, and whatever serves a transfer of its files holds it for as long as the
-/// transfer can reach them — an offer read from it (``ClipboardOfferSource``), and a clipboard end while its
-/// pasteboard stands at the generation, since reading that again reaches nothing once its grants are given back.
+/// shares this one access while it lives, and whatever reads its files holds it for as long as it can reach them —
+/// an offer read from it (``ClipboardOfferSource``), a clipboard end while its pasteboard stands at the generation,
+/// since reading that again reaches nothing once its grants are given back, and an import of what was dropped.
+/// A grant whose file has left the path it was read at stays with the process when let go: giving back one of a
+/// path no longer holding its file takes nothing.
 @MainActor
 public final class PasteboardFileAccess {
     /// What this process read of one pasteboard generation.
@@ -31,7 +33,7 @@ public final class PasteboardFileAccess {
 
     private let generation: Generation
     private let grants: SandboxFileGrants
-    private var granted: [URL] = []
+    private var granted: [SandboxFileGrants.Grant] = []
 
     private init(generation: Generation, grants: SandboxFileGrants) {
         self.generation = generation
@@ -62,9 +64,20 @@ public final class PasteboardFileAccess {
         let string = item.string(forType: .fileURL)
         guard let string, let url = URL(string: string), url.isFileURL, generation.read.insert(index).inserted
         else { return string }
-        grants.pasteboardGranted(url)
-        granted.append(url)
+        granted.append(grants.pasteboardGranted(url))
         return string
+    }
+
+    /// The file URL each of `pasteboard`'s items names as it stands now, read into the access every read of it
+    /// shares, and that access, which whatever reads the files holds until it has.
+    public static func readFileURLs(
+        from pasteboard: any ClipboardReadPasteboard
+    ) -> (urls: [URL], access: PasteboardFileAccess) {
+        let access = reading(pasteboard, at: pasteboard.changeCount)
+        let urls = pasteboard.items.enumerated().compactMap { index, item in
+            access.fileURL(ofItem: index, item).flatMap(URL.init(string:)).flatMap { $0.isFileURL ? $0 : nil }
+        }
+        return (urls, access)
     }
 
     /// Whether this holds any grant.
@@ -73,9 +86,5 @@ public final class PasteboardFileAccess {
     /// Whether the pasteboard read still stands at the generation it read.
     public var standsOnItsPasteboard: Bool {
         generation.pasteboard.map { $0.changeCount == generation.changeCount } ?? false
-    }
-
-    isolated deinit {
-        for url in granted { grants.pasteboardGrantReleased(url) }
     }
 }

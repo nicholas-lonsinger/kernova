@@ -58,21 +58,21 @@ struct SandboxFileGrantsTests {
                     for order in orders {
                         let sandbox = FakeSandbox()
                         let grants = sandbox.fileGrants
+                        var held: [Int: SandboxFileGrants.Grant] = [:]
                         var live: Set<Int> = []
                         for step in order {
                             let unheldBefore = sandbox.unheldGiveBacks.count
                             switch (kinds[step.holder], step.takes) {
                             case (.started, true):
-                                #expect(grants.startAccessing(path))
-                            case (.started, false):
-                                grants.stopAccessing(path)
+                                held[step.holder] = grants.startAccessing(path)
+                                #expect(held[step.holder] != nil)
                             case (.pasteboardTook, true):
                                 sandbox.grant(path)
-                                grants.pasteboardGranted(path)
+                                held[step.holder] = grants.pasteboardGranted(path)
                             case (.pasteboardTookNone, true):
-                                grants.pasteboardGranted(path)
-                            case (.pasteboardTook, false), (.pasteboardTookNone, false):
-                                grants.pasteboardGrantReleased(path)
+                                held[step.holder] = grants.pasteboardGranted(path)
+                            case (_, false):
+                                held.removeValue(forKey: step.holder)?.release()
                             }
                             if step.takes { live.insert(step.holder) } else { live.remove(step.holder) }
                             let granted = live.contains { kinds[$0] != .pasteboardTookNone }
@@ -91,5 +91,23 @@ struct SandboxFileGrantsTests {
                 }
             }
         }
+    }
+
+    @Test("A grant released again, or let go after its release, is given back once")
+    func grantIsGivenBackOnce() {
+        let path = URL(fileURLWithPath: "/Volumes/Data/disk.img")
+        let sandbox = FakeSandbox()
+        let started = sandbox.fileGrants.startAccessing(path)
+        sandbox.grant(path)
+        let read = sandbox.fileGrants.pasteboardGranted(path)
+
+        started?.release()
+        started?.release()
+        #expect(sandbox.grants(of: path) == 1, "the read's grant, still held")
+        read.release()
+        read.release()
+
+        #expect(sandbox.grants(of: path) == 0)
+        #expect(sandbox.unheldGiveBacks.isEmpty)
     }
 }

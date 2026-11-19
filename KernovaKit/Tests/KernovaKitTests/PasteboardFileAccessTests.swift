@@ -96,7 +96,7 @@ struct PasteboardFileAccessTests {
         #expect(sandbox.unheldGiveBacks.isEmpty)
     }
 
-    @Test("A copy read again once its grants were given back takes none, so its offer holds none and gives none back")
+    @Test("A copy read again once its grants were given back takes none, so holds none and gives none back")
     func rereadAfterGiveBackGivesNoneBack() async throws {
         let copied = try file("copied.txt")
         let pasteboard = FakePasteboard()
@@ -107,12 +107,29 @@ struct PasteboardFileAccessTests {
         source = nil
         try await sandbox.changed.wait { sandbox.grants(of: copied) == 0 }
 
-        source = await offer(pasteboard, drop: false)
-        #expect(source != nil)
-        #expect(source?.fileAccess == nil)
-        source = nil
+        _ = await ClipboardPasteboardReader.readOffer(from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
+        let reread = PasteboardFileAccess.readFileURLs(from: pasteboard)
 
-        #expect(sandbox.grants(of: copied) == 0)
+        #expect(reread.urls == [copied])
+        #expect(!reread.access.holdsGrants)
+        #expect(sandbox.unheldGiveBacks.isEmpty)
+    }
+
+    @Test("A read of a drop's file URLs holds their grants while its access lives, and gives each back once after")
+    func fileURLReadHoldsItsGrants() async throws {
+        let files = [try file("a.txt"), try file("b.txt")]
+        let pasteboard = FakePasteboard()
+        pasteboard.setFiles(files)
+        let sandbox = pasteboard.sandbox
+
+        var read: (urls: [URL], access: PasteboardFileAccess)? = PasteboardFileAccess.readFileURLs(from: pasteboard)
+        withExtendedLifetime(read) {
+            #expect(read?.urls == files)
+            #expect(files.map(sandbox.grants(of:)) == [1, 1])
+        }
+        read = nil
+
+        try await sandbox.changed.wait { files.allSatisfy { sandbox.grants(of: $0) == 0 } }
         #expect(sandbox.unheldGiveBacks.isEmpty)
     }
 }

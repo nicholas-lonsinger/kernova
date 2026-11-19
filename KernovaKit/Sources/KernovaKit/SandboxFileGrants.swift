@@ -2,7 +2,8 @@ import Foundation
 import KernovaSynchronization
 
 /// The grants of sandbox access to files and folders this process starts and takes, counted by path: a
-/// security-scoped URL's started access, and the grant a pasteboard read took (``PasteboardFileAccess``).
+/// security-scoped URL's started access, and the grant a pasteboard read took (``PasteboardFileAccess``). Each is a
+/// ``Grant``, which gives itself back once.
 ///
 /// Giving a grant back takes away one of the process's grants of that exact path, whichever holder took it, and a
 /// pasteboard read past an exhausted grant budget takes none while still naming the file
@@ -13,6 +14,35 @@ public final class SandboxFileGrants: Sendable {
     /// This process's grants.
     public static let shared = SandboxFileGrants(
         start: { $0.startAccessingSecurityScopedResource() }, stop: { $0.stopAccessingSecurityScopedResource() })
+
+    /// One grant this process holds of `url`'s path, given back once: at ``release()``, or once nothing holds it.
+    public final class Grant: Sendable {
+        /// The URL the grant was taken through.
+        public let url: URL
+        private let grants: SandboxFileGrants
+        private let started: Bool
+        private let released = Locked(false)
+
+        fileprivate init(url: URL, grants: SandboxFileGrants, started: Bool) {
+            self.url = url
+            self.grants = grants
+            self.started = started
+        }
+
+        /// Gives the grant back, the first time only.
+        public func release() {
+            let first = released.withLock { released in
+                defer { released = true }
+                return !released
+            }
+            guard first else { return }
+            grants.letGo(url, started: started)
+        }
+
+        deinit {
+            release()
+        }
+    }
 
     /// One path's holders.
     private struct Holders {
@@ -31,50 +61,36 @@ public final class SandboxFileGrants: Sendable {
         self.stop = stop
     }
 
-    /// Starts access to the security-scoped `url`, true when it took a grant: `url` then holds its path until
-    /// ``stopAccessing(_:)``.
-    public func startAccessing(_ url: URL) -> Bool {
+    /// Starts access to the security-scoped `url`: the grant it took, or nil when it took none.
+    public func startAccessing(_ url: URL) -> Grant? {
         paths.withLock { paths in
-            guard start(url) else { return false }
+            guard start(url) else { return nil }
             paths[Self.path(of: url), default: Holders()].count += 1
-            return true
+            return Grant(url: url, grants: self, started: true)
         }
     }
 
-    /// Gives back the grant ``startAccessing(_:)`` took for `url`, and every grant a pasteboard read of its path
-    /// let go once that leaves the path no holder.
-    public func stopAccessing(_ url: URL) {
-        paths.withLock { paths in
-            stop(url)
-            letGo(Self.path(of: url), in: &paths)
-        }
-    }
-
-    /// A pasteboard read took a grant of the file or folder `url` names, which holds its path until
-    /// ``pasteboardGrantReleased(_:)``.
-    func pasteboardGranted(_ url: URL) {
+    /// The grant a pasteboard read took of the file or folder `url` names.
+    func pasteboardGranted(_ url: URL) -> Grant {
         paths.withLock { $0[Self.path(of: url), default: Holders()].count += 1 }
+        return Grant(url: url, grants: self, started: false)
     }
 
-    /// The pasteboard read's grant of `url` is no longer needed: given back now, or once its path has no holder.
-    func pasteboardGrantReleased(_ url: URL) {
+    /// A grant of `url` was let go: a started access's is given back now, a pasteboard read's once its path has no
+    /// holder, and the last holder gives back every pasteboard read's grant of the path.
+    private func letGo(_ url: URL, started: Bool) {
         paths.withLock { paths in
             let path = Self.path(of: url)
-            paths[path, default: Holders()].released.append(url)
-            letGo(path, in: &paths)
+            guard var holders = paths[path] else { return }
+            if started { stop(url) } else { holders.released.append(url) }
+            holders.count -= 1
+            guard holders.count <= 0 else {
+                paths[path] = holders
+                return
+            }
+            paths[path] = nil
+            for url in holders.released { stop(url) }
         }
-    }
-
-    /// One holder of `path` let go of it; the last gives back every pasteboard read's grant of it.
-    private func letGo(_ path: String, in paths: inout [String: Holders]) {
-        guard var holders = paths[path] else { return }
-        holders.count -= 1
-        guard holders.count <= 0 else {
-            paths[path] = holders
-            return
-        }
-        paths[path] = nil
-        for url in holders.released { stop(url) }
     }
 
     private static func path(of url: URL) -> String {

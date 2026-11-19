@@ -22,6 +22,7 @@ process, the writer writing a new generation between steps where a step says so:
 - make an app-scoped bookmark of a path while it was granted, resolve it, and start or stop its access;
 - read every item's `types`, `canReadObject(forClasses: [NSURL.self])` and
   `readObjects(forClasses: [NSFilePromiseReceiver.self])`;
+- between steps, from outside the sandbox, move the folder holding the granted files and move it back;
 - meter the grants left: read fresh files until the first `open` fails.
 
 Each scenario ran in a fresh process. A fresh process's meter read 1,456 files of 213-character paths before the
@@ -48,6 +49,13 @@ first failed, about 496 KB at path length plus 128 bytes each.
 7. `types`, `canReadObject(forClasses: [NSURL.self])` and `readObjects(forClasses: [NSFilePromiseReceiver.self])`
    of file items took no grant.
 8. A path without a grant still answers `lstat(2)` and `FileManager.fileExists(atPath:)`.
+9. A grant stays with its path, not its file. With the granted files' folder moved, the files did not open at their
+   new paths, and a give-back on their old paths or their new ones took nothing: moved back, every file opened, and
+   a give-back then closed it.
+10. A give-back of a path holding no grant, even three in a row, left no debt: the next generation's read of the
+    path took its grant and opened it.
+11. A second probe the same day measured a give-back through a file's reference URL (`file:///.file/id=…`) taking
+    the grant while the file was at its path.
 
 ## Consequence
 
@@ -57,4 +65,6 @@ the first read of each item in a generation, so every read of a generation share
 answers whether a read took a grant (5), so a pasteboard read's give-back waits until no other holder of the path
 in the process remains. A read of a generation whose grants were given back reaches none of its files (2), so what
 may read a generation again holds its grants while the generation stands. A file gone missing and one never
-granted are told apart by `open`, not by `stat` (8).
+granted are told apart by `open`, not by `stat` (8). A grant whose file has left its path is given back neither
+at its old path nor at its new one (9), so it stays held while the file is away; a give-back that takes nothing
+costs nothing later (10).

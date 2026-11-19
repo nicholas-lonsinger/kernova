@@ -1,5 +1,6 @@
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 import KernovaLogging
 
 /// The library verbs — create, clone, rename, delete, import, and the cancel
@@ -550,9 +551,12 @@ extension VMCommandCore {
     /// reserved against each other's arrivals — put in the folder `folder`
     /// identifies, if any, in one write, the batch's first entry selected
     /// there. ``importVM(from:waitForOutcome:)`` without `waitForOutcome` is
-    /// this for one bundle and no folder.
-    func beginImports(from urls: [URL], intoFolder folder: UUID?) -> VMImportBatch {
-        let registered = registerImports(from: urls, intoFolder: folder, awaited: false)
+    /// this for one bundle and no folder. Each copy holds `access`, the grants
+    /// a drop's read of `urls` took, until it has read its source.
+    func beginImports(
+        from urls: [URL], intoFolder folder: UUID?, holding access: PasteboardFileAccess? = nil
+    ) -> VMImportBatch {
+        let registered = registerImports(from: urls, intoFolder: folder, awaited: false, holding: access)
         return VMImportBatch(
             imports: registered.starts.map { start in start.flatMap { start in Result { try summary(of: start) } } },
             membershipFailure: registered.membershipFailure)
@@ -600,10 +604,10 @@ extension VMCommandCore {
     /// nothing. A folder write that fails fails no import: the imports run
     /// on, and the failure is answered beside them.
     private func registerImports(
-        from urls: [URL], intoFolder folder: UUID?, awaited: Bool
+        from urls: [URL], intoFolder folder: UUID?, awaited: Bool, holding access: PasteboardFileAccess? = nil
     ) -> (starts: [Result<ImportStart, any Error>], membershipFailure: (any Error)?) {
         let starts = urls.map { url in
-            Result<ImportStart, any Error> { try registerImport(from: url, awaited: awaited) }
+            Result<ImportStart, any Error> { try registerImport(from: url, awaited: awaited, holding: access) }
         }
         let registered = starts.compactMap { try? $0.get() }
         let members = registered.filter {
@@ -634,13 +638,16 @@ extension VMCommandCore {
     }
 
     /// Reserves a collision-free destination for one `.kernova` bundle,
-    /// registers its arrival, and starts the copy.
+    /// registers its arrival, and starts the copy, which holds `access` until
+    /// it has read the bundle.
     ///
     /// Synchronous all the way to the registration: a batch's reservations —
     /// and two overlapping triggers' — run atomically on the main actor and see
     /// each other's arrivals, which one suspension point between them would
     /// break. The copies then run concurrently.
-    private func registerImport(from sourceURL: URL, awaited: Bool) throws -> ImportStart {
+    private func registerImport(
+        from sourceURL: URL, awaited: Bool, holding access: PasteboardFileAccess?
+    ) throws -> ImportStart {
         // The bundle may be reached through a link, so every step reads and
         // names the bundle the path resolves to.
         let sourceURL = sourceURL.resolvingSymlinksInPath()
@@ -690,7 +697,7 @@ extension VMCommandCore {
                     awaited: awaited,
                     write: { [logger] staged in
                         try await Self.runBoundedCopy {
-                            try VMBundleItems.copy(sourceURL, to: staged.url)
+                            try withExtendedLifetime(access) { try VMBundleItems.copy(sourceURL, to: staged.url) }
                             if let repaired = try staged.arriveHostStateAsCopy() {
                                 logger.log(
                                     .notice,
@@ -1025,7 +1032,7 @@ extension VMCommandCore {
     }
 }
 
-/// What ``VMCommandCore/beginImports(from:intoFolder:)`` answered.
+/// What ``VMCommandCore/beginImports(from:intoFolder:holding:)`` answered.
 struct VMImportBatch {
     /// Each bundle's import, in the order given: the VM or arrival it
     /// answers, or why it was refused.

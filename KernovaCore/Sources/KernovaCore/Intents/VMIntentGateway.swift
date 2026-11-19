@@ -320,8 +320,8 @@ package final class VMIntentGateway {
     /// drop that authority out from under a copy still reading through it.
     func importVM(from url: URL) async throws -> VMEntity {
         try await perform(.importVM, on: nil) {
-            let accessing = SandboxFileGrants.shared.startAccessing(url)
-            defer { if accessing { SandboxFileGrants.shared.stopAccessing(url) } }
+            let grant = SandboxFileGrants.shared.startAccessing(url)
+            defer { grant?.release() }
             let settled = try await self.commands.importVM(from: url, waitForOutcome: true)
             return VMEntity(try self.commands.info(.id(settled.id)))
         }
