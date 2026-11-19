@@ -3,9 +3,9 @@ description: >-
   Run one of the Tools/install-*.sh installers with its tool-cache entry
   (Tools/lib/tool-cache.sh) restored from the Actions cache, and save the
   entry when the installer built it. The installer names the entry by a hash
-  of everything that determines the tool, so the cache key is that name and
-  a new key appears only when an input changes; a pull request's run saves
-  nothing, so its pushes add none.
+  of everything that determines the tool, so the cache key is that name: a
+  ref saves one entry per set of inputs, never one per commit, and a pull
+  request's entries serve only that pull request's later runs.
 
 inputs:
   installer:
@@ -23,7 +23,8 @@ runs:
         INSTALLER: ${{ inputs.installer }}
       run: |
         # shellcheck disable=SC2086 # the installer and its arguments, one per word
-        dir="$(dirname "$($INSTALLER --path)")"
+        path="$($INSTALLER --path)"
+        dir="$(dirname "$path")"
         echo "dir=$dir" >> "$GITHUB_OUTPUT"
         echo "key=$RUNNER_OS-$(basename "$dir")" >> "$GITHUB_OUTPUT"
 
@@ -40,7 +41,7 @@ runs:
         INSTALLER: ${{ inputs.installer }}
       run: $INSTALLER >/dev/null
 
-    - if: steps.restore.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
+    - if: steps.restore.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.locate.outputs.dir }}

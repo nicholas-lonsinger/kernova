@@ -20,24 +20,33 @@
 
 tool_cache_repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 
-# tool_cache_root — the directory every entry is in.
+# tool_cache_root — the directory every entry is in; fails when there is no
+# home directory to put it under.
 tool_cache_root() {
+    local caches
     if [ "$(uname -s)" = Darwin ]; then
-        printf '%s\n' "$HOME/Library/Caches/kernova-dev"
+        caches=${HOME:+$HOME/Library/Caches}
     else
-        printf '%s\n' "${XDG_CACHE_HOME:-$HOME/.cache}/kernova-dev"
+        caches=${XDG_CACHE_HOME:-${HOME:+$HOME/.cache}}
     fi
+    if [ -z "$caches" ]; then
+        echo 'tool_cache_root: HOME is unset or empty, so the tool cache has no directory' >&2
+        return 1
+    fi
+    printf '%s\n' "$caches/kernova-dev"
 }
 
 # tool_dir <name> [<value>...] -- [<path>...] — the entry <name> installs
 # into: <name>-<16 hex digits> under the cache root, the digits hashing
 # <name>, each <value>, each <path> — a file, or every file under a directory,
 # named relative to the repository root and read for its content — and the
-# Swift toolchain on PATH, which every tool here builds with.
+# Swift toolchain `swift` resolves in the repository root, where every tool
+# here builds: a swiftly proxy on PATH picks its toolchain by directory.
 tool_dir() {
-    local key
+    local root key
+    root=$(tool_cache_root) || return
     key=$(tool_key "$@") || return
-    printf '%s/%s-%s\n' "$(tool_cache_root)" "$1" "$key"
+    printf '%s/%s-%s\n' "$root" "$1" "$key"
 }
 
 tool_key() (
@@ -70,10 +79,10 @@ tool_key() (
     printf '%s' "$manifest" | tool_sha256 | cut -c 1-16
 )
 
-# The toolchain a build here uses: the `swift` on PATH, by its compiler, the
-# triple it targets less the OS version, and where it is installed, which a
-# macOS build of Periphery links libIndexStore from by absolute path — and on
-# macOS the SDK it builds against.
+# The toolchain a build here uses, by its compiler, the triple it targets less
+# the OS version, and where it is installed, which a macOS build of Periphery
+# links libIndexStore from by absolute path — and on macOS the SDK it builds
+# against.
 tool_toolchain() {
     swift -print-target-info | grep -E '"(compilerVersion|unversionedTriple|runtimeResourcePath)"' || return
     if [ "$(uname -s)" = Darwin ]; then
@@ -93,13 +102,15 @@ tool_sha256() {
 # the entry tool_dir names for the rest, unless it is there, and prints its
 # directory. `<build> <entry> <work>` writes the tool's files into <entry>
 # and may use <work>, both empty directories removed afterwards; `<verify>
-# <entry>` succeeds only when the files there run. Fails, installing nothing,
-# when either fails, when the entry's inputs changed while it built, or when
-# it is interrupted.
+# <entry>` succeeds only when the files there run. Both run in the repository
+# root, where the entry's toolchain is read. Fails, installing nothing, when
+# either fails, when the entry's inputs changed while it built, or when it is
+# interrupted.
 tool_install() (
     set -eo pipefail
     build=$1 verify=$2
     shift 2
+    cd "$tool_cache_repo"
     dir=$(tool_dir "$@")
     if [ -d "$dir" ]; then
         touch -c "$dir"

@@ -34,18 +34,32 @@ export HOME="$tmp/home" XDG_CACHE_HOME="$tmp/home/.cache"
 mkdir -p "$HOME"
 
 # The toolchain the stubs report, which a test changes by rewriting the files.
-mkdir -p "$tmp/bin"
-echo '"compilerVersion": "Swift 1"' >"$tmp/toolchain"
+# Like a swiftly proxy, the stub `swift` serves the toolchain a `.swift-version`
+# in the working directory or above it pins, and another one elsewhere.
+toolchain() { # <compiler> <triple> <install location>
+    printf '  "compilerVersion": "%s",\n  "unversionedTriple": "%s",\n  "runtimeResourcePath": "%s"\n' "$@" \
+        >"$tmp/toolchain"
+}
+toolchain 'Swift 1' arm64-apple-macosx /toolchains/one
+printf '  "compilerVersion": "Swift 0",\n' >"$tmp/unpinned"
 echo 1A1 >"$tmp/sdk"
-printf '#!/bin/sh\n[ "$1" = -print-target-info ] && exec cat "%s"\nexit 1\n' "$tmp/toolchain" >"$tmp/bin/swift"
+mkdir -p "$tmp/bin"
+cat >"$tmp/bin/swift" <<EOF
+#!/bin/sh
+[ "\$1" = -print-target-info ] || exit 1
+dir=\$PWD
+while [ "\$dir" != / ] && [ ! -f "\$dir/.swift-version" ]; do dir=\$(dirname "\$dir"); done
+if [ -f "\$dir/.swift-version" ]; then exec cat "$tmp/toolchain"; else exec cat "$tmp/unpinned"; fi
+EOF
 printf '#!/bin/sh\nexec cat "%s"\n' "$tmp/sdk" >"$tmp/bin/xcrun"
 chmod +x "$tmp/bin/swift" "$tmp/bin/xcrun"
 export PATH="$tmp/bin:$PATH"
 
-# A repository holding the library and the inputs the tests hash.
+# A repository holding the library, a `.swift-version`, and the inputs the
+# tests hash.
 new_repo() { # <dir>
     mkdir -p "$1/Tools/lib" "$1/src/dir/sub" &&
-        cp "$ROOT/Tools/lib/tool-cache.sh" "$1/Tools/lib/" &&
+        cp "$ROOT/Tools/lib/tool-cache.sh" "$1/Tools/lib/" && echo 1 >"$1/.swift-version" &&
         echo a >"$1/src/file" && echo b >"$1/src/dir/b" && echo c >"$1/src/dir/sub/c"
 }
 repo="$tmp/repo"
@@ -94,8 +108,12 @@ changes 'a file changes' write "$repo/src/file" A --restore write "$repo/src/fil
 changes 'a nested file changes' write "$repo/src/dir/sub/c" C --restore write "$repo/src/dir/sub/c" c
 changes 'a file is added under a directory' write "$repo/src/dir/new" n --restore rm "$repo/src/dir/new"
 changes 'a file is renamed' mv "$repo/src/dir/b" "$repo/src/dir/b2" --restore mv "$repo/src/dir/b2" "$repo/src/dir/b"
-changes 'the toolchain changes' write "$tmp/toolchain" '"compilerVersion": "Swift 2"' \
-    --restore write "$tmp/toolchain" '"compilerVersion": "Swift 1"'
+original=(toolchain 'Swift 1' arm64-apple-macosx /toolchains/one)
+changes "the toolchain's compiler changes" toolchain 'Swift 2' arm64-apple-macosx /toolchains/one --restore "${original[@]}"
+changes "the toolchain's target changes" toolchain 'Swift 1' aarch64-unknown-linux-gnu /toolchains/one \
+    --restore "${original[@]}"
+changes "the toolchain's install location changes" toolchain 'Swift 1' arm64-apple-macosx /toolchains/two \
+    --restore "${original[@]}"
 if [ "$(uname -s)" = Darwin ]; then
     changes 'the SDK changes' write "$tmp/sdk" 1A2 --restore write "$tmp/sdk" 1A1
 fi
@@ -104,6 +122,17 @@ check "name: unchanged when a value is added" [ "$(tool_dir t v x -- src/file sr
 check "name: unchanged when a path is dropped" [ "$(tool_dir t v -- src/file)" != "$base" ]
 fails() { ! "$@" 2>/dev/null; }
 check "name: a path that does not exist named an entry" fails tool_dir t v -- src/missing
+# homeless <unset | empty> — tool_dir with no home directory fails and prints no path.
+homeless() {
+    local out
+    if out=$(unset XDG_CACHE_HOME; if [ "$1" = unset ]; then unset HOME; else HOME=''; fi
+        tool_dir t v -- src/file 2>/dev/null); then
+        return 1
+    fi
+    [ -z "$out" ]
+}
+check "name: with HOME unset, tool_dir did not fail, or printed a path" homeless unset
+check "name: with HOME empty, tool_dir did not fail, or printed a path" homeless empty
 
 # ---- installs ----------------------------------------------------------------------
 
@@ -143,6 +172,14 @@ fi
 out=$(tool_install build_fails verify_ok t v -- src/file)
 check "install: an installed entry was not printed ('$out')" [ "$out" = "$entry" ]
 check "install: an installed entry was built again" [ "$(wc -l <"$builds" | tr -d ' ')" -eq 1 ]
+
+# Called from a directory whose `swift` is another toolchain, the build still
+# uses the toolchain the entry's name was read with.
+build_records() { swift -print-target-info >"$1/toolchain" && build_ok "$1"; }
+mkdir -p "$tmp/outside"
+seen=$(cd "$tmp/outside" && tool_install build_records verify_ok t cwd -- src/file)
+check "install: called from outside the repository, the build used '$(cat "$seen/toolchain" 2>/dev/null)', not the toolchain its name was read with" \
+    cmp -s "$seen/toolchain" "$tmp/toolchain"
 
 before=$(listing)
 tool_install build_broken verify_ok t verify-fails -- src/file >/dev/null 2>&1

@@ -30,7 +30,7 @@ case "${1:-}" in
 esac
 [ $# -le 2 ] || usage
 
-inputs=("$product" release -- Tools/install-dead-code-tool.sh Tools/lib/dead-code-tool.sh
+inputs=("$product" release -- Tools/install-dead-code-tool.sh Tools/lib/dead-code-tool.sh Tools/lib/package-pins.sh
     Tools/DeadCode/Package.swift Tools/DeadCode/Package.resolved Tools/DeadCode/Sources)
 
 build_tool() {
