@@ -29,8 +29,15 @@ final class GuestClipboard {
 
     /// The latest clipboard activity, for the menu-bar status line.
     private(set) var activity: ClipboardActivity = .disabled {
-        didSet { onActivityChanged() }
+        didSet {
+            standingNotice = ClipboardActivity.standingNotice(standingNotice, after: activity)
+            onActivityChanged()
+        }
     }
+
+    /// The notice that stands: the latest one, until an activity after it
+    /// ends it (``ClipboardActivity/standingNotice(_:after:)``).
+    private(set) var standingNotice: ClipboardActivity?
 
     /// A clipboard over `pasteboard`, landing the host's representations and calling in copied promises under
     /// `stagingRoot`, logging through `logger`, raising `onActivityChanged` whenever ``activity`` changes, and

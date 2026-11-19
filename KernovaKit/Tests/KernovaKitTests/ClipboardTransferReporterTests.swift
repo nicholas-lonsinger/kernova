@@ -166,6 +166,42 @@ struct ClipboardTransferReporterTests {
         #expect(clock.requestedSeconds.isEmpty)
     }
 
+    @Test(
+        "the refusal a reporter holds stands while another operation runs and ends, and goes with a retry's completion"
+    )
+    func theHeldRefusalOutlivesWhatHidesIt() {
+        let reporter = makeReporter(clock: GatedEngineClock())
+        var published: [ClipboardTransferFinish?] = []
+        reporter.onRefusalChanged = { published.append($0) }
+        let fire = makeOperation(reporter)
+        let since = Date(timeIntervalSince1970: 100)
+        reporter.publish(from: fire, .running(snapshot(bytes: 10), since: since))
+
+        // Another fire of the same paste fails while this one runs.
+        let refusal = finish(.diskFull(needed: 4096, available: 0), at: since.addingTimeInterval(1))
+        reporter.finish(refusal)
+        #expect(reporter.refusal == refusal)
+
+        // The running fire's next emission takes the readout back, hiding the
+        // refusal from the report but not ending it.
+        reporter.publish(from: fire, .running(snapshot(bytes: 20), since: since))
+        #expect(reporter.refusal == refusal)
+
+        // That fire began before the refusal, so its completion disproves nothing.
+        let completed = ClipboardTransferFinish(
+            gesture: .paste, outcome: .completed(final: snapshot(bytes: 100)), peerName: "macOS TEST")
+        reporter.publish(from: fire, .finished(completed))
+        #expect(reporter.refusal == refusal)
+
+        // A retry begun after the refusal completes, and the refusal goes.
+        let retry = makeOperation(reporter)
+        reporter.publish(from: retry, .running(snapshot(bytes: 10), since: since.addingTimeInterval(2)))
+        #expect(reporter.refusal == refusal)
+        reporter.publish(from: retry, .finished(completed))
+        #expect(reporter.refusal == nil)
+        #expect(published == [refusal, nil])
+    }
+
     @Test("a retry that succeeds clears a failure that stood before it began")
     func aLaterSuccessClearsAnOlderFailure() async throws {
         let clock = GatedEngineClock()

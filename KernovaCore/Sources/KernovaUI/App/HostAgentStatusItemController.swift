@@ -137,6 +137,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                 _ = self.currentRows()
                 for instance in self.viewModel.instances {
                     _ = instance.clipboardTransferReport
+                    _ = instance.clipboardRefusal
                 }
                 _ = self.heldCounts
             },
@@ -206,7 +207,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     /// Presents each VM's newly raised refusal where ``ClipboardNoticeLedger``
     /// routes it, as an error: up until the user clicks it or the status item,
-    /// or the VM's report stops carrying it.
+    /// or the VM's reporter stops holding the refusal.
     ///
     /// A notice the status item can't carry is dropped rather than deferred:
     /// the dropdown's own line is the fallback, and a refusal replayed later
@@ -215,8 +216,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// guest's own status item announces it over there.
     private func presentPendingNotices() {
         for instance in viewModel.instances {
-            guard case .finished(let finish) = instance.clipboardTransferReport,
-                finish.failure != nil, finish.gesture.isMadeHere,
+            guard let finish = instance.clipboardRefusal, finish.gesture.isMadeHere,
                 let wording = ClipboardTransferWording.wording(
                     for: finish, vmName: instance.name),
                 noticeLedger.route(finish.date, for: instance.instanceID, dropdownIsOpen: isMenuOpen)
@@ -225,10 +225,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             let content = ClipboardNoticeViewController(wording: wording)
             let lifetime = CalloutLifetime.error(
                 announcement: "\(wording.headline) \(wording.message)",
-                stands: { [weak instance] in
-                    guard case .finished(let standing)? = instance?.clipboardTransferReport else { return false }
-                    return standing.date == finish.date
-                })
+                stands: { [weak instance] in instance?.clipboardRefusal == finish })
             if case .skipped(let reason) = transientPopover.show(content, as: lifetime) {
                 Self.logger.log(
                     .info,

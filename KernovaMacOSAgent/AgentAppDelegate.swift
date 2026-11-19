@@ -175,6 +175,7 @@ final class AgentAppDelegate: NSObject, NSApplicationDelegate {
             connectionState: { peer.hostConnection },
             logForwardingEnabled: { logs.isForwarding },
             clipboardActivity: { [weak clipboard] in clipboard?.activity ?? .disabled },
+            clipboardNotice: { [weak clipboard] in clipboard?.standingNotice },
             onQuit: stop
         )
 

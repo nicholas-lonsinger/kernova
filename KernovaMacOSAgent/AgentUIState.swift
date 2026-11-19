@@ -60,4 +60,41 @@ enum ClipboardActivity: Equatable, Sendable {
             return false
         }
     }
+
+    /// The notice that stands once `later` follows `standing`: `later` when it
+    /// is a notice, `standing` while `later` leaves it standing, else none.
+    static func standingNotice(_ standing: ClipboardActivity?, after later: ClipboardActivity) -> ClipboardActivity? {
+        if later.isNotice { return later }
+        guard let standing, !standing.isEnded(by: later) else { return nil }
+        return standing
+    }
+
+    /// Whether `later`, an activity after this notice, ends it: the clipboard
+    /// content the notice is about is gone, or the gesture it reports was made
+    /// again and went through. Anything else leaves the notice standing.
+    ///
+    /// A copy notice is about the guest's copy; a paste notice about the
+    /// host's offer the paste was of.
+    func isEnded(by later: ClipboardActivity) -> Bool {
+        switch (self, later) {
+        // A later notice replaces this one.
+        case (_, .pasteRefused), (_, .copyCarriedNothing), (_, .copyPartlyCarried):
+            return true
+        // The connection ending withdraws the offers on both sides.
+        case (_, .disabled):
+            return true
+        // A new copy on either side replaces both the guest's copy and the
+        // host's offer on the guest's pasteboard.
+        case (_, .offeredToHost), (_, .offeredFromHost):
+            return true
+        // A paste that landed is the refused paste made again.
+        case (.pasteRefused, .receivedFromHost):
+            return true
+        // The host reading the guest's copy is the copy being used, short as
+        // the notice says; a paste landing says nothing about a copy; a
+        // connection coming up follows one that ended.
+        case (_, .sentToHost), (_, .receivedFromHost), (_, .enabled):
+            return false
+        }
+    }
 }

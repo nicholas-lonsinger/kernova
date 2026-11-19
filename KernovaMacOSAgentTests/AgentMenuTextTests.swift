@@ -78,3 +78,50 @@ struct AgentMenuTextTests {
         #expect(AgentMenuText.logForwardingLine(false) == "Log Forwarding: disabled")
     }
 }
+
+/// Which clipboard activity ends the notice standing before it.
+@Suite("ClipboardActivity.standingNotice", .caseScoped)
+struct ClipboardNoticeStandingTests {
+    private static let copyNotices: [ClipboardActivity] = [.copyCarriedNothing, .copyPartlyCarried(skipped: 2)]
+    private static let pasteNotices: [ClipboardActivity] = [
+        .pasteRefused(.pasteFailed, pasteLimitBytes: nil), .pasteRefused(.pasteTooLarge, pasteLimitBytes: 1_024),
+    ]
+
+    /// Each activity that is not a notice, with whether a copy notice and a
+    /// paste notice stand after it, worked out by hand.
+    private static let laters: [(later: ClipboardActivity, copyStands: Bool, pasteStands: Bool)] = [
+        (.enabled, true, true),
+        (.offeredToHost, false, false),
+        (.offeredFromHost, false, false),
+        (.sentToHost, true, true),
+        (.receivedFromHost, true, false),
+        (.disabled, false, false),
+    ]
+
+    @Test("a notice stands through what neither disproves nor replaces it, and goes with what does")
+    func noticeAgainstEveryActivity() {
+        for (later, copyStands, pasteStands) in Self.laters {
+            for notice in Self.copyNotices {
+                #expect(
+                    ClipboardActivity.standingNotice(notice, after: later) == (copyStands ? notice : nil),
+                    "\(notice) then \(later)")
+            }
+            for notice in Self.pasteNotices {
+                #expect(
+                    ClipboardActivity.standingNotice(notice, after: later) == (pasteStands ? notice : nil),
+                    "\(notice) then \(later)")
+            }
+            #expect(ClipboardActivity.standingNotice(nil, after: later) == nil, "nothing then \(later)")
+        }
+    }
+
+    @Test("a later notice stands in place of whatever stood")
+    func aLaterNoticeReplaces() {
+        let notices = Self.copyNotices + Self.pasteNotices
+        for later in notices {
+            for standing in [nil] + notices {
+                #expect(ClipboardActivity.standingNotice(standing, after: later) == later)
+            }
+        }
+    }
+}

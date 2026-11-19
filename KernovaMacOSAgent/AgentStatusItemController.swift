@@ -20,6 +20,8 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     private let connectionState: () -> HostConnectionState
     private let logForwardingEnabled: () -> Bool
     private let clipboardActivity: () -> ClipboardActivity
+    /// The clipboard notice that stands, if any.
+    private let clipboardNotice: () -> ClipboardActivity?
     private let onQuit: () -> Void
 
     /// Whether the dropdown is currently on screen, which `NSMenu` doesn't
@@ -35,12 +37,14 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         connectionState: @escaping () -> HostConnectionState,
         logForwardingEnabled: @escaping () -> Bool,
         clipboardActivity: @escaping () -> ClipboardActivity,
+        clipboardNotice: @escaping () -> ClipboardActivity?,
         onQuit: @escaping () -> Void
     ) {
         self.statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.connectionState = connectionState
         self.logForwardingEnabled = logForwardingEnabled
         self.clipboardActivity = clipboardActivity
+        self.clipboardNotice = clipboardNotice
         self.onQuit = onQuit
         super.init()
 
@@ -69,18 +73,17 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     /// other signal — the paste simply yields nothing, the copy simply crosses
     /// short — so the line is shown rather than left for whenever the menu is
     /// next opened, as an error: up until the user clicks it or the status
-    /// item, or the clipboard's activity moves on from it. The dropdown keeps
-    /// the same line, which is the fallback when the status item can't carry
+    /// item, or the notice stops standing. The dropdown keeps the same line
+    /// while it stands, which is the fallback when the status item can't carry
     /// the callout.
     func clipboardNoticeRaised() {
-        let activity = clipboardActivity()
         // Delivered asynchronously, so a later activity may already have
-        // replaced the notice.
-        guard activity.isNotice else { return }
-        let line = AgentMenuText.clipboardLine(activity)
+        // ended the notice.
+        guard let notice = clipboardNotice() else { return }
+        let line = AgentMenuText.clipboardLine(notice)
         let content = AgentClipboardNoticeViewController(line: line)
         let lifetime = CalloutLifetime.error(
-            announcement: line, stands: { [weak self] in self?.clipboardActivity() == activity })
+            announcement: line, stands: { [weak self] in self?.clipboardNotice() == notice })
         if case .skipped(let reason) = calloutSlot.show(content, as: lifetime) {
             Self.logger.log(
                 .info, "Clipboard notice skipped — \(String(describing: reason), privacy: .public)")
@@ -89,8 +92,8 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         Self.logger.log(.info, "Showing a clipboard notice")
     }
 
-    /// The clipboard's activity changed: a notice up for an activity it moved
-    /// on from goes.
+    /// The clipboard's activity changed: a notice up that no longer stands
+    /// goes.
     func clipboardActivityChanged() {
         calloutSlot.failuresChanged()
     }
@@ -131,10 +134,11 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         menu.removeAllItems()
 
         let activity = clipboardActivity()
-        // A notice is what the callout announced, so it reads at the top level;
-        // every other activity is state the Status submenu holds.
-        if activity.isNotice {
-            addInfoItem(AgentMenuText.clipboardLine(activity))
+        // A notice is what the callout announced, so it reads at the top level
+        // while it stands; the latest activity is state the Status submenu
+        // holds.
+        if let notice = clipboardNotice() {
+            addInfoItem(AgentMenuText.clipboardLine(notice))
             menu.addItem(.separator())
         }
 
