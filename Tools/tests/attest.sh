@@ -149,8 +149,8 @@ echo '[new](new.md)' >"$clone/notes/index.md"
 git -C "$clone" add notes/index.md
 echo new >"$clone/notes/new.md"
 in_clone "$attest" record lint 2>"$tmp/err"
-check "a lint run beside an untracked file runs Tools/lint.sh" "$(calls ran)" lint
 check "a lint run beside an untracked file keeps its status" "$?" 0
+check "a lint run beside an untracked file runs Tools/lint.sh" "$(calls ran)" lint
 check "a lint run beside an untracked file is not recorded" "$(record_count)" 0
 check "a lint run beside an untracked file says so" "$(cat "$tmp/err")" 'attest: untracked files are present, so this lint run is not recorded: notes/new.md'
 git -C "$clone" rm -q --cached notes/index.md

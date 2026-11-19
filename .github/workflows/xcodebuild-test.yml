@@ -48,9 +48,10 @@ jobs:
       # The store is content-addressed, so any earlier snapshot is a valid
       # seed: the per-commit key makes every run save its own, and the prefix
       # restores the newest one this ref can see. Its on-disk format is the
-      # toolchain's, hence the Xcode build in the key. The Makefile's size
-      # limit rolls the store every build and the prune step below drops the
-      # generation left behind, so what gets saved is one build's live set.
+      # toolchain's, hence the Xcode build in the key. The size limit
+      # Tools/lib/xcodebuild-flags.sh sets under CI rolls the store every
+      # build and the prune step below drops the generation left behind, so
+      # what gets saved is one build's live set.
       - name: Cache compilation cache
         uses: actions/cache@v5
         with:
