@@ -5,8 +5,7 @@
 #
 #   1. copy the gitignored local files listed in .worktreeinclude from the
 #      main checkout (never overwriting; only in a linked worktree)
-#   2. sweep dead LaunchServices registrations and orphaned DerivedData
-#      arenas (Tools/ghosts.sh --sweep)
+#   2. sweep what removed worktrees left behind (Tools/build-arenas.sh sweep)
 #   3. write this checkout's buildServer.json (Tools/lsp-config.sh)
 #
 # This is the only implementation; each entry point is a one-line call:
@@ -64,8 +63,8 @@ fi
 
 # ---- 2. sweep worktree debris ------------------------------------------------
 
-if [ -x Tools/ghosts.sh ]; then
-    Tools/ghosts.sh --sweep || true
+if [ -x Tools/build-arenas.sh ]; then
+    Tools/build-arenas.sh sweep || true
 fi
 
 # ---- 3. write this checkout's Swift language-server config -------------------

@@ -8,11 +8,10 @@
 #
 # Prints the absolute arena directory (e.g. ~/Library/Developer/Xcode/
 # DerivedData/Kernova-<hash>, or <project-dir>/DerivedData/Kernova in Relative
-# mode). The project path does NOT need to exist: for Xcode's default
-# (per-path-hashed ~/Library location) the folder name is a pure function of
-# the absolute path string, which is what lets cleanup tooling locate a
-# torn-down worktree's arena after the worktree itself is gone
-# (Tools/ghosts.sh, `make clean`).
+# mode). The project path need not exist: in Xcode's default per-path-hashed
+# location the folder name is a function of the path alone. For a checkout
+# that exists, `xcodebuild -showBuildSettings` answers authoritatively, but it
+# resolves the project's packages into the arena it names, creating it.
 #
 # A per-user workspace override (Xcode's File > Project Settings…, stored in
 # the workspace's xcuserdata) takes precedence over the global preference.
@@ -27,10 +26,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO_ROOT/Tools/lib/xcodebuild-flags.sh"
 
 # --root: print the directory that CONTAINS the per-path-hashed arenas, rather
-# than one project's arena. Tools/ghosts.sh scans it to find arenas orphaned by
-# torn-down worktrees, and used to hardcode the default ~/Library location —
-# which silently scanned the wrong directory on a machine pointed at a custom
-# root, reporting no orphans while they accumulated.
+# than one project's arena — where an arena can outlive its checkout.
 #
 # Exits 1 printing nothing when no such shared directory exists: Relative mode
 # nests each arena inside its own checkout (so an arena cannot outlive its
@@ -63,6 +59,19 @@ case "$project" in
     *) project="$PWD/$project" ;;
 esac
 project="${project%/}"
+
+# Spelled the way Xcode keys the arena, which is NSString's
+# resolvingSymlinksInPath: symlinks resolved, then a leading /private dropped
+# when the path without it exists. Observed with Xcode 27.2: a symlinked
+# spelling, a /private/tmp one and the /tmp one get the same arena.
+if resolved=$(cd "$project" 2>/dev/null && pwd -P); then
+    project=$resolved
+elif resolved=$(cd "$(dirname "$project")" 2>/dev/null && pwd -P); then
+    project="$resolved/$(basename "$project")"
+fi
+case "$project" in
+    /private/*) [ -e "${project#/private}" ] && project=${project#/private} ;;
+esac
 
 name="$(basename "$project")"
 name="${name%.*}"
