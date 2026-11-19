@@ -276,6 +276,43 @@ extension HubDropServiceTests {
         #expect(instance.clipboardTransferReport.failure == .tooLarge(limitBytes: 16_777_216))
     }
 
+    @Test(
+        "A drop holds each dropped file's grant until its offer ends, however it ends, then gives it back",
+        arguments: [
+            StreamClosure.completed(remoteEndBody: DropLanded(landed: 1).endBody),
+            .resetByPeer(WireError(.writeFailed)), .resetLocally(WireError(.cancelled)), .connectionLost,
+        ])
+    func dropHoldsGrantsUntilItEnds(ending: StreamClosure) async throws {
+        let probe = AgentHubProbe()
+        let instance = try await instance(probe)
+        let dropped = try file("a.txt", "a")
+        let board = pasteboard([dropped])
+        #expect(instance.dropOnGuest(board, promises: []))
+        let (request, offer) = try await sentOffer(probe)
+        probe.deliver(.itemReply(request, .offered(nil)), fromConnection: 0)
+        #expect(board.sandbox.grants(of: dropped) == 1)
+
+        probe.deliver(.items(.offerEnded(.drop, .local, token: offer.token, ending)), fromConnection: 0)
+
+        try await board.sandbox.changed.wait { board.sandbox.grants(of: dropped) == 0 }
+        #expect(board.sandbox.unheldGiveBacks.isEmpty)
+        #expect(instance.dropService.openOffersForTesting == 0)
+    }
+
+    @Test("A drop the hub does not offer gives its files' grants back")
+    func refusedDropGivesGrantsBack() async throws {
+        let probe = AgentHubProbe()
+        let instance = try await instance(probe, console: false)
+        let dropped = try file("a.txt", "a")
+        let board = pasteboard([dropped])
+
+        #expect(instance.dropService.drop(board, promises: [], peerName: "Drop VM"))
+
+        try await waitForChange { instance.clipboardTransferReport.failure != nil }
+        try await board.sandbox.changed.wait { board.sandbox.grants(of: dropped) == 0 }
+        #expect(board.sandbox.unheldGiveBacks.isEmpty)
+    }
+
     @Test("Every item the peer does not count as landed is reported skipped: one gone before the offer, too")
     func unlandedItemsAreSkipped() async throws {
         let probe = AgentHubProbe()

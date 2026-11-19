@@ -39,6 +39,20 @@ public struct FakePasteboardItem: ClipboardPasteboardItemReading, Sendable {
         self.onRead = onRead
     }
 
+    /// The file URL the item's `public.file-url` names, if it names one.
+    var fileURL: URL? {
+        bytes[.fileURL].flatMap { URL(string: String(decoding: $0, as: UTF8.self)) }
+    }
+
+    /// This item, telling `heard` of every read of one of its types after whatever it told before.
+    func alsoTelling(_ heard: @escaping @Sendable (NSPasteboard.PasteboardType) -> Void) -> FakePasteboardItem {
+        let told = onRead
+        return FakePasteboardItem(types: types, bytes: bytes) { type in
+            told?(type)
+            heard(type)
+        }
+    }
+
     /// The bytes staged for `type`, or `nil` when the item vends none.
     public func data(forType type: NSPasteboard.PasteboardType) -> Data? {
         onRead?(type)
@@ -68,11 +82,27 @@ public final class FakeReadPasteboard: ClipboardReadPasteboard, Sendable {
     /// pasteboard's is by every write.
     public var changeCount: Int { state.withLock { $0.changeCount } }
 
-    /// The items currently staged, in order.
-    public var items: [any ClipboardPasteboardItemReading] { state.withLock { $0.items } }
+    /// The items currently staged, in order, each read of a file URL among them read into ``sandbox``.
+    public var items: [any ClipboardPasteboardItemReading] {
+        let (items, changeCount) = state.withLock { ($0.items, $0.changeCount) }
+        let sandbox = sandbox
+        return items.enumerated().map { index, item in
+            guard let file = item.fileURL else { return item }
+            return item.alsoTelling { type in
+                guard type == .fileURL else { return }
+                sandbox.read(fileURL: file, ofItem: index, at: changeCount)
+            }
+        }
+    }
 
     /// None: no snapshot on this double carries a file promise.
     @MainActor public var filePromiseReceivers: [any FilePromiseReceiving] { [] }
+
+    /// The grants reading this double's file URLs takes, as ``FakeSandbox/read(fileURL:ofItem:at:)`` says.
+    public let sandbox = FakeSandbox()
+
+    /// The grants ``sandbox`` counts.
+    public var fileGrants: SandboxFileGrants { sandbox.fileGrants }
 
     /// Stages a single item, as one copy does, bumping the change count.
     public func setItem(_ representations: [(type: NSPasteboard.PasteboardType, data: Data)]) {
