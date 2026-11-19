@@ -192,7 +192,8 @@ package struct ClipboardTransferWording: Equatable {
                 message: "\(reader) couldn't read one of the items, so \(unfinished(gesture)) didn't finish.",
                 menuLine: "\(prefix): \(reader.lowercasedFirst) couldn't read an item")
 
-        case (.stagingFailed, _):
+        // Only a drag out raises a refused write.
+        case (.stagingFailed, _), (.writesRefused, _):
             return ClipboardTransferWording(
                 headline: "Clipboard not pasted from \(vm).",
                 message: "The copied file couldn't be saved to disk, so the paste didn't finish.",
@@ -259,14 +260,31 @@ package struct ClipboardTransferWording: Equatable {
     /// where they were dropped on this Mac, or that could not leave the guest.
     ///
     /// Says the drag did not finish rather than that nothing arrived: a
-    /// destination asks for each item in turn, so the items before the failure
-    /// may already be there.
+    /// destination asks for each item in turn, so other items may be there.
+    ///
+    /// A refused write names a step that helps only when a file of the same
+    /// drag landed in the folder the write was refused in: that folder takes
+    /// Kernova's writes, so the refusal was of those paths alone, and a drag of
+    /// fewer items asks this Mac for fewer of them. A refusal with nothing
+    /// landed beside it may be of the folder itself, so it says only that.
     private static func dragOutWording(
         for failure: ClipboardTransferFailure, vm: String
     ) -> ClipboardTransferWording {
+        var title = headline(for: .dragOut, vm: vm)
         let message: String
         let menuLine: String
         switch failure {
+        case .writesRefused(let refused, let landedBeside) where landedBeside > 0:
+            title = "Some files not copied from \(vm)."
+            message =
+                "This Mac didn't allow Kernova to save \(refused.formatted()) of the files where you dropped them, though Kernova saved \(landedBeside.formatted()) others there. Drag the folder that holds them in the VM instead, which goes as one item."
+            menuLine = "Drag: some files not saved; drag their folder instead"
+        case .writesRefused(let refused, _):
+            message =
+                refused == 1
+                ? "This Mac didn't allow Kernova to save the file where you dropped it, so the drag didn't finish."
+                : "This Mac didn't allow Kernova to save the files where you dropped them, so the drag didn't finish."
+            menuLine = "Drag: this Mac didn't allow saving there"
         case .diskFull(let needed, let available):
             let detail = diskFullDetail(needed: needed, available: available)
             let base = "This Mac ran out of disk space receiving the files, so the drag didn't finish"
@@ -298,8 +316,7 @@ package struct ClipboardTransferWording: Equatable {
             message = "The transfer from the VM failed, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"
         }
-        return ClipboardTransferWording(
-            headline: headline(for: .dragOut, vm: vm), message: message, menuLine: menuLine)
+        return ClipboardTransferWording(headline: title, message: message, menuLine: menuLine)
     }
 
     /// What the gesture that did not finish is called in the sentence saying so.

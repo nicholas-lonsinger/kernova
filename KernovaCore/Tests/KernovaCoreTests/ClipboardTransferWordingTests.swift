@@ -59,6 +59,9 @@ struct ClipboardTransferWordingTests {
             (.timedOut, .dragOut),
             (.transferFailed, .dragOut),
             (.stagingFailed, .dragOut),
+            (.writesRefused(refused: 1, landedBeside: 0), .dragOut),
+            (.writesRefused(refused: 3, landedBeside: 0), .dragOut),
+            (.writesRefused(refused: 575, landedBeside: 2_425), .dragOut),
             (.peerReported(.pasteFailed), .dragOut),
             (.peerReported(.dragItemUnavailable), .dragOut),
             (.sourceUnreadable, .dragOut),
@@ -158,7 +161,7 @@ struct ClipboardTransferWordingTests {
     func dragOutWording() throws {
         for (failure, gesture) in everyArm where gesture == .dragOut {
             let copy = try #require(wording(failure, gesture), "\(failure)")
-            #expect(copy.headline == "Files not copied from \(quotedVM).", "\(failure)")
+            #expect(copy.headline.hasSuffix("not copied from \(quotedVM)."), "\(failure)")
             #expect(copy.menuLine.hasPrefix("Drag: "), "\(failure)")
             #expect(!copy.message.contains("paste"), "\(failure)")
             #expect(!copy.message.contains("clipboard"), "\(failure)")
@@ -172,6 +175,24 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.peerReported(.dragItemUnavailable), .dragOut)).message
                 == "An app in the VM didn't write a dragged item, so the drag didn't finish.")
+    }
+
+    @Test(
+        "a refused write names dragging the folder only beside a landed file, counting both; otherwise it states no count",
+        arguments: [(1, 0), (3, 0), (1, 1), (575, 2_425)])
+    func refusedWrites(refused: Int, landedBeside: Int) throws {
+        let copy = try #require(wording(.writesRefused(refused: refused, landedBeside: landedBeside), .dragOut))
+        let beside = landedBeside > 0
+        #expect(copy.message.contains("folder") == beside)
+        #expect(copy.menuLine.contains("folder") == beside)
+        #expect(copy.headline.hasPrefix("Some files") == beside)
+        if beside {
+            #expect(copy.message.contains(refused.formatted()))
+            #expect(copy.message.contains(landedBeside.formatted()))
+        } else {
+            let statesACount = copy.message.contains { $0.isNumber }
+            #expect(!statesACount)
+        }
     }
 
     @Test("an item that couldn't be read is worded by the side that read it")

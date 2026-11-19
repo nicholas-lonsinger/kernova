@@ -79,6 +79,10 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case sourceUnreadable
     /// The bytes arrived but could not be written to a file on this side.
     case stagingFailed
+    /// This side was not permitted (`EPERM`) to write `refused` of the gesture's items where they were to land.
+    /// `landedBeside` is how many others it wrote into a folder one of those was refused in: one or more means
+    /// that folder took this side's writes, so the refusal was of the refused paths alone.
+    case writesRefused(refused: Int, landedBeside: Int)
     /// Items the sending side did not send whole, and the rest crossed whole;
     /// `count` is how many. A gesture that reads a pasteboard leaves out a file
     /// it cannot read or that is gone, the rest of its item crossing. A drop's

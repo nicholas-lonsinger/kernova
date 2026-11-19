@@ -404,7 +404,11 @@ package final class GuestDragTake: GuestDragTaking {
 
     /// How the writes ended early, once they did.
     @ObservationIgnored private var terminal: Terminal?
-    @ObservationIgnored private var written: Set<Int> = []
+    /// The items written, each with the folder it landed in.
+    @ObservationIgnored private var landed: [Int: String] = [:]
+    /// The items whose writes failed for a reason of their own, which the
+    /// other writes go on past.
+    @ObservationIgnored private var failed: [Int: ItemWriteFailure] = [:]
     /// The items a Mac destination asked for: by name, which it asks before it
     /// writes, or by a write.
     nonisolated private let asked = Mutex<Set<Int>>([])
@@ -417,6 +421,14 @@ package final class GuestDragTake: GuestDragTaking {
 
     private enum Terminal {
         case cancelled
+        case failed(ClipboardTransferFailure)
+    }
+
+    /// How one item's write failed.
+    enum ItemWriteFailure: Equatable {
+        /// This Mac did not permit the write to its destination, in `folder`.
+        case refused(folder: String)
+        /// Any other failure, as the readout reports it.
         case failed(ClipboardTransferFailure)
     }
 
@@ -691,7 +703,7 @@ package final class GuestDragTake: GuestDragTaking {
         switch phase {
         case .handingOff, .ready: abandon(because: "the guest's offer ended")
         case .carried, .released, .unreleased, .abandoned:
-            endWrites(.interrupted(fileCount: items.count - written.count))
+            endWrites(.interrupted(fileCount: items.count - landed.count))
             retireIfDone()
         }
     }
@@ -855,9 +867,9 @@ package final class GuestDragTake: GuestDragTaking {
     /// A Mac destination asks for the items after its session ends, at any
     /// moment and for only some of them, and AppKit reports no end to its
     /// asking. So a session a destination took holds the offer until every
-    /// item is written, the writes ended, or a newer drag's session replaced
-    /// its promises — after which only an item already asked for is still
-    /// written.
+    /// item's write ended, the writes ended, or a newer drag's session
+    /// replaced its promises — after which only an item already asked for is
+    /// still written.
     private func retireIfDone() {
         switch phase {
         case .handingOff, .ready, .carried: return
@@ -865,11 +877,17 @@ package final class GuestDragTake: GuestDragTaking {
         }
         guard !takeOpen, inFlight.isEmpty, owed.isEmpty else { return }
         if destinationMayAsk {
-            let askedWritten = superseded && asked.withLock { $0.isSubset(of: written) }
-            guard written.count == items.count || terminal != nil || askedWritten else { return }
+            let askedEnded = superseded && asked.withLock { $0 }.allSatisfy(hasEnded)
+            guard everyItemEnded || terminal != nil || askedEnded else { return }
         }
         retire()
     }
+
+    /// Whether item `index`'s write landed or failed.
+    private func hasEnded(_ index: Int) -> Bool { landed[index] != nil || failed[index] != nil }
+
+    /// Whether every item's write landed or failed.
+    private var everyItemEnded: Bool { landed.count + failed.count == items.count }
 
     /// Releases the guest's offer, withdraws the Mac session's promises and
     /// reports the take finished, once.
@@ -976,6 +994,7 @@ package final class GuestDragTake: GuestDragTaking {
             return
         }
         pull(index, to: destination, completion)
+        retireIfDone()
     }
 
     /// The drag's delivery settled: every write waiting on it pulls now, or
@@ -1022,49 +1041,79 @@ package final class GuestDragTake: GuestDragTaking {
 
     private func pull(_ index: Int, to destination: URL, _ completion: @escaping @Sendable ((any Error)?) -> Void) {
         let operation = liveReadout()
+        failed[index] = nil
         guard offerOpen, let item = source(of: index) else {
-            let failure = ClipboardTransferFailure.peerReported(.dragItemUnavailable)
             operation.unitBegan(id: UInt64(index), expectedBytes: 0, name: items[index].filename)
-            operation.unitFailed(id: UInt64(index), failure)
-            endWrites(failure)
-            return completion(GuestDragWriteError.failed(failure))
+            return itemEnded(
+                index, failing: .failed(.peerReported(.dragItemUnavailable)), to: destination, operation: operation,
+                completion)
         }
         operation.unitBegan(id: UInt64(index), expectedBytes: item.sizeEstimate, name: item.filename)
         var ended = false
         let cancel = transport.pull(item, at: index, to: destination) { [weak self] result in
             ended = true
-            self?.endWrite(index, result, operation: operation, completion)
+            self?.pullEnded(index, result, to: destination, operation: operation, completion)
         }
         // A pull refused before it opened has already ended.
         if !ended { inFlight[index] = cancel }
     }
 
-    private func endWrite(
-        _ index: Int, _ result: Result<Void, WireError>, operation: ClipboardTransferOperation,
+    private func pullEnded(
+        _ index: Int, _ result: Result<Void, WireError>, to destination: URL, operation: ClipboardTransferOperation,
         _ completion: @escaping @Sendable ((any Error)?) -> Void
     ) {
         inFlight[index] = nil
         defer { retireIfDone() }
-        switch result {
-        case .success:
-            written.insert(index)
-            operation.unitEnded(id: UInt64(index), succeeded: true)
-            if written.count == items.count { operation.finish(.completed) } else { operation.finishWhenIdle() }
-            completion(nil)
-        case .failure(let error):
-            if let terminal {
-                operation.unitEnded(id: UInt64(index), succeeded: false)
-                return completion(Self.error(for: terminal))
-            }
-            let failure = Self.failure(for: error, owed: items.count - written.count)
-            Self.logger.log(
-                .error,
-                "Could not write dragged item \(index, privacy: .public) from '\(self.peerName, privacy: .public)': \(String(describing: error.code), privacy: .public) \(error.debugDetail, privacy: .public)"
-            )
-            operation.unitFailed(id: UInt64(index), failure)
-            endWrites(failure)
-            completion(GuestDragWriteError.failed(failure))
+        guard case .failure(let error) = result else {
+            return itemEnded(index, failing: nil, to: destination, operation: operation, completion)
         }
+        if let terminal {
+            operation.unitEnded(id: UInt64(index), succeeded: false)
+            return completion(Self.error(for: terminal))
+        }
+        Self.logger.log(
+            .error,
+            "Could not write dragged item \(index, privacy: .public) from '\(self.peerName, privacy: .public)': \(String(describing: error.code), privacy: .public) \(error.debugDetail, privacy: .public)"
+        )
+        let failure = Self.failure(for: error, at: destination, owed: items.count - landed.count)
+        itemEnded(index, failing: failure, to: destination, operation: operation, completion)
+    }
+
+    /// Ends item `index`'s write to `destination`: landed when `failure` is
+    /// nil. A failure of the item's own fails it alone, and the other writes
+    /// go on; one every write shares ends them all.
+    private func itemEnded(
+        _ index: Int, failing failure: ItemWriteFailure?, to destination: URL, operation: ClipboardTransferOperation,
+        _ completion: @escaping @Sendable ((any Error)?) -> Void
+    ) {
+        operation.unitEnded(id: UInt64(index), succeeded: failure == nil)
+        switch failure {
+        case nil:
+            landed[index] = Self.folder(of: destination)
+        case .failed(let shared) where Self.endsEveryWrite(shared):
+            endWrites(shared)
+            return completion(GuestDragWriteError.failed(shared))
+        case let failure?:
+            failed[index] = failure
+        }
+        if let shortfall = Self.shortfall(landed: landed, failed: failed) { operation.recordShortfall(shortfall) }
+        if everyItemEnded {
+            if !failed.isEmpty { logShortfall() }
+            operation.finish(.completed)
+        } else {
+            operation.finishWhenIdle()
+        }
+        completion(failure.map { GuestDragWriteError.failed(Self.readoutFailure(of: $0)) })
+    }
+
+    /// Records how many of the drag's items landed once every write ended
+    /// and some failed.
+    private func logShortfall() {
+        let shortfall = Self.shortfall(landed: landed, failed: failed).map { String(describing: $0) } ?? "none"
+        Self.logger.log(
+            .error,
+            "A drag out of '\(self.peerName, privacy: .public)' wrote \(self.landed.count, privacy: .public) of \(self.items.count, privacy: .public) item(s): \(shortfall, privacy: .public)"
+        )
     }
 
     /// Ends every write still owed on `failure`, cancelling those in flight.
@@ -1123,17 +1172,63 @@ package final class GuestDragTake: GuestDragTaking {
         }
     }
 
-    /// What the readout says of a pull that ended in `error`, with `owed`
+    /// How a pull to `destination` that ended in `error` failed, with `owed`
     /// items not yet written.
-    static func failure(for error: WireError, owed: Int) -> ClipboardTransferFailure {
+    static func failure(for error: WireError, at destination: URL, owed: Int) -> ItemWriteFailure {
         switch error.code {
-        case .itemOfferStale, .cancelled, .shuttingDown: .interrupted(fileCount: owed)
-        case .itemRepresentationUnavailable: .peerReported(.dragItemUnavailable)
-        case .writeFailed where error.posixErrno == ENOSPC: .diskFull(needed: nil, available: nil)
-        case .writeFailed, .itemUnpackRefused, .itemDecmpfsRefused: .stagingFailed
-        case .readFailed: .sourceUnreadable
-        default: .transferFailed
+        case .itemOfferStale, .cancelled, .shuttingDown: .failed(.interrupted(fileCount: owed))
+        case .itemRepresentationUnavailable: .failed(.peerReported(.dragItemUnavailable))
+        case .writeFailed where error.posixErrno == ENOSPC: .failed(.diskFull(needed: nil, available: nil))
+        case .writeFailed where error.posixErrno == EPERM: .refused(folder: folder(of: destination))
+        case .writeFailed, .itemUnpackRefused, .itemDecmpfsRefused: .failed(.stagingFailed)
+        case .readFailed: .failed(.sourceUnreadable)
+        default: .failed(.transferFailed)
         }
+    }
+
+    /// Whether `failure` is shared by every write of the take rather than
+    /// one item's own: the offer or its connection gone, or this Mac's volume
+    /// full.
+    private static func endsEveryWrite(_ failure: ClipboardTransferFailure) -> Bool {
+        switch failure {
+        case .interrupted, .diskFull, .timedOut: true
+        case .tooLarge, .peerReported, .transferFailed, .sourceUnreadable, .stagingFailed, .writesRefused,
+            .itemsSkipped, .itemsUnreadable, .sendFailed, .dropStopped, .nothingToCopy, .filesLeftOut:
+            false
+        }
+    }
+
+    /// What the readout reports of one item's failed write alone.
+    private static func readoutFailure(of failure: ItemWriteFailure) -> ClipboardTransferFailure {
+        switch failure {
+        case .refused: .writesRefused(refused: 1, landedBeside: 0)
+        case .failed(let failure): failure
+        }
+    }
+
+    /// What the readout reports of a take whose writes landed `landed`, each
+    /// with its folder, and failed `failed`, by item index; nil when none
+    /// failed.
+    ///
+    /// A refused write in a folder that took another item of the drag is
+    /// reported over any other failure, since it alone names a step that
+    /// helps; otherwise the lowest-indexed failure is.
+    static func shortfall(landed: [Int: String], failed: [Int: ItemWriteFailure]) -> ClipboardTransferFailure? {
+        var refusedIn: Set<String> = []
+        for case .refused(let folder) in failed.values { refusedIn.insert(folder) }
+        let refused = failed.values.count { if case .refused = $0 { true } else { false } }
+        let landedBeside = landed.values.count { refusedIn.contains($0) }
+        if landedBeside > 0 { return .writesRefused(refused: refused, landedBeside: landedBeside) }
+        guard let first = failed.min(by: { $0.key < $1.key })?.value else { return nil }
+        switch first {
+        case .refused: return .writesRefused(refused: refused, landedBeside: 0)
+        case .failed(let failure): return failure
+        }
+    }
+
+    /// The folder a write to `destination` lands in.
+    private static func folder(of destination: URL) -> String {
+        destination.standardizedFileURL.deletingLastPathComponent().path
     }
 
     private static func describe(_ result: DragTakeResult) -> String {
