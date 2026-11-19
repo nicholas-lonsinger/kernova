@@ -74,7 +74,7 @@ struct PeerAgentRuntimeTests {
         second.far.command(.requestPower(refused, .shutdown))
         try await harness.pump(second)
         var results = second.far.events.waiter()
-        _ = try await results.next { $0 == .power(refused, .indeterminate) }
+        _ = try await results.next { $0 == .role(.power(refused, .indeterminate)) }
 
         let writes = second.stream.calls.elements.filter { $0 == "write" }.count
         let events = second.far.events.elements.count
@@ -123,7 +123,7 @@ struct PeerAgentRuntimeTests {
         let second = try await harness.connect(2)
         var secondEvents = second.far.events.waiter()
         _ = try await secondEvents.next { event in
-            if case .helloReceived(_, moved) = event { true } else { false }
+            if case .role(.helloReceived(_, moved)) = event { true } else { false }
         }
         // At once: the clock never moved, so no backoff came between the two dials.
         #expect(harness.scheduler.now == Fixture.t0)
@@ -149,7 +149,7 @@ struct PeerAgentRuntimeTests {
         let second = try await harness.connect(2)
         var secondEvents = second.far.events.waiter()
         _ = try await secondEvents.next { event in
-            if case .helloReceived(_, Fixture.peerState) = event { true } else { false }
+            if case .role(.helloReceived(_, Fixture.peerState)) = event { true } else { false }
         }
     }
 
@@ -210,10 +210,10 @@ struct HostConnectionRuntimeTests {
         try await harness.pump()
         var events = harness.events.waiter()
         let closed = try await events.next {
-            if case .update(.closed) = $0 { return true }
+            if case .role(.update(.closed)) = $0 { return true }
             return false
         }
-        guard case .update(.closed(_, .resetLocally(let error))) = closed else {
+        guard case .role(.update(.closed(_, .resetLocally(let error)))) = closed else {
             Issue.record("the pull ended \(closed)")
             return
         }

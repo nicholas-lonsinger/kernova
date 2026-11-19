@@ -65,7 +65,7 @@ struct ConnectionDriverTests {
             ],
             droppedBefore: 0)
         let harness = PeerDriverHarness(policy: Fixture.logsEnabled) { effect in
-            guard case .logs(.ready) = effect else { return .consumed }
+            guard case .role(.logs(.ready)) = effect else { return .consumed }
             let first = answered.withLock { answered in
                 defer { answered = true }
                 return !answered

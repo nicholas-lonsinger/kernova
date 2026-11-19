@@ -150,9 +150,10 @@ final class FarPeer: Sendable {
     private static func answer(_ endpoint: inout PeerEndpoint, _ now: CoreInstant) {
         while let effect = endpoint.pollEffect() {
             switch effect {
-            case .update(.payload(let id, let bytes)): endpoint.handle(.update(.consumed(id, bytes.count)), now: now)
-            case .update(.complete(let id, _)): endpoint.handle(.update(.installed(id)), now: now)
-            case .power, .logs, .update, .itemSource, .itemSink: break
+            case .role(.update(.payload(let id, let bytes))):
+                endpoint.handle(.update(.consumed(id, bytes.count)), now: now)
+            case .role(.update(.complete(let id, _))): endpoint.handle(.update(.installed(id)), now: now)
+            case .role, .itemSource, .itemSink: break
             }
         }
         while endpoint.pollEvent() != nil {}

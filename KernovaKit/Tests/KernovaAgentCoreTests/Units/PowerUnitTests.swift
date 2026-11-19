@@ -48,7 +48,7 @@ extension CoreUnits {
         }
 
         static func powerEffects(_ run: HostileRun) -> [PowerEffect] {
-            run.peerEffects.compactMap { if case .power(let effect) = $0 { effect } else { nil } }
+            run.peerEffects.compactMap { if case .role(.power(let effect)) = $0 { effect } else { nil } }
         }
 
         static func localFaults(_ run: HostileRun) -> Int {
@@ -213,7 +213,7 @@ extension CoreUnits {
 
         static func results(_ run: HostileRun) -> [PowerRequestResult] {
             run.hostEvents.compactMap { event in
-                guard case .power(let id, let result) = event, id == Self.id else { return nil }
+                guard case .role(.power(let id, let result)) = event, id == Self.id else { return nil }
                 return result
             }
         }

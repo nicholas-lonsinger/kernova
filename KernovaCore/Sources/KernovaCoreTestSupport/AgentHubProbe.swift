@@ -91,8 +91,8 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
             return index
         }
         let offer = powerOffer.encoded
-        deliver(.helloReceived(claim, peerState), fromConnection: index)
-        deliver(.featuresChanged(FeatureStatusTable([(.power, .available(offer))])), fromConnection: index)
+        deliver(.role(.helloReceived(claim, peerState)), fromConnection: index)
+        deliver(.role(.featuresChanged(FeatureStatusTable([(.power, .available(offer))]))), fromConnection: index)
         return index
     }
 
@@ -151,7 +151,7 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
             }
             if case .requestPower(let id, let action, _) = command, let answer {
                 for result in answer(action) {
-                    probe.deliver(.power(id, result), fromConnection: Int(generation.rawValue) - 1)
+                    probe.deliver(.role(.power(id, result)), fromConnection: Int(generation.rawValue) - 1)
                 }
             }
             probe.changed.notify()

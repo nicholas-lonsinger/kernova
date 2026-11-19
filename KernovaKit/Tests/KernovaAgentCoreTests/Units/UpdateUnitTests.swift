@@ -32,7 +32,7 @@ extension CoreUnits {
         }
 
         static func effects(_ run: HostileRun) -> [UpdateEffect] {
-            run.peerEffects.compactMap { if case .update(let effect) = $0 { effect } else { nil } }
+            run.peerEffects.compactMap { if case .role(.update(let effect)) = $0 { effect } else { nil } }
         }
 
         /// The hash each UPDATE_PULL the peer opened asks for, by stream.
@@ -162,11 +162,11 @@ extension CoreUnits {
         static let small = SimHub.bundle(size: 1_000, tag: 5)
 
         static func served(_ run: HostileRun) -> [UpdateServeEvent] {
-            run.hostEvents.compactMap { if case .update(let event) = $0 { event } else { nil } }
+            run.hostEvents.compactMap { if case .role(.update(let event)) = $0 { event } else { nil } }
         }
 
         static func grants(_ run: HostileRun) -> [Int] {
-            run.hostEffects.compactMap { if case .read(_, _, _, let maxBytes) = $0 { maxBytes } else { nil } }
+            run.hostEffects.compactMap { if case .role(.read(_, _, _, let maxBytes)) = $0 { maxBytes } else { nil } }
         }
 
         static func result(_ kind: Kernova_V2_UpdateResult.Kind, _ code: ErrorCode? = nil) -> Frame {
@@ -234,7 +234,7 @@ extension CoreUnits {
         func pullRequested() {
             let run = Self.serving()
             #expect(Self.served(run) == [.pullRequested(Self.id(), Self.offered)])
-            #expect(run.hostEffects == [.read(Self.id(), Self.offered, offset: 0, maxBytes: 262_144)])
+            #expect(run.hostEffects == [.role(.read(Self.id(), Self.offered, offset: 0, maxBytes: 262_144))])
         }
 
         @Test("Bytes past the grant → RESET READ_FAILED with a diagnostic (as built)")

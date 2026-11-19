@@ -102,15 +102,15 @@ package final class SimPeerProcess {
 
     func handle(_ effect: PeerEffect, link: SimLink, world: SimWorld) {
         switch effect {
-        case .power(let power):
+        case .role(.power(let power)):
             handlePower(power, world: world)
-        case .logs(.mode(let mode)):
+        case .role(.logs(.mode(let mode))):
             ring.setMode(mode)
-        case .logs(.ready):
+        case .role(.logs(.ready)):
             if let batch = ring.takeBatch() {
                 link.peer?.handle(.logs(.batch(batch)), now: world.localNow(.peer(index)))
             }
-        case .update(let update):
+        case .role(.update(let update)):
             handleUpdate(update, link: link, world: world)
         case .itemSource(let effect):
             world.itemOutput(.source(effect), link: link, side: .peer)
@@ -121,7 +121,7 @@ package final class SimPeerProcess {
 
     func handle(_ event: PeerEvent, link: SimLink, world: SimWorld) {
         switch event {
-        case .policyReceived:
+        case .role(.policyReceived):
             agent?.policyReceived(link.generation, now: world.localNow(.peer(index)))
             world.drainAgent(index)
             confirmSwitch()
@@ -134,7 +134,7 @@ package final class SimPeerProcess {
             link.items(.peer).dragTake(event, link: link, side: .peer, world: world)
         case .itemReply(let id, let reply):
             link.items(.peer).reply(id, reply, link: link, side: .peer, world: world)
-        case .established, .hostLiveness, .updateAvailable, .diagnostic, .itemFeatureUsable:
+        case .role(.established), .role(.updateAvailable), .role(.itemFeatureUsable), .liveness, .diagnostic:
             break
         }
     }

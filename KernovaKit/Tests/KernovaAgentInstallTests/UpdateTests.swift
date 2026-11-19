@@ -503,7 +503,7 @@ struct RejectedHashThroughTheCoreTests {
 
         // The offer changes: the core clears the rejected hash through the installer, and pulls.
         run.feed([Self.updateAvailable(Payloads.manifest)])
-        let effects = run.peerEffects.compactMap { if case .update(let effect) = $0 { effect } else { nil } }
+        let effects = run.peerEffects.compactMap { if case .role(.update(let effect)) = $0 { effect } else { nil } }
         #expect(effects == [.clearRejected])
         #expect(Self.pulls(run) == [Payloads.hash])
         later.installer.clearRejected()

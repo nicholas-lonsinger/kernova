@@ -268,7 +268,7 @@ extension SimWorld {
                 let local = world.localNow(process)
                 if case .sink(let report) = input { world.checker.sinkReport(report, link: link, side: side) }
                 switch side {
-                case .host: link.host?.handle(input, now: local)
+                case .host: link.host?.handle(.items(input), now: local)
                 case .peer: link.peer?.handle(.items(input), now: local)
                 }
                 world.drain(link, side)
@@ -289,7 +289,7 @@ extension SimWorld {
             for command in build(link.items(side)) {
                 let now = world.localNow(process)
                 switch side {
-                case .host: link.host?.handle(.items(command), now: now)
+                case .host: link.host?.handle(.hub(.items(command)), now: now)
                 case .peer: link.peer?.handle(.itemCommand(command), now: now)
                 }
             }

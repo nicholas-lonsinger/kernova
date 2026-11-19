@@ -64,134 +64,73 @@ public enum PeerInput: Sendable, Equatable {
 }
 
 /// What a peer endpoint asks its adapters and runtime to do.
-public enum PeerEffect: Sendable, Equatable {
+public typealias PeerEffect = EndpointEffect<PeerRoleEffect>
+
+/// What a peer endpoint asks of its power adapter, log ring and installer.
+public enum PeerRoleEffect: Sendable, Equatable {
     /// For the power adapter.
     case power(PowerEffect)
     /// For the log ring and its runtime.
     case logs(LogEffect)
     /// For the installer.
     case update(UpdateEffect)
-    /// For the item source.
-    case itemSource(ItemSourceEffect)
-    /// For the item sink.
-    case itemSink(ItemSinkEffect)
 }
 
 /// What a peer endpoint tells the shell's UI and the dial schedule.
-public enum PeerEvent: Sendable, Equatable {
+public typealias PeerEvent = EndpointEvent<PeerRoleEvent>
+
+/// What only a peer endpoint tells the shell's UI and the dial schedule.
+public enum PeerRoleEvent: Sendable, Equatable {
     /// The host's Hello was read.
     case established(host: PeerClaim)
     /// A `PolicyUpdate` arrived (coalesced): the host's policy as it stands.
     case policyReceived(PolicySnapshot)
-    /// A liveness verdict about the host.
-    case hostLiveness(LivenessChange)
     /// What the host offers (coalesced).
     case updateAvailable(UpdateManifestValue?)
-    /// An offer or pull of item transfer changed.
-    case items(ItemTransferEvent)
-    /// The host takes this side's drag.
-    case dragTake(DragTakeEvent)
     /// A feature that offers items became usable on the connection, or stopped being usable: the Hello, the
     /// adverts and the host's policy decide it, and the connection's end makes every one unusable. Once per
     /// change, after the event that caused it and before anything the change ends.
     case itemFeatureUsable(FeatureID, Bool)
-    /// The answer to the `.itemCommand` input of this id.
-    case itemReply(ItemRequestID, ItemReply)
-    /// A note for the runtime's log.
-    case diagnostic(Diagnostic)
-    /// The connection ended.
-    case closed(ConnectionClosure)
 }
 
 /// One peer connection's whole state, owned by its driver.
-public struct PeerEndpoint: Sendable {
-    package private(set) var connection: Connection
-    private var power: PowerResponder
-    private var logs: LogForwarder
-    private var update: UpdateClient
-    private var items: ItemMachines
-    #if DEBUG
-    package var testSink = TestBulkSink()
-    #endif
-    /// The connection this endpoint runs.
-    public let generation: ConnectionGeneration
-    private var effects = OutputQueue<PeerEffect, NoSlot>()
-    private var events = OutputQueue<PeerEvent, PeerEventSlot>()
+package typealias PeerEndpoint = Endpoint<PeerMachines>
+
+extension PeerConfiguration: EndpointConfiguration {
+    package var connectionConfiguration: ConnectionConfiguration {
+        ConnectionConfiguration(claim: claim, initialState: state, adverts: [], policy: receiverPolicy)
+    }
+}
+
+/// A peer endpoint's power, logs and update machines, and the features that offer items it last said are usable.
+package struct PeerMachines: RoleMachines {
+    package var power: PowerResponder
+    package var logs: LogForwarder
+    package var update: UpdateClient
     /// The features that offer items `.itemFeatureUsable` last said are usable.
     private var usableItemFeatures: Set<FeatureID> = []
 
-    /// Creates the endpoint of a connection that just connected.
-    public init(_ configuration: PeerConfiguration, generation: ConnectionGeneration, now: CoreInstant) {
-        self.generation = generation
+    /// The machines of a connection that just connected.
+    package init(_ configuration: PeerConfiguration, generation: ConnectionGeneration) {
         power = PowerResponder(
             availability: configuration.power, ledger: configuration.powerLedger, generation: generation)
         logs = LogForwarder(availability: configuration.logs)
         update = UpdateClient(
             availability: configuration.update, ownHash: configuration.claim.payloadHash, generation: generation)
-        items = ItemMachines(configuration.items, role: configuration.claim.role, generation: generation)
-        var connectionConfiguration = ConnectionConfiguration(
-            claim: configuration.claim, initialState: configuration.state, adverts: [],
-            policy: configuration.receiverPolicy)
-        connectionConfiguration.adverts =
-            [(.power, power.localAdvert), (.update, update.localAdvert), (.logs, logs.localAdvert)] + items.adverts
-        #if DEBUG
-        configuration.tweakForTesting(&connectionConfiguration)
-        #endif
-        connection = Connection(connectionConfiguration, now: now)
     }
 
-    /// The connection's phase.
-    public var state: ConnectionState { connection.state }
-
-    /// Whether a committed pull's `.pullEnded` is still owed, which its sink's publish report brings, though
-    /// the connection may have finished.
-    public var hasLandingsInFlight: Bool { items.hasLandingsInFlight }
-
-    /// When the driver must next call `handleTimeout`: the soonest of the
-    /// connection's deadline and the power machine's, each computed from the clock now.
-    public var nextDeadline: CoreInstant? {
-        guard connection.state != .finished else { return nil }
-        let clock = connection.clock
-        return [connection.nextDeadline, clock.external(power.nextDeadline(on: clock))].compactMap { $0 }.min()
-    }
-
-    // MARK: Inputs
-
-    /// Bytes from the transport.
-    public mutating func receive(_ bytes: Data, now: CoreInstant) {
-        connection.ingest(bytes, now: now)
-        route()
-        while connection.processNextFrame() {
-            route()
+    /// The host's policy and its offer coalesce.
+    package static func slot(of event: PeerRoleEvent) -> PeerEventSlot? {
+        switch event {
+        case .policyReceived: .policy
+        case .updateAvailable: .updateAvailable
+        case .established, .itemFeatureUsable: nil
         }
-        connection.finishReceive()
-        route()
     }
 
-    /// The transmit marked `isFinal` was written in full.
-    public mutating func finalTransmitWritten(now: CoreInstant) {
-        connection.finalTransmitWritten(now: now)
-        route()
-    }
-
-    /// The transport ended.
-    public mutating func transportEnded(now: CoreInstant) {
-        connection.transportEnded(now: now)
-        route()
-    }
-
-    /// The timer fired.
-    public mutating func handleTimeout(now: CoreInstant) {
-        connection.handleTimeout(now: now)
-        route()
-        notifyAll(.deadline)
-        route()
-    }
-
-    /// An adapter's or the runtime's input.
-    public mutating func handle(_ input: PeerInput, now: CoreInstant) {
-        connection.tick(now)
-        route()
+    /// Carries out the session state or an adapter's report; leaves item commands, item answers and drag answers to
+    /// the endpoint.
+    package mutating func handle(_ input: PeerInput, connection: inout Connection, now: CoreInstant) -> SharedInput? {
         switch input {
         case .peerState(let state):
             if connection.isAcceptingInput { connection.setPeerState(state) }
@@ -202,203 +141,48 @@ public struct PeerEndpoint: Sendable {
         case .update(let input):
             update.handle(input: input, connection: &connection)
         case .items(let input):
-            items.handle(input, connection: &connection)
+            return .items(input)
         case .dragTake(let id, let answer):
-            items.answer(id, answer, connection: &connection)
+            return .dragTake(id, answer)
         case .itemCommand(let command):
-            // Queued before the route below collects what the command caused, so the answer comes first.
-            if let (id, reply) = items.perform(command, connection: &connection) {
-                events.append(.itemReply(id, reply))
-            }
+            return .itemCommand(command)
         }
-        route()
+        return nil
     }
 
-    /// Closes the connection, the agent exiting (`SHUTTING_DOWN`).
-    public mutating func close(_ code: ErrorCode, now: CoreInstant) {
-        connection.close(code, retryAfter: nil, now: now)
-        route()
-    }
-
-    // MARK: Outputs
-
-    /// The next frames to write.
-    public mutating func pollTransmit(maxBytes: Int) -> Transmit? {
-        let transmit = connection.pollTransmit(maxBytes: maxBytes)
-        route()
-        return transmit
-    }
-
-    /// The next effect for an adapter.
-    public mutating func pollEffect() -> PeerEffect? {
-        effects.poll()
-    }
-
-    /// The next event for the shell.
-    public mutating func pollEvent() -> PeerEvent? {
-        events.poll()
-    }
-
-    #if DEBUG
-    // MARK: Testing
-
-    /// Opens a bulk test stream.
-    package mutating func openTestBulk(_ kind: StreamKind, consumes: Bool, now: CoreInstant) -> StreamID? {
-        connection.tick(now)
-        route()
-        let stream = testSink.open(kind, consumes: consumes, connection: &connection)
-        route()
-        return stream
-    }
-
-    /// Resets the bulk test stream `stream` with CANCELLED.
-    package mutating func resetTestStream(_ stream: StreamID, now: CoreInstant) {
-        connection.tick(now)
-        testSink.reset(stream, connection: &connection)
-        route()
-    }
-
-    /// Starts or stops consuming on the bulk test stream `stream`.
-    package mutating func setTestConsumes(_ consumes: Bool, on stream: StreamID, now: CoreInstant) {
-        connection.tick(now)
-        testSink.setConsumes(consumes, on: stream, connection: &connection)
-        route()
-    }
-
-    /// The item offers both sides hold open.
-    package var itemOffersForTesting: ItemOfferRegistry { items.transfer.offers }
-
-    /// Events not yet polled.
-    package var pendingEventCountForTesting: Int { events.countForTesting }
-
-    /// Takes the connection's trace, emptying it.
-    package mutating func takeTraceForTesting() -> [ConnectionTrace] {
-        connection.takeTraceForTesting()
-    }
-    #endif
-
-    // MARK: Routing
-
-    private mutating func route() {
-        while true {
-            collect()
-            if let routed = connection.pollRoutedEvent() {
-                dispatch(routed)
-            } else if publishAdverts() {
-                notifyAll(.usabilityChanged)
-                refreshItemUsability()
-            } else {
-                break
-            }
-        }
-    }
-
-    private mutating func publishAdverts() -> Bool {
-        let adverts: [(FeatureID, LocalAdvert)] =
-            [(.power, power.localAdvert), (.update, update.localAdvert), (.logs, logs.localAdvert)] + items.adverts
-        let before = connection.localAdverts
-        connection.setLocalAdverts(adverts)
-        return connection.localAdverts != before && connection.state == .established
-    }
-
-    private mutating func notifyAll(_ event: FeatureEvent) {
-        power.handle(event, connection: &connection)
-        logs.handle(event, connection: &connection)
-        update.handle(event, connection: &connection)
-        items.notify(event, connection: &connection)
-    }
-
-    private mutating func dispatch(_ routed: RoutedEvent) {
-        let event = routed.event
-        switch event {
-        case .helloReceived(let hello):
-            events.append(.established(host: hello.claim))
-            notifyAll(.sessionEstablished)
-            refreshItemUsability()
-        case .remoteAdvertsChanged:
-            notifyAll(.usabilityChanged)
-            refreshItemUsability()
-        case .peerStateChanged:
-            break
-        case .policyChanged(let policy):
-            events.append(.policyReceived(policy), coalescing: .policy)
-            notifyAll(.policyChanged)
-            notifyAll(.usabilityChanged)
-            refreshItemUsability()
+    /// The shell hears the host's Hello, its policy, which every machine then hears, and its offer, which the update
+    /// client hears first. The host sends no peer state: the connection closes on one before it reaches here.
+    package mutating func receive(
+        _ message: SessionMessage, connection: inout Connection
+    ) -> (event: PeerRoleEvent?, shared: SharedInput?) {
+        switch message {
+        case .hello(let hello):
+            return (.established(host: hello.claim), nil)
+        case .policy(let policy):
+            return (.policyReceived(policy), .policyChanged)
         case .updateAvailable(let manifest):
-            events.append(.updateAvailable(manifest), coalescing: .updateAvailable)
             update.offerChanged(manifest, connection: &connection)
-        case .liveness(let change):
-            events.append(.hostLiveness(change))
-        case .diagnostic(let diagnostic):
-            events.append(.diagnostic(diagnostic))
-        case .closed(let closure):
-            refreshItemUsability(closed: true)
-            events.append(.closed(closure))
-        case .opened(let id, _, let body):
-            deliver(.opened(id, body: body), to: routed.owner)
-        case .message(let id, let payload):
-            deliver(.message(id, payload), to: routed.owner)
-        case .data(let id, let payload):
-            deliver(.data(id, payload), to: routed.owner)
-        case .remoteEnded(let id, let body):
-            deliver(.remoteEnded(id, body: body), to: routed.owner)
-        case .writable(let id):
-            deliver(.writable(id), to: routed.owner)
-        case .streamClosed(let id, let closure):
-            deliver(.streamClosed(id, closure), to: routed.owner)
-        case .slotFreed:
-            // The slots are shared across kinds, so every opener re-checks.
-            notifyAll(.slotFreed)
+            return (.updateAvailable(manifest), nil)
+        case .peerState:
+            return (nil, nil)
         }
     }
 
-    /// Emits `.itemFeatureUsable` for each feature that offers items whose usability changed; with `closed`,
-    /// every one is unusable.
-    private mutating func refreshItemUsability(closed: Bool = false) {
+    /// `.itemFeatureUsable` for each feature that offers items whose usability changed; once `closed`, every one is
+    /// unusable.
+    package mutating func reportUsability(of connection: Connection, closed: Bool) -> [PeerRoleEvent] {
+        var changes: [PeerRoleEvent] = []
         for feature in ItemFeatureAvailability.offering.sorted(by: { $0.rawValue < $1.rawValue }) {
             let usable = !closed && connection.usability(feature).isAvailable
             guard usable != usableItemFeatures.contains(feature) else { continue }
             if usable { usableItemFeatures.insert(feature) } else { usableItemFeatures.remove(feature) }
-            events.append(.itemFeatureUsable(feature, usable))
+            changes.append(.itemFeatureUsable(feature, usable))
         }
-    }
-
-    private mutating func deliver(_ event: FeatureEvent, to owner: KindOwner?) {
-        guard let owner else { return }
-        switch owner {
-        case .power: power.handle(event, connection: &connection)
-        case .update: update.handle(event, connection: &connection)
-        case .logs: logs.handle(event, connection: &connection)
-        case .itemTransfer, .itemOffer, .dragTake: items.deliver(event, to: owner, connection: &connection)
-        #if DEBUG
-        case .testBulk: testSink.handle(event, connection: &connection)
-        #endif
-        }
-    }
-
-    private mutating func collect() {
-        for output in [power.takeOutputs(), logs.takeOutputs(), update.takeOutputs()] {
-            for effect in output.effects { effects.append(effect) }
-            for diagnostic in output.diagnostics {
-                connection.diagnose(diagnostic)
-            }
-        }
-        let outputs = items.takeOutputs()
-        for output in outputs.items {
-            switch output {
-            case .source(let effect): effects.append(.itemSource(effect))
-            case .sink(let effect): effects.append(.itemSink(effect))
-            case .event(let event): events.append(.items(event))
-            case .reply(let id, let reply): events.append(.itemReply(id, reply))
-            }
-        }
-        for event in outputs.drag { events.append(.dragTake(event)) }
-        for diagnostic in outputs.diagnostics { connection.diagnose(diagnostic) }
+        return changes
     }
 }
 
 /// The peer's events that coalesce.
-enum PeerEventSlot: Hashable, Sendable {
+package enum PeerEventSlot: Hashable, Sendable {
     case policy, updateAvailable
 }

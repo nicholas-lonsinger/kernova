@@ -294,7 +294,7 @@ final class FarHost: Sendable {
     func command(_ command: HostCommand) {
         let now = clock.now
         let events = far.withLock { far in
-            far.endpoint.handle(command, now: now)
+            far.endpoint.handle(.hub(command), now: now)
             return Self.drain(&far, now)
         }
         events.forEach(self.events.record)
@@ -330,7 +330,7 @@ final class FarHost: Sendable {
             answered = false
             while let effect = far.endpoint.pollEffect() {
                 guard case .itemSource(let effect) = effect, let input = far.source.handle(effect) else { continue }
-                far.endpoint.handle(.source(input), now: now)
+                far.endpoint.handle(.items(.source(input)), now: now)
                 answered = true
             }
         }
@@ -382,13 +382,13 @@ final class PeerDriverHarness: Sendable {
 
     static func name(_ event: PeerEvent) -> String {
         switch event {
-        case .established: "established"
-        case .policyReceived: "policyReceived"
-        case .hostLiveness: "hostLiveness"
-        case .updateAvailable: "updateAvailable"
+        case .role(.established): "established"
+        case .role(.policyReceived): "policyReceived"
+        case .liveness: "liveness"
+        case .role(.updateAvailable): "updateAvailable"
         case .items: "items"
         case .dragTake: "dragTake"
-        case .itemFeatureUsable: "itemFeatureUsable"
+        case .role(.itemFeatureUsable): "itemFeatureUsable"
         case .itemReply: "itemReply"
         case .diagnostic: "diagnostic"
         case .closed: "closed"
@@ -428,6 +428,6 @@ final class PeerDriverHarness: Sendable {
 extension PeerEvent {
     /// Whether this is a `PolicyUpdate`'s arrival, whatever it carries.
     var isPolicyReceived: Bool {
-        if case .policyReceived = self { true } else { false }
+        if case .role(.policyReceived) = self { true } else { false }
     }
 }

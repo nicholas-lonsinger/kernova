@@ -545,7 +545,7 @@ package final class SimWorld {
         at(now + delay) { world in
             world.perform(.host) { world in
                 guard !link.shutDown.contains(.host) else { return }
-                link.host?.handle(command, now: world.localNow(.host))
+                link.host?.handle(.hub(command), now: world.localNow(.host))
                 world.drain(link, .host)
             }
         }
@@ -556,7 +556,7 @@ package final class SimWorld {
         at(now + delay) { world in
             world.perform(.host) { world in
                 guard !link.shutDown.contains(.host) else { return }
-                link.host?.handle(input, now: world.localNow(.host))
+                link.host?.handle(.payload(input), now: world.localNow(.host))
                 world.drain(link, .host)
             }
         }
@@ -630,7 +630,7 @@ package final class SimWorld {
                 world.faultTookEffect(index)
                 // The VMs auto-pause before the host sleeps.
                 for link in world.links where !link.shutDown.contains(.host) {
-                    link.host?.handle(.setPeerFrozen(true), now: world.localNow(.host))
+                    link.host?.handle(.hub(.setPeerFrozen(true)), now: world.localNow(.host))
                     world.drain(link, .host)
                 }
                 world.hub.peersFrozen = true

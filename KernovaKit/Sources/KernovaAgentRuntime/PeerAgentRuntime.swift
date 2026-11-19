@@ -296,7 +296,7 @@ public final class PeerAgentRuntime: Sendable {
         let itemConnection = ItemConnection(role: claim.role)
         return ConnectionDriver<PeerEndpoint>.Handlers(
             inTurn: { effect in
-                guard case .logs(let effect) = effect, let logs else { return .deliver }
+                guard case .role(.logs(let effect)) = effect, let logs else { return .deliver }
                 switch effect {
                 case .mode(let mode):
                     logs.ring.withLock { $0.setMode(mode) }
@@ -308,25 +308,25 @@ public final class PeerAgentRuntime: Sendable {
             },
             effect: { [registry, ledger] effect, driver in
                 switch effect {
-                case .power(let effect):
+                case .role(.power(let effect)):
                     ledger.withLock { $0.record(effect) }
                     switch effect {
                     case .perform(let id, let action, let ignoringApps):
                         registry.power?.perform(id, action, ignoringApps: ignoringApps)
                     case .cancel(let id): registry.power?.cancel(id)
                     }
-                case .update(.payload(let id, let bytes)): registry.update?.write(id, bytes)
-                case .update(.complete(let id, let manifest)): registry.update?.complete(id, manifest)
-                case .update(.abort(let id)): registry.update?.abort(id)
-                case .update(.recordRejected(let hash)): registry.update?.recordRejected(hash)
-                case .update(.clearRejected): registry.update?.clearRejected()
+                case .role(.update(.payload(let id, let bytes))): registry.update?.write(id, bytes)
+                case .role(.update(.complete(let id, let manifest))): registry.update?.complete(id, manifest)
+                case .role(.update(.abort(let id))): registry.update?.abort(id)
+                case .role(.update(.recordRejected(let hash))): registry.update?.recordRejected(hash)
+                case .role(.update(.clearRejected)): registry.update?.clearRejected()
                 case .itemSource(let effect):
                     registry.items?.source.handle(
                         effect, reporter: ItemSourceReporter(itemConnection) { driver.handle(.items(.source($0))) })
                 case .itemSink(let effect):
                     registry.items?.sink.handle(
                         effect, reporter: ItemSinkReporter(itemConnection) { driver.handle(.items(.sink($0))) })
-                case .logs: break
+                case .role(.logs): break
                 }
             },
             event: { [self] event, _ in
@@ -345,7 +345,7 @@ public final class PeerAgentRuntime: Sendable {
         }
         if let changed { handlers.hostConnectionChanged(changed) }
         switch event {
-        case .policyReceived:
+        case .role(.policyReceived):
             step { agent, now in agent.policyReceived(generation, now: now) }
         case .itemReply(let id, let reply):
             state.withLock { $0.items.take(id, from: generation) }?.answer(reply)

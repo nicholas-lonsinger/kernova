@@ -95,10 +95,10 @@ extension CoreUnits {
             run.feed(WireFrames.bytes(frames, preamble: false), maxSplit: 1 << 20)
             let events = Array(run.hostEvents.dropFirst(mark))
             #expect(
-                events.filter { if case .peerStateChanged = $0 { true } else { false } } == [
-                    .peerStateChanged(PeerSessionState(console: .on, sessionID: "c1", userName: "c"))
+                events.filter { if case .role(.peerStateChanged) = $0 { true } else { false } } == [
+                    .role(.peerStateChanged(PeerSessionState(console: .on, sessionID: "c1", userName: "c")))
                 ])
-            #expect(events.count { if case .featuresChanged = $0 { true } else { false } } == 1)
+            #expect(events.count { if case .role(.featuresChanged) = $0 { true } else { false } } == 1)
         }
 
         @Test("PolicyUpdates and offers read in one turn raise one event each on the peer, the newest kept")
@@ -113,12 +113,12 @@ extension CoreUnits {
             run.feed(WireFrames.bytes(frames, preamble: false), maxSplit: 1 << 20)
             // One event, carrying the last policy.
             #expect(
-                run.peerEvents.filter { if case .policyReceived = $0 { true } else { false } } == [
-                    .policyReceived(PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]))
+                run.peerEvents.filter { if case .role(.policyReceived) = $0 { true } else { false } } == [
+                    .role(.policyReceived(PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)])))
                 ])
             #expect(
-                run.peerEvents.filter { if case .updateAvailable = $0 { true } else { false } } == [
-                    .updateAvailable(last)
+                run.peerEvents.filter { if case .role(.updateAvailable) = $0 { true } else { false } } == [
+                    .role(.updateAvailable(last))
                 ])
         }
     }
@@ -145,7 +145,7 @@ extension CoreUnits {
         }
 
         static func performed(_ run: HostileRun) -> [PowerRequestID] {
-            run.peerEffects.compactMap { if case .power(.perform(let id, _, _)) = $0 { id } else { nil } }
+            run.peerEffects.compactMap { if case .role(.power(.perform(let id, _, _))) = $0 { id } else { nil } }
         }
 
         static func localFaults(_ run: HostileRun) -> Int {
@@ -213,7 +213,7 @@ extension CoreUnits {
 
         static func results(_ run: HostileRun) -> [PowerRequestResult] {
             run.hostEvents.compactMap { event in
-                guard case .power(let id, let result) = event, id == Self.hostID else { return nil }
+                guard case .role(.power(let id, let result)) = event, id == Self.hostID else { return nil }
                 return result
             }
         }

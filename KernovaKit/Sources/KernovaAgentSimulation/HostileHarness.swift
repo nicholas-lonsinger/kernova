@@ -234,13 +234,13 @@ package final class HostileRun {
     }
 
     package func command(_ command: HostCommand) {
-        host?.handle(command, now: now)
+        host?.handle(.hub(command), now: now)
         drain()
     }
 
     /// Answers the host's payload read.
     package func payload(_ input: PayloadInput) {
-        host?.handle(input, now: now)
+        host?.handle(.payload(input), now: now)
         drain()
     }
 
@@ -259,7 +259,7 @@ package final class HostileRun {
 
     /// Sends the local endpoint `command`, then drains.
     package func item(_ command: ItemCommand) {
-        host?.handle(.items(command), now: now)
+        host?.handle(.hub(.items(command)), now: now)
         peer?.handle(.itemCommand(command), now: now)
         drain()
     }
@@ -328,7 +328,7 @@ package final class HostileRun {
                 switch effect {
                 case .itemSource(let effect): item(.source(effect))
                 case .itemSink(let effect): item(.sink(effect))
-                case .read: break
+                case .role: break
                 }
             }
             while let effect = peer?.pollEffect() {
@@ -337,7 +337,7 @@ package final class HostileRun {
                 switch effect {
                 case .itemSource(let effect): item(.source(effect))
                 case .itemSink(let effect): item(.sink(effect))
-                case .power, .logs, .update: break
+                case .role: break
                 }
             }
             while let event = host?.pollEvent() {
@@ -376,7 +376,7 @@ package final class HostileRun {
         case .event, .reply: input = nil
         }
         guard let input else { return }
-        host?.handle(input, now: now)
+        host?.handle(.items(input), now: now)
         peer?.handle(.items(input), now: now)
     }
 

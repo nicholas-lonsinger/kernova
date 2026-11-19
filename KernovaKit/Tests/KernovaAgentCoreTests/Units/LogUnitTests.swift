@@ -107,7 +107,7 @@ extension CoreUnits {
         }
 
         static func logEffects(_ run: HostileRun) -> [LogEffect] {
-            run.peerEffects.compactMap { if case .logs(let effect) = $0 { effect } else { nil } }
+            run.peerEffects.compactMap { if case .role(.logs(let effect)) = $0 { effect } else { nil } }
         }
 
         static func readies(_ run: HostileRun) -> Int {
@@ -202,7 +202,7 @@ extension CoreUnits {
         }
 
         static func deliveries(_ run: HostileRun) -> [LogDelivery] {
-            run.hostEvents.compactMap { if case .log(let delivery) = $0 { delivery } else { nil } }
+            run.hostEvents.compactMap { if case .role(.log(let delivery)) = $0 { delivery } else { nil } }
         }
 
         static func violations(_ run: HostileRun) -> Int {

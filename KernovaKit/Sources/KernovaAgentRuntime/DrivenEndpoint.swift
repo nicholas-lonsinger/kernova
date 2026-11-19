@@ -52,57 +52,15 @@ public protocol DrivenEndpoint: Sendable {
     static func closure(in event: Event) -> ConnectionClosure?
 }
 
-extension PeerEndpoint: DrivenEndpoint {
-    /// The diagnostic a peer event carries.
-    public static func diagnostic(in event: PeerEvent) -> Diagnostic? {
+extension Endpoint: DrivenEndpoint {
+    /// The diagnostic an endpoint event carries.
+    package static func diagnostic(in event: EndpointEvent<Role.Event>) -> Diagnostic? {
         if case .diagnostic(let diagnostic) = event { return diagnostic }
         return nil
     }
 
-    /// The closure a peer event carries.
-    public static func closure(in event: PeerEvent) -> ConnectionClosure? {
-        if case .closed(let closure) = event { return closure }
-        return nil
-    }
-}
-
-/// What a host connection's driver feeds its endpoint: the hub's commands, and the payload source's and
-/// item adapters' answers to the endpoint's effects. The hub can send only the first.
-public enum HostInput: Sendable, Equatable {
-    /// A hub command.
-    case hub(HostCommand)
-    /// The payload source's answer.
-    case payload(PayloadInput)
-    /// The item source's answer or the item sink's report.
-    case items(ItemTransferInput)
-}
-
-extension HostEndpoint: DrivenEndpoint {
-    /// The hub's commands and the adapters' answers.
-    public typealias Input = HostInput
-
-    /// Feeds a hub command or an adapter's answer.
-    public mutating func handle(_ input: HostInput, now: CoreInstant) {
-        switch input {
-        case .hub(let command): handle(command, now: now)
-        case .payload(let answer): handle(answer, now: now)
-        case .items(let answer): handle(answer, now: now)
-        }
-    }
-
-    /// Closes the connection with `code` and no retry delay.
-    public mutating func close(_ code: ErrorCode, now: CoreInstant) {
-        handle(HostCommand.close(code, retryAfter: nil), now: now)
-    }
-
-    /// The diagnostic a host event carries.
-    public static func diagnostic(in event: HostEvent) -> Diagnostic? {
-        if case .diagnostic(let diagnostic) = event { return diagnostic }
-        return nil
-    }
-
-    /// The closure a host event carries.
-    public static func closure(in event: HostEvent) -> ConnectionClosure? {
+    /// The closure an endpoint event carries.
+    package static func closure(in event: EndpointEvent<Role.Event>) -> ConnectionClosure? {
         if case .closed(let closure) = event { return closure }
         return nil
     }

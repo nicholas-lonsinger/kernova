@@ -134,7 +134,7 @@ struct ItemMachineRegressionTests {
         var source = FixturePayloadSource()
         var answered = 0
         while answered < run.hostEffects.count {
-            if case .read(let id, let manifest, let offset, let maxBytes) = run.hostEffects[answered] {
+            if case .role(.read(let id, let manifest, let offset, let maxBytes)) = run.hostEffects[answered] {
                 run.payload(source.answer(id, manifest, offset: offset, maxBytes: maxBytes))
             }
             answered += 1
@@ -145,7 +145,7 @@ struct ItemMachineRegressionTests {
         run.writerStalled = false
         run.drain()
         #expect(Regression.resets(run, on: 1) == [.streamProtocolError])
-        #expect(!run.hostEvents.contains { if case .update(.result) = $0 { true } else { false } })
+        #expect(!run.hostEvents.contains { if case .role(.update(.result)) = $0 { true } else { false } })
     }
 }
 

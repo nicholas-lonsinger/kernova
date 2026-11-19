@@ -37,8 +37,8 @@ struct HubDropServiceTests {
         try await probe.changed.wait { probe.isStarted }
         #expect(probe.connect())
         guard console else { return instance }
-        probe.deliver(.helloReceived(Self.claim, Self.onConsole), fromConnection: 0)
-        probe.deliver(.featuresChanged(Self.features), fromConnection: 0)
+        probe.deliver(.role(.helloReceived(Self.claim, Self.onConsole)), fromConnection: 0)
+        probe.deliver(.role(.featuresChanged(Self.features)), fromConnection: 0)
         try await waitForChange { instance.displayDropAvailability == .available }
         return instance
     }
@@ -105,7 +105,8 @@ struct HubDropServiceTests {
         let (instance, offer) = try await openDrop(probe)
 
         probe.deliver(
-            .peerStateChanged(PeerSessionState(console: .off, sessionID: "2", userName: "pbear")), fromConnection: 0)
+            .role(.peerStateChanged(PeerSessionState(console: .off, sessionID: "2", userName: "pbear"))),
+            fromConnection: 0)
         try await probe.changed.wait {
             probe.commands.contains(.items(.withdraw(token: offer.token, code: .capabilityWithdrawn)))
         }
@@ -125,9 +126,9 @@ struct HubDropServiceTests {
             role: .sessionPeer, scope: .user, os: .macOS, architecture: .arm64, versionLabel: "1.0 (1)",
             instanceID: Data(repeating: 2, count: 16))
         probe.deliver(
-            .helloReceived(other, PeerSessionState(console: .on, sessionID: "3", userName: "other")),
+            .role(.helloReceived(other, PeerSessionState(console: .on, sessionID: "3", userName: "other"))),
             fromConnection: 1)
-        probe.deliver(.featuresChanged(Self.features), fromConnection: 1)
+        probe.deliver(.role(.featuresChanged(Self.features)), fromConnection: 1)
         try await probe.changed.wait {
             probe.commands.contains(.items(.withdraw(token: offer.token, code: .capabilityWithdrawn)))
         }
@@ -142,11 +143,12 @@ struct HubDropServiceTests {
         let (instance, offer) = try await openDrop(probe)
 
         probe.deliver(
-            .featuresChanged(
-                FeatureStatusTable([
-                    (FeatureID.itemTransfer, Availability<Data>.available(Data())),
-                    (.drop, .absent(.disabledByPolicy, debugDetail: "")),
-                ])),
+            .role(
+                .featuresChanged(
+                    FeatureStatusTable([
+                        (FeatureID.itemTransfer, Availability<Data>.available(Data())),
+                        (.drop, .absent(.disabledByPolicy, debugDetail: "")),
+                    ]))),
             fromConnection: 0)
         try await probe.changed.wait {
             probe.commands.contains(.items(.withdraw(token: offer.token, code: .disabledByPolicy)))
