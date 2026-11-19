@@ -26,7 +26,7 @@ clone="$tmp/clone"
 git init -q -b main "$clone" && git -C "$clone" commit -q --allow-empty -m init
 mkdir -p "$clone/Tools/lib"
 cp "$ROOT/Tools/arena-label.sh" "$ROOT/Tools/derived-data-path.sh" "$clone/Tools/"
-cp "$ROOT/Tools/lib/output.sh" "$ROOT/Tools/lib/worktrees.sh" "$ROOT/Tools/lib/holders.sh" \
+cp "$ROOT/Tools/lib/output.sh" "$ROOT/Tools/lib/arena-records.sh" "$ROOT/Tools/lib/worktrees.sh" "$ROOT/Tools/lib/holders.sh" \
     "$ROOT/Tools/lib/xcodebuild-flags.sh" "$clone/Tools/lib/"
 git -C "$clone" worktree add -q --detach "$clone/.claude/worktrees/live"
 
@@ -62,6 +62,7 @@ check "registered worktree outside .claude/worktrees, packages only" \
 git -C "$clone" worktree add -q --detach "$clone/.claude/worktrees/hand"
 mv "$clone/.claude/worktrees/hand" "$clone/.claude/worktrees/hand moved"
 mkdir -p "$clone/.claude/worktrees/hand moved/Kernova.xcodeproj"
+touch "$clone/.claude/worktrees/hand moved/Kernova.xcodeproj/project.pbxproj"
 moved=$(arena_for "$clone/.claude/worktrees/hand moved" Logs)
 printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>WorkspacePath</key><string>%s</string></dict></plist>\n' \
     "$clone/.claude/worktrees/hand moved/Kernova.xcodeproj" >"$moved/info.plist"

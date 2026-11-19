@@ -45,25 +45,50 @@ worktree_registered() {
     return 1
 }
 
-# orphaned_worktree_dirs — one line per directory directly under worktrees_root
-# that no registration names; files and symlinks are skipped. Reports nothing
-# when the listing could not be read, where every directory would otherwise
-# look unregistered.
-orphaned_worktree_dirs() {
+# worktree_live <dir> — whether <dir> is a checkout of this clone that still
+# builds: git registers it, or it holds the project file. A worktree moved with
+# `mv` is the second kind: git lists its old path, while its .git file still
+# names its record and builds go on at the new one. The project file, not the
+# .xcodeproj: Xcode writes the .xcodeproj's xcuserdata into a removed
+# worktree's path, recreating the directory.
+worktree_live() {
+    worktree_registered "$1" || [ -f "$1/Kernova.xcodeproj/project.pbxproj" ]
+}
+
+# worktree_dirs — one line per directory directly under worktrees_root; files
+# and symlinks are skipped.
+worktree_dirs() {
     [ -n "$worktrees_root" ] || return 0
     local dir
     for dir in "$worktrees_root"/*/; do
         dir=${dir%/}
-        if [ ! -d "$dir" ] || [ -L "$dir" ]; then
-            continue
-        fi
-        worktree_registered "$dir" || printf '%s\n' "$dir"
+        [ -d "$dir" ] && [ ! -L "$dir" ] && printf '%s\n' "$dir"
     done
+}
+
+# orphaned_worktree_dirs — one line per directory under worktrees_root that is
+# not live. Reports nothing when the listing could not be read, where every
+# directory would otherwise look unregistered.
+orphaned_worktree_dirs() {
+    local dir
+    while IFS= read -r dir; do
+        worktree_live "$dir" || printf '%s\n' "$dir"
+    done < <(worktree_dirs)
+}
+
+# moved_worktree_dirs — one line per directory under worktrees_root that is
+# live but unregistered: a worktree moved by hand, which
+# `git worktree repair <dir>` registers again.
+moved_worktree_dirs() {
+    local dir
+    while IFS= read -r dir; do
+        worktree_registered "$dir" || ! worktree_live "$dir" || printf '%s\n' "$dir"
+    done < <(worktree_dirs)
 }
 
 # stale_build_server_caches <cache root> — one line per xcode-build-server
 # cache folder under <cache root> that names this clone's primary checkout or
-# a .claude/worktrees/ checkout, and no registered worktree. xcode-build-server
+# a .claude/worktrees/ checkout, and no live one. xcode-build-server
 # names each folder for its checkout's absolute path with every `/` turned into
 # `-` (its server.py, build_initialize), and nothing removes the folder with the
 # checkout. The transform is lossy, so a folder is claimed only in this clone's
@@ -77,6 +102,9 @@ stale_build_server_caches() {
     while IFS= read -r wt; do
         [ -n "$wt" ] && live+="${wt//\//-}"$'\n'
     done <<<"$worktree_paths"
+    while IFS= read -r wt; do
+        worktree_live "$wt" && live+="${wt//\//-}"$'\n'
+    done < <(worktree_dirs)
     for dir in "$1/$prefix" "$1/$prefix"-.claude-worktrees-*; do
         if [ ! -d "$dir" ] || [ -L "$dir" ]; then
             continue

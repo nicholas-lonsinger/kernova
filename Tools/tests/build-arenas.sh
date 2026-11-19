@@ -50,16 +50,16 @@ esac
 EOF
 # No custom derived-data location, so the arena root is under HOME.
 printf '#!/bin/bash\nexit 1\n' >"$fakes/defaults"
-# -showBuildSettings answers BUILD_DIR = $FAKE_BUILD_DIR and, as xcodebuild
-# does, creates the arena it names; FAKE_XCODEBUILD=fail fails, =nocreate
-# creates nothing.
-cat >"$fakes/xcodebuild" <<'EOF'
+# Records each call. -showBuildSettings answers BUILD_DIR = $FAKE_BUILD_DIR, a
+# custom build location; FAKE_XCODEBUILD=fail fails, as it does offline or over
+# a broken package resolution.
+xcodebuild_calls="$tmp/xcodebuild-calls"
+: >"$xcodebuild_calls"
+cat >"$fakes/xcodebuild" <<EOF
 #!/bin/bash
-[ "${FAKE_XCODEBUILD:-}" = fail ] && { echo 'xcodebuild: error: fake failure' >&2; exit 65; }
-case "$FAKE_BUILD_DIR" in
-    */Build/Products) [ "${FAKE_XCODEBUILD:-}" = nocreate ] || mkdir -p "${FAKE_BUILD_DIR%/Build/Products}/Logs" ;;
-esac
-printf 'Build settings for action build and target Kernova:\n    BUILD_DIR = %s\n' "$FAKE_BUILD_DIR"
+printf '%s\n' "\$*" >>'$xcodebuild_calls'
+[ "\${FAKE_XCODEBUILD:-}" = fail ] && { echo 'xcodebuild: error: fake failure' >&2; exit 65; }
+printf 'Build settings for action build and target Kernova:\n    BUILD_DIR = %s\n' "\$FAKE_BUILD_DIR"
 EOF
 chmod +x "$fakes"/*
 export PATH="$fakes:$PATH"
@@ -74,16 +74,22 @@ git -C "$clone" add Kernova.xcodeproj && git -C "$clone" commit -q -m init
 mkdir -p "$clone/Tools/lib"
 cp "$ROOT/Tools/build-arenas.sh" "$ROOT/Tools/arena-label.sh" "$ROOT/Tools/derived-data-path.sh" \
     "$ROOT/Tools/checkout-lock.sh" "$clone/Tools/"
-cp "$ROOT/Tools/lib/build-arenas.sh" "$ROOT/Tools/lib/output.sh" "$ROOT/Tools/lib/worktrees.sh" \
-    "$ROOT/Tools/lib/holders.sh" "$ROOT/Tools/lib/xcodebuild-flags.sh" "$clone/Tools/lib/"
+cp "$ROOT/Tools/lib/build-arenas.sh" "$ROOT/Tools/lib/arena-records.sh" "$ROOT/Tools/lib/output.sh" \
+    "$ROOT/Tools/lib/worktrees.sh" "$ROOT/Tools/lib/holders.sh" "$ROOT/Tools/lib/xcodebuild-flags.sh" \
+    "$clone/Tools/lib/"
 wts="$clone/.claude/worktrees"
 add_worktree() { git -C "$clone" worktree add -q --detach "$1"; }
 
-dd_root="$HOME/Library/Developer/Xcode/DerivedData"
-if [ "$("$clone/Tools/derived-data-path.sh" --root)" != "$dd_root" ]; then
-    echo "build-arenas fixtures: the arena root is not $dd_root under the fake defaults" >&2
-    exit 1
-fi
+# Every destructive case below acts on this root, so the suite stops unless the
+# scripts would use one inside the fixture.
+dd_root=$("$clone/Tools/derived-data-path.sh" --root)
+case "$dd_root" in
+    "$base"/*) mkdir -p "$dd_root" ;;
+    *)
+        echo "build-arenas fixtures: the scripts' DerivedData root '$dd_root' is outside $base" >&2
+        exit 1
+        ;;
+esac
 
 # ---- arenas --------------------------------------------------------------------
 
@@ -139,8 +145,9 @@ held_arena=$(recorded_arena "$wts/held/Kernova.xcodeproj")
 moved_from_arena=$(recorded_arena "$wts/moving/Kernova.xcodeproj")
 hand_from_arena=$(recorded_arena "$wts/hand/Kernova.xcodeproj")
 for name in gone 'gone space' stray pif held; do git -C "$clone" worktree remove --force "$wts/$name"; done
-# A write after removal recreates the directory, unregistered and projectless.
-mkdir -p "$wts/stray/DerivedData"
+# Xcode writing its user state after removal recreates the directory,
+# unregistered and with no project file.
+mkdir -p "$wts/stray/Kernova.xcodeproj/project.xcworkspace/xcuserdata"
 git -C "$clone" worktree move "$wts/moving" "$wts/moved"
 moved_to_arena=$(recorded_arena "$wts/moved/Kernova.xcodeproj")
 # Moved by hand: git still lists the old path, and the checkout builds at the
@@ -213,63 +220,103 @@ wait "$sweep_holder" 2>/dev/null
 
 # ---- clean ---------------------------------------------------------------------
 
-# Where xcodebuild says this checkout builds — deliberately not the arena
-# Tools/derived-data-path.sh computes, so only xcodebuild's answer can find it.
-xcode_arena="$dd_root/Kernova-$(printf 'x%.0s' {1..28})"
+project="$clone/Kernova.xcodeproj"
+own_named=$("$clone/Tools/derived-data-path.sh" "$project")
+# Recording this checkout's project the way Xcode spells it, without /private,
+# under a name the hash does not give it.
+own_recorded="$dd_root/Kernova-$(printf 'x%.0s' {1..28})"
+# Named and spelled like this checkout's, and someone else's.
+near_name="$dd_root/Kernova-$(printf 'x%.0s' {1..27})y"
+copy_name="$own_named-old"
+# A build location set outside DerivedData: xcodebuild's BUILD_DIR, beside the
+# user's own file.
+custom="$tmp/custom build"
+record() {
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>WorkspacePath</key><string>%s</string></dict></plist>\n' \
+        "$2" >"$1/info.plist"
+}
 reset_clean() {
-    rm -rf "$xcode_arena" "$clone/DerivedData"
-    add_bundles "$xcode_arena"
+    rm -rf "$own_named" "$own_recorded" "$near_name" "$copy_name" "$custom" "$clone/DerivedData"
+    add_bundles "$own_named"
+    record "$own_named" "$project"
+    add_bundles "$own_recorded"
+    record "$own_recorded" "${project#/private}"
+    add_bundles "$near_name"
+    record "$near_name" "$wts/live/Kernova.xcodeproj"
+    mkdir -p "$copy_name/Logs" "$copy_name/SourcePackages"
+    mkdir -p "$custom/Build/Products"
+    touch "$custom/keep.txt"
     add_bundles "$clone/DerivedData/Periphery"
     : >"$unregistered"
+    : >"$xcodebuild_calls"
 }
-run_clean() { clean_out=$(FAKE_BUILD_DIR=$1 FAKE_XCODEBUILD=${2:-} "$clone/Tools/build-arenas.sh" clean 2>&1); clean_status=$?; }
+run_clean() {
+    clean_out=$(FAKE_BUILD_DIR="$custom/Build/Products" FAKE_XCODEBUILD=${1:-} "$clone/Tools/build-arenas.sh" clean 2>&1)
+    clean_status=$?
+}
 
 reset_clean
-run_clean "$xcode_arena/Build/Products"
+run_clean
 check "clean: exit status" "$clean_status" 0
-check "clean: xcodebuild's arena" "$(present "$xcode_arena")" gone
+check "clean: the arena named for this checkout" "$(present "$own_named")" gone
+check "clean: an arena recording this checkout under another name" "$(present "$own_recorded")" gone
 check "clean: in-checkout DerivedData/" "$(present "$clone/DerivedData")" gone
-check "clean: names the arena it removed" "$(grep -c "Removing build arena .*Kernova-xxxx" <<<"$clean_out")" 1
+check "clean: names each arena it removed" "$(grep -c '^Removing build arena ' <<<"$clean_out")" 3
 check "clean: unregisters what it removes" "$(sort "$unregistered")" "$(
-    { bundles_of "$xcode_arena"; bundles_of "$clone/DerivedData/Periphery"; } | sort
+    { bundles_of "$own_named"; bundles_of "$own_recorded"; bundles_of "$clone/DerivedData/Periphery"; } | sort
 )"
-check "clean: the main checkout's other arena" "$(present "$main_arena")" present
+check "clean: asks xcodebuild nothing" "$(cat "$xcodebuild_calls")" ''
+check "clean: a file beside a custom build location" "$(present "$custom/keep.txt")" present
+check "clean: another checkout's arena with a similar name" "$(present "$near_name")" present
+check "clean: a copy named like this checkout's arena" "$(present "$copy_name")" present
 check "clean: a live worktree's arena" "$(present "$live_arena")" present
 check "clean: another project's arena" "$(present "$other_project_arena")" present
 
+# What people run clean to recover from: a broken package resolution, which
+# xcodebuild cannot get past.
 reset_clean
-run_clean "$xcode_arena/Build/Products" fail
-check "clean, xcodebuild fails: exit status" "$((clean_status != 0))" 1
-check "clean, xcodebuild fails: says what it asked" "$(grep -c 'showBuildSettings` failed' <<<"$clean_out")" 1
-check "clean, xcodebuild fails: DerivedData/" "$(present "$clone/DerivedData")" present
+rm -rf "$own_named" "$own_recorded"
+mkdir -p "$own_named/Logs" "$own_named/SourcePackages/checkouts"
+printf 'garbage{' >"$own_named/SourcePackages/workspace-state.json"
+run_clean fail
+check "clean, packages only and corrupted: exit status" "$clean_status" 0
+check "clean, packages only and corrupted: the arena" "$(present "$own_named")" gone
+
+# Under this checkout's name but recording nothing, with more than packages:
+# nothing says whose it is.
+reset_clean
+rm -rf "$own_named"
+mkdir -p "$own_named/Logs" "$own_named/Build"
+run_clean
+check "clean, unrecorded arena with build output: exit status" "$clean_status" 0
+check "clean, unrecorded arena with build output: the arena" "$(present "$own_named")" present
 
 reset_clean
-run_clean "$xcode_arena/Build"
-check "clean, BUILD_DIR not in an arena: exit status" "$((clean_status != 0))" 1
-check "clean, BUILD_DIR not in an arena: names it" "$(grep -c "BUILD_DIR is '$xcode_arena/Build'" <<<"$clean_out")" 1
-check "clean, BUILD_DIR not in an arena: DerivedData/" "$(present "$clone/DerivedData")" present
-
-reset_clean
-(cd "$xcode_arena" && exec sleep 300) &
+(cd "$own_recorded" && exec sleep 300) &
 holder=$!
 children+=("$holder")
-run_clean "$xcode_arena/Build/Products"
+run_clean
 kill "$holder" 2>/dev/null
 wait "$holder" 2>/dev/null
 check "clean, arena held: exit status" "$((clean_status != 0))" 1
 check "clean, arena held: names the holder" "$(grep -c "PID $holder" <<<"$clean_out")" 1
-check "clean, arena held: arena" "$(present "$xcode_arena")" present
-check "clean, arena held: DerivedData/ too" "$(present "$clone/DerivedData")" present
+check "clean, arena held: the held arena" "$(present "$own_recorded")" present
+check "clean, arena held: the others too" "$(present "$own_named")$(present "$clone/DerivedData")" presentpresent
 
 reset_clean
-run_clean "$clone/DerivedData/Kernova/Build/Products"
-check "clean, arena inside DerivedData/: exit status" "$clean_status" 0
-check "clean, arena inside DerivedData/: DerivedData/" "$(present "$clone/DerivedData")" gone
+mkdir -p "$own_named/Locked"
+touch "$own_named/Locked/file"
+chmod 555 "$own_named/Locked"
+run_clean
+chmod 755 "$own_named/Locked"
+check "clean, a removal leaves something: exit status" "$((clean_status != 0))" 1
+check "clean, a removal leaves something: names it" "$(grep -c "failed to remove .*${own_named##*/}" <<<"$clean_out")" 1
 
-rm -rf "$xcode_arena" "$clone/DerivedData"
-run_clean "$xcode_arena/Build/Products" nocreate
+reset_clean
+rm -rf "$own_named" "$own_recorded" "$clone/DerivedData"
+run_clean
 check "clean, nothing there: exit status" "$clean_status" 0
-check "clean, nothing there: says so" "$(grep -c '^No build arena to remove' <<<"$clean_out")" 1
+check "clean, nothing there: says so" "$(grep -c '^No build arena of this checkout to remove' <<<"$clean_out")" 1
 
 # ---- unregister ----------------------------------------------------------------
 

@@ -5,16 +5,20 @@
 # Usage: Tools/build-arenas.sh clean | sweep | unregister <dir>
 #
 #   clean             Remove the build arenas of the checkout holding this
-#                     script: its DerivedData/, and the arena xcodebuild's own
-#                     build settings name for the app's build flags. Names each
-#                     arena it removes; exits non-zero, naming what it looked
-#                     for, when it cannot locate one or one stays. `make clean`
-#                     runs it under the checkout's build lock.
+#                     script: its DerivedData/, and every Kernova-<hash> arena
+#                     in Xcode's machine-wide DerivedData folder that records
+#                     this checkout's project, or that holds only a package
+#                     resolution under the name Xcode gives that project.
+#                     Nothing else: a build location set any other way is out
+#                     of its reach. Names each arena it removes, and exits
+#                     non-zero naming what is left when a process holds one or
+#                     a removal leaves one behind. `make clean` runs it under
+#                     the checkout's build lock.
 #   sweep             Unregister the Launch Services records whose bundle is
 #                     gone, evict the build arenas of this clone's worktrees
 #                     that git no longer registers and whose project is gone,
 #                     and the xcode-build-server caches of this clone's
-#                     checkouts that git no longer registers. Skips anything a
+#                     checkouts that are gone. Skips anything a
 #                     process holds, and always exits 0: Tools/worktree-setup.sh
 #                     runs it on every new worktree.
 #   unregister <dir>  Unregister every bundle under <dir> from Launch Services,
@@ -27,6 +31,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO_ROOT/Tools/lib/output.sh"
 # shellcheck source=lib/worktrees.sh
 . "$REPO_ROOT/Tools/lib/worktrees.sh"
+# shellcheck source=lib/arena-records.sh
+. "$REPO_ROOT/Tools/lib/arena-records.sh"
 # shellcheck source=lib/build-arenas.sh
 . "$REPO_ROOT/Tools/lib/build-arenas.sh"
 
@@ -48,36 +54,46 @@ absolute() {
     esac
 }
 
-clean() {
-    local flags=() flag settings build_dir arena dir present=() held=0 line
-    cd "$REPO_ROOT" || die "cannot enter $REPO_ROOT"
-    # shellcheck source=lib/xcodebuild-flags.sh
-    . Tools/lib/xcodebuild-flags.sh
-    while IFS= read -r flag; do flags+=("$flag"); done < <(xcodebuild_flags Debug)
-    # xcodebuild's answer, not Tools/derived-data-path.sh's: for a checkout that
-    # exists, it is where builds actually go, under every preference and
-    # override Xcode has.
-    settings=$(Tools/checkout-lock.sh xcodebuild "${flags[@]}" -showBuildSettings) ||
-        die "cannot locate this checkout's build arena: \`xcodebuild ${flags[*]} -showBuildSettings\` failed"
-    build_dir=$(sed -n 's/^ *BUILD_DIR = //p' <<<"$settings" | head -1)
-    case "$build_dir" in
-        /*/Build/Products) arena=${build_dir%/Build/Products} ;;
-        *) die "cannot locate this checkout's build arena: xcodebuild's BUILD_DIR is '$build_dir', not <arena>/Build/Products" ;;
-    esac
-
-    for dir in "$REPO_ROOT/DerivedData" "$arena"; do
-        [ -e "$dir" ] && present+=("$dir")
+# own_arenas <root> — one line per arena directly under <root> that belongs to
+# this checkout: named Kernova-<28 letters>, and recording this checkout's
+# project, or holding only a package resolution under the name
+# Tools/derived-data-path.sh gives that project.
+own_arenas() {
+    local root=$1 project="$REPO_ROOT/Kernova.xcodeproj" named dir recorded
+    [ -n "$root" ] || return 0
+    named=$("$REPO_ROOT/Tools/derived-data-path.sh" "$project" 2>/dev/null) || named=''
+    for dir in "$root"/Kernova-*; do
+        [[ ${dir##*/} =~ ^Kernova-[a-z]{28}$ ]] && [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+        if recorded=$(arena_recorded_project "$dir"); then
+            [ "$recorded" -ef "$project" ] && printf '%s\n' "$dir"
+        elif [ "$dir" = "$named" ] && arena_holds_only_packages "$dir"; then
+            printf '%s\n' "$dir"
+        fi
     done
-    if [ "${#present[@]}" -eq 0 ]; then
-        printf 'No build arena to remove: neither %s nor %s exists\n' \
-            "$(pretty_path "$REPO_ROOT/DerivedData")" "$(pretty_path "$arena")"
+}
+
+clean() {
+    local root targets=() dir held=0 line
+    root=$(derived_data_root)
+    if [ -e "$REPO_ROOT/DerivedData" ] || [ -L "$REPO_ROOT/DerivedData" ]; then
+        targets+=("$REPO_ROOT/DerivedData")
+    fi
+    while IFS= read -r dir; do
+        targets+=("$dir")
+    done < <(own_arenas "$root")
+    if [ -z "$root" ]; then
+        printf 'Xcode keeps no machine-wide DerivedData folder here, so clean looks only at %s\n' \
+            "$(pretty_path "$REPO_ROOT/DerivedData")"
+    fi
+    if [ "${#targets[@]}" -eq 0 ]; then
+        printf 'No build arena of this checkout to remove\n'
         return 0
     fi
 
     # Every refusal before any removal, so a refusal never follows a
     # "Removing…" line, and nothing goes while a process runs from what stays.
-    refresh_holders "${present[@]}"
-    for dir in "${present[@]}"; do
+    refresh_holders "${targets[@]}"
+    for dir in "${targets[@]}"; do
         path_held "$dir" || continue
         held=1
         printf 'build-arenas.sh: cannot remove %s\n' "$(labeled_path "$dir")" >&2
@@ -87,9 +103,7 @@ clean() {
     done
     [ "$held" = 0 ] || exit 1
 
-    for dir in "${present[@]}"; do
-        # Gone already when the arena lies inside DerivedData/.
-        [ -e "$dir" ] || continue
+    for dir in "${targets[@]}"; do
         printf 'Removing build arena %s — %s\n' "$(labeled_path "$dir")" "$(disk_size "$dir")"
         evict_arena "$dir" || die "failed to remove $(pretty_path "$dir")"
     done

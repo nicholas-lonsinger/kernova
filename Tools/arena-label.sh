@@ -60,6 +60,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO_ROOT/Tools/lib/output.sh"
 # shellcheck source=lib/worktrees.sh
 . "$REPO_ROOT/Tools/lib/worktrees.sh"
+# shellcheck source=lib/arena-records.sh
+. "$REPO_ROOT/Tools/lib/arena-records.sh"
 read_worktree_layout "$REPO_ROOT" || exit 1
 
 # label_for_checkout <path> — classify a path that names a checkout or sits
@@ -75,12 +77,8 @@ label_for_checkout() {
             name=${name%%/*}
             # A worktree git no longer registers still names itself here — that
             # is the whole point for orphaned arenas, which outlive the
-            # worktree that created them. It is removed only when git registers
-            # nothing there and its project is gone too: a write after
-            # `git worktree remove` can recreate the directory, and a worktree
-            # moved with `mv` keeps building at a path git does not list.
-            if worktree_registered "$worktrees_root/$name" ||
-                [ -e "$worktrees_root/$name/Kernova.xcodeproj" ]; then
+            # worktree that created them.
+            if worktree_live "$worktrees_root/$name"; then
                 [ "$STATUS_ONLY" = 1 ] && { printf 'worktree-live'; return 0; }
                 printf 'worktree: %s' "$name"
             else
@@ -99,39 +97,6 @@ label_for_checkout() {
     return 1
 }
 
-# project_path_of <dir> — the .xcodeproj an arena root records, printed on
-# stdout, or exit 1 when this directory is not an arena root that records one.
-#
-# Xcode writes that path in two independent places, and an arena can hold either
-# one alone. info.plist's WorkspacePath comes with the first build; an arena
-# that has only ever resolved packages never gets one, and then the PIF cache's
-# workspace object is the sole record, naming the .xcodeproj's
-# project.xcworkspace. Reading both is what makes attribution independent of
-# whether a build ever ran in the arena.
-project_path_of() {
-    local dir=$1 ws record
-    if [ -f "$dir/info.plist" ]; then
-        ws=$(plutil -extract WorkspacePath raw "$dir/info.plist" -o - 2>/dev/null) || ws=''
-        if [ -n "$ws" ]; then
-            printf '%s' "$ws"
-            return 0
-        fi
-    fi
-    # The records are keyed by a hash of the same workspace path, so whichever
-    # one reads first answers for all of them.
-    for record in "$dir"/Build/Intermediates.noindex/XCBuildData/PIFCache/workspace/WORKSPACE@*-json; do
-        [ -f "$record" ] || continue
-        ws=$(plutil -extract path raw "$record" -o - 2>/dev/null) || continue
-        [ -n "$ws" ] || continue
-        # A project's workspace is a directory inside the .xcodeproj; the suffix
-        # strip is a no-op on a standalone .xcworkspace, which is already the
-        # path the arena hashes from.
-        printf '%s' "${ws%/project.xcworkspace}"
-        return 0
-    done
-    return 1
-}
-
 # A path already inside a checkout needs no arena lookup — this covers a
 # Relative-mode in-checkout DerivedData/ and a checkout passed directly.
 label_for_checkout "$target" && exit 0
@@ -147,7 +112,7 @@ label_for_checkout "$target" && exit 0
 # reaching the arena.
 dir=$target
 while [ -n "$dir" ] && [ "$dir" != "/" ]; do
-    if ws=$(project_path_of "$dir"); then
+    if ws=$(arena_recorded_project "$dir"); then
         label_for_checkout "$ws" && exit 0
         # A checkout outside this repo's layout — another clone, or a copy
         # staged somewhere temporary: name its directory rather than
@@ -170,10 +135,9 @@ while [ -n "$dir" ] && [ "$dir" != "/" ]; do
     dir=$(dirname "$dir")
 done
 
-# An arena that has only resolved packages — `xcodebuild -showBuildSettings`
-# does that — carries neither record. Its name is still a pure function of its project's
-# path (Tools/derived-data-path.sh), so it is matched forwards against every
-# checkout this clone registers.
+# An arena that has only resolved packages carries neither record. Its name is
+# still a pure function of its project's path (Tools/derived-data-path.sh), so it
+# is matched forwards against every checkout this clone registers.
 [[ ${target##*/} =~ ^Kernova-[a-z]{28}$ ]] && [ -d "$target" ] || exit 1
 while IFS= read -r checkout; do
     [ -n "$checkout" ] || continue
@@ -186,12 +150,6 @@ done <<<"$worktree_paths"
 
 # Matching none, it can only belong to a checkout outside this clone. Holding
 # nothing but that resolution, it costs such a checkout one re-resolve at most.
-for entry in "$target"/* "$target"/.[!.]*; do
-    [ -e "$entry" ] || continue
-    case "${entry##*/}" in
-        Logs | SourcePackages) ;;
-        *) exit 1 ;;
-    esac
-done
+arena_holds_only_packages "$target" || exit 1
 if [ "$STATUS_ONLY" = 1 ]; then printf 'unclaimed'; else printf 'packages only, no checkout here'; fi
 exit 0

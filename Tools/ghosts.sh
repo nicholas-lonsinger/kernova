@@ -205,6 +205,19 @@ done < <(pgrep -f -i kernova 2>/dev/null)
 
 section 'Git worktrees'
 
+moved_dirs=()
+if read_worktree_layout "$REPO_ROOT"; then
+    while IFS= read -r dir; do
+        moved_dirs+=("$dir")
+    done < <(moved_worktree_dirs)
+fi
+# A moved worktree's .git file names the record git lists at its old path,
+# which reads as prunable; pruning it would leave the checkout with no record.
+for dir in ${moved_dirs[@]+"${moved_dirs[@]}"}; do
+    ghost "Worktree moved by hand, unregistered at its new path: $(pretty_path "$dir")"
+    detail "register it again: git worktree repair '$dir'"
+done
+
 prunable=$(git -C "$REPO_ROOT" worktree list 2>/dev/null | grep 'prunable' || true)
 if [ -z "$prunable" ]; then
     pass 'No prunable git worktrees'
@@ -213,7 +226,9 @@ else
         [ -z "$line" ] && continue
         ghost "Prunable worktree: $line"
     done <<< "$prunable"
-    if [ "$FIX" = 1 ]; then
+    if [ "$FIX" = 1 ] && [ "${#moved_dirs[@]}" -gt 0 ]; then
+        detail 'not pruned: repair the moved worktrees above first'
+    elif [ "$FIX" = 1 ]; then
         if git -C "$REPO_ROOT" worktree prune >/dev/null 2>&1; then
             fixed 'pruned stale worktree metadata'
         else
@@ -256,9 +271,8 @@ fi
 
 section 'DerivedData build arenas'
 
-# Unlike the live-copy election check below (which prompts, because a live
-# copy might be wanted), an orphaned arena's source checkout is gone — its
-# build products are unreachable garbage, so --fix evicts without asking.
+# Unlike the live-copy election check below, which prompts, --fix evicts these
+# without asking: an arena holds only build products its checkout regenerates.
 # An arena a process is still running from is skipped with a pointer instead,
 # since quitting a possibly-in-use app is not this script's call.
 dd_orphans=()

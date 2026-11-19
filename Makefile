@@ -116,7 +116,7 @@ locked-build-for-testing:
 	xcodebuild $(XCODEBUILD_FLAGS) build-for-testing
 	@Tools/built-app.sh --check-weak-links $(XCODEBUILD_FLAGS)
 
-clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the arena xcodebuild builds into)
+clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and its arenas in Xcode's DerivedData folder)
 	$(LOCKED_TWIN)
 
 locked-clean:
