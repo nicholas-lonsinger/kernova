@@ -54,30 +54,16 @@
 #     re-registers it, so trashing costs a rebuild and fixes nothing.
 #
 # Run via `make ghosts` (report only) or `make clean-ghosts` (also fixes).
-# Direct invocation: Tools/ghosts.sh [--fix | --sweep | --evict <dir> | --unregister <dir>]
+# Direct invocation: Tools/ghosts.sh [--fix]. The build pipeline's own
+# operations on the same debris are Tools/build-arenas.sh's.
 set -uo pipefail
 
 FIX=0
-SWEEP=0
-EVICT=0
-EVICT_DIR=
-UNREGISTER=0
 # No argument is the report mode, so '' is an arm rather than falling to *).
-# Printed with plain printf, not the lib's helpers: output.sh is sourced below,
-# after this dispatch, so a bad flag can be rejected before anything else runs.
-usage='Usage: Tools/ghosts.sh [--fix | --sweep | --evict <dir> | --unregister <dir>]'
+usage='Usage: Tools/ghosts.sh [--fix]'
 case "${1:-}" in
     '') ;;
     --fix) FIX=1 ;;
-    --sweep) SWEEP=1 ;;
-    --evict)
-        EVICT=1
-        EVICT_DIR="${2:-}"
-        ;;
-    --unregister)
-        UNREGISTER=1
-        EVICT_DIR="${2:-}"
-        ;;
     -h | --help)
         printf '%s\n' "$usage"
         exit 0
@@ -89,103 +75,28 @@ case "${1:-}" in
 esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
 
-# Sourced here, before anything prints: the --sweep and --evict modes below run
-# and exit long before the report body, and they label paths too.
 # shellcheck source=lib/output.sh
 . "$REPO_ROOT/Tools/lib/output.sh"
-# shellcheck source=lib/holders.sh
-. "$REPO_ROOT/Tools/lib/holders.sh"
 # shellcheck source=lib/worktrees.sh
 . "$REPO_ROOT/Tools/lib/worktrees.sh"
+# shellcheck source=lib/build-arenas.sh
+. "$REPO_ROOT/Tools/lib/build-arenas.sh"
 
-# ---- path display -------------------------------------------------------------
-
-# The path plus the checkout its build arena belongs to. A default-mode arena is
-# named by a hash of the .xcodeproj path (Kernova-cylpmrailymlsackwzjwvurxnpbj),
-# so on its own no arena line answers the first question a reader has — whose
-# build is this? Tools/arena-label.sh resolves the hash back to a worktree name;
-# it exits non-zero for anything it can't attribute, and then the path renders
-# bare exactly as before.
-labeled_path() {
-    local label
-    label=$("$REPO_ROOT/Tools/arena-label.sh" "$1" 2>/dev/null) || label=''
-    if [ -n "$label" ]; then
-        printf '%s (%s)' "$(pretty_path "$1")" "$label"
-    else
-        pretty_path "$1"
-    fi
-}
-
-# lsregister's dump lists `path:` a few lines before the `identifier:` line
-# for the same entry, with entries separated by a full-width dash rule —
-# track the most recently seen path and reset it at each rule so an
-# identifier never gets paired with a path from a different entry.
-#
-# Both identifier eras match: the current `app.kernova*` one and the legacy
-# `com.kernova.app` left by builds predating the #471 naming cleanup.
-kernova_registered_paths() {
-    "$LSREGISTER" -dump 2>/dev/null | awk '
-        /^-+$/ { path = "" }
-        /^path:/ {
-            line = $0
-            sub(/^path:[ \t]*/, "", line)
-            sub(/ \(0x[0-9a-fA-F]+\)[ \t]*$/, "", line)
-            path = line
-        }
-        /^identifier:[ \t]+(app\.kernova($|\.)|com\.kernova\.app$)/ {
-            if (path != "") print path
-        }
-    ' | sort -u
-}
-
-# Xcode DerivedData arenas left by torn-down worktrees. Where the machine's
-# preference puts per-path-hashed arenas, every worktree the GUI opens gets a
-# permanent folder there — nothing removes it when the worktree goes away, and
-# the LS-registered app copy inside keeps competing in the CFBundleVersion
-# election (Tools/derived-data-path.sh).
-#
-# Resolved rather than hardcoded to the default ~/Library path: on a machine
-# pointed at a custom root, hardcoding scanned a directory Xcode never writes
-# to, so the sweep reported no orphans while they piled up unseen. Empty means
-# no machine-wide arena directory exists at all — Relative mode nests each arena
-# inside its own checkout, where it cannot outlive the worktree, so there is
-# genuinely nothing to scan.
-XCODE_DD_ROOT=$("$REPO_ROOT/Tools/derived-data-path.sh" --root 2>/dev/null) || XCODE_DD_ROOT=''
+# Empty when no machine-wide arena directory exists: Relative mode nests each
+# arena inside its own checkout, where it cannot outlive the worktree.
+XCODE_DD_ROOT=$(derived_data_root)
 
 # xcode-build-server's per-checkout caches; Tools/lib/worktrees.sh
 # (stale_build_server_caches) says which ones outlived their checkout.
 BUILD_SERVER_CACHE="$HOME/Library/Caches/xcode-build-server"
 
-# Print one arena directory per line whose recorded source checkout is gone.
-# The classification is Tools/arena-label.sh's — this used to re-read each
-# arena's own records and re-derive the .claude/worktrees layout itself, which
-# was the same mapping implemented twice. --status is asked for rather than the
-# human label so nothing here depends on that label's wording.
-#
-# Every arena directory is offered to that classifier, which alone decides what
-# is attributable — including an arena that only ever resolved packages and
-# records no checkout at all (`unclaimed`).
-#
-# A torn-down worktree is the common case but not the only one: a checkout
-# staged anywhere else — a copy under a temp dir, a clone since deleted —
-# leaves an arena just as unreachable, and reports `other-removed`.
-#
-# The glob is what keeps that second status from reaching other projects'
-# arenas, which it also covers. Xcode names an arena `<project>-<hash>`, the
-# same name Tools/derived-data-path.sh builds forwards, so the prefix selects
-# this project's arenas and nobody else's.
+# Every arena whose recorded checkout is gone, or that records none and matches
+# no checkout of this clone (Tools/arena-label.sh). Wider than what
+# `Tools/build-arenas.sh sweep` evicts unattended: a checkout outside this
+# clone's worktrees that reads as removed may only be out of reach.
 orphaned_dd_arenas() {
-    [ -n "$XCODE_DD_ROOT" ] || return 0
-    local dir
-    for dir in "$XCODE_DD_ROOT"/Kernova-*/; do
-        dir=${dir%/}
-        [ -d "$dir" ] || continue
-        case "$("$REPO_ROOT/Tools/arena-label.sh" --status "$dir" 2>/dev/null)" in
-            worktree-removed | other-removed | unclaimed) printf '%s\n' "$dir" ;;
-        esac
-    done
+    arenas_with_status "$XCODE_DD_ROOT" worktree-removed other-removed unclaimed
 }
 
 # The process's own executable path. lsof's `txt` fd is the mapped binary,
@@ -196,102 +107,17 @@ exe_of_pid() {
     lsof -a -p "$1" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
 }
 
-# Unregister every bundle inside the arena, then delete the folder outright.
-# Unregister first, so no dead registration lingers until the next sweep.
-# `rm -rf`, not `trash` (the exception to the trash-first file-operations
-# rule): a bundle sitting in the Trash is still a valid on-disk copy that
-# Launch Services can rediscover and re-elect until the Trash is emptied,
-# so trashing just relocates the ghost — and an orphaned arena is
-# purely regenerable build products of a checkout that no longer exists,
-# with nothing user-authored to recover.
-evict_dd_arena() {
-    unregister_apps_in "$1"
-    rm -rf "$1" 2>/dev/null
-}
-
-# Unregister every bundle under <dir> from Launch Services, leaving the files.
-unregister_apps_in() {
-    local app
-    while IFS= read -r app; do
-        "$LSREGISTER" -u "$app" >/dev/null 2>&1
-    done < <(find "$1" -maxdepth 6 -name '*.app' -type d 2>/dev/null)
-}
-
-# --unregister <dir>: unregister the bundles under ONE build arena and exit —
-# `make dead-code` runs it over Periphery's build, which no one launches but
-# Launch Services registers anyway and would otherwise elect. A missing path
-# is a no-op.
-if [ "$UNREGISTER" = 1 ]; then
-    if [ -z "$EVICT_DIR" ]; then
-        printf 'ghosts.sh: --unregister requires a directory argument\n' >&2
-        exit 2
-    fi
-    # Absolute, because Launch Services records bundles by absolute path.
-    case "$EVICT_DIR" in
-        /*) ;;
-        *) EVICT_DIR="$PWD/$EVICT_DIR" ;;
-    esac
-    unregister_apps_in "$EVICT_DIR"
-    exit 0
-fi
-
-# Deleted outright for the same reason as an orphaned arena: a stale cache is
-# regenerable index data for a checkout that no longer exists.
-evict_build_server_cache() {
-    rm -rf "$1" 2>/dev/null
-}
-
 # Out of place, recoverably: an abandoned worktree can still hold ignored files
 # someone set by hand (a local .xcconfig, saved artifacts), so it goes to the
 # Trash. Its DerivedData/ build arena is evicted first — a bundle in the Trash
-# stays registered with Launch Services (see evict_dd_arena).
+# stays registered with Launch Services (see evict_arena).
 # shellcheck disable=SC2329 # called through report_abandoned_worktrees
 dispose_worktree() {
     if [ -d "$1/DerivedData" ] && [ ! -L "$1/DerivedData" ]; then
-        evict_dd_arena "$1/DerivedData"
+        evict_arena "$1/DerivedData"
     fi
     trash "$1" >/dev/null 2>&1
 }
-
-# --sweep: the quiet, non-interactive subset for hooks — unregister dead
-# app.kernova.* Launch Services registrations, evict DerivedData arenas and
-# xcode-build-server caches orphaned by removed checkouts, and exit. The
-# post-checkout git hook runs it on every new worktree, so that debris
-# self-heals at the next worktree creation. Best-effort: always exits 0 so a failed sweep can never fail the
-# checkout that triggered it, skips anything a process is still running from,
-# and skips the fix path's re-dump verification — `make ghosts` still reports
-# anything left behind. Unlike --fix it terminates nothing: --fix kills
-# processes whose own binary is already deleted, while an arena's live
-# blocker is the user's to quit under either flag. The sweep runs unattended
-# from a git hook, and the next worktree creation sweeps again.
-if [ "$SWEEP" = 1 ]; then
-    while IFS= read -r path; do
-        [ -z "$path" ] && continue
-        [ -e "$path" ] && continue
-        "$LSREGISTER" -u "$path" >/dev/null 2>&1
-        printf 'ghosts.sh: swept dead Launch Services registration: %s\n' "$path"
-    done < <(kernova_registered_paths)
-    held_roots=()
-    [ -n "$XCODE_DD_ROOT" ] && held_roots+=("$XCODE_DD_ROOT")
-    [ -d "$BUILD_SERVER_CACHE" ] && held_roots+=("$BUILD_SERVER_CACHE")
-    [ "${#held_roots[@]}" -gt 0 ] && refresh_holders "${held_roots[@]}"
-    while IFS= read -r dir; do
-        [ -z "$dir" ] && continue
-        path_held "$dir" && continue
-        if evict_dd_arena "$dir"; then
-            printf 'ghosts.sh: evicted orphaned DerivedData arena: %s\n' "$(labeled_path "$dir")"
-        fi
-    done < <(orphaned_dd_arenas)
-    if read_worktree_layout "$REPO_ROOT"; then
-        while IFS= read -r dir; do
-            [ -z "$dir" ] && continue
-            path_held "$dir" && continue
-            evict_build_server_cache "$dir" &&
-                printf 'ghosts.sh: evicted stale xcode-build-server cache: %s\n' "$(pretty_path "$dir")"
-        done < <(stale_build_server_caches "$BUILD_SERVER_CACHE")
-    fi
-    exit 0
-fi
 
 # ---- output helpers (matches Tools/doctor.sh) --------------------------------
 
@@ -302,48 +128,6 @@ fixed_count=0
 # These two stay local because they also drive this script's summary counters.
 ghost() { printf '  %s✗%s %s\n' "$c_red" "$c_reset" "$1"; found_count=$((found_count + 1)); }
 fixed() { printf '    %s→ fixed:%s %s\n' "$c_green" "$c_reset" "$1"; fixed_count=$((fixed_count + 1)); }
-
-# --evict <dir>: remove ONE build arena and exit — the shared implementation
-# behind `make clean`. The in-use guard matches --fix: a process running from
-# the arena is the user's to quit, so the arena is left intact and this exits
-# non-zero rather than deleting a binary out from under it. A path that isn't
-# there is a no-op, so callers can pass every candidate arena unconditionally.
-if [ "$EVICT" = 1 ]; then
-    if [ -z "$EVICT_DIR" ]; then
-        printf 'ghosts.sh: --evict requires a directory argument\n' >&2
-        exit 2
-    fi
-    # Absolutize: callers pass repo-relative arenas (the in-worktree
-    # DerivedData/), and the in-use check greps absolute paths out of `ps` —
-    # a relative path would silently never match, defeating the guard.
-    case "$EVICT_DIR" in
-        /*) ;;
-        *) EVICT_DIR="$PWD/$EVICT_DIR" ;;
-    esac
-    [ -d "$EVICT_DIR" ] || exit 0
-    # Clear the in-use guard before announcing anything, so a refusal never
-    # follows a "Removing…" line that turned out to be false.
-    refresh_holders "$EVICT_DIR"
-    if path_held "$EVICT_DIR"; then
-        printf 'ghosts.sh: cannot remove %s\n' "$(labeled_path "$EVICT_DIR")" >&2
-        while IFS= read -r blocked; do
-            printf 'ghosts.sh: %s\n' "$blocked" >&2
-        done < <(holder_blocked_lines "$EVICT_DIR")
-        exit 1
-    fi
-    # Size on the way out: on a default-location machine this is the arena the
-    # Xcode GUI shares, so discarding it costs a full rebuild — worth seeing as
-    # it happens rather than wondering later why the next build was cold.
-    printf 'Removing build arena %s — %s\n' \
-        "$(labeled_path "$EVICT_DIR")" \
-        "$(disk_size "$EVICT_DIR")"
-    evict_dd_arena "$EVICT_DIR"
-    if [ -d "$EVICT_DIR" ]; then
-        printf 'ghosts.sh: failed to remove %s\n' "$(labeled_path "$EVICT_DIR")" >&2
-        exit 1
-    fi
-    exit 0
-fi
 
 printf '%sKernova ghost cleanup%s\n' "$c_bold" "$c_reset"
 # Names the mode, not the flag that selected it: the flag is unreachable through
@@ -377,7 +161,7 @@ else
         # track whether the record actually went away. Attempt all of them,
         # then re-dump once and check what is still registered.
         for path in "${live_ghost_paths[@]}"; do
-            "$LSREGISTER" -u "$path" >/dev/null 2>&1
+            lsregister -u "$path" >/dev/null 2>&1
         done
 
         still_registered=$(kernova_registered_paths)
@@ -501,7 +285,7 @@ else
             continue
         fi
         if [ "$FIX" = 1 ]; then
-            if evict_dd_arena "$dir"; then
+            if evict_arena "$dir"; then
                 fixed "deleted: $(pretty_path "$dir")"
             else
                 detail "delete failed for $dir_label"
@@ -538,7 +322,7 @@ else
                 continue
             fi
             if [ "$FIX" = 1 ]; then
-                if evict_build_server_cache "$dir" && [ ! -e "$dir" ]; then
+                if evict_build_server_cache "$dir"; then
                     fixed "deleted: $(pretty_path "$dir")"
                 else
                     detail "delete failed for $(pretty_path "$dir")"
@@ -875,7 +659,7 @@ if [ "$FIX" = 1 ] && [ "${#competing_copies[@]}" -gt 0 ]; then
             case "$reply" in
                 y|Y|yes|YES)
                     if trash "$path" 2>/dev/null; then
-                        "$LSREGISTER" -u "$path" >/dev/null 2>&1
+                        lsregister -u "$path" >/dev/null 2>&1
                         # Same best-effort-then-verify discipline as the
                         # Launch Services ghost fix above: don't trust
                         # the unregister exit code, re-check the dump.
@@ -918,7 +702,7 @@ fi
 # Findings are this script's output, not a failure, so the report-mode arm
 # below exits 0 — `make ghosts` would otherwise stamp "Error 1" over its own
 # closing instruction. A non-zero exit is reserved for not doing the requested
-# job: `--fix` repairing less than it found, and the --evict failures above.
+# job: `--fix` repairing less than it found.
 if [ "$FIX" = 1 ]; then
     printf '%d issue(s) found, %d fixed.\n' "$found_count" "$fixed_count"
     [ "$fixed_count" -lt "$found_count" ] && exit 1

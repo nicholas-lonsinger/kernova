@@ -116,28 +116,11 @@ locked-build-for-testing:
 	xcodebuild $(XCODEBUILD_FLAGS) build-for-testing
 	@Tools/built-app.sh --check-weak-links $(XCODEBUILD_FLAGS)
 
-# Removes both build arenas this checkout can have: the in-worktree
-# DerivedData/ (CI-style explicit-flag builds, and Relative-mode machines) and
-# the arena the machine's Xcode preference resolves to (the hashed ~/Library
-# folder on default-location machines — where flag-less `make build` and GUI
-# builds land). The resolver is authoritative for "where would a build go",
-# so this cannot delete another project's folder; the $(CURDIR) guard just
-# avoids a redundant second eviction when the arena is already inside the
-# worktree.
-#
-# Both go through `Tools/ghosts.sh --evict`, the same unregister-then-delete
-# routine the post-checkout sweep and `clean-ghosts` use. A missing path is a
-# no-op, so both candidates are passed unconditionally.
-clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the resolved Xcode arena)
+clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and the arena xcodebuild builds into)
 	$(LOCKED_TWIN)
 
 locked-clean:
-	@Tools/ghosts.sh --evict '$(DERIVED_DATA_ROOT)'
-	@arena=$$(Tools/derived-data-path.sh 2>/dev/null); \
-	case "$$arena" in \
-		''|'$(CURDIR)'/*) ;; \
-		*) Tools/ghosts.sh --evict "$$arena" ;; \
-	esac
+	@Tools/build-arenas.sh clean
 
 test: check-hooks ## Run the full test suite (every test target in Kernova.xctestplan) in Debug, then check the built app's weak links; a passing run is recorded for `make attest`
 	@test '$(CONFIGURATION)' = Debug || { echo 'make test runs Debug only, the build its record covers; build-for-testing and test-without-building take CONFIGURATION=$(CONFIGURATION)' >&2; exit 2; }
@@ -238,7 +221,7 @@ dead-code: ## Scan for unused code with Periphery on macOS and, once `make ubunt
 	$(LOCKED_TWIN)
 
 locked-dead-code: dead-code-tool
-	@trap "Tools/ghosts.sh --unregister '$(PERIPHERY_DERIVED_DATA)/Build/Products' >&2" EXIT; \
+	@trap "Tools/build-arenas.sh unregister '$(PERIPHERY_DERIVED_DATA)/Build/Products' >&2" EXIT; \
 	periphery=$$(Tools/install-periphery.sh) || exit 1; \
 	indexutil=$$(Tools/install-periphery.sh --indexutil-export) || exit 1; \
 	raw=$(PERIPHERY_DERIVED_DATA)/Report/raw; \

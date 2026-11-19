@@ -17,7 +17,9 @@
 #   worktree: <name>                a live .claude/worktrees/<name> worktree
 #   worktree: <name>, removed       an arena that outlived its worktree
 #   main checkout                   the primary checkout
-#   other checkout: <dir>           a different clone or project entirely
+#   other checkout: <dir>           any other checkout: a different clone or
+#                                   project, or a worktree registered outside
+#                                   .claude/worktrees/
 #   other checkout: <dir>, removed  …one that is no longer on disk
 #   packages only, no checkout here an arena that only ever resolved packages,
 #                                   named for none of this clone's checkouts
@@ -35,9 +37,6 @@
 # neither record of the project it came from, a path outside every known
 # checkout, not a git repo). Callers append the label only when there is one, so
 # an unattributable path just renders bare.
-#
-# Consumed by Tools/ghosts.sh (arena and on-disk-copy lines, plus the orphan
-# scan via --status) and Tools/doctor.sh (the build-arena report).
 
 set -uo pipefail
 
@@ -57,12 +56,11 @@ esac
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# shellcheck source=lib/output.sh
+. "$REPO_ROOT/Tools/lib/output.sh"
 # shellcheck source=lib/worktrees.sh
 . "$REPO_ROOT/Tools/lib/worktrees.sh"
 read_worktree_layout "$REPO_ROOT" || exit 1
-
-# Display-only: abbreviate $HOME to ~, matching Tools/ghosts.sh's pretty_path.
-pretty() { printf '%s' "${1/#$HOME/~}"; }
 
 # label_for_checkout <path> — classify a path that names a checkout or sits
 # inside one, then emit either the human label or the --status token from that
@@ -77,9 +75,12 @@ label_for_checkout() {
             name=${name%%/*}
             # A worktree git no longer registers still names itself here — that
             # is the whole point for orphaned arenas, which outlive the
-            # worktree that created them. Registration decides, not the
-            # directory: a write after `git worktree remove` can recreate it.
-            if worktree_registered "$worktrees_root/$name"; then
+            # worktree that created them. It is removed only when git registers
+            # nothing there and its project is gone too: a write after
+            # `git worktree remove` can recreate the directory, and a worktree
+            # moved with `mv` keeps building at a path git does not list.
+            if worktree_registered "$worktrees_root/$name" ||
+                [ -e "$worktrees_root/$name/Kernova.xcodeproj" ]; then
                 [ "$STATUS_ONLY" = 1 ] && { printf 'worktree-live'; return 0; }
                 printf 'worktree: %s' "$name"
             else
@@ -162,7 +163,7 @@ while [ -n "$dir" ] && [ "$dir" != "/" ]; do
         if [ "$STATUS_ONLY" = 1 ]; then
             printf 'other%s' "${removed:+-removed}"
         else
-            printf 'other checkout: %s%s' "$(pretty "${ws%/*}")" "${removed:+, removed}"
+            printf 'other checkout: %s%s' "$(pretty_path "${ws%/*}")" "${removed:+, removed}"
         fi
         exit 0
     fi
@@ -178,6 +179,9 @@ while IFS= read -r checkout; do
     [ -n "$checkout" ] || continue
     [ "$("$REPO_ROOT/Tools/derived-data-path.sh" "$checkout/Kernova.xcodeproj" 2>/dev/null)" = "$target" ] || continue
     label_for_checkout "$checkout" && exit 0
+    # A registered worktree outside .claude/worktrees/.
+    if [ "$STATUS_ONLY" = 1 ]; then printf 'other'; else printf 'other checkout: %s' "$(pretty_path "$checkout")"; fi
+    exit 0
 done <<<"$worktree_paths"
 
 # Matching none, it can only belong to a checkout outside this clone. Holding
