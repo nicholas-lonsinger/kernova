@@ -27,10 +27,14 @@
 #     on disk (the file was deleted out from under a still-running process)
 #   - `git worktree list` entries marked `prunable` (administrative metadata
 #     for a worktree whose directory is already gone)
-#   - Directories under the primary checkout's .claude/worktrees/ that no
-#     `git worktree list` entry names: anything writing into a removed
-#     worktree's path after `git worktree remove` recreates the directory,
-#     and git, holding no registration for it, never lists it again
+#   - Directories under the primary checkout's .claude/worktrees/ that git
+#     does not register (Tools/lib/worktrees.sh classifies them): one with no
+#     project file is debris — a write into a removed worktree's path
+#     recreates the directory — and goes to the Trash; a worktree moved by
+#     hand is registered again with `git worktree repair`, and nothing is
+#     pruned while one stays unrepaired; a checkout whose git record is gone,
+#     a copy of another worktree, and one naming no record of this clone are
+#     reported and left alone
 #   - Registered worktrees under .claude/worktrees/ that are abandoned: no
 #     live Claude Code session or subagent holds their lock, no session runs
 #     inside them, nothing is uncommitted, and their HEAD is already on
@@ -205,18 +209,49 @@ done < <(pgrep -f -i kernova 2>/dev/null)
 
 section 'Git worktrees'
 
-moved_dirs=()
+# Before the prune: a moved worktree's record reads as prunable, and repairing
+# it first is what keeps the prune from deleting it.
+repair_failed=0
 if read_worktree_layout "$REPO_ROOT"; then
-    while IFS= read -r dir; do
-        moved_dirs+=("$dir")
-    done < <(moved_worktree_dirs)
+    checkouts=$(unregistered_checkouts)
+    while IFS=$'\t' read -r kind dir path; do
+        [ -n "$kind" ] || continue
+        case "$kind" in
+            moved)
+                ghost "Worktree moved by hand: $(pretty_path "$dir") — git lists it at $(pretty_path "$path")"
+                if [ "$FIX" != 1 ]; then
+                    detail "register it again: git worktree repair '$dir'"
+                    continue
+                fi
+                # Re-read: once one copy of a record is repaired, any other
+                # directory naming it is a copy of a live worktree.
+                still=''
+                read_worktree_layout "$REPO_ROOT" &&
+                    still=$(DIR=$dir awk -F '\t' '$1 == "moved" && $2 == ENVIRON["DIR"]' <<<"$(unregistered_checkouts)")
+                if [ -z "$still" ]; then
+                    detail 'left alone: another directory naming its record was registered first'
+                elif git -C "$REPO_ROOT" worktree repair "$dir" >/dev/null 2>&1 &&
+                    read_worktree_layout "$REPO_ROOT" && worktree_registered "$dir"; then
+                    fixed "registered again: $(pretty_path "$dir")"
+                else
+                    repair_failed=1
+                    detail "git worktree repair '$dir' failed"
+                fi
+                ;;
+            broken)
+                warn "Checkout git cannot use: $(pretty_path "$dir") — the record its .git file names, $(pretty_path "$path"), is gone"
+                detail 'its files are intact; nothing here removes it'
+                ;;
+            copy)
+                warn "Copy of the worktree at $(pretty_path "$path"): $(pretty_path "$dir")"
+                detail "its .git file names that worktree's record, so git commands in it act on that worktree's HEAD and index; nothing here changes it"
+                ;;
+            foreign)
+                warn "Unregistered checkout that names no git record of this clone: $(pretty_path "$dir")"
+                ;;
+        esac
+    done <<<"$checkouts"
 fi
-# A moved worktree's .git file names the record git lists at its old path,
-# which reads as prunable; pruning it would leave the checkout with no record.
-for dir in ${moved_dirs[@]+"${moved_dirs[@]}"}; do
-    ghost "Worktree moved by hand, unregistered at its new path: $(pretty_path "$dir")"
-    detail "register it again: git worktree repair '$dir'"
-done
 
 prunable=$(git -C "$REPO_ROOT" worktree list 2>/dev/null | grep 'prunable' || true)
 if [ -z "$prunable" ]; then
@@ -226,8 +261,8 @@ else
         [ -z "$line" ] && continue
         ghost "Prunable worktree: $line"
     done <<< "$prunable"
-    if [ "$FIX" = 1 ] && [ "${#moved_dirs[@]}" -gt 0 ]; then
-        detail 'not pruned: repair the moved worktrees above first'
+    if [ "$FIX" = 1 ] && [ "$repair_failed" = 1 ]; then
+        detail 'not pruned: a moved worktree above still depends on its record'
     elif [ "$FIX" = 1 ]; then
         if git -C "$REPO_ROOT" worktree prune >/dev/null 2>&1; then
             fixed 'pruned stale worktree metadata'

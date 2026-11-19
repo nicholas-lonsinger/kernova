@@ -47,10 +47,9 @@ worktree_registered() {
 
 # worktree_live <dir> — whether <dir> is a checkout of this clone that still
 # builds: git registers it, or it holds the project file. A worktree moved with
-# `mv` is the second kind: git lists its old path, while its .git file still
-# names its record and builds go on at the new one. The project file, not the
-# .xcodeproj: Xcode writes the .xcodeproj's xcuserdata into a removed
-# worktree's path, recreating the directory.
+# `mv` is the second kind (unregistered_checkouts says which others are). The
+# project file, not the .xcodeproj: Xcode writes the .xcodeproj's xcuserdata
+# into a removed worktree's path, recreating the directory.
 worktree_live() {
     worktree_registered "$1" || [ -f "$1/Kernova.xcodeproj/project.pbxproj" ]
 }
@@ -76,13 +75,48 @@ orphaned_worktree_dirs() {
     done < <(worktree_dirs)
 }
 
-# moved_worktree_dirs — one line per directory under worktrees_root that is
-# live but unregistered: a worktree moved by hand, which
-# `git worktree repair <dir>` registers again.
-moved_worktree_dirs() {
-    local dir
+# unregistered_checkouts — one `<kind> TAB <dir> TAB <path>` line per live
+# directory under worktrees_root that git does not register, <kind> read from
+# the record its .git file names:
+#
+#   moved    a record of this clone whose worktree path is gone, <path>: the
+#            record `git worktree prune` deletes, and `git worktree repair <dir>`
+#            points back at <dir>
+#   broken   a record that no longer exists, <path>; git cannot use <dir>
+#   copy     a record of this clone whose worktree is <path>, another directory
+#            that exists: <dir> is a copy of it
+#   foreign  no record of this clone; <path> is what .git names, or empty
+unregistered_checkouts() {
+    local common dir record path
+    common=$(git -C "$main_root" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || return 0
     while IFS= read -r dir; do
-        worktree_registered "$dir" || ! worktree_live "$dir" || printf '%s\n' "$dir"
+        worktree_registered "$dir" || ! worktree_live "$dir" || {
+            record=''
+            [ -f "$dir/.git" ] && record=$(sed -n 's/^gitdir: //p' "$dir/.git" | head -1)
+            case "$record" in
+                '' | /*) ;;
+                *) record="$dir/$record" ;;
+            esac
+            if [ -z "$record" ]; then
+                printf 'foreign\t%s\t\n' "$dir"
+            elif [ ! -e "$record" ]; then
+                printf 'broken\t%s\t%s\n' "$dir" "$record"
+            elif ! [ "$(dirname "$record")" -ef "$common/worktrees" ]; then
+                printf 'foreign\t%s\t%s\n' "$dir" "$record"
+            else
+                path=$(head -1 "$record/gitdir" 2>/dev/null)
+                case "$path" in
+                    /*) ;;
+                    *) path="$record/$path" ;;
+                esac
+                path=${path%/.git}
+                if [ -e "$path" ]; then
+                    printf 'copy\t%s\t%s\n' "$dir" "$path"
+                else
+                    printf 'moved\t%s\t%s\n' "$dir" "$path"
+                fi
+            fi
+        }
     done < <(worktree_dirs)
 }
 

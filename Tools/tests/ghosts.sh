@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Fixture tests for `Tools/ghosts.sh --fix` on a worktree moved by hand: it is
-# reported with its repair, and nothing prunes its record, trashes it, or
-# evicts its arena or editor cache, while a directory Xcode recreated after a
-# removal still goes. Runs a copy of the scripts inside a fixture clone, with
-# HOME in the fixture and fakes for every tool that reaches past it
-# (lsregister, defaults, pgrep, mdfind, trash, launchctl). Local git only.
+# Fixture tests for `Tools/ghosts.sh --fix` on checkouts under
+# .claude/worktrees/ that git does not register: a worktree moved by hand is
+# registered again, keeping its arena and editor cache, before stale records
+# are pruned; one whose record is gone and a copy of a live worktree keep their
+# files and change nothing; a directory Xcode recreated after a removal goes to
+# the Trash. Runs a copy of the scripts inside a fixture clone, with HOME in the
+# fixture and fakes for every tool that reaches past it (lsregister, defaults,
+# pgrep, mdfind, trash, launchctl). Local git only.
 
 set -uo pipefail
 
@@ -59,10 +61,17 @@ case "$dd_root" in
 esac
 
 wts="$clone/.claude/worktrees"
-git -C "$clone" worktree add -q --detach "$wts/before"
-echo 'uncommitted' >"$wts/before/edit.txt"
+common="$clone/.git"
+add() { git -C "$clone" worktree add -q --detach "$wts/$1" && echo 'uncommitted' >"$wts/$1/edit.txt"; }
+
+# Moved by hand, and its record pruned since.
+add lost
+mv "$wts/lost" "$wts/lost moved"
+git -C "$clone" worktree prune
+
+# Moved by hand: its record names the old path.
+add before
 mv "$wts/before" "$wts/after"
-record_dir=$(sed -n 's/^gitdir: //p' "$wts/after/.git")
 arena=$("$clone/Tools/derived-data-path.sh" "$wts/after/Kernova.xcodeproj")
 mkdir -p "$arena"
 printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>WorkspacePath</key><string>%s</string></dict></plist>\n' \
@@ -70,21 +79,37 @@ printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>
 cache="$HOME/Library/Caches/xcode-build-server/${wts//\//-}-after"
 mkdir -p "$cache"
 
-# Removed, then recreated by Xcode writing its user state there.
+# A copy of a live worktree, whose .git file names the original's record.
+add original
+cp -R "$wts/original" "$wts/original copy"
+echo 'the copy' >"$wts/original copy/edit.txt"
+
+# A stale record, and a removed worktree's directory Xcode recreated.
+add stale
+rm -rf "$wts/stale"
 git -C "$clone" worktree add -q --detach "$wts/gone"
 git -C "$clone" worktree remove "$wts/gone"
 mkdir -p "$wts/gone/Kernova.xcodeproj/project.xcworkspace/xcuserdata"
 
 out=$("$clone/Tools/ghosts.sh" --fix </dev/null 2>&1)
 
-check "moved worktree: its record is not pruned" "$(present "$record_dir")" present
-check "moved worktree: still a checkout" "$(git -C "$wts/after" rev-parse --is-inside-work-tree 2>/dev/null)" true
-check "moved worktree: not trashed" "$(present "$wts/after/edit.txt")" present
-check "moved worktree: its arena" "$(present "$arena")" present
-check "moved worktree: its xcode-build-server cache" "$(present "$cache")" present
-check "moved worktree: reported with its repair" \
-    "$(grep -c "git worktree repair '$wts/after'" <<<"$out")" 1
+check "moved: its files" "$(cat "$wts/after/edit.txt" 2>/dev/null)" uncommitted
+check "moved: git works in it" "$(git -C "$wts/after" rev-parse --show-toplevel 2>/dev/null)" "$wts/after"
+check "moved: registered again" "$(git -C "$clone" worktree list --porcelain | grep -cxF "worktree $wts/after")" 1
+check "moved: its arena" "$(present "$arena")" present
+check "moved: its xcode-build-server cache" "$(present "$cache")" present
+check "stale record: pruned" "$(present "$common/worktrees/stale")" gone
+check "record gone: its files" "$(cat "$wts/lost moved/edit.txt" 2>/dev/null)" uncommitted
+check "record gone: reported" "$(grep -c "Checkout git cannot use: .*lost moved" <<<"$out")" 1
+check "copy: its files" "$(cat "$wts/original copy/edit.txt" 2>/dev/null)" 'the copy'
+check "copy: the original's record still names the original" \
+    "$(cat "$common/worktrees/original/gitdir")" "$wts/original/.git"
+check "copy: reported" "$(grep -c "Copy of the worktree at .*original: .*original copy" <<<"$out")" 1
 check "recreated directory: trashed" "$(present "$wts/gone")$(present "$HOME/.Trash/gone")" gonepresent
+
+"$clone/Tools/ghosts.sh" --fix </dev/null >/dev/null 2>&1
+check "a second --fix: exit status" "$?" 0
+check "a second --fix: the record-gone checkout's files" "$(cat "$wts/lost moved/edit.txt" 2>/dev/null)" uncommitted
 
 if [ "$FAIL" -eq 0 ]; then
     printf '  %s✓%s ghosts: %d fixture checks\n' "$c_green" "$c_reset" "$PASS"
