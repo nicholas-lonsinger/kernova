@@ -58,10 +58,8 @@ struct ClipboardTransferWordingTests {
             (.interrupted(fileCount: nil), .dragOut),
             (.timedOut, .dragOut),
             (.transferFailed, .dragOut),
-            (.stagingFailed, .dragOut),
-            (.peerReported(.pasteFailed), .dragOut),
-            (.peerReported(.dragItemUnavailable), .dragOut),
-            (.sourceUnreadable, .dragOut),
+            (.dragOutShortfall(Self.account(2, refused: 2)), .dragOut),
+            (.dragOutShortfall(Self.account(3_000, landed: 2_425, refused: 575, besideLanded: true)), .dragOut),
             (.tooLarge(limitBytes: 65_536), .dragOut),
             (.sourceUnreadable, .paste),
             (.sourceUnreadable, .drop),
@@ -158,7 +156,7 @@ struct ClipboardTransferWordingTests {
     func dragOutWording() throws {
         for (failure, gesture) in everyArm where gesture == .dragOut {
             let copy = try #require(wording(failure, gesture), "\(failure)")
-            #expect(copy.headline == "Files not copied from \(quotedVM).", "\(failure)")
+            #expect(copy.headline.hasSuffix("not copied from \(quotedVM)."), "\(failure)")
             #expect(copy.menuLine.hasPrefix("Drag: "), "\(failure)")
             #expect(!copy.message.contains("paste"), "\(failure)")
             #expect(!copy.message.contains("clipboard"), "\(failure)")
@@ -166,21 +164,77 @@ struct ClipboardTransferWordingTests {
         #expect(
             try #require(wording(.diskFull(needed: nil, available: nil), .dragOut)).message
                 == "This Mac ran out of disk space receiving the files, so the drag didn't finish.")
-        #expect(
-            try #require(wording(.stagingFailed, .dragOut)).message
-                == "The files couldn't be saved where you dropped them, so the drag didn't finish.")
-        #expect(
-            try #require(wording(.peerReported(.dragItemUnavailable), .dragOut)).message
-                == "An app in the VM didn't write a dragged item, so the drag didn't finish.")
+    }
+
+    /// The account of a drag of `items` items, with the counts given and every other count zero.
+    private static func account(
+        _ items: Int, landed: Int = 0, refused: Int = 0, unreadable: Int = 0, unwritable: Int = 0,
+        unsupplied: Int = 0, failed: Int = 0, besideLanded: Bool = false, promise: Bool = false
+    ) -> DragOutAccount {
+        var account = DragOutAccount(items: items)
+        account.landed = landed
+        account.refused = refused
+        account.unreadable = unreadable
+        account.unwritable = unwritable
+        account.unsupplied = unsupplied
+        account.failed = failed
+        account.refusedBesideLanded = besideLanded
+        account.refusedPromise = promise
+        return account
+    }
+
+    /// Accounts of drags out, each with its headline's start, message and menu line worked out by hand.
+    private static let shortfalls: [(DragOutAccount, headline: String, message: String, menuLine: String)] = [
+        (
+            account(3_000, landed: 2_425, refused: 575, besideLanded: true), "Some files",
+            "\(2_425.formatted()) of the \(3_000.formatted()) items were copied. This Mac didn't allow Kernova to save 575 items where you dropped them. Drag fewer at a time, or drag a folder that holds them \u{2014} a folder goes as one item.",
+            "Drag: \(2_425.formatted()) of \(3_000.formatted()) items copied; drag fewer at a time"
+        ),
+        (
+            account(4, landed: 1, refused: 1, unreadable: 1, unsupplied: 1, besideLanded: true), "Some files",
+            "1 of the 4 items was copied. This Mac didn't allow Kernova to save one item where you dropped it. One item couldn't be read in the VM. An app in the VM didn't supply one item. Drag fewer at a time, or drag a folder that holds it \u{2014} a folder goes as one item.",
+            "Drag: 1 of 4 items copied; drag fewer at a time"
+        ),
+        (
+            account(4, landed: 2, refused: 2, besideLanded: true, promise: true), "Some files",
+            "2 of the 4 items were copied. This Mac didn't allow Kernova to save 2 items where you dropped them. Drag fewer at a time.",
+            "Drag: 2 of 4 items copied; drag fewer at a time"
+        ),
+        (
+            account(2, refused: 2), "Files",
+            "None of the 2 items were copied. This Mac didn't allow Kernova to save 2 items where you dropped them.",
+            "Drag: 0 of 2 items copied"
+        ),
+        (
+            account(1, unwritable: 1), "Files",
+            "The item wasn't copied. One item couldn't be written on this Mac.",
+            "Drag: 0 of 1 item copied"
+        ),
+        (
+            account(4, landed: 2, unwritable: 1, failed: 1), "Some files",
+            "2 of the 4 items were copied. One item couldn't be written on this Mac. One item failed to transfer.",
+            "Drag: 2 of 4 items copied"
+        ),
+        (
+            account(5, landed: 3, refused: 2), "Some files",
+            "3 of the 5 items were copied. This Mac didn't allow Kernova to save 2 items where you dropped them.",
+            "Drag: 3 of 5 items copied"
+        ),
+    ]
+
+    @Test(
+        "a drag out that landed some items counts what landed and each failure, and names a step only beside a landed item",
+        arguments: shortfalls.indices)
+    func shortfallWording(_ shortfall: Int) throws {
+        let (account, headline, message, menuLine) = Self.shortfalls[shortfall]
+        let copy = try #require(wording(.dragOutShortfall(account), .dragOut))
+        #expect(copy.headline == "\(headline) not copied from \(quotedVM).")
+        #expect(copy.message == message)
+        #expect(copy.menuLine == menuLine)
     }
 
     @Test("an item that couldn't be read is worded by the side that read it")
     func unreadableItemWording() throws {
-        let dragOut = try #require(wording(.sourceUnreadable, .dragOut))
-        #expect(dragOut.headline == "Files not copied from \(quotedVM).")
-        #expect(dragOut.message == "The VM couldn't read one of the items, so the drag didn't finish.")
-        #expect(dragOut.menuLine == "Drag: the VM couldn't read an item")
-
         let paste = try #require(wording(.sourceUnreadable, .paste))
         #expect(paste.headline == "Clipboard not pasted from \(quotedVM).")
         #expect(paste.message == "The VM couldn't read one of the items, so the paste didn't finish.")

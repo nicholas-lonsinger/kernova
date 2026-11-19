@@ -76,6 +76,9 @@ struct GuestDragTakeTests {
         private(set) var releases = 0
         /// What the guest lists before its first `TARGETED`.
         var listed: [OfferedItem] = []
+        /// The error a pull of an item ends with before it opens, as a landing
+        /// this Mac refuses ends it; nil pulls it.
+        var refusal: (Int) -> WireError? = { _ in nil }
         private var hasListed = false
         nonisolated let delivering = DispatchSemaphore(value: 0)
         let changed = AsyncGate()
@@ -99,6 +102,11 @@ struct GuestDragTakeTests {
             _ item: DraggedOutItem, at index: Int, to destination: URL,
             ended: @escaping @MainActor (Result<Void, WireError>) -> Void
         ) -> @MainActor () -> Void {
+            if let refused = refusal(index) {
+                ended(.failure(refused))
+                changed.notify()
+                return {}
+            }
             let position = pulls.count
             pulls.append(Pull(index: index, destination: destination, ended: ended))
             changed.notify()
@@ -702,7 +710,7 @@ struct GuestDragTakeTests {
         take.writeItem(at: 0, to: URL(fileURLWithPath: "/tmp/drag-out/x.jpeg")) { outcome.set($0) }
         transport.end(.caught(nil))
         try await transport.changed.wait { outcome.isSet }
-        #expect(outcome.error as? GuestDragWriteError == .failed(.peerReported(.dragItemUnavailable)))
+        #expect(outcome.error as? GuestDragWriteError == .itemFailed(.unsupplied))
         #expect(transport.pulls.isEmpty)
     }
 
@@ -825,31 +833,221 @@ struct GuestDragTakeTests {
         #expect((later as? CocoaError)?.code == .userCancelled)
     }
 
-    @Test("a failed pull fails its write and every write after it")
-    func failedPullEndsTheWrites() async throws {
+    @Test(
+        "a pull failing for its own item fails that write alone; one failing for what every write shares fails them all",
+        arguments: [
+            (WireError(.itemRepresentationUnavailable), GuestDragWriteError.itemFailed(.unsupplied), false),
+            (WireError(.readFailed), .itemFailed(.unreadable), false),
+            (WireError(.writeFailed, posixErrno: EIO), .itemFailed(.unwritable), false),
+            (WireError(.writeFailed, posixErrno: EPERM), .itemFailed(.refused), false),
+            (WireError(.writeFailed, posixErrno: ENOSPC), .failed(.diskFull(needed: nil, available: nil)), true),
+            (WireError(.itemOfferStale), .failed(.interrupted(fileCount: 2)), true),
+        ])
+    func failedPullScope(error: WireError, failure: GuestDragWriteError, endsEveryWrite: Bool) async throws {
         let take = try carriedTake(items: [Self.file, Self.file])
         take.hostSessionEnded(dropped: true)
         transport.end(.caught(nil))
         let folder = URL(fileURLWithPath: "/tmp/drag-out", isDirectory: true)
 
         let failed = try await write(take, item: 0, to: folder.appendingPathComponent("a.txt")) {
-            $0.end(0, .failure(WireError(.itemRepresentationUnavailable)))
+            $0.end(0, .failure(error))
         }
-        #expect(failed as? GuestDragWriteError == .failed(.peerReported(.dragItemUnavailable)))
+        #expect(failed as? GuestDragWriteError == failure)
 
-        let after = try await write(take, item: 1, to: folder.appendingPathComponent("b.txt"))
-        #expect(after as? GuestDragWriteError == .failed(.peerReported(.dragItemUnavailable)))
-        #expect(transport.pulls.count == 1)
+        let after = try await write(take, item: 1, to: folder.appendingPathComponent("b.txt")) {
+            guard !endsEveryWrite else { return }
+            try #require($0.pulls.count == 2, "the write after a failure of the first item's own did not pull")
+            $0.end(1, .success(()))
+        }
+        if endsEveryWrite {
+            #expect(after as? GuestDragWriteError == failure)
+            #expect(transport.pulls.count == 1)
+        } else {
+            #expect(after == nil)
+            #expect(transport.pulls.count == 2)
+        }
         #expect(transport.releases == 1)
     }
 
-    @Test("a pull's error says what the readout reports")
+    /// A take of `items` a Mac destination took, the guest's drag delivered,
+    /// with a write of each item to `destination` begun in order, reporting to
+    /// `reporter`; returns each write's outcome.
+    private func writingTake(
+        _ items: [DraggedOutItem], reporter: ClipboardTransferReporter, destination: (Int) -> URL
+    ) async throws -> (take: GuestDragTake, outcomes: [OutcomeBox]) {
+        reporter.onReportChanged = { [transport] _ in transport.changed.notify() }
+        let take = makeTake(items: items, reporter: reporter, revealDelay: 0)
+        transport.report(.armed)
+        transport.target()
+        take.withheldDrag()
+        take.hostSessionEnded(dropped: true)
+        transport.report(.delivering)
+        transport.end(.caught(Self.delivery), delivered: items)
+        let outcomes = items.indices.map { _ in OutcomeBox(gate: transport.changed) }
+        for index in items.indices {
+            take.writeItem(at: index, to: destination(index)) { outcomes[index].set($0) }
+        }
+        try await transport.changed.wait { transport.pulls.count + outcomes.count(where: \.isSet) == items.count }
+        return (take, outcomes)
+    }
+
+    /// What `reporter` reports once the readout has finished.
+    private func finish(of reporter: ClipboardTransferReporter) async throws -> ClipboardTransferFinish {
+        try await transport.changed.wait { if case .finished = reporter.report { true } else { false } }
+        guard case .finished(let finish) = reporter.report else { throw CancellationError() }
+        return finish
+    }
+
+    /// How a landing this Mac does not permit ends a pull.
+    nonisolated private static let notPermitted = WireError(
+        .writeFailed, posixErrno: EPERM, debugDetail: "the landing's path: Operation not permitted (errno 1)")
+
+    /// The account of a drag of `items` items, with the counts given and every other count zero.
+    nonisolated private static func account(
+        _ items: Int, landed: Int = 0, refused: Int = 0, unreadable: Int = 0, unwritable: Int = 0,
+        unsupplied: Int = 0, failed: Int = 0, besideLanded: Bool = false, promise: Bool = false
+    ) -> DragOutAccount {
+        var account = DragOutAccount(items: items)
+        account.landed = landed
+        account.refused = refused
+        account.unreadable = unreadable
+        account.unwritable = unwritable
+        account.unsupplied = unsupplied
+        account.failed = failed
+        account.refusedBesideLanded = besideLanded
+        account.refusedPromise = promise
+        return account
+    }
+
+    @Test(
+        "writes this Mac refuses from item k on fail alone: the writes before them land, and the readout counts both",
+        arguments: 0...4)
+    func refusedWritesFailAlone(firstRefused: Int) async throws {
+        let count = 4
+        let reporter = ClipboardTransferReporter()
+        let folder = URL(fileURLWithPath: "/Users/me/Desktop/Dropped", isDirectory: true)
+        transport.refusal = { $0 >= firstRefused ? Self.notPermitted : nil }
+        let (take, outcomes) = try await writingTake(Array(repeating: Self.file, count: count), reporter: reporter) {
+            folder.appendingPathComponent("file \($0).txt")
+        }
+        defer { withExtendedLifetime(take) {} }
+        // The writes before the refusal were in flight as it came, and land after it.
+        for position in transport.pulls.indices { transport.end(position, .success(())) }
+        try await transport.changed.wait { outcomes.allSatisfy(\.isSet) }
+
+        #expect(transport.pulls.map(\.index) == Array(0..<firstRefused))
+        #expect(transport.pulls.allSatisfy { !$0.cancelled }, "a refusal called off writes it says nothing about")
+        for index in 0..<count {
+            #expect((outcomes[index].error == nil) == (index < firstRefused), "item \(index)")
+        }
+        let refused = count - firstRefused
+        let finish = try await finish(of: reporter)
+        let expected = Self.account(count, landed: firstRefused, refused: refused, besideLanded: firstRefused > 0)
+        #expect(finish.failure == (refused == 0 ? nil : .dragOutShortfall(expected)))
+        if refused > 0 {
+            // Dragging fewer is named only once a file landed beside a refused one.
+            let copy = try #require(ClipboardTransferWording.wording(for: finish, vmName: "Test VM"))
+            #expect(copy.message.contains("fewer at a time") == (firstRefused > 0))
+        }
+        #expect(finished.count == 1)
+        #expect(transport.releases == 1)
+    }
+
+    @Test("a refused write has nothing landed beside it when the files that landed are in another folder")
+    func aRefusalInAnotherFolderHasNothingBesideIt() async throws {
+        let reporter = ClipboardTransferReporter()
+        transport.refusal = { $0 == 1 ? Self.notPermitted : nil }
+        let (take, outcomes) = try await writingTake([Self.file, Self.file], reporter: reporter) {
+            URL(fileURLWithPath: $0 == 0 ? "/Users/me/Desktop/a.txt" : "/Users/me/Documents/b.txt")
+        }
+        defer { withExtendedLifetime(take) {} }
+        transport.end(0, .success(()))
+        try await transport.changed.wait { outcomes.allSatisfy(\.isSet) }
+
+        #expect(try await finish(of: reporter).failure == .dragOutShortfall(Self.account(2, landed: 1, refused: 1)))
+    }
+
+    /// Drops whose items each land (nil) or fail with the error given, each with the account worked out by hand.
+    nonisolated private static let mixedDrops: [(promised: Set<Int>, ends: [WireError?], account: DragOutAccount)] = [
+        (
+            [], [nil, notPermitted, WireError(.readFailed), WireError(.itemRepresentationUnavailable)],
+            account(4, landed: 1, refused: 1, unreadable: 1, unsupplied: 1, besideLanded: true)
+        ),
+        (
+            [], [notPermitted, notPermitted, WireError(.readFailed), WireError(.readFailed)],
+            account(4, refused: 2, unreadable: 2)
+        ),
+        (
+            [], [nil, nil, WireError(.writeFailed, posixErrno: EIO), WireError(.internal)],
+            account(4, landed: 2, unwritable: 1, failed: 1)
+        ),
+        (
+            [1], [nil, notPermitted, nil, notPermitted],
+            account(4, landed: 2, refused: 2, besideLanded: true, promise: true)
+        ),
+        (
+            [0], [notPermitted, nil, nil, nil],
+            account(4, landed: 3, refused: 1, besideLanded: true, promise: true)
+        ),
+        ([2], [nil, notPermitted, nil], account(3, landed: 2, refused: 1, besideLanded: true)),
+    ]
+
+    @Test(
+        "a drop whose items fail for different reasons counts each reason, and what landed",
+        arguments: mixedDrops.indices)
+    func mixedFailuresAreEachCounted(drop: Int) async throws {
+        let (promised, ends, expected) = Self.mixedDrops[drop]
+        let reporter = ClipboardTransferReporter()
+        let items = ends.indices.map { promised.contains($0) ? Self.namedPromise : Self.file }
+        let folder = URL(fileURLWithPath: "/Users/me/Desktop", isDirectory: true)
+        let (take, outcomes) = try await writingTake(items, reporter: reporter) {
+            folder.appendingPathComponent("item \($0)")
+        }
+        defer { withExtendedLifetime(take) {} }
+        for position in transport.pulls.indices {
+            let end = ends[transport.pulls[position].index]
+            transport.end(position, end.map { .failure($0) } ?? .success(()))
+        }
+        try await transport.changed.wait { outcomes.allSatisfy(\.isSet) }
+
+        #expect(try await finish(of: reporter).failure == .dragOutShortfall(expected))
+    }
+
+    @Test("a take a newer session replaced retires once an item already asked for fails on its own")
+    func supersededTakeRetiresOnAnAskedItemsFailure() async throws {
+        let take = try carriedTake(items: [Self.file, Self.file, Self.file])
+        var retired = false
+        take.whenRetired { retired = true }
+        take.hostSessionEnded(dropped: true)
+        transport.end(.caught(nil))
+        let folder = URL(fileURLWithPath: "/tmp/drag-out", isDirectory: true)
+        let first = try await write(take, item: 0, to: folder.appendingPathComponent("a.txt")) {
+            $0.end(0, .success(()))
+        }
+        #expect(first == nil)
+        // Asked by name, which a destination does before it writes.
+        _ = take.filename(forItemAt: 1)
+        take.newerTakeBegan()
+        take.promisesReplaced()
+        #expect(!retired, "retired before an item already asked for ended")
+
+        let second = try await write(take, item: 1, to: folder.appendingPathComponent("b.txt")) {
+            $0.end(1, .failure(WireError(.readFailed)))
+        }
+        #expect(second as? GuestDragWriteError == .itemFailed(.unreadable))
+        #expect(retired)
+        #expect(transport.releases == 1)
+        #expect(finished.count == 1)
+    }
+
+    @Test("a pull's error says whether it fails its item alone or every write")
     func failureMapping() {
-        #expect(GuestDragTake.failure(for: WireError(.itemOfferStale), owed: 3) == .interrupted(fileCount: 3))
-        #expect(
-            GuestDragTake.failure(for: WireError(.writeFailed, posixErrno: ENOSPC), owed: 1)
-                == .diskFull(needed: nil, available: nil))
-        #expect(GuestDragTake.failure(for: WireError(.writeFailed), owed: 1) == .stagingFailed)
-        #expect(GuestDragTake.failure(for: WireError(.readFailed), owed: 1) == .sourceUnreadable)
+        func failure(_ error: WireError) -> GuestDragTake.PullFailure { GuestDragTake.failure(for: error, owed: 3) }
+        #expect(failure(WireError(.itemOfferStale)) == .shared(.interrupted(fileCount: 3)))
+        #expect(failure(WireError(.writeFailed, posixErrno: ENOSPC)) == .shared(.diskFull(needed: nil, available: nil)))
+        #expect(failure(WireError(.writeFailed, posixErrno: EPERM)) == .item(.refused))
+        #expect(failure(WireError(.writeFailed)) == .item(.unwritable))
+        #expect(failure(WireError(.readFailed)) == .item(.unreadable))
+        #expect(failure(WireError(.itemRepresentationUnavailable)) == .item(.unsupplied))
     }
 }

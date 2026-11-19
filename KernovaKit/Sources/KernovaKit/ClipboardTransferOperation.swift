@@ -157,9 +157,9 @@ public final class ClipboardTransferOperation: Sendable {
         /// Bytes the units expect to move; see `transferredBytes`.
         private(set) var declaredBytes: UInt64 = 0
         var completedCount = 0
-        /// The first failure a transfer reported for itself, which a terminal
-        /// that would complete reports instead.
-        var unitFailure: ClipboardTransferFailure?
+        /// What the owner last recorded its transfers did not deliver, which a
+        /// terminal that would complete reports instead.
+        var shortfall: ClipboardTransferFailure?
         /// Transfers currently in flight, in the order they began; the readout
         /// names the most recently begun one.
         var activeUnits: [UInt64] = []
@@ -270,8 +270,8 @@ public final class ClipboardTransferOperation: Sendable {
             var isFailure = false
             switch terminal {
             case .completed:
-                if let unitFailure {
-                    outcome = .failed(unitFailure)
+                if let shortfall {
+                    outcome = .failed(shortfall)
                     label = "failed"
                     isFailure = true
                 } else {
@@ -411,15 +411,15 @@ public final class ClipboardTransferOperation: Sendable {
         }
     }
 
-    /// Records why one of this operation's transfers failed, for a transfer
-    /// that knows: a terminal that would complete the operation — its idle
-    /// gap's, or its owner's — ends it failed with the first such failure, since
-    /// what it measured did not all arrive.
+    /// Records what this operation's transfers did not deliver, as its owner
+    /// accounts for it now: a terminal that would complete the operation — its
+    /// idle gap's, or its owner's — ends it failed with the latest one recorded.
     ///
-    /// The transfer still ends through ``unitEnded(id:succeeded:)``.
-    public func unitFailed(id: UInt64, _ failure: ClipboardTransferFailure) {
-        apply(id: id, declaring: nil) { state, _ in
-            if state.unitFailure == nil { state.unitFailure = failure }
+    /// A failed transfer still ends through ``unitEnded(id:succeeded:)``.
+    public func recordShortfall(_ failure: ClipboardTransferFailure) {
+        state.withLock { state in
+            guard !state.isFinished else { return }
+            state.shortfall = failure
         }
     }
 
@@ -428,7 +428,7 @@ public final class ClipboardTransferOperation: Sendable {
     /// Ends the operation, publishing its finished report.
     ///
     /// For a caller that owns the loop. Idempotent; later events are dropped.
-    /// `.completed` reports a failure ``unitFailed(id:_:)`` recorded instead. A
+    /// `.completed` reports a shortfall ``recordShortfall(_:)`` recorded instead. A
     /// `.completed`/`.cancelled` terminal inside the reveal gate publishes
     /// nothing, so an operation nobody saw never
     /// flashes UI; a `.failed` one always reports, since a refusal is owed an

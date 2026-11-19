@@ -23,8 +23,4 @@ public enum ClipboardErrorCode: Sendable {
 
     /// A dropped item's bytes arrived but the guest could not unpack them.
     case dropUnpackFailed
-
-    /// A promised item of a guest drag will never have bytes to pull: its
-    /// source failed to write it.
-    case dragItemUnavailable
 }
