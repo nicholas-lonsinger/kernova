@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Fixture tests for the config-decoding rule (Tools/swift-rules/
-# config-decoding.pm): which spellings of a decodeIfPresent fallback it flags,
-# and on which line.
+# Fixture tests for the config-decoding rule
+# (Tools/swift-rules/config-decoding.pm): which spellings of a decodeIfPresent
+# fallback it flags, and on which line.
 
 set -uo pipefail
 
