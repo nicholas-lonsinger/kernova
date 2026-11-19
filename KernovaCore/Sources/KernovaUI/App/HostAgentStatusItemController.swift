@@ -205,12 +205,13 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     // MARK: - Clipboard notice
 
-    /// Presents each VM's newly raised refusal where ``ClipboardNoticeLedger``
-    /// routes it, as an error: up until the user clicks it or the status item,
-    /// or the VM's reporter stops holding the refusal.
+    /// Presents each VM's newly raised refusal (``VMInstance/clipboardRefusal``)
+    /// where ``ClipboardNoticeLedger`` routes it, as an error: up until the user
+    /// clicks it or the status item, or the refusal stops standing.
     ///
     /// A notice the status item can't carry is dropped rather than deferred:
-    /// the dropdown's own line is the fallback, and a refusal replayed later
+    /// the dropdown's line, which reads the same refusal for as long as it
+    /// stands, is the fallback, and a refusal replayed later
     /// would interrupt for something the user has moved past. A refusal the
     /// *guest* user's gesture produced is not presented here at all — the
     /// guest's own status item announces it over there.
@@ -340,8 +341,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         // Opening the dropdown means the user found the icon — the soft-quit
-        // reminder has done its job, and the notice's line and the readout are
-        // in the menu below.
+        // reminder has done its job, and the refusal's line, while it stands,
+        // and the readout are in the menu below.
         transientPopover.dismiss()
 
         menu.removeAllItems()

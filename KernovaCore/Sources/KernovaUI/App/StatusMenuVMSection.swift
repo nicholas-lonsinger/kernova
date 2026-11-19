@@ -70,11 +70,11 @@ final class StatusMenuVMSection {
         }
     }
 
-    /// The compact refusal line under a VM's row, or `nil` when its report is
-    /// running, idle, or a success.
+    /// The compact line under a VM's row for the refusal that stands, or `nil`
+    /// when none does.
     private static func noticeText(for instance: VMInstance) -> String? {
-        guard case .finished(let finish) = instance.clipboardTransferReport else { return nil }
-        return ClipboardTransferWording.wording(for: finish, vmName: instance.name)?.menuLine
+        guard let refusal = instance.clipboardRefusal else { return nil }
+        return ClipboardTransferWording.wording(for: refusal, vmName: instance.name)?.menuLine
     }
 
     /// Appends the section's items at the menu's current end, dropping any

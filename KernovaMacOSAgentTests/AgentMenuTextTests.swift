@@ -82,33 +82,28 @@ struct AgentMenuTextTests {
 /// Which clipboard activity ends the notice standing before it.
 @Suite("ClipboardActivity.standingNotice", .caseScoped)
 struct ClipboardNoticeStandingTests {
-    private static let copyNotices: [ClipboardActivity] = [.copyCarriedNothing, .copyPartlyCarried(skipped: 2)]
-    private static let pasteNotices: [ClipboardActivity] = [
-        .pasteRefused(.pasteFailed, pasteLimitBytes: nil), .pasteRefused(.pasteTooLarge, pasteLimitBytes: 1_024),
+    private static let notices: [ClipboardActivity] = [
+        .copyCarriedNothing, .copyPartlyCarried(skipped: 2), .pasteRefused(.pasteFailed, pasteLimitBytes: nil),
+        .pasteRefused(.pasteTooLarge, pasteLimitBytes: 1_024),
     ]
 
-    /// Each activity that is not a notice, with whether a copy notice and a
-    /// paste notice stand after it, worked out by hand.
-    private static let laters: [(later: ClipboardActivity, copyStands: Bool, pasteStands: Bool)] = [
-        (.enabled, true, true),
-        (.offeredToHost, false, false),
-        (.offeredFromHost, false, false),
-        (.sentToHost, true, true),
-        (.receivedFromHost, true, false),
-        (.disabled, false, false),
+    /// Each activity that is not a notice, with whether a notice stands after
+    /// it, worked out by hand: only the connection ending ends one.
+    private static let laters: [(later: ClipboardActivity, stands: Bool)] = [
+        (.enabled, true),
+        (.offeredToHost, true),
+        (.offeredFromHost, true),
+        (.sentToHost, true),
+        (.receivedFromHost, true),
+        (.disabled, false),
     ]
 
-    @Test("a notice stands through what neither disproves nor replaces it, and goes with what does")
+    @Test("a notice stands through every activity but the connection ending")
     func noticeAgainstEveryActivity() {
-        for (later, copyStands, pasteStands) in Self.laters {
-            for notice in Self.copyNotices {
+        for (later, stands) in Self.laters {
+            for notice in Self.notices {
                 #expect(
-                    ClipboardActivity.standingNotice(notice, after: later) == (copyStands ? notice : nil),
-                    "\(notice) then \(later)")
-            }
-            for notice in Self.pasteNotices {
-                #expect(
-                    ClipboardActivity.standingNotice(notice, after: later) == (pasteStands ? notice : nil),
+                    ClipboardActivity.standingNotice(notice, after: later) == (stands ? notice : nil),
                     "\(notice) then \(later)")
             }
             #expect(ClipboardActivity.standingNotice(nil, after: later) == nil, "nothing then \(later)")
@@ -117,9 +112,8 @@ struct ClipboardNoticeStandingTests {
 
     @Test("a later notice stands in place of whatever stood")
     func aLaterNoticeReplaces() {
-        let notices = Self.copyNotices + Self.pasteNotices
-        for later in notices {
-            for standing in [nil] + notices {
+        for later in Self.notices {
+            for standing in [nil] + Self.notices {
                 #expect(ClipboardActivity.standingNotice(standing, after: later) == later)
             }
         }

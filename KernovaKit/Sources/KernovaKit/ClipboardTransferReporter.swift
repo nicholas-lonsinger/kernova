@@ -58,8 +58,9 @@ public final class ClipboardTransferReporter {
     }
 
     /// The refusal that stands, whether or not a running readout hides it from
-    /// ``report``: from the moment it is recorded until a later finish
-    /// displaces it or a completion it does not outlive clears it.
+    /// ``report``: from the moment it is recorded until a newer refusal
+    /// replaces it, or an operation of this side's gesture begun after it
+    /// completes or is cancelled.
     public private(set) var refusal: ClipboardTransferFinish?
 
     /// Called on each distinct value of ``refusal``.

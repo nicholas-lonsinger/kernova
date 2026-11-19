@@ -65,35 +65,21 @@ enum ClipboardActivity: Equatable, Sendable {
     /// is a notice, `standing` while `later` leaves it standing, else none.
     static func standingNotice(_ standing: ClipboardActivity?, after later: ClipboardActivity) -> ClipboardActivity? {
         if later.isNotice { return later }
-        guard let standing, !standing.isEnded(by: later) else { return nil }
-        return standing
+        return later.endsStandingNotice ? nil : standing
     }
 
-    /// Whether `later`, an activity after this notice, ends it: the clipboard
-    /// content the notice is about is gone, or the gesture it reports was made
-    /// again and went through. Anything else leaves the notice standing.
+    /// Whether this activity, coming after a notice, ends it: a newer notice
+    /// replaces it, and the connection ending withdraws the offers on both
+    /// sides, so nothing it reports can still be acted on.
     ///
-    /// A copy notice is about the guest's copy; a paste notice about the
-    /// host's offer the paste was of.
-    func isEnded(by later: ClipboardActivity) -> Bool {
-        switch (self, later) {
-        // A later notice replaces this one.
-        case (_, .pasteRefused), (_, .copyCarriedNothing), (_, .copyPartlyCarried):
+    /// Nothing in the guest records whether the failure a notice reports still
+    /// stands — an activity is only the latest event — so no other activity
+    /// ends one; a click does.
+    var endsStandingNotice: Bool {
+        switch self {
+        case .pasteRefused, .copyCarriedNothing, .copyPartlyCarried, .disabled:
             return true
-        // The connection ending withdraws the offers on both sides.
-        case (_, .disabled):
-            return true
-        // A new copy on either side replaces both the guest's copy and the
-        // host's offer on the guest's pasteboard.
-        case (_, .offeredToHost), (_, .offeredFromHost):
-            return true
-        // A paste that landed is the refused paste made again.
-        case (.pasteRefused, .receivedFromHost):
-            return true
-        // The host reading the guest's copy is the copy being used, short as
-        // the notice says; a paste landing says nothing about a copy; a
-        // connection coming up follows one that ended.
-        case (_, .sentToHost), (_, .receivedFromHost), (_, .enabled):
+        case .enabled, .offeredToHost, .offeredFromHost, .sentToHost, .receivedFromHost:
             return false
         }
     }
