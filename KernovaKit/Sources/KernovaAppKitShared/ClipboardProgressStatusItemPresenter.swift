@@ -192,7 +192,7 @@ public final class ClipboardProgressStatusItemPresenter {
         let dropdownOpen = slot.isDropdownOpen
         var skip: TransientStatusItemPopover.SkipReason?
         let decision = autoReveal.readoutChanged(readout, dropdownIsOpen: dropdownOpen) {
-            switch slot.show(calloutContent, as: .heldByOwner) {
+            switch slot.show(calloutContent, for: nil) {
             case .shown(let showing):
                 calloutShowing = showing
                 return true
