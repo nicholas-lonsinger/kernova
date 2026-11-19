@@ -2,10 +2,13 @@
 # Records passing lint and test runs and posts the `Commit Attestation` commit
 # status on HEAD.
 #
-#     Tools/attest.sh record <lint|test> -- <command> [<arg>...]
-#         Runs the command untouched and exits with its status. On exit 0 with
-#         the fingerprint unchanged across the run, records the fingerprint
-#         under that kind.
+#     Tools/attest.sh record <lint|test>
+#         Runs Tools/<kind>.sh, test's under the checkout's build lock, and
+#         exits with its status. On exit 0 with the fingerprint unchanged
+#         across the run, records the fingerprint under that kind. A lint run
+#         with untracked files present is not recorded: lint lists what it
+#         checks from git, while a check such as a link's target reads the
+#         disk, so an untracked file is read without being checked.
 #     Tools/attest.sh
 #         Attests a clean, pushed HEAD: posts success once its fingerprint has
 #         a record of each kind, running `make lint` and `make test` for the
@@ -13,12 +16,9 @@
 #     Tools/attest.sh post <success|failure> <description> [<target-url>]
 #         Posts the status on HEAD.
 #
-# The fingerprint covers what a run's outcome depends on: the content tree the
-# run reads, the Xcode and macOS builds, and the gitignored
-# Config/Local.xcconfig, which sets signing and entitlements. A test run
-# builds whatever is in the working tree, so its tree is what `git add -A`
-# would stage; lint covers the files git tracks, so its tree is what
-# `git add -u` would, and an untracked file is not taken as linted.
+# The fingerprint covers what a run's outcome depends on: the content tree
+# (what `git add -A` would stage), the Xcode and macOS builds, and the
+# gitignored Config/Local.xcconfig, which sets signing and entitlements.
 # Records live in the common git dir, so every worktree shares them. Statuses
 # on this public repo are world-readable, so a description names no host or
 # user.
@@ -30,7 +30,7 @@ set -uo pipefail
 CONTEXT='Commit Attestation'
 
 usage() {
-    echo 'usage: Tools/attest.sh [record <lint|test> -- <command> [<arg>...] | post <success|failure> <description> [<target-url>]]' >&2
+    echo 'usage: Tools/attest.sh [record <lint|test> | post <success|failure> <description> [<target-url>]]' >&2
     exit 2
 }
 
@@ -41,16 +41,14 @@ records_dir() { printf '%s/kernova-attest' "$(git rev-parse --path-format=absolu
 xcode_build() { xcodebuild -version 2>/dev/null | awk '/^Build version/ { print $3 }'; }
 macos_build() { sw_vers -buildVersion; }
 
-# content_tree <lint|test> — the tree that kind of run reads (see the header),
-# built in a copy of the index so its stat data is reused and the real index
-# stays untouched.
+# content_tree — the tree `git add -A` would stage, built in a copy of the
+# index so its stat data is reused and the real index stays untouched.
 content_tree() {
-    local index scratch tree stage
-    case "$1" in lint) stage=-u ;; test) stage=-A ;; esac
+    local index scratch tree
     index=$(git rev-parse --path-format=absolute --git-path index) || return 1
     scratch=$(mktemp -d) || return 1
     if [ -e "$index" ]; then cp "$index" "$scratch/index" || { rm -rf "$scratch"; return 1; }; fi
-    tree=$(cd "$(top)" && GIT_INDEX_FILE="$scratch/index" git add "$stage" && GIT_INDEX_FILE="$scratch/index" git write-tree)
+    tree=$(cd "$(top)" && GIT_INDEX_FILE="$scratch/index" git add -A && GIT_INDEX_FILE="$scratch/index" git write-tree)
     local status=$?
     rm -rf "$scratch"
     [ "$status" -eq 0 ] && printf '%s\n' "$tree"
@@ -88,24 +86,30 @@ write_record() {
 }
 
 record() {
-    case "${1:-}" in lint | test) ;; *) usage ;; esac
-    [ "${2:-}" = -- ] && [ $# -ge 3 ] || usage
-    local kind=$1
-    shift 2
-    local tree inputs='' before='' after='' status
-    if tree=$(content_tree "$kind") && inputs=$(fingerprint_inputs "$tree"); then
+    [ $# -eq 1 ] || usage
+    local kind=$1 root run
+    root=$(top) || die 'not in a git checkout'
+    case "$kind" in
+        lint) run=("$root/Tools/lint.sh") ;;
+        test) run=("$root/Tools/checkout-lock.sh" "$root/Tools/test.sh") ;;
+        *) usage ;;
+    esac
+    local tree inputs='' before='' after='' status untracked
+    if tree=$(content_tree) && inputs=$(fingerprint_inputs "$tree"); then
         before=$(fingerprint "$inputs")
     else
         echo 'attest: cannot fingerprint the working tree; this run will not be recorded' >&2
     fi
-    "$@"
+    "${run[@]}"
     status=$?
     [ "$status" -eq 0 ] && [ -n "$before" ] || return "$status"
-    if tree=$(content_tree "$kind") && after=$(fingerprint_inputs "$tree") && [ "$(fingerprint "$after")" = "$before" ]; then
+    if ! { tree=$(content_tree) && after=$(fingerprint_inputs "$tree") && [ "$(fingerprint "$after")" = "$before" ]; }; then
+        echo 'attest: the files changed during the run, so it is not recorded' >&2
+    elif [ "$kind" = lint ] && untracked=$(cd "$root" && git ls-files -o --exclude-standard) && [ -n "$untracked" ]; then
+        echo "attest: untracked files are present, so this lint run is not recorded: $(printf '%s\n' "$untracked" | head -5 | paste -sd ' ' -)" >&2
+    else
         write_record "$kind" "$before" "$inputs" ||
             echo "attest: cannot write the record of this passing run under $(records_dir)" >&2
-    else
-        echo 'attest: the files changed during the run, so it is not recorded' >&2
     fi
     return 0
 }

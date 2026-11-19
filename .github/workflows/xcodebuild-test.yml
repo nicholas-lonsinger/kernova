@@ -70,11 +70,6 @@ jobs:
       - name: Build for testing
         run: make build-for-testing 2>&1
 
-      # Reads load commands off the built app, so it runs after the build.
-      # The script's header says what it guards.
-      - name: Check weak framework links
-        run: Tools/check-weak-links.sh
-
       # llvm-cas keeps the two newest generations (the fresh primary and its
       # read-through fallback) and deletes the rest. The listing shows which
       # generations survive and the size that will be saved.
@@ -174,9 +169,8 @@ jobs:
           retention-days: 7
 
       # Lint runs whatever the build and tests did, so one run reports both.
-      # The macOS runner images ship shellcheck; install it only if a future
-      # image drops it, so `make lint` never silently skips static analysis
-      # here (it hard-fails on CI without it).
+      # `make lint` fails without shellcheck. The macOS runner images ship it;
+      # this installs it only if an image drops it.
       - name: Ensure shellcheck
         if: success() || failure()
         run: Tools/brew-install.sh shellcheck

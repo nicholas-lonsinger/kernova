@@ -378,12 +378,15 @@ Build settings for action build and target KernovaCLI:
     TARGET_BUILD_DIR = /tmp/CLI
 SETTINGS
 
-for build_target in build build-for-testing; do
-    run "$build_target resolves main app with spaces" 0 env FAKE_BUILD_SETTINGS="$tmp/settings" "$real_make" -s "$build_target"
-    expect '^binary=/tmp/Custom Build/Products/Release/Kernova.app/Contents/MacOS/Kernova$'
-    expect_count '^binary=' 1
-    expect '^app=/tmp/Custom Build/Products/Release/Kernova.app$'
-done
+run "build resolves main app with spaces" 0 env FAKE_BUILD_SETTINGS="$tmp/settings" "$real_make" -s build
+expect '^binary=/tmp/Custom Build/Products/Release/Kernova.app/Contents/MacOS/Kernova$'
+expect_count '^binary=' 1
+expect '^app=/tmp/Custom Build/Products/Release/Kernova.app$'
+# The fake build leaves no app behind, so the weak-link check fails on the
+# path it was given.
+run "build-for-testing checks the app it resolved" 2 env FAKE_BUILD_SETTINGS="$tmp/settings" "$real_make" -s build-for-testing
+expect '^binary=/tmp/Custom Build/Products/Release/Kernova.app/Contents/MacOS/Kernova$'
+expect_err '^check-weak-links: no built app at /tmp/Custom Build/Products/Release/Kernova.app '
 
 run "failed settings query suppresses binary" 2 env FAKE_BUILD_SETTINGS="$tmp/settings" FAKE_SETTINGS_STATUS=1 "$real_make" -s build
 reject '^binary='

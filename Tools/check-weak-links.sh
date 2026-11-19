@@ -14,14 +14,11 @@
 # A framework listed here that no image links at all is a failure rather than a
 # skip, for the same reason — "nothing to check" is what a broken check says.
 #
-# make lint: not run — it reads a built app; Tools/test.sh and CI run it
+# make lint: not run — it reads a built app; `make build-for-testing` and `make test` run it
 #
 # Usage:
-#   Tools/check-weak-links.sh [<path-to-.app>]
-#
-# With no argument it resolves the Debug Kernova.app: CI's fixed
-# -derivedDataPath when $CI is set, otherwise the arena
-# Tools/derived-data-path.sh reports. CONFIGURATION overrides Debug.
+#   Tools/check-weak-links.sh <path-to-.app>
+#     Tools/built-app.sh --check-weak-links resolves the app a build made.
 #
 # Written for bash 3.2, which is what macOS ships: no mapfile, no associative
 # arrays.
@@ -39,25 +36,11 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # floor; at or above it, a hard link is correct.
 weak_frameworks="AccessoryAccess:27.0"
 
-configuration="${CONFIGURATION:-Debug}"
-
-resolve_app() {
-    if [ -n "${CI:-}" ]; then
-        echo "DerivedData/Kernova/Build/Products/$configuration/Kernova.app"
-        return
-    fi
-    local arena
-    arena=$(Tools/derived-data-path.sh 2>/dev/null) || return 1
-    echo "$arena/Build/Products/$configuration/Kernova.app"
-}
-
-app="${1:-}"
-if [ -z "$app" ]; then
-    app=$(resolve_app) || {
-        echo "check-weak-links: could not resolve the build arena" >&2
-        exit 1
-    }
+if [ $# -ne 1 ] || [ -z "$1" ]; then
+    echo 'usage: Tools/check-weak-links.sh <path-to-.app>' >&2
+    exit 2
 fi
+app=$1
 
 if [ ! -d "$app" ]; then
     echo "check-weak-links: no built app at $app — build first" >&2

@@ -1,48 +1,29 @@
 # Kernova build & test invocations.
 #
-# These targets own the `xcodebuild` invocations — the flags are not the
-# obvious ones, so never hand-write one. Inside Xcode, just use the IDE
+# These targets own the `xcodebuild` invocations, with the flags
+# Tools/lib/xcodebuild-flags.sh gives them — they are not the obvious ones, so
+# never hand-write one. Inside Xcode, just use the IDE
 # (CMD-B / CMD-U); this Makefile is for terminal, CI, and tooling use.
 
-PROJECT      := Kernova.xcodeproj
-SCHEME       := Kernova
-DESTINATION  := platform=macOS
+XCODEBUILD_LIB := . Tools/lib/xcodebuild-flags.sh
+PROJECT        := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_project"')
+SCHEME         := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_scheme"')
+DESTINATION    := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_destination"')
 
 DERIVED_DATA_ROOT := DerivedData
-DERIVED_DATA      := $(DERIVED_DATA_ROOT)/$(basename $(PROJECT))
 RESULT_BUNDLE     := artifacts/TestResults.xcresult
 
-# CI-only settings. `CI=1 make test` reproduces a CI build locally.
 ifneq ($(strip $(CI)),)
-# OMIT -derivedDataPath on a dev machine so a terminal build shares the Xcode
-# GUI's arena; pass it under CI so artifacts land at a fixed path. Omitting is
-# load-bearing: the flag, even at the identical resolved path, records a
-# different arena identity in the build description, and every CLI↔GUI switch
-# then rebuilds the whole graph both ways (measured in Relative mode).
-DERIVED_DATA_FLAG  := -derivedDataPath $(DERIVED_DATA)
-# The index store serves an editor CI does not have. The compilation cache is on
-# project-wide in Config/Base.xcconfig and repeated here because a package
-# target never reads a project xcconfig. The limit is below any build's
-# output, so every build rolls the store over into a fresh generation that
-# holds exactly what that build produced or looked up — the workflow prunes
-# the generation left behind and saves the rest.
-CI_FLAGS           := COMPILER_INDEX_STORE_ENABLE=NO \
-                      COMPILATION_CACHE_ENABLE_CACHING=YES \
-                      COMPILATION_CACHE_LIMIT_SIZE=1M
 RESULT_BUNDLE_FLAG := -resultBundlePath $(RESULT_BUNDLE)
 endif
 
-# Build configuration, passed explicitly rather than relying on the scheme's
-# per-action default (Debug). Override on the command line to build/test in
-# Release, e.g. `make build CONFIGURATION=Release`.
+# Override on the command line to build in Release, e.g.
+# `make build CONFIGURATION=Release`. `make test` tests Debug only.
 CONFIGURATION ?= Debug
 
-XCODEBUILD_FLAGS = -project $(PROJECT) \
-                   -scheme $(SCHEME) \
-                   -destination '$(DESTINATION)' \
-                   $(DERIVED_DATA_FLAG) \
-                   -configuration $(CONFIGURATION) \
-                   $(CI_FLAGS)
+# Tools/lib/xcodebuild-flags.sh owns the flags; CI is passed in so a
+# command-line `CI=1` reaches it as an environment one does.
+XCODEBUILD_FLAGS = $(shell CI='$(CI)' bash -c '$(XCODEBUILD_LIB) && xcodebuild_flags "$$1"' _ '$(CONFIGURATION)')
 
 # Every command that runs xcodebuild against this checkout — Periphery's
 # included, which resolves packages into the checkout's shared files — runs
@@ -71,7 +52,7 @@ help:
 	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-22s %s\n", $$1, $$2}'
 	@printf '\n'
 	@printf '  make test-suite requires SUITE=<Target/Suite>, e.g. SUITE=KernovaVirtualizationTests/ConfigurationBuilderTests or SUITE=KernovaCoreTests/VMConfigurationTests\n'
-	@printf '  Append CONFIGURATION=Release to build/test in Release (default: Debug)\n'
+	@printf '  Append CONFIGURATION=Release to build or test-without-building in Release (default: Debug); make test runs Debug only\n'
 	@printf '  Prefix CI=1 to build/test with the CI-only settings (fixed DerivedData path, no index store)\n'
 
 # Everything a fresh clone needs beyond Xcode itself, composed from the
@@ -127,12 +108,12 @@ locked-build:
 	xcodebuild $(XCODEBUILD_FLAGS) build
 	@Tools/built-app.sh $(XCODEBUILD_FLAGS)
 
-build-for-testing: check-hooks ## Compile the app and test bundles without running them
+build-for-testing: check-hooks ## Compile the app and test bundles without running them, then check the built app's weak links
 	$(LOCKED_TWIN)
 
 locked-build-for-testing:
 	xcodebuild $(XCODEBUILD_FLAGS) build-for-testing
-	@Tools/built-app.sh $(XCODEBUILD_FLAGS)
+	@Tools/built-app.sh --check-weak-links $(XCODEBUILD_FLAGS)
 
 # Removes both build arenas this checkout can have: the in-worktree
 # DerivedData/ (CI-style explicit-flag builds, and Relative-mode machines) and
@@ -157,8 +138,9 @@ locked-clean:
 		*) Tools/ghosts.sh --evict "$$arena" ;; \
 	esac
 
-test: check-hooks ## Run the full test suite (every test target in Kernova.xctestplan), then check the built app's weak links; a passing run is recorded for `make attest`
-	$(LOCKED) Tools/attest.sh record test -- Tools/test.sh $(XCODEBUILD_FLAGS)
+test: check-hooks ## Run the full test suite (every test target in Kernova.xctestplan) in Debug, then check the built app's weak links; a passing run is recorded for `make attest`
+	@test '$(CONFIGURATION)' = Debug || { echo 'make test runs Debug only, the build its record covers; build-for-testing and test-without-building take CONFIGURATION=$(CONFIGURATION)' >&2; exit 2; }
+	Tools/attest.sh record test
 
 attest: check-hooks ## Post the `Commit Attestation` status on the pushed HEAD, reusing a passing `make lint` and `make test` of the same content or running them
 	@Tools/attest.sh
@@ -217,7 +199,7 @@ format: ## Rewrite Swift sources in place via swift-format
 	$(SWIFT_FORMAT) format --in-place --recursive $(SWIFT_SOURCE_DIRS)
 
 lint: ## Run Tools/lint.sh: shell analysis, the Tools/check-*.sh checks, swift-format --strict and the fixture suites; a passing run is recorded for `make attest`
-	@Tools/attest.sh record lint -- Tools/lint.sh
+	@Tools/attest.sh record lint
 
 # The macOS half of the dead-code scan, reading .periphery.yml, over one fixed
 # arena per checkout. Periphery's own build would go to

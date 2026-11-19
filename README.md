@@ -196,7 +196,7 @@ make setup   # one-time per clone; idempotent, rerun any time
 | `make setup` step | What it does |
 |---|---|
 | **Git hooks** | Activates the checked-in `.githooks/` — a pre-push `make lint` (`git push --no-verify` bypasses once), a commit-msg check that an agent's co-author trailer names the model and version, and a post-checkout hook that readies new worktrees. |
-| **Homebrew tools** | `shellcheck`, `gh`, `xcode-build-server` — skipped if present or if [Homebrew](https://brew.sh) is absent; none is needed to build or test. |
+| **Homebrew tools** | `shellcheck`, `gh`, `xcode-build-server` — skipped if present or if [Homebrew](https://brew.sh) is absent; none is needed to build or test, and `make lint` (and so the pre-push hook) needs `shellcheck`. |
 | **swift.org toolchain** | swiftly, the Swift release `.swift-version` pins and its Static Linux SDK, which the app build cross-builds the Linux guest agent with; Xcode's own toolchain stays the default `swift`. |
 | **Ubuntu SDK** | Generated for that release (minutes, about 850 MB); `make dead-code` cross-builds its Linux half with it, and without it reports macOS alone. |
 | **`buildServer.json`** | Gives editors and language servers the project's real compiler flags; build once for them to resolve. |
@@ -205,7 +205,7 @@ make setup   # one-time per clone; idempotent, rerun any time
 
 Then open `Kernova.xcodeproj`, pick the `Kernova` scheme, and run (⌘R). `make` alone lists every build, test, format, and lint target.
 
-The flags of every `xcodebuild` build and test live in the `Makefile` (`make help`). Build settings live in `Config/` — `Base.xcconfig` project-wide, `Config/Targets/<Target>.xcconfig` per target. Lint is `Tools/lint.sh`, which `make lint` runs, and the hooks `make setup` activates are in `.githooks/`. Each of those files explains itself in its own header.
+Every `xcodebuild` build and test goes through the `Makefile` (`make help`). Build settings live in `Config/` — `Base.xcconfig` project-wide, `Config/Targets/<Target>.xcconfig` per target. Lint is `Tools/lint.sh`, which `make lint` runs, and the hooks `make setup` activates are in `.githooks/`. Each of those files explains itself in its own header.
 
 > [!IMPORTANT]
 > **Debug needs no Apple account** — it signs ad-hoc, so a fresh clone builds and runs as-is, minus the features a provisioning profile authorizes and the `kernova` CLI, which reaches the app through an app group an ad-hoc signature doesn't get. With a development certificate, point Debug at it via a gitignored `Config/Local.xcconfig` (from `Config/Local.xcconfig.example`) so privacy grants survive rebuilds and the CLI works. **Distributing** a build needs a paid membership and a distribution identity.
