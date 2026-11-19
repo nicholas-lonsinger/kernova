@@ -1,6 +1,30 @@
 import AppKit
 import KernovaKit
 
+/// How long a callout stays in the status item's slot, which follows from the
+/// kind of thing it says.
+public enum CalloutLifetime: Equatable, Sendable {
+    /// Up until its owner dismisses it: a transfer's live readout.
+    case heldByOwner
+    /// Information, which goes away by itself after `seconds`.
+    case informational(seconds: TimeInterval)
+    /// An error, which stays until the user clicks it or the status item.
+    /// `announcement` is what VoiceOver speaks as it goes up.
+    case error(announcement: String)
+
+    /// Where the kind stands when callouts compete for the slot: a callout
+    /// takes the slot from one of the same or a lower standing, and is skipped
+    /// while one of a higher standing is up. An error outranks information,
+    /// so nothing but a newer error takes an unread one down.
+    fileprivate var standing: Int {
+        switch self {
+        case .heldByOwner: 0
+        case .informational: 1
+        case .error: 2
+        }
+    }
+}
+
 /// A status item's one callout slot, as the readout presenter uses it.
 ///
 /// It has no unscoped dismissal: a holder ends only its own showing.
@@ -9,9 +33,9 @@ public protocol StatusItemCalloutSlot: AnyObject {
     /// Whether the status item's dropdown is on screen.
     var isDropdownOpen: Bool { get }
 
-    /// Shows `content` for `duration` seconds, or until dismissed when `nil`,
-    /// and says whether it went up; the caller logs the outcome.
-    func show(_ content: NSViewController, for duration: TimeInterval?)
+    /// Shows `content` for `lifetime`, and says whether it went up; the caller
+    /// logs the outcome.
+    func show(_ content: NSViewController, as lifetime: CalloutLifetime)
         -> TransientStatusItemPopover.ShowResult
 
     /// Closes `showing`'s callout if it still holds the slot; `false` otherwise.
@@ -22,12 +46,11 @@ public protocol StatusItemCalloutSlot: AnyObject {
 /// The menu-bar status item's one popover slot: a callout anchored to the
 /// item's button, for whatever Kernova shows there without the user asking.
 ///
-/// Every callout shares the anchor, so they share the slot. A callout with a
-/// duration replaces whatever the slot held; one without — up until its owner
-/// dismisses it — never displaces a timed one before its time is up, and is
-/// skipped instead. A callout is non-modal, so it never takes the user's next
-/// click; the status item's menu opens only from the user's own click. The menu
-/// is detached for as long as a callout is up and reattached on every dismissal
+/// Every callout shares the anchor, so they share the slot, and which callout
+/// holds it follows ``CalloutLifetime``'s standing. A callout is non-modal and
+/// stays up through clicks elsewhere, which go to whatever was clicked; the
+/// status item's menu opens only from the user's own click. The menu is
+/// detached for as long as a callout is up and reattached on every dismissal
 /// path, and a click on the status item while a callout is up dismisses it and
 /// opens the menu.
 @MainActor
@@ -42,21 +65,21 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
         /// The status item can't carry a popover: hidden by the app, dropped
         /// from a crowded menu bar, or with its dropdown already open.
         case unreachable(visible: Bool, onScreen: Bool, menuOpen: Bool)
-        /// An untimed callout would displace a timed one still up.
-        case timedCalloutUp
+        /// A callout of a higher standing is up.
+        case outranked
 
         /// The reason as a log line names it.
         public var description: String {
             switch self {
             case .unreachable(let visible, let onScreen, let menuOpen):
                 "visible=\(visible), onScreen=\(onScreen), menuOpen=\(menuOpen)"
-            case .timedCalloutUp:
-                "a timed callout is up"
+            case .outranked:
+                "a callout that outranks it is up"
             }
         }
     }
 
-    /// What became of a ``show(_:for:)``.
+    /// What became of a ``show(_:as:)``.
     public enum ShowResult: Equatable, Sendable {
         /// The callout went up, for this showing.
         case shown(Showing)
@@ -64,22 +87,22 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
         case skipped(SkipReason)
     }
 
-    /// Which showing holds the slot, and whether it is timed.
+    /// Which showing holds the slot, and its lifetime.
     struct Tenancy {
         private var lastSerial: UInt64 = 0
         private(set) var current: Showing?
-        /// Whether `current` ends on its own timer.
-        private var currentIsTimed = false
+        /// The standing of `current`'s lifetime.
+        private var currentStanding = 0
 
-        /// Hands the slot to a new showing, replacing whichever held it — or
-        /// `nil`, leaving the slot as it was, when an untimed showing would
-        /// displace a timed one still up.
-        mutating func begin(timed: Bool) -> Showing? {
-            guard timed || current == nil || !currentIsTimed else { return nil }
+        /// Hands the slot to a new showing of `lifetime`, replacing whichever
+        /// held it — or `nil`, leaving the slot as it was, when one of a higher
+        /// standing holds it.
+        mutating func begin(_ lifetime: CalloutLifetime) -> Showing? {
+            guard current == nil || lifetime.standing >= currentStanding else { return nil }
             lastSerial += 1
             let showing = Showing(serial: lastSerial)
             current = showing
-            currentIsTimed = timed
+            currentStanding = lifetime.standing
             return showing
         }
 
@@ -129,20 +152,23 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
     /// Whether the status item's dropdown is on screen.
     public var isDropdownOpen: Bool { isDropdownOpenProvider() }
 
-    /// Shows `content` for `duration` seconds or — when `duration` is `nil` —
-    /// until something dismisses it.
+    /// Shows `content` for `lifetime`.
+    ///
+    /// An error's content is wrapped so a click anywhere on it dismisses it,
+    /// and VoiceOver announces it, reaches it as one button and dismisses it
+    /// by pressing that button.
     ///
     /// Logs nothing: the caller logs the outcome at the level its own rate
     /// calls for.
-    public func show(_ content: NSViewController, for duration: TimeInterval? = nil) -> ShowResult {
+    public func show(_ content: NSViewController, as lifetime: CalloutLifetime) -> ShowResult {
         let visible = statusItem.isVisible
         let onScreen = statusItem.isButtonOnScreen
         let dropdownOpen = isDropdownOpen
         guard let button = statusItem.button, visible, onScreen, !dropdownOpen else {
             return .skipped(.unreachable(visible: visible, onScreen: onScreen, menuOpen: dropdownOpen))
         }
-        guard let showing = tenancy.begin(timed: duration != nil) else {
-            return .skipped(.timedCalloutUp)
+        guard let showing = tenancy.begin(lifetime) else {
+            return .skipped(.outranked)
         }
 
         // Re-arm cleanly if a prior callout is still up.
@@ -163,17 +189,32 @@ public final class TransientStatusItemPopover: NSObject, StatusItemCalloutSlot {
         // soft quit deactivates the app moments after the reminder shows, acting
         // on a clipboard refusal means switching to another app to retry the
         // paste, and a transfer's readout runs while the user works elsewhere.
-        // `duration`, its owner, a click on the status item, and the content's
-        // own controls bound the lifetime instead.
-        presenter.show(
-            content: content, from: button, preferredEdge: .minY, behavior: .applicationDefined)
-
-        if let duration {
+        // `lifetime`, a click on the status item, and the content's own
+        // controls bound the lifetime instead.
+        let shown: NSViewController
+        switch lifetime {
+        case .heldByOwner:
+            shown = content
+        case .informational(let seconds):
+            shown = content
             dismissTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
                 guard !Task.isCancelled else { return }
                 self?.dismiss(showing)
             }
+        case .error(let announcement):
+            shown = ClickToDismissCalloutController(
+                content: content, label: announcement, onDismiss: { [weak self] in self?.dismiss(showing) })
+        }
+        presenter.show(
+            content: shown, from: button, preferredEdge: .minY, behavior: .applicationDefined)
+        if case .error(let announcement) = lifetime {
+            NSAccessibility.post(
+                element: shown.view, notification: .announcementRequested,
+                userInfo: [
+                    .announcement: announcement,
+                    .priority: NSAccessibilityPriorityLevel.high.rawValue,
+                ])
         }
         return .shown(showing)
     }

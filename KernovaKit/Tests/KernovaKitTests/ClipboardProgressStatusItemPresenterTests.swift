@@ -25,11 +25,11 @@ struct ClipboardProgressStatusItemPresenterTests {
 
         var current: TransientStatusItemPopover.Showing? { tenancy.current }
 
-        func show(_ content: NSViewController, for duration: TimeInterval?)
+        func show(_ content: NSViewController, as lifetime: CalloutLifetime)
             -> TransientStatusItemPopover.ShowResult
         {
-            guard let showing = tenancy.begin(timed: duration != nil) else {
-                return .skipped(.timedCalloutUp)
+            guard let showing = tenancy.begin(lifetime) else {
+                return .skipped(.outranked)
             }
             shown.append(content)
             return .shown(showing)
@@ -41,13 +41,13 @@ struct ClipboardProgressStatusItemPresenterTests {
             return true
         }
 
-        /// Puts a timed callout up — a notice — as another owner would.
-        func showNotice() -> TransientStatusItemPopover.Showing? {
-            guard case .shown(let showing) = show(NSViewController(), for: 6) else { return nil }
+        /// Puts a callout of `lifetime` up, as another owner would.
+        func showOther(_ lifetime: CalloutLifetime) -> TransientStatusItemPopover.Showing? {
+            guard case .shown(let showing) = show(NSViewController(), as: lifetime) else { return nil }
             return showing
         }
 
-        /// Ends a showing the way its own timer would.
+        /// Ends a showing the way its timer, or the user's click, would.
         func expire(_ showing: TransientStatusItemPopover.Showing) {
             _ = tenancy.end(showing)
         }
@@ -113,10 +113,12 @@ struct ClipboardProgressStatusItemPresenterTests {
         #expect(slot.events == [.dismissed(readout), .cancelled(operation)])
     }
 
-    @Test("a timed callout already up holds the reveal back until its time is up")
-    func aTimedCalloutHoldsTheRevealBack() throws {
+    @Test(
+        "information or an error already up holds the reveal back until it ends",
+        arguments: [CalloutLifetime.informational(seconds: 4.5), .error(announcement: "Files not copied.")])
+    func anotherCalloutHoldsTheRevealBack(_ lifetime: CalloutLifetime) throws {
         let presenter = makePresenter()
-        let notice = try #require(slot.showNotice())
+        let notice = try #require(slot.showOther(lifetime))
 
         presenter.apply(running(elapsed: 5))
         #expect(slot.current == notice)

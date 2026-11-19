@@ -105,11 +105,9 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// Which surface presents each VM's refusal.
     private var noticeLedger = ClipboardNoticeLedger()
 
-    /// How long a clipboard notice stays up unattended.
-    private static let clipboardNoticeDuration: TimeInterval = 6
-
-    /// How long the soft-quit reminder stays up unattended.
-    private static let softQuitReminderDuration: TimeInterval = 4.5
+    /// How long the soft-quit reminder, which is information, stays up
+    /// unattended.
+    private static let softQuitReminderLifetime = CalloutLifetime.informational(seconds: 4.5)
 
     init(
         viewModel: VMLibraryViewModel,
@@ -206,7 +204,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     // MARK: - Clipboard notice
 
     /// Presents each VM's newly raised refusal where ``ClipboardNoticeLedger``
-    /// routes it.
+    /// routes it, as an error: up until the user clicks it or the status item.
     ///
     /// A notice the status item can't carry is dropped rather than deferred:
     /// the dropdown's own line is the fallback, and a refusal replayed later
@@ -223,9 +221,8 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
                     == .notice
             else { continue }
             let content = ClipboardNoticeViewController(wording: wording)
-            if case .skipped(let reason) = transientPopover.show(
-                content, for: Self.clipboardNoticeDuration)
-            {
+            let lifetime = CalloutLifetime.error(announcement: "\(wording.headline) \(wording.message)")
+            if case .skipped(let reason) = transientPopover.show(content, as: lifetime) {
                 Self.logger.log(
                     .info,
                     "Clipboard notice for '\(instance.name, privacy: .public)' skipped — \(String(describing: reason), privacy: .public)"
@@ -251,9 +248,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
             Self.logger.log(.info, "Soft-quit menu-bar reminder silenced by the user")
             self.transientPopover.dismiss()
         })
-        if case .skipped(let reason) = transientPopover.show(
-            content, for: Self.softQuitReminderDuration)
-        {
+        if case .skipped(let reason) = transientPopover.show(content, as: Self.softQuitReminderLifetime) {
             Self.logger.log(
                 .info,
                 "Soft-quit reminder skipped — \(String(describing: reason), privacy: .public)")

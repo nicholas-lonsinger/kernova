@@ -31,9 +31,6 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
         statusItem: statusItem, menu: menu,
         isDropdownOpen: { [weak self] in self?.isMenuOpen ?? false })
 
-    /// How long a clipboard notice stays up unattended.
-    private static let clipboardNoticeDuration: TimeInterval = 6
-
     init(
         connectionState: @escaping () -> HostConnectionState,
         logForwardingEnabled: @escaping () -> Bool,
@@ -71,15 +68,17 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
     /// The notice ends a gesture the user made in this guest and produces no
     /// other signal — the paste simply yields nothing, the copy simply crosses
     /// short — so the line is shown rather than left for whenever the menu is
-    /// next opened. The dropdown keeps the same line, which is the fallback when
-    /// the status item can't carry the callout.
+    /// next opened, as an error: up until the user clicks it or the status
+    /// item. The dropdown keeps the same line, which is the fallback when the
+    /// status item can't carry the callout.
     func clipboardNoticeRaised() {
         let activity = clipboardActivity()
         // Delivered asynchronously, so a later activity may already have
         // replaced the notice.
         guard activity.isNotice else { return }
-        let content = AgentClipboardNoticeViewController(line: AgentMenuText.clipboardLine(activity))
-        if case .skipped(let reason) = calloutSlot.show(content, for: Self.clipboardNoticeDuration) {
+        let line = AgentMenuText.clipboardLine(activity)
+        let content = AgentClipboardNoticeViewController(line: line)
+        if case .skipped(let reason) = calloutSlot.show(content, as: .error(announcement: line)) {
             Self.logger.log(
                 .info, "Clipboard notice skipped — \(String(describing: reason), privacy: .public)")
             return
