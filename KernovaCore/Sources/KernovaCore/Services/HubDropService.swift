@@ -2,6 +2,7 @@ import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
 import KernovaAgentRuntime
+import KernovaClipboardItems
 import KernovaKit
 import KernovaLogging
 import KernovaWire
@@ -34,6 +35,8 @@ package final class HubDropService: Sendable {
     private let stagingRoot: ProcessStagingRoot
     /// Read and written on the main actor only; a lock because the service is shared with the hub's queue.
     private let offers = Mutex<[Data: Offer]>([:])
+    /// Each pull's wait for its content, and the grant it is read under until its serve ends.
+    private let serves = ClipboardServeWaits()
     private let reporter: ClipboardTransferReporter
     #if DEBUG
     private let stagingReleases = Mutex<[Task<Void, Never>]>([])
@@ -50,9 +53,10 @@ package final class HubDropService: Sendable {
         ItemFeatureOwner(
             usable: { _ in },
             events: { [self] _, event in
+                serves.end(by: event)
                 DispatchQueue.main.async { [self] in MainActor.assumeIsolated { handle(event) } }
             },
-            content: { [self] _, request, _ in content(request) })
+            content: { [self] id, request, _ in content(id, request) })
     }
 
     /// Offers through `hub`, the one built with ``owner``.
@@ -184,39 +188,39 @@ package final class HubDropService: Sendable {
     }
 
     /// What a pull of an open offer is served from, on the pull's own queue: a promise waits there for its
-    /// source to write it.
-    private func content(_ request: PullRequest) -> Result<ItemContent, WireError> {
+    /// source to write it, or for the pull to end.
+    private func content(_ id: ItemPullID, _ request: PullRequest) -> Result<ItemContent, WireError> {
         dispatchPrecondition(condition: .notOnQueue(.main))
-        let served = Mutex<Result<ItemContent, WireError>?>(nil)
-        let done = DispatchSemaphore(value: 0)
-        Task { @MainActor [self] in
-            let result = await serve(request)
-            served.withLock { $0 = result }
-            done.signal()
+        guard let wait = serves.open(id, token: request.token) else {
+            return .failure(WireError(.cancelled, debugDetail: "the pull ended before it was served"))
         }
-        done.wait()
-        return served.withLock { $0 } ?? .failure(WireError(.internal))
+        let serving = Task { @MainActor [self] in wait.answer(await serve(request)) }
+        let answer = wait.result()
+        serving.cancel()
+        serves.served(id, holding: answer.access)
+        return answer.content
     }
 
     @MainActor
-    private func serve(_ request: PullRequest) async -> Result<ItemContent, WireError> {
+    private func serve(_ request: PullRequest) async -> ClipboardServeWaits.Answer {
         guard let source = offers.withLock({ $0[request.token]?.source }) else {
-            return .failure(WireError(.itemOfferStale, debugDetail: "the drop is no longer offered"))
+            return .init(.failure(WireError(.itemOfferStale, debugDetail: "the drop is no longer offered")))
         }
-        let served: ClipboardServedRepresentation
+        let served: ClipboardServed
         do throws(ClipboardServeError) {
             served = try await source.serve(item: Int(request.item), representation: Int(request.representation))
         } catch {
-            return .failure(
-                error == .unavailable
-                    ? WireError(.itemRepresentationUnavailable, debugDetail: "the dropped item is gone")
-                    : WireError(.readFailed, debugDetail: "the dropped item could not be read"))
+            return .init(
+                .failure(
+                    error == .unavailable
+                        ? WireError(.itemRepresentationUnavailable, debugDetail: "the dropped item is gone")
+                        : WireError(.readFailed, debugDetail: "the dropped item could not be read")))
         }
-        switch served {
+        switch served.representation {
         case .file(let url), .folder(let url):
-            return .success(.tree(path: url.path))
+            return .init(.success(.tree(path: url.path)), access: served.access)
         case .bytes(let data):
-            return .success(.inline(data))
+            return .init(.success(.inline(data)))
         }
     }
 

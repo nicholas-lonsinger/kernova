@@ -12,8 +12,41 @@ import KernovaSynchronization
 /// path: a grant the read never took then costs no other holder its access.
 public final class SandboxFileGrants: Sendable {
     /// This process's grants.
-    public static let shared = SandboxFileGrants(
-        start: { $0.startAccessingSecurityScopedResource() }, stop: { $0.stopAccessingSecurityScopedResource() })
+    public static let shared = SandboxFileGrants(.system)
+
+    /// The calls into the sandbox the grants make.
+    public struct Platform: Sendable {
+        /// Starts access to a security-scoped URL, true when it took a grant.
+        public var start: @Sendable (URL) -> Bool
+        /// Gives back one grant of the URL's path.
+        public var stop: @Sendable (URL) -> Void
+        /// A security-scoped bookmark of the file or folder at the URL, or nil when this process can't make one.
+        public var bookmark: @Sendable (URL) -> Data?
+        /// The security-scoped URL of the file or folder a bookmark names now, or nil when it no longer resolves.
+        public var resolve: @Sendable (Data) -> URL?
+
+        /// Calls that make `start`, `stop`, `bookmark` and `resolve`.
+        public init(
+            start: @escaping @Sendable (URL) -> Bool, stop: @escaping @Sendable (URL) -> Void,
+            bookmark: @escaping @Sendable (URL) -> Data?, resolve: @escaping @Sendable (Data) -> URL?
+        ) {
+            self.start = start
+            self.stop = stop
+            self.bookmark = bookmark
+            self.resolve = resolve
+        }
+
+        /// The App Sandbox's.
+        public static let system = Platform(
+            start: { $0.startAccessingSecurityScopedResource() }, stop: { $0.stopAccessingSecurityScopedResource() },
+            bookmark: { try? $0.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil) },
+            resolve: { bookmark in
+                var stale = false
+                return try? URL(
+                    resolvingBookmarkData: bookmark, options: [.withSecurityScope, .withoutUI, .withoutMounting],
+                    relativeTo: nil, bookmarkDataIsStale: &stale)
+            })
+    }
 
     /// One grant this process holds of `url`'s path, given back once: at ``release()``, or once nothing holds it.
     public final class Grant: Sendable {
@@ -51,23 +84,35 @@ public final class SandboxFileGrants: Sendable {
         var released: [URL] = []
     }
 
-    private let start: @Sendable (URL) -> Bool
-    private let stop: @Sendable (URL) -> Void
+    private let platform: Platform
     private let paths = Locked<[String: Holders]>([:])
 
-    /// Grants that `start` takes and `stop` gives back.
-    public init(start: @escaping @Sendable (URL) -> Bool, stop: @escaping @Sendable (URL) -> Void) {
-        self.start = start
-        self.stop = stop
+    /// Grants that `platform` takes and gives back.
+    public init(_ platform: Platform) {
+        self.platform = platform
     }
 
     /// Starts access to the security-scoped `url`: the grant it took, or nil when it took none.
     public func startAccessing(_ url: URL) -> Grant? {
         paths.withLock { paths in
-            guard start(url) else { return nil }
+            guard platform.start(url) else { return nil }
             paths[Self.path(of: url), default: Holders()].count += 1
             return Grant(url: url, grants: self, started: true)
         }
+    }
+
+    /// A security-scoped bookmark of the file or folder at `url`, which this process makes only while it holds a
+    /// grant of it; nil when it can't make one.
+    public func bookmark(of url: URL) -> Data? {
+        platform.bookmark(url)
+    }
+
+    /// The file or folder `bookmark` names now, wherever it has moved since: its URL, and the grant started for it,
+    /// nil for one that needs none, which whatever reads it holds until it has. Nil when the bookmark no longer
+    /// resolves.
+    public func reach(_ bookmark: Data) -> (url: URL, grant: Grant?)? {
+        guard let url = platform.resolve(bookmark) else { return nil }
+        return (url, startAccessing(url))
     }
 
     /// The grant a pasteboard read took of the file or folder `url` names.
@@ -82,18 +127,19 @@ public final class SandboxFileGrants: Sendable {
         paths.withLock { paths in
             let path = Self.path(of: url)
             guard var holders = paths[path] else { return }
-            if started { stop(url) } else { holders.released.append(url) }
+            if started { platform.stop(url) } else { holders.released.append(url) }
             holders.count -= 1
             guard holders.count <= 0 else {
                 paths[path] = holders
                 return
             }
             paths[path] = nil
-            for url in holders.released { stop(url) }
+            for url in holders.released { platform.stop(url) }
         }
     }
 
+    /// `url`'s path, its links resolved, so a bookmark's URL and a pasteboard's name one path alike.
     private static func path(of url: URL) -> String {
-        url.standardizedFileURL.path
+        url.resolvingSymlinksInPath().path
     }
 }

@@ -434,35 +434,36 @@ public final class ClipboardItemExchange {
             return .failure(WireError(.cancelled, debugDetail: "the pull ended before it was served"))
         }
         let serving = Task { @MainActor in wait.answer(await self.serve(request)) }
-        let result = wait.result()
+        let answer = wait.result()
         serving.cancel()
-        serves.served(id)
-        return result
+        serves.served(id, holding: answer.access)
+        return answer.content
     }
 
-    /// Serves `request` from this side's offer.
-    private func serve(_ request: PullRequest) async -> Result<ItemContent, WireError> {
+    /// Serves `request` from this side's offer: its content, and the grant a FILE or FOLDER is read under.
+    private func serve(_ request: PullRequest) async -> ClipboardServeWaits.Answer {
         guard let offered = openLocal, offered.token == request.token else {
-            return .failure(WireError(.itemRepresentationUnavailable, debugDetail: "not this side's open offer"))
+            return .init(
+                .failure(WireError(.itemRepresentationUnavailable, debugDetail: "not this side's open offer")))
         }
         let source = offered.source
         do throws(ClipboardServeError) {
             let served = try await source.serve(item: Int(request.item), representation: Int(request.representation))
             onServed?()
-            switch served {
+            switch served.representation {
             case .bytes(let data):
-                return .success(.inline(data))
+                return .init(.success(.inline(data)))
             case .file(let url), .folder(let url):
-                return .success(.tree(path: url.path))
+                return .init(.success(.tree(path: url.path)), access: served.access)
             }
         } catch {
             switch error {
             case .unavailable:
                 // What the offer was read from is gone, so it can serve nothing more: it ends.
                 if openLocal?.source === source { withdrawLocal() }
-                return .failure(WireError(.itemRepresentationUnavailable, debugDetail: "the source is gone"))
+                return .init(.failure(WireError(.itemRepresentationUnavailable, debugDetail: "the source is gone")))
             case .readFailed:
-                return .failure(WireError(.readFailed, debugDetail: "the source could not be read"))
+                return .init(.failure(WireError(.readFailed, debugDetail: "the source could not be read")))
             }
         }
     }
@@ -610,48 +611,68 @@ public final class ClipboardItemExchange {
 }
 
 /// The waits of the pulls this side serves, each ended by its pull's end or its offer's: every pull's content is
-/// asked for once and its `.serveEnded` arrives once, in either order, and an entry lasts until both have.
-final class ClipboardServeWaits: Sendable {
+/// asked for once and its `.serveEnded` arrives once, in either order, and an entry lasts until both have. A pull's
+/// FILE or FOLDER is read after its content is answered, until the pull's serve ends, so the entry holds the grant
+/// it is read under until then.
+public final class ClipboardServeWaits: Sendable {
+    /// A pull's content, and the grant its FILE or FOLDER is read under.
+    public struct Answer: Sendable {
+        /// What the pull is served.
+        public let content: Result<ItemContent, WireError>
+        /// The grant a FILE or FOLDER is read under, nil when it needs none.
+        public let access: SandboxFileGrants.Grant?
+
+        /// `content`, read under `access`.
+        public init(_ content: Result<ItemContent, WireError>, access: SandboxFileGrants.Grant? = nil) {
+            self.content = content
+            self.access = access
+        }
+    }
+
     /// One pull's wait for its content: the first answer wins.
-    final class Wait: Sendable {
+    public final class Wait: Sendable {
         let token: Data
-        private let answered = Locked<Result<ItemContent, WireError>?>(nil)
+        private let answered = Locked<Answer?>(nil)
         private let signal = DispatchSemaphore(value: 0)
 
         init(token: Data) {
             self.token = token
         }
 
-        func answer(_ result: Result<ItemContent, WireError>) {
+        /// Answers the wait with `answer`, unless it was answered already.
+        public func answer(_ answer: Answer) {
             let first = answered.withLock { answered -> Bool in
                 guard answered == nil else { return false }
-                answered = result
+                answered = answer
                 return true
             }
             if first { signal.signal() }
         }
 
         /// Parks the calling thread until the first answer.
-        func result() -> Result<ItemContent, WireError> {
+        public func result() -> Answer {
             signal.wait()
-            guard let result = answered.withLock({ $0 }) else { preconditionFailure("a wait signalled unanswered") }
-            return result
+            guard let answer = answered.withLock({ $0 }) else { preconditionFailure("a wait signalled unanswered") }
+            return answer
         }
     }
 
     private enum Entry {
         /// Its content is being served.
         case serving(Wait)
-        /// Its content was served; its end is still to come.
-        case served
+        /// Its content was served, and is read under `access`; its end is still to come.
+        case served(access: SandboxFileGrants.Grant?)
         /// It ended before its content was asked for.
         case ended
     }
 
+    /// No waits.
+    public init() {}
+
     private let entries = Locked<[ItemPullID: Entry]>([:])
 
     /// The wait for pull `id`'s content, of the offer `token`; nil when the pull already ended.
-    func open(_ id: ItemPullID, token: Data) -> Wait? {
+    public func open(_ id: ItemPullID, token: Data) -> Wait? {
         entries.withLock { entries in
             if case .ended = entries[id] {
                 entries[id] = nil
@@ -663,34 +684,42 @@ final class ClipboardServeWaits: Sendable {
         }
     }
 
-    /// Pull `id`'s content was answered.
-    func served(_ id: ItemPullID) {
-        entries.withLock { entries in
+    /// Pull `id`'s content was answered, its FILE or FOLDER read under `access` until its serve ends; one whose
+    /// serve has ended already lets `access` go.
+    public func served(_ id: ItemPullID, holding access: SandboxFileGrants.Grant?) {
+        let ended = entries.withLock { entries -> Entry? in
             switch entries[id] {
-            case .serving: entries[id] = .served
-            case .served, .ended, nil: entries[id] = nil
+            case .serving:
+                entries[id] = .served(access: access)
+                return nil
+            case .served, .ended, nil:
+                return entries.removeValue(forKey: id)
             }
         }
+        _ = ended
     }
 
     /// Ends the waits `event` ends: a pull's at its `.serveEnded`, every pull's of an offer of this side's at
     /// its `.offerEnded`.
-    func end(by event: ItemTransferEvent) {
+    public func end(by event: ItemTransferEvent) {
         switch event {
         case .serveEnded(_, let id, _):
-            let wait = entries.withLock { entries -> Wait? in
-                switch entries.removeValue(forKey: id) {
+            // A served pull's grant goes with its entry, once out of the lock.
+            let (wait, ended) = entries.withLock { entries -> (Wait?, Entry?) in
+                let entry = entries.removeValue(forKey: id)
+                switch entry {
                 case .serving(let wait):
-                    entries[id] = .served
-                    return wait
+                    entries[id] = .served(access: nil)
+                    return (wait, nil)
                 case .served, .ended:
-                    return nil
+                    return (nil, entry)
                 case nil:
                     entries[id] = .ended
-                    return nil
+                    return (nil, nil)
                 }
             }
-            wait?.answer(.failure(WireError(.cancelled, debugDetail: "the pull ended")))
+            _ = ended
+            wait?.answer(.init(.failure(WireError(.cancelled, debugDetail: "the pull ended"))))
         case .offerEnded(_, .local, let token, _):
             let waits = entries.withLock { entries in
                 entries.values.compactMap { entry -> Wait? in
@@ -698,7 +727,7 @@ final class ClipboardServeWaits: Sendable {
                 }
             }
             for wait in waits {
-                wait.answer(.failure(WireError(.itemRepresentationUnavailable, debugDetail: "the offer ended")))
+                wait.answer(.init(.failure(WireError(.itemRepresentationUnavailable, debugDetail: "the offer ended"))))
             }
         case .offerReceived, .offerEnded, .offerRequested, .requestEnded, .pullEnded:
             break

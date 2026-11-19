@@ -12,6 +12,11 @@ public final class FakeSandbox: Sendable {
     private struct State: Sendable {
         var counts: [String: Int] = [:]
         var unheldGiveBacks: [String] = []
+        /// The pasteboard generation `readItems` were read in.
+        var readGeneration = 0
+        /// The items whose file URL was read in `readGeneration`.
+        var readItems: Set<Int> = []
+        var bookmarksAsked = 0
     }
 
     private let state: Locked<State>
@@ -20,7 +25,8 @@ public final class FakeSandbox: Sendable {
     public let changed: AsyncGate
 
     /// The process's grants as ``SandboxFileGrants`` holds them over this sandbox: a start takes a grant and
-    /// answers that it did.
+    /// answers that it did; a bookmark is made only of a path holding a grant, and resolves to wherever its file or
+    /// folder has moved since.
     public let fileGrants: SandboxFileGrants
 
     /// A sandbox granting nothing yet.
@@ -30,25 +36,50 @@ public final class FakeSandbox: Sendable {
         self.state = state
         self.changed = changed
         fileGrants = SandboxFileGrants(
-            start: { url in
-                Self.take(url, in: state, changed)
-                return true
-            },
-            stop: { url in
-                state.withLock { state in
-                    let path = Self.path(of: url)
-                    guard let count = state.counts[path], count > 0 else {
-                        return state.unheldGiveBacks.append(path)
+            SandboxFileGrants.Platform(
+                start: { url in
+                    Self.take(url, in: state, changed)
+                    return true
+                },
+                stop: { url in
+                    state.withLock { state in
+                        let path = Self.path(of: url)
+                        guard let count = state.counts[path], count > 0 else {
+                            return state.unheldGiveBacks.append(path)
+                        }
+                        state.counts[path] = count - 1
                     }
-                    state.counts[path] = count - 1
-                }
-                changed.notify()
-            })
+                    changed.notify()
+                },
+                bookmark: { url in
+                    let granted = state.withLock { state in
+                        defer { state.bookmarksAsked += 1 }
+                        return (state.counts[Self.path(of: url)] ?? 0) > 0
+                    }
+                    return granted ? try? url.bookmarkData() : nil
+                },
+                resolve: { bookmark in
+                    var stale = false
+                    return try? URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &stale)
+                }))
     }
 
     /// A pasteboard read took a grant of `url`'s path.
     public func grant(_ url: URL) {
         Self.take(url, in: state, changed)
+    }
+
+    /// A read of the file URL `url` that pasteboard item `index` names, in the generation `changeCount` counts: the
+    /// first of the generation takes a grant, as a pasteboard read on a Mac does, and a later one none.
+    public func read(fileURL url: URL, ofItem index: Int, at changeCount: Int) {
+        let first = state.withLock { state in
+            if state.readGeneration != changeCount {
+                state.readGeneration = changeCount
+                state.readItems = []
+            }
+            return state.readItems.insert(index).inserted
+        }
+        if first { grant(url) }
     }
 
     /// How many grants of `url`'s path the process holds.
@@ -59,12 +90,15 @@ public final class FakeSandbox: Sendable {
     /// Each path given back while it held no grant, in order.
     public var unheldGiveBacks: [String] { state.withLock { $0.unheldGiveBacks } }
 
+    /// How many bookmarks were asked for, made or not.
+    public var bookmarksAsked: Int { state.withLock { $0.bookmarksAsked } }
+
     private static func take(_ url: URL, in state: Locked<State>, _ changed: AsyncGate) {
         state.withLock { $0.counts[path(of: url), default: 0] += 1 }
         changed.notify()
     }
 
     private static func path(of url: URL) -> String {
-        url.standardizedFileURL.path
+        url.resolvingSymlinksInPath().path
     }
 }

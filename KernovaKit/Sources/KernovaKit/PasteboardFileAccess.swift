@@ -6,11 +6,10 @@ import Foundation
 ///
 /// Only the first read of an item's `public.file-url` in a generation takes a grant: a later one takes none, even once
 /// that grant is given back (docs/research/2026-11-18-pasteboard-file-grants.md). So every read of a generation
-/// shares this one access while it lives, and whatever reads its files holds it for as long as it can reach them —
-/// an offer read from it (``ClipboardOfferSource``), a clipboard end while its pasteboard stands at the generation,
-/// since reading that again reaches nothing once its grants are given back, and an import of what was dropped.
-/// A grant whose file has left the path it was read at stays with the process when let go: giving back one of a
-/// path no longer holding its file takes nothing.
+/// shares this one access while it lives, and keeps the bookmark each read makes of a file while its grant lasts,
+/// which reaches the file once the grant is given back. A drop's offer holds the access for as long as the drop
+/// lasts, and so does an import of what was dropped; a copy's read holds it only until it has made its bookmarks.
+/// A grant is given back by path, so one whose path's folder is gone stays with the process when let go.
 @MainActor
 public final class PasteboardFileAccess {
     /// What this process read of one pasteboard generation.
@@ -19,6 +18,9 @@ public final class PasteboardFileAccess {
         let changeCount: Int
         /// The items whose `public.file-url` this process has read in the generation, granted or not.
         var read: Set<Int> = []
+        /// A bookmark of each item's file or folder a read made while its grant lasted, by item: how a later read of
+        /// the generation reaches it once its grant is given back.
+        var bookmarks: [Int: Data] = [:]
         /// The access holding the generation's grants, while anything holds it.
         weak var access: PasteboardFileAccess?
 
@@ -80,11 +82,16 @@ public final class PasteboardFileAccess {
         return (urls, access)
     }
 
+    /// The bookmark a read of the generation made of item `index`'s file or folder, if one did.
+    func bookmark(ofItem index: Int) -> Data? {
+        generation.bookmarks[index]
+    }
+
+    /// Keeps `bookmark`, of item `index`'s file or folder, for every later read of the generation.
+    func keep(_ bookmark: Data, forItem index: Int) {
+        generation.bookmarks[index] = bookmark
+    }
+
     /// Whether this holds any grant.
     public var holdsGrants: Bool { !granted.isEmpty }
-
-    /// Whether the pasteboard read still stands at the generation it read.
-    public var standsOnItsPasteboard: Bool {
-        generation.pasteboard.map { $0.changeCount == generation.changeCount } ?? false
-    }
 }

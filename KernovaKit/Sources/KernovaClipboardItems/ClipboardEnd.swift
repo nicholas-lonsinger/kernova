@@ -41,10 +41,6 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
     /// The far side's offer this end wrote, or held back over the paste ceiling, while it is this end's clipboard.
     private var published: Publication?
     private var nextPublication = 0
-    /// The grants of access to the files of the pasteboard generation this end read last, held while the
-    /// pasteboard stands at it: reading it again takes none (``PasteboardFileAccess``), so a later read of the same
-    /// copy — a command, or one after the connection returns — still reaches its files.
-    private var lastRead: (access: PasteboardFileAccess, watch: ClipboardPasteboardWatch.Observation)?
 
     private struct Poll {
         let observation: ClipboardPasteboardWatch.Observation
@@ -255,20 +251,8 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
             #if DEBUG
             if let held = pasteboard as? any ClipboardTestHeldReadPasteboard { await held.readMayLandForTesting() }
             #endif
-            if case .offer(let source, _) = outcome { self?.holdWhileStanding(source.fileAccess) }
             self?.landed(outcome, of: id)
         }
-    }
-
-    /// Holds `access`, a read's, in place of the last read's, until the pasteboard moves on from the generation it
-    /// read.
-    private func holdWhileStanding(_ access: PasteboardFileAccess?) {
-        guard let access, access.standsOnItsPasteboard, lastRead?.access !== access else { return }
-        let watch = ClipboardPasteboardWatch.observe(pasteboard, in: .standingWrites) { [weak self] in
-            guard let self, let lastRead = self.lastRead, !lastRead.access.standsOnItsPasteboard else { return }
-            self.lastRead = nil
-        }
-        lastRead = (access, watch)
     }
 
     /// Read `id` landed with `outcome`. One the pasteboard outran is dropped: the poll reads what replaced it, and

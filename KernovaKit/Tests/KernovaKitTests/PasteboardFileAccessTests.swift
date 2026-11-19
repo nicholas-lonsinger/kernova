@@ -5,8 +5,8 @@ import Testing
 
 @testable import KernovaKit
 
-/// The grants reading a pasteboard's file URLs takes, held by what the read offers and given back once nothing does,
-/// over a fake pasteboard whose sandbox counts them as a Mac does.
+/// The grants reading a pasteboard's file URLs takes and the bookmarks a copy's read makes, held by what the read
+/// offers, over a fake pasteboard whose sandbox counts grants and follows bookmarks as a Mac does.
 @Suite("PasteboardFileAccess", .caseScoped)
 @MainActor
 struct PasteboardFileAccessTests {
@@ -36,16 +36,25 @@ struct PasteboardFileAccessTests {
         return source
     }
 
-    @Test(
-        "An offer, a drop's or a copy's, holds each file's grant while it lives, and gives each back once as it goes",
-        arguments: [true, false])
-    func offerHoldsItsGrants(drop: Bool) async throws {
+    private struct NotAFile: Error {
+        let served: ClipboardServedRepresentation
+    }
+
+    /// The FILE `source` serves of its first item, which the caller holds its grant while it has.
+    private func servedFile(of source: ClipboardOfferSource?) async throws -> (url: URL, served: ClipboardServed) {
+        let served = try await #require(source).serve(item: 0, representation: 0)
+        guard case .file(let url) = served.representation else { throw NotAFile(served: served.representation) }
+        return (url, served)
+    }
+
+    @Test("A drop's offer holds each file's grant while it lives, and gives each back once as it goes")
+    func dropOfferHoldsItsGrants() async throws {
         let files = [try file("a.txt"), try file("b.txt")]
         let pasteboard = FakePasteboard()
         pasteboard.setFiles(files)
         let sandbox = pasteboard.sandbox
 
-        var source = await offer(pasteboard, drop: drop)
+        var source = await offer(pasteboard, drop: true)
         withExtendedLifetime(source) {
             #expect(source?.items.count == 2)
             #expect(files.map(sandbox.grants(of:)) == [1, 1])
@@ -53,6 +62,23 @@ struct PasteboardFileAccessTests {
         source = nil
 
         try await sandbox.changed.wait { files.allSatisfy { sandbox.grants(of: $0) == 0 } }
+        #expect(sandbox.unheldGiveBacks.isEmpty)
+    }
+
+    @Test("A copy's offer holds no grant while it stands: its read gives each back once it has bookmarked the file")
+    func copyOfferHoldsNoGrant() async throws {
+        let files = [try file("a.txt"), try file("b.txt")]
+        let pasteboard = FakePasteboard()
+        pasteboard.setFiles(files)
+        let sandbox = pasteboard.sandbox
+
+        let source = await offer(pasteboard, drop: false)
+
+        withExtendedLifetime(source) {
+            #expect(source?.items.count == 2)
+            #expect(files.map(sandbox.grants(of:)) == [0, 0])
+        }
+        #expect(sandbox.bookmarksAsked == 2)
         #expect(sandbox.unheldGiveBacks.isEmpty)
     }
 
@@ -75,34 +101,80 @@ struct PasteboardFileAccessTests {
         #expect(sandbox.unheldGiveBacks.isEmpty)
     }
 
-    @Test("Two reads of one copy share its grants: they are given back once, when the second read's offer goes too")
-    func readsOfOneCopyShareGrants() async throws {
+    @Test("A pull of a copied file is served under a grant of its own, held while the pull holds it")
+    func copiedFileIsServedUnderItsOwnGrant() async throws {
+        let copied = try file("copied.txt")
+        let pasteboard = FakePasteboard()
+        pasteboard.setFiles([copied])
+        let sandbox = pasteboard.sandbox
+        let source = await offer(pasteboard, drop: false)
+
+        var pulled: (url: URL, served: ClipboardServed)? = try await servedFile(of: source)
+        #expect(pulled?.url.resolvingSymlinksInPath().path == copied.resolvingSymlinksInPath().path)
+        #expect(sandbox.grants(of: copied) == 1)
+        pulled = nil
+
+        #expect(sandbox.grants(of: copied) == 0)
+        #expect(sandbox.unheldGiveBacks.isEmpty)
+    }
+
+    @Test("A copied file moved after the copy is served from where it is now")
+    func movedCopiedFileIsServedWhereItIs() async throws {
+        let copied = try file("copied.txt")
+        let pasteboard = FakePasteboard()
+        pasteboard.setFiles([copied])
+        let source = await offer(pasteboard, drop: false)
+        let moved = scratch.url.appendingPathComponent("elsewhere", isDirectory: true)
+        try FileManager.default.createDirectory(at: moved, withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: copied, to: moved.appendingPathComponent("renamed.txt"))
+
+        let pulled = try await servedFile(of: source)
+
+        #expect(pulled.url.lastPathComponent == "renamed.txt")
+        #expect(try Data(contentsOf: pulled.url) == Data("copied.txt".utf8))
+        #expect(pasteboard.sandbox.grants(of: pulled.url) == 1)
+    }
+
+    @Test("Two ends reading one copy each serve its file, the second through the bookmark the first made")
+    func twoReadsOfOneCopyBothServe() async throws {
         let copied = try file("copied.txt")
         let pasteboard = FakePasteboard()
         pasteboard.setFiles([copied])
         let sandbox = pasteboard.sandbox
 
-        var first = await offer(pasteboard, drop: false)
-        var second = await offer(pasteboard, drop: false)
-        #expect(first != nil)
-        first = nil
+        let first = await offer(pasteboard, drop: false)
+        let second = await offer(pasteboard, drop: false)
+        let pulls = [try await servedFile(of: first), try await servedFile(of: second)]
 
-        withExtendedLifetime(second) {
-            #expect(second != nil)
-            #expect(sandbox.grants(of: copied) == 1)
-        }
-        second = nil
-        try await sandbox.changed.wait { sandbox.grants(of: copied) == 0 }
-        #expect(sandbox.unheldGiveBacks.isEmpty)
+        let path = copied.resolvingSymlinksInPath().path
+        #expect(pulls.map { $0.url.resolvingSymlinksInPath().path } == [path, path])
+        #expect(sandbox.grants(of: copied) == 2)
+        #expect(sandbox.bookmarksAsked == 1)
     }
 
-    @Test("A copy read again once its grants were given back takes none, so holds none and gives none back")
+    @Test("A copy read again after its first offer went serves its file through the bookmark the first read made")
+    func rereadOfACopyServes() async throws {
+        let copied = try file("copied.txt")
+        let pasteboard = FakePasteboard()
+        pasteboard.setFiles([copied])
+        var source = await offer(pasteboard, drop: false)
+        #expect(source != nil)
+        source = nil
+
+        source = await offer(pasteboard, drop: false)
+        let pulled = try await servedFile(of: source)
+
+        #expect(pulled.url.resolvingSymlinksInPath().path == copied.resolvingSymlinksInPath().path)
+        #expect(pasteboard.sandbox.grants(of: copied) == 1)
+    }
+
+    @Test("A pasteboard read again once its grants were given back takes none, so holds none and gives none back")
     func rereadAfterGiveBackGivesNoneBack() async throws {
         let copied = try file("copied.txt")
         let pasteboard = FakePasteboard()
         pasteboard.setFiles([copied])
         let sandbox = pasteboard.sandbox
-        var source = await offer(pasteboard, drop: false)
+        var source = await offer(pasteboard, drop: true)
         #expect(source?.fileAccess != nil)
         source = nil
         try await sandbox.changed.wait { sandbox.grants(of: copied) == 0 }

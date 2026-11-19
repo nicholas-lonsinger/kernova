@@ -26,18 +26,14 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         var reads: [NSPasteboard.PasteboardType] = []
         /// Every promised type read before a provider resolved it, in order.
         var promiseReads: [NSPasteboard.PasteboardType] = []
-        /// The change count `grantedItems` were read at.
-        var grantedAt = 0
-        /// The resident items whose file URL was read at `grantedAt`, each read taking a grant of its file.
-        var grantedItems: Set<Int> = []
     }
 
     private let writer = FakeWritePasteboard()
     private let state = Locked(State())
     /// Whether only the test polls it (``ClipboardTestPolledPasteboard``).
     public let pollsOnlyWhenToldForTesting: Bool
-    /// The grants reading this pasteboard takes: the first read of a resident item's `public.file-url` in a
-    /// generation takes one of the file it names, and no later read of it in that generation does.
+    /// The grants reading a resident item's `public.file-url` takes, as ``FakeSandbox/read(fileURL:ofItem:at:)``
+    /// says.
     public let sandbox = FakeSandbox()
 
     /// Creates an empty pasteboard double, which no timer polls when `pollsOnlyWhenTold`: its test polls it.
@@ -76,17 +72,9 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
                 URL(string: String(decoding: $0.data, as: UTF8.self))
             }
             return FakePasteboardItem(representations) { type in
-                let changeCount = writer.changeCount
-                let grants = state.withLock { state in
-                    state.reads.append(type)
-                    guard type == .fileURL, file != nil else { return false }
-                    if state.grantedAt != changeCount {
-                        state.grantedAt = changeCount
-                        state.grantedItems = []
-                    }
-                    return state.grantedItems.insert(index).inserted
-                }
-                if grants, let file { sandbox.grant(file) }
+                state.withLock { $0.reads.append(type) }
+                guard type == .fileURL, let file else { return }
+                sandbox.read(fileURL: file, ofItem: index, at: writer.changeCount)
             }
         }
     }
