@@ -41,11 +41,16 @@ struct DragOutTallyTests {
         .failed(.failed, folder: "/a", promised: false),
     ]
 
-    @Test("every sequence of up to four ends of two items' writes keeps the account counted from scratch")
-    func incrementalMatchesScratch() {
-        let events = [0, 1].flatMap { index in Self.outcomes.map { (index, $0) } }
+    /// Three items reach one folder holding a landed and a refused item while
+    /// another folder's counts change; two items reach every replacement of
+    /// an outcome by a second and a third.
+    @Test(
+        "every sequence of up to `depth` ends of `items` items' writes keeps the account counted from scratch",
+        arguments: [(items: 2, depth: 4), (items: 3, depth: 3)])
+    func incrementalMatchesScratch(items: Int, depth: Int) {
+        let events = (0..<items).flatMap { index in Self.outcomes.map { (index, $0) } }
         var sequences: [[(Int, DragOutTally.Outcome)]] = [[]]
-        for _ in 0..<4 {
+        for _ in 0..<depth {
             sequences = sequences.flatMap { sequence in events.map { sequence + [$0] } }
             for sequence in sequences {
                 var tally = DragOutTally()
@@ -55,7 +60,7 @@ struct DragOutTallyTests {
                     last[index] = outcome
                 }
                 let anyFailed = last.values.contains { if case .failed = $0 { true } else { false } }
-                guard tally.account(items: 2) == Self.account(of: last, items: 2), tally.outcomes == last,
+                guard tally.account(items: items) == Self.account(of: last, items: items), tally.outcomes == last,
                     tally.ended == last.count, tally.hasFailures == anyFailed
                 else {
                     Issue.record("the tally diverged after \(sequence)")
