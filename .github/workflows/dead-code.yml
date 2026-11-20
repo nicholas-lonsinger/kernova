@@ -49,6 +49,11 @@ jobs:
       - name: Select Xcode
         uses: ./.github/actions/select-xcode
 
+      - name: Install dead-code
+        uses: ./.github/actions/tool-cache
+        with:
+          installer: Tools/install-dead-code-tool.sh dead-code
+
       - name: List the targets only tests reach
         run: make dead-code-targets > test-only-targets.txt
 
@@ -75,7 +80,19 @@ jobs:
         uses: ./.github/actions/swift-toolchain
 
       - name: Install Periphery and indexutil-export
-        run: Tools/install-periphery.sh && Tools/install-periphery.sh --indexutil-export
+        uses: ./.github/actions/tool-cache
+        with:
+          installer: Tools/install-periphery.sh
+
+      - name: Install dead-code
+        uses: ./.github/actions/tool-cache
+        with:
+          installer: Tools/install-dead-code-tool.sh dead-code
+
+      - name: Install dead-code-sources
+        uses: ./.github/actions/tool-cache
+        with:
+          installer: Tools/install-dead-code-tool.sh dead-code-sources
 
       # The same target a developer runs; the Makefile owns the flags.
       - name: Scan
@@ -102,16 +119,20 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Locate Periphery
-        id: periphery
-        run: echo "dir=$(dirname "$(Tools/install-periphery.sh --path)")" >> "$GITHUB_OUTPUT"
-
-      # Built from source against this toolchain's libIndexStore.so (minutes).
-      - name: Restore Periphery and indexutil-export
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - name: Install Periphery and indexutil-export
+        uses: ./.github/actions/tool-cache
         with:
-          path: ${{ steps.periphery.outputs.dir }}
-          key: periphery-${{ runner.os }}-${{ runner.arch }}-swift-${{ needs.swift-version.outputs.version }}-${{ hashFiles('Tools/install-periphery.sh', 'Tools/periphery.patch') }}
+          installer: Tools/install-periphery.sh
+
+      - name: Install dead-code
+        uses: ./.github/actions/tool-cache
+        with:
+          installer: Tools/install-dead-code-tool.sh dead-code
+
+      - name: Install dead-code-sources
+        uses: ./.github/actions/tool-cache
+        with:
+          installer: Tools/install-dead-code-tool.sh dead-code-sources
 
       - name: Download the test-only targets
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -147,8 +168,11 @@ jobs:
         with:
           fetch-depth: 1
           sparse-checkout: |
-            Tools/DeadCode
-            Tools/lib
+            /.github/actions/
+            /Tools/DeadCode/
+            /Tools/lib/
+            /Tools/install-dead-code-tool.sh
+          sparse-checkout-cone-mode: false
 
       - name: Download the macOS bundle
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -162,13 +186,16 @@ jobs:
           name: dead-code-linux
           path: ${{ runner.temp }}/linux
 
+      - name: Install dead-code
+        uses: ./.github/actions/tool-cache
+        with:
+          installer: Tools/install-dead-code-tool.sh dead-code
+
       - name: Combine
         id: combine
         run: |
-          . Tools/lib/dead-code-tool.sh
-          dead_code_swift build -c release --quiet
           mkdir -p "$RUNNER_TEMP/report"
-          Tools/DeadCode/.build/release/dead-code report \
+          "$(Tools/install-dead-code-tool.sh dead-code)" report \
             --platform macos="$RUNNER_TEMP/macos" \
             --platform linux="$RUNNER_TEMP/linux" \
             --markdown "$RUNNER_TEMP/report/sections.md" \

@@ -1,8 +1,8 @@
-# Every SwiftPM call on the dead-code tool's package, Tools/DeadCode, so each
+# Every SwiftPM call on the dead-code tools' package, Tools/DeadCode, so each
 # takes the same options. Sourced, never run:
 #
 #     . "$ROOT/Tools/lib/dead-code-tool.sh"
-#     dead_code_swift build -c release --quiet
+#     dead_code_swift build --product dead-code-sources --quiet
 #     dead_code_swift test --quiet
 #
 # SwiftPM fetches prebuilt swift-syntax libraries, 115 MB of them, for any

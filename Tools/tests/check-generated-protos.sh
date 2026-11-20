@@ -39,10 +39,19 @@ printf 'syntax = "proto3";\n' >"$caller/schema.proto"
 git -C "$caller" add -A && git -C "$caller" commit -q -m caller || exit 1
 caller_head=$(git -C "$caller" rev-parse HEAD)
 
-# The build step only records what repository it would see.
+# The build step only records what repository it would see; asked what it
+# targets, as the tool cache keys an entry by, it answers.
 mkdir -p "$tmp/bin"
-printf '#!/bin/sh\nprintf "GIT_DIR=%%s\\n" "${GIT_DIR-<unset>}" >>"%s"\nexit 1\n' "$tmp/xcrun.log" >"$tmp/bin/xcrun"
-chmod +x "$tmp/bin/xcrun"
+cat >"$tmp/bin/swift" <<EOF
+#!/bin/sh
+if [ "\$1" = -print-target-info ]; then
+    echo '"compilerVersion": "fixture"'
+    exit 0
+fi
+printf 'GIT_DIR=%s\n' "\${GIT_DIR-<unset>}" >>"$tmp/swift.log"
+exit 1
+EOF
+chmod +x "$tmp/bin/swift"
 
 output=$(cd "$caller" && GIT_DIR="$caller/.git" PATH="$tmp/bin:$PATH" bash "$check_script" 2>&1)
 
@@ -50,10 +59,10 @@ if [ "$(git -C "$caller" symbolic-ref -q HEAD)" != refs/heads/main ] ||
     [ "$(git -C "$caller" rev-parse HEAD)" != "$caller_head" ]; then
     fail "hook-environment: moved the caller's HEAD to '$(git -C "$caller" rev-parse HEAD)' ($(git -C "$caller" symbolic-ref -q HEAD || echo detached)), wanted refs/heads/main at $caller_head"
 fi
-if [ ! -s "$tmp/xcrun.log" ]; then
+if [ ! -s "$tmp/swift.log" ]; then
     fail "hook-environment: never reached the build; output: $output"
-elif grep -qv '^GIT_DIR=<unset>$' "$tmp/xcrun.log"; then
-    fail "hook-environment: built with the caller's repository: $(sort -u "$tmp/xcrun.log" | tr '\n' ' ')"
+elif grep -qv '^GIT_DIR=<unset>$' "$tmp/swift.log"; then
+    fail "hook-environment: built with the caller's repository: $(sort -u "$tmp/swift.log" | tr '\n' ' ')"
 fi
 
 if [ "$FAIL" -gt 0 ]; then

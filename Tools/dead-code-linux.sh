@@ -22,8 +22,6 @@ fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 # shellcheck source=lib/linux-swift.sh
 . "$root/Tools/lib/linux-swift.sh"
-# shellcheck source=lib/dead-code-tool.sh
-. "$root/Tools/lib/dead-code-tool.sh"
 
 scratch="$root/KernovaKit/.build/dead-code-linux"
 build=(--scratch-path "$scratch" --build-tests --enable-index-store)
@@ -41,8 +39,8 @@ mkdir -p "$(dirname "$2")"
 output="$(cd "$(dirname "$2")" && pwd -P)/$(basename "$2")"
 periphery="$("$root/Tools/install-periphery.sh")"
 indexutil="$("$root/Tools/install-periphery.sh" --indexutil-export)"
-dead_code_swift build -c release --quiet >&2
-tool="$root/Tools/DeadCode/.build/release/dead-code"
+dead_code="$("$root/Tools/install-dead-code-tool.sh" dead-code)"
+sources="$("$root/Tools/install-dead-code-tool.sh" dead-code-sources)"
 
 raw="$(mktemp -d)"
 trap 'rm -rf "$raw"' EXIT
@@ -50,7 +48,7 @@ linux_swift build "${build[@]}" >&2
 store="$(linux_swift build "${build[@]}" --show-bin-path)/index/store"
 linux_swift package --scratch-path "$scratch" describe --type json >"$raw/package.json"
 
-"$tool" bundle --root "$root" --base "$root/KernovaKit" --periphery "$periphery" --store "$store" \
+"$sources" bundle --root "$root" --base "$root/KernovaKit" --periphery "$periphery" --store "$store" \
     --indexutil-export "$indexutil" --test-only-targets "$1" --package-description "$raw/package.json" \
     --output "$output"
-"$tool" report --platform linux="$output"
+"$dead_code" report --platform linux="$output"

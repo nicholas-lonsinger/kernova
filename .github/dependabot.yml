@@ -10,6 +10,7 @@ updates:
       interval: weekly
     labels:
       - "Area: Build & CI"
+      - "ci"
     # One pull request, so upload-artifact and download-artifact move together.
     groups:
       actions:

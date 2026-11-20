@@ -1,0 +1,48 @@
+name: Install a tool through the tool cache
+description: >-
+  Run one of the Tools/install-*.sh installers with its tool-cache entry
+  (Tools/lib/tool-cache.sh) restored from the Actions cache, and save the
+  entry when the installer built it. The installer names the entry by a hash
+  of everything that determines the tool, so the cache key is that name: a
+  ref saves one entry per set of inputs, never one per commit, and a pull
+  request's entries serve only that pull request's later runs.
+
+inputs:
+  installer:
+    description: >-
+      The installer and its arguments, run from the repository root; with
+      `--path` appended it prints the tool's path and installs nothing.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - id: locate
+      shell: bash
+      env:
+        INSTALLER: ${{ inputs.installer }}
+      run: |
+        # shellcheck disable=SC2086 # the installer and its arguments, one per word
+        path="$($INSTALLER --path)"
+        dir="$(dirname "$path")"
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+        echo "key=$RUNNER_OS-$(basename "$dir")" >> "$GITHUB_OUTPUT"
+
+    - id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.locate.outputs.dir }}
+        key: ${{ steps.locate.outputs.key }}
+
+    # A restored entry is marked used here, before any other install in the
+    # job could prune it.
+    - shell: bash
+      env:
+        INSTALLER: ${{ inputs.installer }}
+      run: $INSTALLER >/dev/null
+
+    - if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.locate.outputs.dir }}
+        key: ${{ steps.locate.outputs.key }}
