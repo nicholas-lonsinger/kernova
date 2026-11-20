@@ -30,8 +30,6 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="${lib_dir%/*}"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
-# shellcheck source=lib/dead-code-tool.sh
-. "$lib_dir/lib/dead-code-tool.sh"
 
 usage() {
     echo 'usage: Tools/check-swift-sources.sh [--tool <path>] [--rule <name>]... [<file>...]' >&2
@@ -47,7 +45,8 @@ tracked_rules() (
 )
 names=()
 while IFS= read -r file; do
-    [ -z "$file" ] || names+=("$(basename "$file" .pm)")
+    file=${file##*/}
+    [ -z "$file" ] || names+=("${file%.pm}")
 done <<<"$(tracked_rules)"
 [ "${#names[@]}" -gt 0 ] || { echo 'check-swift-sources: git tracks no Tools/swift-rules/*.pm' >&2; exit 1; }
 
@@ -93,6 +92,8 @@ else
 fi
 
 if [ -z "$tool" ]; then
+    # shellcheck source=lib/dead-code-tool.sh
+    . "$lib_dir/lib/dead-code-tool.sh"
     tool=$(installed_dead_code_sources) || {
         echo 'check-swift-sources: dead-code-sources does not install, so no rule read a file' >&2
         exit 1
