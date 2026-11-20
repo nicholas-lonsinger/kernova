@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Fixture tests for Tools/check-swift-sources.sh run the way lint runs it, with
-# no arguments: which rule each finding is reported under, which files each
-# rule's scope reads, and which rules print their pass line. Then what fails
+# Fixture tests for Tools/check-swift-sources.sh run over a repository's
+# tracked files, as lint runs it: which rule each finding is reported under,
+# which files each rule's scope reads, and which rules print their pass line.
+# Then what fails
 # the check outright: a file that does not parse, a rule module that is no
 # rule, and a malformed command line. Each rule's own findings are its fixture
 # suite's.
@@ -12,7 +13,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 check_script="$ROOT/Tools/check-swift-sources.sh"
 # shellcheck source=../lib/dead-code-tool.sh
 . "$ROOT/Tools/lib/dead-code-tool.sh"
-dead_code_sources=$(installed_dead_code_sources) || exit 1
+dead_code_sources=$(fixture_dead_code_sources) || exit 1
 
 if [ -t 1 ]; then c_red=$'\033[0;31m'; c_reset=$'\033[0m'; else c_red=''; c_reset=''; fi
 FAIL=0
@@ -34,7 +35,7 @@ printf '%s\n' 'self.a = try c.decodeIfPresent(Bool.self, forKey: .a) ?? false' >
 git init -q "$repo"
 git -C "$repo" add .
 
-(cd "$repo" && bash "$check_script") >"$tmp/out" 2>"$tmp/err"
+(cd "$repo" && bash "$check_script" --tool "$dead_code_sources") >"$tmp/out" 2>"$tmp/err"
 status=$?
 
 got=$(sed -n 's|^\(check-[a-z-]*: [^ ]*\) — .*|\1|p' "$tmp/err" | sort | tr '\n' ' ')
@@ -54,7 +55,8 @@ printf '%s\n' 'let a = 1' 'let s = "never closed' >"$unparsed/App/D.swift"
 printf '%s\n' 'let b = 2' >"$unparsed/AppTests/E.swift"
 git init -q "$unparsed"
 git -C "$unparsed" add .
-(cd "$unparsed" && bash "$check_script" --rule lock-values --rule test-waits) >"$tmp/out" 2>"$tmp/err"
+(cd "$unparsed" && bash "$check_script" --tool "$dead_code_sources" --rule lock-values --rule test-waits) \
+    >"$tmp/out" 2>"$tmp/err"
 status=$?
 [ "$status" -eq 1 ] || fail "unparsed: exited $status, wanted 1"
 grep -q '^check-swift-sources: App/D.swift:2:[0-9]* does not parse as Swift$' "$tmp/err" ||
@@ -83,9 +85,9 @@ usage_error unknown-option 'usage: Tools/check-swift-sources.sh [--tool <path>] 
 # A tracked rule module that returns no check, or no pass line, fails the
 # check before any file is read: here no file is in any rule's scope.
 tools="$tmp/tools"
-mkdir -p "$tools/Tools/lib" "$tools/Tools/swift-rules" "$tools/Tools/DeadCode"
+mkdir -p "$tools/Tools/lib" "$tools/Tools/swift-rules"
 cp "$check_script" "$tools/Tools/"
-for lib in output.sh dead-code-tool.sh package-pins.sh; do cp "$ROOT/Tools/lib/$lib" "$tools/Tools/lib/"; done
+cp "$ROOT/Tools/lib/output.sh" "$tools/Tools/lib/"
 git init -q "$tools"
 mkdir -p "$tmp/empty"
 git init -q "$tmp/empty"

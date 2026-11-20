@@ -1,10 +1,10 @@
 # Every SwiftPM call on the dead-code tools' package, Tools/DeadCode, so each
-# takes the same options, and the release dead-code-sources lint runs.
-# Sourced, never run:
+# takes the same options, and the release dead-code-sources a fixture suite
+# runs. Sourced, never run:
 #
 #     . "$ROOT/Tools/lib/dead-code-tool.sh"
 #     dead_code_swift test --quiet
-#     tool=$(installed_dead_code_sources)
+#     dead_code_sources=$(fixture_dead_code_sources)
 #
 # SwiftPM fetches prebuilt swift-syntax libraries, 115 MB of them, for any
 # package that depends on swift-syntax, but they serve only macro targets and
@@ -26,11 +26,15 @@ dead_code_swift() (
     with_package_pins "$dead_code_package" swift "$1" --disable-experimental-prebuilts -- "${@:2}"
 )
 
-# installed_dead_code_sources — the path of the release dead-code-sources in
-# the machine's tool cache, installed first if it is not there
-# (Tools/install-dead-code-tool.sh). The cache is under the user's own home,
-# whatever HOME names: a fixture suite runs under the scratch HOME isolate_git
-# (git-isolation.sh) gives it.
-installed_dead_code_sources() {
-    HOME=$(perl -e 'print +(getpwuid $<)[7]') "${dead_code_package%/*}/install-dead-code-tool.sh" dead-code-sources
+# fixture_dead_code_sources — the path of the release dead-code-sources a
+# fixture suite runs: the one Tools/tests/git-isolation.sh resolved before it
+# isolated the suite, or, for a suite run on its own, the one in the machine's
+# tool cache (Tools/install-dead-code-tool.sh), so the suite calls it before
+# isolate_git.
+fixture_dead_code_sources() {
+    if [ -n "${KERNOVA_FIXTURE_DEAD_CODE_SOURCES:-}" ]; then
+        printf '%s\n' "$KERNOVA_FIXTURE_DEAD_CODE_SOURCES"
+    else
+        "${dead_code_package%/*}/install-dead-code-tool.sh" dead-code-sources
+    fi
 }

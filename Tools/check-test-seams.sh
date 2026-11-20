@@ -73,8 +73,6 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
-# shellcheck source=lib/dead-code-tool.sh
-. "$lib_dir/lib/dead-code-tool.sh"
 
 # Test code, by the path convention the header states; each gate takes one side
 # of it.
@@ -99,7 +97,7 @@ report() {
     printf '%s %s\n' "$(printf '%s\n' "$text" | wc -l | tr -d ' ')" "$summary" >&2
 }
 
-if seam_tool=$(installed_dead_code_sources); then
+if seam_tool=$("$lib_dir/install-dead-code-tool.sh" dead-code-sources); then
     findings=$(git ls-files '*.swift' \
         | grep -vE "$test_paths" \
         | tr '\n' '\0' \

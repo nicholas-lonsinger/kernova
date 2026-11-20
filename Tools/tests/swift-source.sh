@@ -10,7 +10,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=../lib/dead-code-tool.sh
 . "$ROOT/Tools/lib/dead-code-tool.sh"
-dead_code_sources=$(installed_dead_code_sources) || exit 1
+dead_code_sources=$(fixture_dead_code_sources) || exit 1
 
 if [ -t 1 ]; then c_red=$'\033[0;31m'; c_reset=$'\033[0m'; else c_red=''; c_reset=''; fi
 FAIL=0

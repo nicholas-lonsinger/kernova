@@ -8,7 +8,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 # shellcheck source=../lib/dead-code-tool.sh
 . "$ROOT/Tools/lib/dead-code-tool.sh"
-dead_code_sources=$(installed_dead_code_sources) || exit 1
+dead_code_sources=$(fixture_dead_code_sources) || exit 1
 run_rule() { bash "$ROOT/Tools/check-swift-sources.sh" --tool "$dead_code_sources" --rule exit-tests; }
 exit_root='KernovaKit/Tests/KernovaKitExitTests'
 

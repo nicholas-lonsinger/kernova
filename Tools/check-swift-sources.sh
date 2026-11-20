@@ -92,9 +92,7 @@ else
 fi
 
 if [ -z "$tool" ]; then
-    # shellcheck source=lib/dead-code-tool.sh
-    . "$lib_dir/lib/dead-code-tool.sh"
-    tool=$(installed_dead_code_sources) || {
+    tool=$("$lib_dir/install-dead-code-tool.sh" dead-code-sources) || {
         echo 'check-swift-sources: dead-code-sources does not install, so no rule read a file' >&2
         exit 1
     }
