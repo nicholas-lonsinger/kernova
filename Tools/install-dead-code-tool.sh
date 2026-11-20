@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# Installs one of the dead-code scan's tools, built in release from
-# Tools/DeadCode, into the machine's tool cache (Tools/lib/tool-cache.sh), and
-# prints its path. `dead-code` lists the targets only tests reach and combines
-# the platforms' reports; `dead-code-sources` writes each platform's bundle and
-# reads seams, and alone links swift-syntax.
+# Installs one of the tools Tools/DeadCode builds, in release, into the
+# machine's tool cache (Tools/lib/tool-cache.sh), and prints its path.
 #
 # Usage: Tools/install-dead-code-tool.sh <dead-code | dead-code-sources> [--path]
 #   --path  print the tool's path, installing nothing

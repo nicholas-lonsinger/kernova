@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Fixture tests for Tools/check-config-decoding.sh: which spellings of a
-# decodeIfPresent fallback it flags, and on which line.
+# Fixture tests for the config-decoding rule
+# (Tools/swift-rules/config-decoding.pm): which spellings of a decodeIfPresent
+# fallback it flags, and on which line.
 
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-check_script="$ROOT/Tools/check-config-decoding.sh"
+# shellcheck source=../lib/dead-code-tool.sh
+. "$ROOT/Tools/lib/dead-code-tool.sh"
+dead_code_sources=$(fixture_dead_code_sources) || exit 1
+run_rule() { bash "$ROOT/Tools/check-swift-sources.sh" --tool "$dead_code_sources" --rule config-decoding "$@"; }
 
 if [ -t 1 ]; then c_red=$'\033[0;31m'; c_reset=$'\033[0m'; else c_red=''; c_reset=''; fi
 FAIL=0
@@ -23,7 +27,7 @@ isolate_git "$tmp"
 expect() {
     local name=$1 want=$2 file="$tmp/$1.swift" output status got
     printf '%s\n' "$3" >"$file"
-    output=$(bash "$check_script" "$file" 2>&1)
+    output=$(run_rule "$file" 2>&1)
     status=$?
     got=$(printf '%s\n' "$output" | sed -n "s|^check-config-decoding: $file:\([0-9]*\) .*|\1|p" | tr '\n' ' ')
     got=${got% }
@@ -39,8 +43,8 @@ expect() {
 expect one-line 2 'let c = try decoder.container(keyedBy: CodingKeys.self)
 self.a = try c.decodeIfPresent(Bool.self, forKey: .a) ?? false'
 
-expect operator-on-next-line 1 'guestAgents: try c.decodeIfPresent(Set<VMGuestAgentBucket>.self, forKey: .guestAgents)
-    ?? [],'
+expect operator-on-next-line 1 'let a = A(guestAgents: try c.decodeIfPresent(Set<VMGuestAgentBucket>.self, forKey: .guestAgents)
+    ?? [])'
 
 expect arguments-across-lines 1 'self.b = try c.decodeIfPresent(
     String.self,
@@ -92,7 +96,7 @@ expect quote-in-comment 2 '// a lone " in prose
 self.a = try c.decodeIfPresent(Bool.self, forKey: .a) ?? false'
 
 # A file the check cannot open fails it, rather than passing unread.
-output=$(bash "$check_script" "$tmp/missing.swift" 2>&1)
+output=$(run_rule "$tmp/missing.swift" 2>&1)
 status=$?
 if [ "$status" -eq 0 ]; then
     fail "unreadable-file: exited 0 for a file it could not open"
@@ -105,7 +109,7 @@ fi
 mkdir -p "$tmp/repo/sub"
 git init -q "$tmp/repo"
 printf '%s\n' 'self.a = try c.decodeIfPresent(Bool.self, forKey: .a) ?? false' >"$tmp/repo/sub/Field.swift"
-output=$(cd "$tmp/repo/sub" && bash "$check_script" Field.swift 2>&1)
+output=$(cd "$tmp/repo/sub" && run_rule Field.swift 2>&1)
 status=$?
 if [ "$status" -eq 0 ] || ! printf '%s\n' "$output" | grep -q '^check-config-decoding: Field.swift:1 '; then
     fail "relative-path: wanted Field.swift:1 flagged, got status $status: $output"

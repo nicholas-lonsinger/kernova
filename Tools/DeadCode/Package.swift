@@ -1,11 +1,8 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
-// The dead-code scan's own tools, which build wherever the scan runs, macOS and Linux. `dead-code` lists the
-// targets only tests reach and combines the per-platform Periphery reports into one; `dead-code-sources` reduces each
-// platform's index to its declaration sites and leaves out of the production view what only a Debug build compiles,
-// and lists the seams a Release build compiles, which check-test-seams.sh reads. Only `DeadCodeSources` parses Swift,
-// so only `dead-code-sources` links swift-syntax.
+// Tools that build wherever they run, macOS and Linux. Only `DeadCodeSources` parses Swift, so only
+// `dead-code-sources` links swift-syntax.
 let swiftSettings: [SwiftSetting] = [
     .swiftLanguageMode(.v6),
     .treatAllWarnings(as: .error),

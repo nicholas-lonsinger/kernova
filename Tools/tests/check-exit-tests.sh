@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Fixture tests for Tools/check-exit-tests.sh: which exit tests outside the
-# exit-test target, and which tests inside it, it flags, and on which line.
+# Fixture tests for the exit-tests rule (Tools/swift-rules/exit-tests.pm):
+# which exit tests outside the exit-test target, and which tests inside it, it
+# flags, and on which line.
 
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-check_script="$ROOT/Tools/check-exit-tests.sh"
+# shellcheck source=../lib/dead-code-tool.sh
+. "$ROOT/Tools/lib/dead-code-tool.sh"
+dead_code_sources=$(fixture_dead_code_sources) || exit 1
+run_rule() { bash "$ROOT/Tools/check-swift-sources.sh" --tool "$dead_code_sources" --rule exit-tests; }
 exit_root='KernovaKit/Tests/KernovaKitExitTests'
 
 if [ -t 1 ]; then c_red=$'\033[0;31m'; c_reset=$'\033[0m'; else c_red=''; c_reset=''; fi
@@ -27,7 +31,7 @@ expect() {
     printf '%s\n' "$4" >"$repo/$path"
     git init -q "$repo"
     git -C "$repo" add .
-    output=$(cd "$repo" && bash "$check_script" 2>&1)
+    output=$(cd "$repo" && run_rule 2>&1)
     status=$?
     got=$(printf '%s\n' "$output" | sed -n "s|^check-exit-tests: $path:\([0-9]*\) .*|\1|p" | tr '\n' ' ')
     got=${got% }
@@ -111,7 +115,7 @@ printf '%s\n' 'let x = 1' >"$repo/M.swift"
 git init -q "$repo"
 git -C "$repo" add .
 rm "$repo/M.swift"
-output=$(cd "$repo" && bash "$check_script" 2>&1)
+output=$(cd "$repo" && run_rule 2>&1)
 status=$?
 if [ "$status" -eq 0 ]; then
     fail "unreadable-file: exited 0 for a file it could not open"

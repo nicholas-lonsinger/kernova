@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Fixture tests for Tools/check-logging.sh: which platform-log and console
-# calls it flags, on which line, and which paths each finding covers.
+# Fixture tests for the logging rule (Tools/swift-rules/logging.pm): which
+# platform-log and console calls it flags, on which line, and which paths each
+# finding covers.
 
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-check_script="$ROOT/Tools/check-logging.sh"
+# shellcheck source=../lib/dead-code-tool.sh
+. "$ROOT/Tools/lib/dead-code-tool.sh"
+dead_code_sources=$(fixture_dead_code_sources) || exit 1
+run_rule() { bash "$ROOT/Tools/check-swift-sources.sh" --tool "$dead_code_sources" --rule logging "$@"; }
 
 if [ -t 1 ]; then c_red=$'\033[0;31m'; c_reset=$'\033[0m'; else c_red=''; c_reset=''; fi
 FAIL=0
@@ -35,7 +39,7 @@ expect() {
     local name=$1 path=$2 want=$3 dir="$tmp/$1" output status got
     mkdir -p "$dir/$(dirname "$path")"
     printf '%s\n' "$4" >"$dir/$path"
-    output=$(cd "$dir" && bash "$check_script" "$path" 2>&1)
+    output=$(cd "$dir" && run_rule "$path" 2>&1)
     status=$?
     got=$(printf '%s\n' "$output" | sed -n "s|^check-logging: $path:\([0-9]*\) .*|\1|p" | tr '\n' ' ')
     got=${got% }
@@ -111,7 +115,7 @@ expect test-support "$test_support" '' 'print("x")'
 
 # An unreadable file fails.
 
-output=$(cd "$tmp" && bash "$check_script" "$app" 2>&1)
+output=$(cd "$tmp" && run_rule "$app" 2>&1)
 status=$?
 if [ "$status" -eq 0 ] || [[ $output != *"cannot read $app"* ]]; then
     fail "missing-file: exited $status without naming the unread file"

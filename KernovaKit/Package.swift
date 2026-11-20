@@ -502,7 +502,7 @@ if declaresAppleTargets {
             swiftSettings: sharedSwiftSettings
         ),
         // Every exit test, and nothing else: a test target runs in a process
-        // of its own (Tools/check-exit-tests.sh).
+        // of its own (Tools/swift-rules/exit-tests.pm).
         .testTarget(
             name: "KernovaKitExitTests",
             dependencies: ["KernovaLogging", "KernovaTestSupport"],

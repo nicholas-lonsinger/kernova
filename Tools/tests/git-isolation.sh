@@ -17,6 +17,17 @@ fail() { FAIL=$((FAIL + 1)); printf '  %s✗%s %s\n' "$c_red" "$c_reset" "$1"; }
 
 tmp="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$tmp"' EXIT
+
+# The release dead-code-sources the Swift source rules' suites run, resolved
+# while HOME is still the caller's, so it is the machine's tool cache that
+# holds it, and handed to every fixture (fixture_dead_code_sources in
+# Tools/lib/dead-code-tool.sh).
+KERNOVA_FIXTURE_DEAD_CODE_SOURCES=$("$ROOT/Tools/install-dead-code-tool.sh" dead-code-sources) || {
+    echo 'git-isolation: dead-code-sources does not install, so no fixture ran' >&2
+    exit 1
+}
+export KERNOVA_FIXTURE_DEAD_CODE_SOURCES
+
 # shellcheck source=../lib/git-isolation.sh
 . "$ROOT/Tools/lib/git-isolation.sh"
 isolate_git "$tmp"
