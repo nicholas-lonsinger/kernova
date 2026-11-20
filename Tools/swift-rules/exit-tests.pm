@@ -65,11 +65,11 @@ my sub test_body {
                 my $start = $-[0];
                 my $body = test_body($code, pos($code));
                 next if defined $body && $body =~ $exit_test;
-                push @found, [SwiftSource::line_at($code, $start), "a test that is not an exit test, in the exit-test target; it belongs in another test target"];
+                push @found, [line_at($code, $start), "a test that is not an exit test, in the exit-test target; it belongs in another test target"];
             }
         } else {
             while ($code =~ /$exit_test/g) {
-                push @found, [SwiftSource::line_at($code, $-[0]), "an exit test outside $root; its child would inherit the descriptors of every other test in this process"];
+                push @found, [line_at($code, $-[0]), "an exit test outside $root; its child would inherit the descriptors of every other test in this process"];
             }
         }
         return @found;

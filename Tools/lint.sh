@@ -9,8 +9,10 @@
 #   3. swift-format lint --strict over the roots Tools/lib/swift-roots.sh names.
 #   4. The fixture suites, through Tools/tests/git-isolation.sh. A suite needs
 #      no Xcode and runs in seconds, which is what lets lint and the pre-push
-#      hook gate it; the dead-code tools' swift-syntax, which each checkout
-#      builds once in about 15 s, is the exception.
+#      hook gate it; the exceptions are the dead-code tools' swift-syntax,
+#      which each checkout builds once in about 15 s, and the release
+#      dead-code-sources the Swift source rules' suites run, which the tool
+#      cache builds once per machine in minutes.
 #   5. The checks whose header declares `# make lint: runs last — <why>`.
 #
 # Tools/lib/lint-inputs.sh lists each step's files and reads a check's order

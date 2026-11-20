@@ -52,7 +52,7 @@ my sub stores_function {
         my @found;
         while ($code =~ m{(?<![\w.]) (?: Locked | Mutex ) \s* <}xg) {
             my ($at, $argument) = ($-[0], $+[0]);
-            push @found, [SwiftSource::line_at($code, $at), "a lock box storing a function directly, which every withLock deepens; hold it in a struct field"]
+            push @found, [line_at($code, $at), "a lock box storing a function directly, which every withLock deepens; hold it in a struct field"]
                 if stores_function($code, $argument);
             pos($code) = $argument;
         }

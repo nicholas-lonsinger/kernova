@@ -136,7 +136,7 @@ my sub arguments {
         while ($code =~ m{$sleep}g) {
             my $start = $-[0];
             next if defined $+{bare} && !defined $+{qualified} && $declared{$+{bare}};
-            push @found, [SwiftSource::line_at($code, $start), "a raw real-clock sleep; wait on the event through a test-support seam, or make a deliberate window a named helper there"];
+            push @found, [line_at($code, $start), "a raw real-clock sleep; wait on the event through a test-support seam, or make a deliberate window a named helper there"];
         }
 
         while ($code =~ m{$unbounded}g) {
@@ -154,7 +154,7 @@ my sub arguments {
                 next if substr($code, 0, receiver_start($code, $start)) =~ /\bawait\s*\z/;
                 $what = "a blocking wait with no deadline; block through Backstop.wait(for:)";
             }
-            push @found, [SwiftSource::line_at($code, $start), $what];
+            push @found, [line_at($code, $start), $what];
         }
 
         while ($code =~ m{\b(\w+)\s*\(}g) {
@@ -165,7 +165,7 @@ my sub arguments {
                 next unless $text =~ /^(\s*)timeout\s*:(.*)$/s;
                 my ($lead, $value) = ($1, $2);
                 next unless $value =~ /(?<![\w.])\.?\d/;
-                my $line = SwiftSource::line_at($code, $offset + length $lead);
+                my $line = line_at($code, $offset + length $lead);
                 next if $raw[$line - 1] =~ $marker || ($line > 1 && $raw[$line - 2] =~ $marker);
                 push @found, [$line, "a numeric deadline on a wait; one expecting success takes the testWaitBackstop default, and a deadline the test asserts carries a deadline-under-test marker"];
             }

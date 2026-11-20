@@ -64,7 +64,7 @@
 # on a scan that did not complete: a check whose whole value is that it cannot
 # pass in silence must not pass when a file went unread.
 #
-# make lint: runs last — it builds dead-code-sources
+# make lint: runs last — a cold tool cache builds dead-code-sources in release (minutes)
 
 set -uo pipefail
 
@@ -99,14 +99,14 @@ report() {
     printf '%s %s\n' "$(printf '%s\n' "$text" | wc -l | tr -d ' ')" "$summary" >&2
 }
 
-if seam_tool=$(dead_code_swift build --product dead-code-sources --quiet >&2 && dead_code_swift build --show-bin-path); then
+if seam_tool=$(installed_dead_code_sources); then
     findings=$(git ls-files '*.swift' \
         | grep -vE "$test_paths" \
         | tr '\n' '\0' \
-        | xargs -0 "$seam_tool/dead-code-sources" ungated-seams)
+        | xargs -0 "$seam_tool" ungated-seams)
     scan_status=$?
 else
-    echo 'check-test-seams: dead-code-sources does not build, so the seam gate read no file' >&2
+    echo 'check-test-seams: dead-code-sources does not install, so the seam gate read no file' >&2
     findings=''
     scan_status=1
 fi

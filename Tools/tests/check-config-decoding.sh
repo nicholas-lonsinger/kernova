@@ -6,7 +6,10 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-run_rule() { bash "$ROOT/Tools/check-swift-sources.sh" --rule config-decoding "$@"; }
+# shellcheck source=../lib/dead-code-tool.sh
+. "$ROOT/Tools/lib/dead-code-tool.sh"
+dead_code_sources=$(installed_dead_code_sources) || exit 1
+run_rule() { bash "$ROOT/Tools/check-swift-sources.sh" --tool "$dead_code_sources" --rule config-decoding "$@"; }
 
 if [ -t 1 ]; then c_red=$'\033[0;31m'; c_reset=$'\033[0m'; else c_red=''; c_reset=''; fi
 FAIL=0
@@ -40,8 +43,8 @@ expect() {
 expect one-line 2 'let c = try decoder.container(keyedBy: CodingKeys.self)
 self.a = try c.decodeIfPresent(Bool.self, forKey: .a) ?? false'
 
-expect operator-on-next-line 1 'guestAgents: try c.decodeIfPresent(Set<VMGuestAgentBucket>.self, forKey: .guestAgents)
-    ?? [],'
+expect operator-on-next-line 1 'let a = A(guestAgents: try c.decodeIfPresent(Set<VMGuestAgentBucket>.self, forKey: .guestAgents)
+    ?? [])'
 
 expect arguments-across-lines 1 'self.b = try c.decodeIfPresent(
     String.self,

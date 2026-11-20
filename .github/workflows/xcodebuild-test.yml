@@ -197,6 +197,14 @@ jobs:
         with:
           installer: Tools/install-protoc.sh
 
+      # The release dead-code-sources the Swift source rules and the seam
+      # check run; a cold build takes minutes.
+      - name: Install dead-code-sources
+        if: success() || failure()
+        uses: ./.github/actions/tool-cache
+        with:
+          installer: Tools/install-dead-code-tool.sh dead-code-sources
+
       - name: make lint
         if: success() || failure()
         timeout-minutes: 10

@@ -45,7 +45,7 @@ my $decode = qr{
             my ($start, $end, $keyed) = ($-[0], $+[0], $+{keyed});
             next if defined $keyed && $keyed !~ /\bforKey\s*:/;
             next unless substr($code, $end) =~ m{\A$chain\?\?};
-            push @found, [SwiftSource::line_at($code, $start), "a decode with a ?? fallback; use a config-field form from $helper"];
+            push @found, [line_at($code, $start), "a decode with a ?? fallback; use a config-field form from $helper"];
         }
         return @found;
     },

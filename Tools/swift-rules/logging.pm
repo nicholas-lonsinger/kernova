@@ -57,11 +57,11 @@ my $console = qr{
         return () if $path =~ $exempt;
         my @found;
         while ($code =~ m{$log_api}g) {
-            push @found, [SwiftSource::line_at($code, $-[0]), "the platform log API; log through KernovaLogger.log(_:_:)"];
+            push @found, [line_at($code, $-[0]), "the platform log API; log through KernovaLogger.log(_:_:)"];
         }
         if ($path !~ $console_exempt) {
             while ($code =~ m{$console}g) {
-                push @found, [SwiftSource::line_at($code, $-[0]), "console output; log through KernovaLogger.log(_:_:), or answer a command line through Console"];
+                push @found, [line_at($code, $-[0]), "console output; log through KernovaLogger.log(_:_:), or answer a command line through Console"];
             }
         }
         return @found;
