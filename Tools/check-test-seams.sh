@@ -11,7 +11,7 @@
 # convention is scanned instead of skipped, so the gap is loud rather than
 # silent.
 #
-# The dead-code tool's `ungated-seams` parses as Swift each file whose text
+# `dead-code-sources ungated-seams` parses as Swift each file whose text
 # contains `ForTesting`. What counts as a seam, and which `#if` gates one, is
 # `DebugOnlyCode`'s (Tools/DeadCode). The dead-code scan leaves debug-only code
 # out of what only tests reach by the same reading, so a seam this check passes
@@ -64,7 +64,7 @@
 # on a scan that did not complete: a check whose whole value is that it cannot
 # pass in silence must not pass when a file went unread.
 #
-# make lint: runs last — it builds the dead-code tool
+# make lint: runs last — it builds dead-code-sources
 
 set -uo pipefail
 
@@ -99,14 +99,14 @@ report() {
     printf '%s %s\n' "$(printf '%s\n' "$text" | wc -l | tr -d ' ')" "$summary" >&2
 }
 
-if seam_tool=$(dead_code_swift build --quiet >&2 && dead_code_swift build --show-bin-path); then
+if seam_tool=$(dead_code_swift build --product dead-code-sources --quiet >&2 && dead_code_swift build --show-bin-path); then
     findings=$(git ls-files '*.swift' \
         | grep -vE "$test_paths" \
         | tr '\n' '\0' \
-        | xargs -0 "$seam_tool/dead-code" ungated-seams)
+        | xargs -0 "$seam_tool/dead-code-sources" ungated-seams)
     scan_status=$?
 else
-    echo 'check-test-seams: the dead-code tool does not build, so the seam gate read no file' >&2
+    echo 'check-test-seams: dead-code-sources does not build, so the seam gate read no file' >&2
     findings=''
     scan_status=1
 fi

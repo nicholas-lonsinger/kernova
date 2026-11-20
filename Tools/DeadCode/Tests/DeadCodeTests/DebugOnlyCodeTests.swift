@@ -1,4 +1,5 @@
 import DeadCodeKit
+import DeadCodeSources
 import Foundation
 import Testing
 

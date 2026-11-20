@@ -7,9 +7,7 @@
 # `protoc-gen-swift` of the swift-protobuf revision Kernova.xcodeproj's
 # Package.resolved pins, and fails on any difference.
 #
-# The tools are built once per revision from a fetch of that exact revision,
-# never taken from Homebrew or the system, and only the two binaries are kept,
-# under ~/Library/Caches/kernova-dev, so CI can save them.
+# Tools/install-protoc.sh builds the tools from a fetch of that exact revision.
 #
 # Usage: Tools/check-generated-protos.sh [--write]
 #   --write   replaces each generated file with the regenerated one
@@ -46,47 +44,8 @@ case "${1:-}" in
         ;;
 esac
 
-resolved=Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
-# The `revision` that follows the swift-protobuf pin's `identity` line.
-revision=$(awk -F'"' '/"identity"/ { pin = $4 } pin == "swift-protobuf" && /"revision"/ { print $4; exit }' "$resolved")
-if [ -z "$revision" ]; then
-    echo "check-generated-protos: $resolved pins no swift-protobuf revision" >&2
-    exit 1
-fi
-
-bin="$HOME/Library/Caches/kernova-dev/swift-protobuf-$revision"
-if [ ! -x "$bin/protoc" ] || [ ! -x "$bin/protoc-gen-swift" ]; then
-    mkdir -p "${bin%/*}" || exit 1
-    staging=$(mktemp -d "${bin%/*}/.swift-protobuf-build.XXXXXX") || exit 1
-    trap 'rm -rf "$staging"' EXIT
-    # A git hook exports GIT_DIR and its companions to its children
-    # (githooks(5)), and GIT_DIR outranks `-C` and the scratch checkout's own
-    # .git, so under `pre-push` the git and SwiftPM calls below would act on
-    # the repository being pushed.
-    (
-        # shellcheck disable=SC2046 # one variable name per word
-        unset $(git rev-parse --local-env-vars)
-        if ! { git init -q "$staging/source" &&
-            git -C "$staging/source" fetch -q --depth 1 https://github.com/apple/swift-protobuf.git "$revision" &&
-            git -C "$staging/source" checkout -q FETCH_HEAD; }; then
-            echo "check-generated-protos: could not fetch swift-protobuf $revision" >&2
-            exit 1
-        fi
-        for product in protoc protoc-gen-swift; do
-            if ! build_log=$(xcrun swift build -c release --package-path "$staging/source" --product "$product" 2>&1); then
-                printf '%s\n' "$build_log" >&2
-                echo "check-generated-protos: building $product from swift-protobuf $revision failed" >&2
-                exit 1
-            fi
-        done
-        built=$(xcrun swift build -c release --package-path "$staging/source" --show-bin-path) || exit 1
-        mkdir -p "$staging/bin" && cp "$built/protoc" "$built/protoc-gen-swift" "$staging/bin/"
-    ) || exit 1
-    # A run that built meanwhile holds the same revision's tools; keep them.
-    [ -d "$bin" ] || mv "$staging/bin" "$bin"
-    rm -rf "$staging"
-    trap - EXIT
-fi
+protoc=$("$lib_dir/install-protoc.sh") || exit 1
+bin=${protoc%/*}
 
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT

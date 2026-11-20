@@ -5,87 +5,16 @@ let usage = """
     Usage:
       dead-code test-only-targets --project <Kernova.xcodeproj>
           Prints every target of the project and of the repository's top-level packages that only tests reach.
-      dead-code bundle --root <repo> --base <dir Periphery runs in> --periphery <path> --store <index store>
-                       --indexutil-export <path> --test-only-targets <file> [--package-description <json>]
-                       --output <dir> [-- <what Periphery scans>...]
-          Scans <store> with Periphery, the full view and the production view without the targets <file> lists,
-          and replaces <dir> with one platform's bundle: the two reports, locations repo-relative and the
-          production one less what only a Debug build compiles of the sources under <repo>, and the declaration
-          sites and import lines the store holds under <repo>. With a package's description, as
-          `swift package describe --type json` writes it, every Swift target it declares must be in the store.
       dead-code report --platform <name>=<dir>... [--remedy <text>] [--markdown <file> --rest <text>]
                        [--json <file>] [--summary <file>]
-          Combines platform bundles (macos, linux) and prints the report; a partial one opens with <text>.
-      dead-code ungated-seams <file>...
-          Prints each declaration whose name contains ForTesting in <file>s that a Release build compiles, as
-          `<file>:<line> — <line's text>`.
+          Combines platform bundles (macos, linux), as dead-code-sources bundle writes them, and prints the report; a
+          partial one opens with <text>.
     """
-
-struct Failure: Error, CustomStringConvertible {
-    var description: String
-}
-
-/// `--name value` pairs, then whatever follows `--`; a name given more than once keeps every value.
-struct Options {
-    private var values: [String: [String]] = [:]
-    private(set) var rest: [String] = []
-
-    init(_ arguments: ArraySlice<String>) throws {
-        var arguments = arguments
-        while let name = arguments.popFirst() {
-            if name == "--" {
-                rest = Array(arguments)
-                return
-            }
-            guard name.hasPrefix("--"), let value = arguments.popFirst() else {
-                throw Failure(description: "expected --<option> <value>, got \(name)\n\n\(usage)")
-            }
-            values[String(name.dropFirst(2)), default: []].append(value)
-        }
-    }
-
-    func all(_ name: String) -> [String] { values[name] ?? [] }
-
-    func optional(_ name: String) -> String? { values[name]?.last }
-
-    func required(_ name: String) throws -> String {
-        guard let value = optional(name) else { throw Failure(description: "missing --\(name)\n\n\(usage)") }
-        return value
-    }
-}
-
-func read(_ path: String) throws -> Data {
-    try Data(contentsOf: URL(fileURLWithPath: path))
-}
-
-func write(_ data: Data, to path: String) throws {
-    let url = URL(fileURLWithPath: path)
-    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try data.write(to: url, options: .atomic)
-}
-
-/// Runs `executable` in `directory` and returns its standard output, failing when it exits non-zero.
-func run(_ executable: String, _ arguments: [String], in directory: String? = nil) throws -> Data {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: executable)
-    process.arguments = arguments
-    if let directory { process.currentDirectoryURL = URL(fileURLWithPath: directory) }
-    let output = Pipe()
-    process.standardOutput = output
-    try process.run()
-    let data = output.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0 else {
-        throw Failure(
-            description: "\(executable) \(arguments.joined(separator: " ")) exited \(process.terminationStatus)")
-    }
-    return data
-}
 
 func testOnlyTargets(_ options: Options) throws {
     let project = URL(fileURLWithPath: try options.required("project")).standardizedFileURL
     let repository = project.deletingLastPathComponent()
-    let targets = try XcodeTarget.targets(pbxproj: read(project.appendingPathComponent("project.pbxproj").path))
+    let targets = try XcodeTarget.targets(pbxproj: readFile(project.appendingPathComponent("project.pbxproj").path))
 
     let schemesDirectory = project.appendingPathComponent("xcshareddata/xcschemes")
     var schemes: [String: [String]] = [:]
@@ -93,7 +22,7 @@ func testOnlyTargets(_ options: Options) throws {
     where file.hasSuffix(".xcscheme") {
         let name = String(file.dropLast(".xcscheme".count))
         schemes[name] = try schemeLaunchTargets(
-            xml: read(schemesDirectory.appendingPathComponent(file).path), scheme: name)
+            xml: readFile(schemesDirectory.appendingPathComponent(file).path), scheme: name)
     }
 
     // A local package is a top-level directory holding a Package.swift.
@@ -103,7 +32,7 @@ func testOnlyTargets(_ options: Options) throws {
         guard FileManager.default.fileExists(atPath: directory.appendingPathComponent("Package.swift").path) else {
             continue
         }
-        let json = try run(
+        let json = try runProcess(
             "/usr/bin/env", ["swift", "package", "--package-path", directory.path, "describe", "--type", "json"])
         packages.append(try JSONDecoder().decode(PackageDescription.self, from: json))
     }
@@ -112,129 +41,42 @@ func testOnlyTargets(_ options: Options) throws {
     print(names.joined(separator: "\n"))
 }
 
-func bundle(_ options: Options) throws {
-    let root = URL(fileURLWithPath: try options.required("root")).standardizedFileURL.path
-    let base = URL(fileURLWithPath: try options.required("base")).standardizedFileURL.path
-    let store = try options.required("store")
-    let description = options.optional("package-description")
-    let testOnly = String(decoding: try read(try options.required("test-only-targets")), as: UTF8.self)
-        .split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
-    let scan = try PeripheryScan(
-        configuration: root + "/.periphery.yml", store: store, packageDescription: description,
-        arguments: options.rest, testOnlyTargets: testOnly)
-
-    let presence = try presence(exporter: try options.required("indexutil-export"), store: store, root: root)
-    if let description {
-        let package = try JSONDecoder().decode(PackageDescription.self, from: read(description))
-        guard base == root || base.hasPrefix(root + "/") else {
-            throw Failure(description: "--base \(base) lies outside --root \(root)")
-        }
-        let unindexed = presence.unindexedTargets(of: package, at: String(base.dropFirst(root.count + 1)))
-        guard unindexed.isEmpty else { throw BundleError.unindexedTargets(store: store, targets: unindexed) }
-    }
-
-    let periphery = try options.required("periphery")
-    func view(_ arguments: [String]) throws -> [Finding] {
-        try JSONDecoder().decode([Finding].self, from: run(periphery, arguments, in: base))
-            .map { try $0.normalized(root: root, base: base) }
-    }
-    let bundle = try PlatformBundle(
-        full: try view(scan.full), production: try view(scan.production), presence: presence,
-        source: { try String(contentsOfFile: root + "/" + $0, encoding: .utf8) })
-    try bundle.write(to: URL(fileURLWithPath: try options.required("output")))
-}
-
-/// What `store` holds under `root`.
-///
-/// `indexutil-export tsv <store> <dir>` writes three files into `<dir>`; only the occurrences are read, streamed
-/// from its standard output through a symlink, and the other two go to `/dev/null`.
-func presence(exporter: String, store: String, root: String) throws -> Presence {
-    var filter = PresenceFilter(root: root)
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("dead-code-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    for (file, destination) in [
-        ("symbols.tsv", "/dev/null"), ("relations.tsv", "/dev/null"), ("occurrences.tsv", "/dev/stdout"),
-    ] {
-        try FileManager.default.createSymbolicLink(
-            atPath: directory.appendingPathComponent(file).path, withDestinationPath: destination)
-    }
-
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: exporter)
-    process.arguments = ["tsv", store, directory.path]
-    let output = Pipe()
-    process.standardOutput = output
-    try process.run()
-    let reader = output.fileHandleForReading
-    while let chunk = try reader.read(upToCount: 1 << 20), !chunk.isEmpty {
-        filter.consume(chunk)
-    }
-    filter.finish()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0 else {
-        throw Failure(description: "\(exporter) exited \(process.terminationStatus) exporting \(store)")
-    }
-    guard !filter.presence.keys.isEmpty else { throw BundleError.emptyStore(store: store, root: root) }
-    return filter.presence
-}
-
 func report(_ options: Options) throws {
     var bundles: [(platform: Platform, bundle: PlatformBundle)] = []
     for spec in options.all("platform") {
         let parts = spec.split(separator: "=", maxSplits: 1).map(String.init)
         guard parts.count == 2, let platform = Platform(rawValue: parts[0]) else {
             let names = Platform.allCases.map(\.rawValue).joined(separator: ", ")
-            throw Failure(description: "--platform takes <name>=<dir>, the name one of \(names): \(spec)")
+            throw Failure("--platform takes <name>=<dir>, the name one of \(names): \(spec)")
         }
         bundles.append((platform, try PlatformBundle(contentsOf: URL(fileURLWithPath: parts[1]))))
     }
-    guard !bundles.isEmpty else { throw Failure(description: "no --platform given\n\n\(usage)") }
+    guard !bundles.isEmpty else { throw Failure("no --platform given\n\n\(usage)") }
 
     let report = try DeadCodeReport(bundles: bundles)
     print(report.text(remedy: options.optional("remedy")), terminator: "")
     if let path = options.optional("markdown") {
         let rest = try options.required("rest")
-        try write(Data(report.markdown(limit: 60_000, rest: rest).utf8), to: path)
+        try writeFile(Data(report.markdown(limit: 60_000, rest: rest).utf8), to: path)
     }
-    if let path = options.optional("json") { try write(report.json(), to: path) }
+    if let path = options.optional("json") { try writeFile(report.json(), to: path) }
     // Appended, as a GitHub Actions step's output file takes it.
     if let path = options.optional("summary") {
         guard let stream = OutputStream(toFileAtPath: path, append: true) else {
-            throw Failure(description: "cannot open \(path)")
+            throw Failure("cannot open \(path)")
         }
         stream.open()
         defer { stream.close() }
         let bytes = Array(report.summary.utf8)
         guard stream.write(bytes, maxLength: bytes.count) == bytes.count else {
-            throw Failure(description: "cannot write \(path)")
+            throw Failure("cannot write \(path)")
         }
     }
 }
 
-func ungatedSeams(_ files: ArraySlice<String>) throws {
-    guard !files.isEmpty else { throw Failure(description: "ungated-seams takes the files to read\n\n\(usage)") }
-    for file in files {
-        let source = try String(contentsOfFile: file, encoding: .utf8)
-        // A seam's name holds this text, so a file without it declares none; a debug build parses slowly.
-        guard source.contains("ForTesting") else { continue }
-        for seam in try DebugOnlyCode(path: file, source: source).ungatedSeams {
-            print("\(file):\(seam.line) — \(seam.text)")
-        }
-    }
-}
-
-do {
-    let arguments = CommandLine.arguments.dropFirst()
-    guard let command = arguments.first else { throw Failure(description: usage) }
-    switch command {
-    case "test-only-targets": try testOnlyTargets(Options(arguments.dropFirst()))
-    case "bundle": try bundle(Options(arguments.dropFirst()))
-    case "report": try report(Options(arguments.dropFirst()))
-    case "ungated-seams": try ungatedSeams(arguments.dropFirst())
-    default: throw Failure(description: "unknown command \(command)\n\n\(usage)")
-    }
-} catch {
-    FileHandle.standardError.write(Data("dead-code: \(error)\n".utf8))
-    exit(1)
-}
+runCommand(
+    tool: "dead-code", usage: usage,
+    [
+        "test-only-targets": { try testOnlyTargets(Options($0, usage: usage)) },
+        "report": { try report(Options($0, usage: usage)) },
+    ])
