@@ -32,7 +32,7 @@ enum AgentShell {
     /// What the process holds for as long as it runs.
     private static let held = Locked<Held>(Held())
 
-    /// The peer's dialer: `UnansweredDialer` in a build `Tools/build-linux-guest-agent.sh` gives the
+    /// The peer's dialer: `UnansweredDialer` in a build `Tools/install-linux-guest-agent.sh` gives the
     /// hang-before-Hello fault, from `KERNOVA_AGENT_FAULT`, Debug only.
     private static var dialer: any TransportDialer {
         #if KERNOVA_AGENT_FAULT_HANG_BEFORE_HELLO

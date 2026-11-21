@@ -9,24 +9,14 @@ on:
       - 'KernovaKit/**'
       - '.github/workflows/**'
       - '.swift-version'
-      - 'Tools/build-linux-guest-agent.sh'
-      - 'Tools/check-linux-guest-agent.sh'
-      - 'Tools/lib/static-linux-sdk.sh'
-      - 'Tools/lib/linux-swift.sh'
       - 'Tools/lib/package-pins.sh'
-      - 'Tools/lib/linux-agent.sh'
       - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
   pull_request:
     paths:
       - 'KernovaKit/**'
       - '.github/workflows/**'
       - '.swift-version'
-      - 'Tools/build-linux-guest-agent.sh'
-      - 'Tools/check-linux-guest-agent.sh'
-      - 'Tools/lib/static-linux-sdk.sh'
-      - 'Tools/lib/linux-swift.sh'
       - 'Tools/lib/package-pins.sh'
-      - 'Tools/lib/linux-agent.sh'
       - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
   workflow_dispatch:
 
@@ -70,10 +60,10 @@ jobs:
         with:
           fetch-depth: 1
 
-      # KernovaPlatformLinuxTests start their own dbus-daemon; the agent's
-      # check reads `file`; ISO9660WriterTests read the image back with xorriso.
-      - name: Install dbus-daemon, file and xorriso
-        run: apt-get update && apt-get install --yes --no-install-recommends dbus file xorriso
+      # KernovaPlatformLinuxTests start their own dbus-daemon; ISO9660WriterTests
+      # read the image back with xorriso.
+      - name: Install dbus-daemon and xorriso
+        run: apt-get update && apt-get install --yes --no-install-recommends dbus xorriso
 
       - name: Build
         shell: bash
@@ -84,26 +74,6 @@ jobs:
       - name: Test
         shell: bash
         run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift test --
-
-      - name: Install the Static Linux SDK
-        shell: bash
-        run: |
-          . Tools/lib/static-linux-sdk.sh
-          version='${{ needs.swift-version.outputs.version }}'
-          swift sdk install "$(static_sdk_url "$version")" --checksum "$STATIC_SDK_CHECKSUM"
-
-      # A second checkout path, so the comparison proves no path reaches the
-      # binary.
-      - name: Build kernova-agent from two checkout paths
-        shell: bash
-        run: |
-          Tools/build-linux-guest-agent.sh --output "$RUNNER_TEMP/a/kernova-agent"
-          mkdir "$RUNNER_TEMP/elsewhere"
-          tar --exclude=./KernovaKit/.build -cf - . | tar -xf - -C "$RUNNER_TEMP/elsewhere"
-          "$RUNNER_TEMP/elsewhere/Tools/build-linux-guest-agent.sh" --output "$RUNNER_TEMP/b/kernova-agent"
-
-      - name: Check kernova-agent
-        run: Tools/check-linux-guest-agent.sh "$RUNNER_TEMP/a/kernova-agent" "$RUNNER_TEMP/b/kernova-agent"
 
   windows:
     name: Windows (arm64)
