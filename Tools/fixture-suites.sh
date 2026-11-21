@@ -233,7 +233,7 @@ for fixture in ${planned[@]+"${planned[@]}"}; do
         GIT_DIR="$gitdir" bash "$stage/$fixture"
     )
     status=$?
-    uncovered=$(uncovered_reads "$stage" "$tmp/$name.covered" | paste -sd ' ' -)
+    uncovered=$(uncovered_reads "$stage" "$tmp/$name.covered" | paste -sd ' ' -) || uncovered='(its stage could not be read)'
     rm -rf "$stage"
     if [ -n "$uncovered" ]; then
         fail "$fixture: read what its header does not declare: $uncovered"
