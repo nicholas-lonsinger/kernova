@@ -108,6 +108,14 @@ changes 'a file changes' write "$repo/src/file" A --restore write "$repo/src/fil
 changes 'a nested file changes' write "$repo/src/dir/sub/c" C --restore write "$repo/src/dir/sub/c" c
 changes 'a file is added under a directory' write "$repo/src/dir/new" n --restore rm "$repo/src/dir/new"
 changes 'a file is renamed' mv "$repo/src/dir/b" "$repo/src/dir/b2" --restore mv "$repo/src/dir/b2" "$repo/src/dir/b"
+# A symbolic link under a directory, to a file outside every path named, is
+# read for its target's content.
+echo l >"$tmp/linked"
+ln -s "$tmp/linked" "$repo/src/dir/link"
+base=$(key)
+changes "a linked file's content changes" write "$tmp/linked" L --restore write "$tmp/linked" l
+rm "$repo/src/dir/link"
+base=$(key)
 original=(toolchain 'Swift 1' arm64-apple-macosx /toolchains/one)
 changes "the toolchain's compiler changes" toolchain 'Swift 2' arm64-apple-macosx /toolchains/one --restore "${original[@]}"
 changes "the toolchain's target changes" toolchain 'Swift 1' aarch64-unknown-linux-gnu /toolchains/one \
@@ -265,6 +273,22 @@ elif [ ! -x "$used/tool" ] || [ ! -x "$fresh/tool" ]; then
     fail "prune: removed an entry in use: $(listing | tr '\n' ' ')"
 else
     pass
+fi
+
+# Of one name's entries, an install that builds keeps the ten used last, its
+# own among them; another name's entries stay, one whose name begins with this
+# one's included.
+aged() { perl -e 'my $t = time - $ARGV[0] * 60; utime($t, $t, $ARGV[1]) or die "$ARGV[1]: $!\n"' "$1" "$2"; }
+for minutes in 1 2 3 4 5 6 7 8 9 10 11; do
+    mkdir "$cache/n-$(printf '%016x' "$minutes")" && aged "$minutes" "$cache/n-$(printf '%016x' "$minutes")"
+done
+mkdir "$cache/n-m-0000000000000001" && aged 100 "$cache/n-m-0000000000000001"
+newest=$(tool_install build_ok verify_ok n new -- src/file)
+kept=$(cd "$cache" && printf '%s\n' n-* | LC_ALL=C sort | tr '\n' ' ')
+wanted=$( (printf '%s\n' "${newest##*/}" n-m-0000000000000001; for minutes in 1 2 3 4 5 6 7 8 9; do
+    printf 'n-%016x\n' "$minutes"; done) | LC_ALL=C sort | tr '\n' ' ')
+if [ "$kept" = "$wanted" ]; then pass; else
+    fail "prune: kept '$kept' of one name's entries, wanted '$wanted'"
 fi
 
 if [ "$FAIL" -gt 0 ]; then

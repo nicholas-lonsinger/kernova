@@ -121,9 +121,8 @@ var targets: [Target] = [
         dependencies: ["KernovaFileTree", "KernovaSynchronization", "CKernovaShims"],
         swiftSettings: sharedSwiftSettings
     ),
-    // The Linux agent's display version. Tools/build-linux-guest-agent.sh
-    // writes the label the C file includes; without it the label reads
-    // "development".
+    // The Linux agent's display version, which Tools/build-linux-guest-agent.sh
+    // writes into the built binary.
     .target(name: "CKernovaAgentVersion"),
     // `kernova-agent`. Declared on every platform, like
     // `KernovaPlatformLinux`, with its body compiled only for Linux.

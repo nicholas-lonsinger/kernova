@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Checks two builds of `kernova-agent` from one commit, as the Linux CI job
-# makes them from two checkout paths: each is an agent Kernova can bundle
-# (check_linux_agent, which every build already runs), and the two are
-# byte-identical.
+# Checks two builds of `kernova-agent` from one commit, as
+# linux-agent-reproducibility.yml makes them from two checkout paths: each is
+# an agent Kernova can bundle (check_linux_agent, which every build already
+# runs), and the two are byte-identical.
 #
 # Usage: Tools/check-linux-guest-agent.sh <binary> <binary>
 #
-# make lint: not run — it reads two built agents; portable.yml runs it
+# make lint: not run — it reads two built agents; linux-agent-reproducibility.yml runs it
 
 set -uo pipefail
 
