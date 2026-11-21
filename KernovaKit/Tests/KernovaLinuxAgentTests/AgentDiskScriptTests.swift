@@ -30,6 +30,7 @@ struct AgentDiskScriptTests {
             directory = try PortableScratchDirectory(prefix: "agent-disk")
             try FileManager.default.copyItem(
                 atPath: AgentDiskScriptTests.script, toPath: directory.path + "/install.sh")
+            // The stand-in agent is 0644, so a script that runs its copy without making it executable fails here.
             try FileManager.default.createSymbolicLink(
                 atPath: directory.path + "/kernova-agent",
                 withDestinationPath: AgentDiskScriptTests.standIns + "/kernova-agent")
