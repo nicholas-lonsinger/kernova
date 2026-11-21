@@ -283,16 +283,19 @@ var targets: [Target] = [
         ],
         swiftSettings: sharedSwiftSettings
     ),
+    // The stand-ins beside it are read from the source tree.
     .testTarget(
         name: "KernovaLinuxAgentTests",
         dependencies: [
             "KernovaLinuxAgent", "KernovaAgentInstall", "KernovaAgentCore", "KernovaSynchronization", "KernovaWire",
             "KernovaPortableTestSupport",
         ],
+        exclude: ["StandIns"],
         swiftSettings: sharedSwiftSettings
     ),
     // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. Its suites, like the target they test,
-    // compile only for Darwin and Linux. The golden payload beside them is read from the source tree.
+    // compile only for Darwin and Linux. The golden payload and stand-ins beside them are read from the source
+    // tree.
     .testTarget(
         name: "KernovaAgentInstallTests",
         dependencies: [
@@ -301,7 +304,7 @@ var targets: [Target] = [
             "KernovaFileTree", "KernovaSynchronization",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
-        exclude: ["Golden"],
+        exclude: ["Golden", "StandIns"],
         swiftSettings: sharedSwiftSettings
     ),
     // Like `KernovaWireTests`, it cannot reach `KernovaTestSupport`. The

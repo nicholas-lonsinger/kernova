@@ -13,8 +13,15 @@ struct AgentDiskScriptTests {
         .appendingPathComponent("../../../KernovaCore/Sources/KernovaCore/Resources/LinuxAgentDisk/agent-disk.sh")
         .standardizedFileURL.path
 
-    /// A disk directory holding the script as install.sh and a stand-in agent that appends
-    /// `<uid> <arguments>` to `calls`.
+    /// The stand-ins, checked in because Linux refuses to run a file some process holds open for writing, and a
+    /// child this process spawns concurrently can inherit the descriptor of a file it writes. Each appends a line
+    /// to the file `STAND_IN_CALLS` names: the agent `<uid> <arguments>`, and `bin/sudo` `sudo <arguments>`
+    /// before refusing `-n` with sudo's own message when `STAND_IN_SUDO_REFUSES` is set, and otherwise running
+    /// the rest.
+    static let standIns = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        .appendingPathComponent("StandIns").path
+
+    /// A disk directory holding the script as install.sh, the stand-in agent, and the `calls` they record to.
     final class Disk {
         let directory: PortableScratchDirectory
         var calls: String { directory.path + "/calls" }
@@ -23,34 +30,24 @@ struct AgentDiskScriptTests {
             directory = try PortableScratchDirectory(prefix: "agent-disk")
             try FileManager.default.copyItem(
                 atPath: AgentDiskScriptTests.script, toPath: directory.path + "/install.sh")
-            let agent = "#!/bin/sh\necho \"$(id -u) $*\" >> '\(calls)'\n"
-            try Data(agent.utf8).write(to: URL(fileURLWithPath: directory.path + "/kernova-agent"))
+            // The stand-in agent is 0644, so a script that runs its copy without making it executable fails here.
+            try FileManager.default.createSymbolicLink(
+                atPath: directory.path + "/kernova-agent",
+                withDestinationPath: AgentDiskScriptTests.standIns + "/kernova-agent")
             // Every account may run it and record a call.
             chmod(directory.path, 0o777)
             _ = FileManager.default.createFile(atPath: calls, contents: Data())
             chmod(calls, 0o666)
         }
 
-        /// Puts a stand-in `sudo` first on the script's `PATH`: it records `sudo <arguments>`, refuses `-n` with
-        /// sudo's own message when `refusesNonInteractive`, and otherwise runs the rest.
-        func addSudo(refusesNonInteractive: Bool) throws {
-            let bin = directory.path + "/bin"
-            try FileManager.default.createDirectory(atPath: bin, withIntermediateDirectories: true)
-            chmod(bin, 0o777)
-            let refusal = refusesNonInteractive ? "echo 'sudo: a password is required' >&2; exit 1" : ":"
-            let sudo = """
-                #!/bin/sh
-                echo "sudo $*" >> '\(calls)'
-                if [ "$1" = -n ]; then \(refusal); shift; fi
-                exec "$@"
-
-                """
-            try Data(sudo.utf8).write(to: URL(fileURLWithPath: bin + "/sudo"))
-            chmod(bin + "/sudo", 0o755)
-            path = bin + ":" + path
+        /// Puts the stand-in `sudo` first on the script's `PATH`, refusing `-n` when `refusesNonInteractive`.
+        func addSudo(refusesNonInteractive: Bool) {
+            path = AgentDiskScriptTests.standIns + "/bin:" + path
+            sudoRefuses = refusesNonInteractive
         }
 
         private var path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        private var sudoRefuses = false
 
         /// Runs `sh install.sh arguments`, under `prefix` when given, with `NONINTERACTIVE` set when
         /// `nonInteractive` and `input` on standard input, answering its exit status.
@@ -60,6 +57,8 @@ struct AgentDiskScriptTests {
             var environment = ProcessInfo.processInfo.environment
             environment["PATH"] = path
             environment["NONINTERACTIVE"] = nonInteractive ? "1" : nil
+            environment["STAND_IN_CALLS"] = calls
+            environment["STAND_IN_SUDO_REFUSES"] = sudoRefuses ? "1" : nil
             return try ChildProcess(
                 URL(fileURLWithPath: "/usr/bin/env"), prefix + ["sh", directory.path + "/install.sh"] + arguments,
                 environment: environment, input: Data(input.utf8)
@@ -99,7 +98,7 @@ struct AgentDiskScriptTests {
         .enabled(if: geteuid() == 0, "needs root to become another user"))
     func nonInteractiveUsesSudoN() throws {
         let disk = try Disk()
-        try disk.addSudo(refusesNonInteractive: false)
+        disk.addSudo(refusesNonInteractive: false)
         #expect(try disk.run(["--system"], as: Self.nobody) == 0)
         let calls = disk.recorded()
         #expect(
@@ -117,7 +116,7 @@ struct AgentDiskScriptTests {
         .enabled(if: geteuid() == 0, "needs root to become another user"))
     func refusedSudoChangesNothing() throws {
         let disk = try Disk()
-        try disk.addSudo(refusesNonInteractive: true)
+        disk.addSudo(refusesNonInteractive: true)
         #expect(try disk.run(["--system"], as: Self.nobody) == 1)
         #expect(disk.recorded() == ["65534 install --dry-run", "65534 install --system --dry-run", "sudo -n true"])
     }
