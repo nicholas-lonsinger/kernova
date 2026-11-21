@@ -28,8 +28,8 @@ dead_code_swift() (
 
 # fixture_dead_code_sources — the path of the release dead-code-sources a
 # fixture suite runs: the one Tools/fixture-suites.sh resolved from the suite's
-# stage before it isolated the suite, or, for a suite run on its own, the one
-# in the machine's tool cache (Tools/install-dead-code-tool.sh), so the suite
+# stage under the caller's HOME, or, for a suite run on its own, the one in
+# the machine's tool cache (Tools/install-dead-code-tool.sh), so the suite
 # calls it before isolate_git.
 fixture_dead_code_sources() {
     if [ -n "${KERNOVA_FIXTURE_DEAD_CODE_SOURCES:-}" ]; then
