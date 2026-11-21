@@ -24,8 +24,8 @@
 # one length, as .github/workflows/linux-agent-reproducibility.yml checks: the
 # prefix maps take the checkout's path out of every string the compilers embed,
 # the frontend embeds no IR hash, and stripping takes out the rest of the debug
-# info. Swift still writes the length of a source file's unmapped path into
-# withoutActuallyEscaping's escape check (issue #2059).
+# info. An -O build still passes withoutActuallyEscaping's escape check the
+# length of each source file's path (issue #2059).
 #
 # KERNOVA_AGENT_FAULT=hang-before-hello builds an agent that never dials,
 # for the update rollback gate, and only in a Debug build.
