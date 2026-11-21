@@ -11,9 +11,6 @@
 # missing and posts success only on both; and `post` takes only success or
 # failure. Runs in a fixture clone with stub xcodebuild, sw_vers, gh, the two
 # scripts, and make — the real make for the Makefile's own recipes.
-#
-# fixture reads: Makefile Tools/attest.sh Tools/checkout-lock.sh Tools/lib/attest-records.sh
-# fixture reads: Tools/lib/swift-roots.sh Tools/lib/xcodebuild-flags.sh
 
 set -uo pipefail
 

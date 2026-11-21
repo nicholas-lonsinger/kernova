@@ -2,8 +2,6 @@
 # Fixture tests for Tools/check-portable-imports.sh: every spelling of a
 # Foundation-module import fails, and only the FoundationEssentials-first form
 # passes.
-#
-# fixture reads: Tools/check-portable-imports.sh Tools/lib/output.sh
 
 set -uo pipefail
 

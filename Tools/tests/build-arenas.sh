@@ -4,11 +4,6 @@
 # the scripts inside a fixture clone, with HOME in the fixture and fakes for
 # xcodebuild, lsregister and defaults first on PATH, so nothing reaches this
 # machine's DerivedData or Launch Services database. Local git only.
-#
-# fixture reads: Tools/build-arenas.sh Tools/arena-label.sh Tools/derived-data-path.sh
-# fixture reads: Tools/checkout-lock.sh Tools/lib/build-arenas.sh Tools/lib/arena-records.sh
-# fixture reads: Tools/lib/output.sh Tools/lib/worktrees.sh Tools/lib/holders.sh
-# fixture reads: Tools/lib/xcodebuild-flags.sh
 
 set -uo pipefail
 

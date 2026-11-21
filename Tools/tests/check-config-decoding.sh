@@ -2,10 +2,6 @@
 # Fixture tests for the config-decoding rule
 # (Tools/swift-rules/config-decoding.pm): which spellings of a decodeIfPresent
 # fallback it flags, and on which line.
-#
-# fixture reads: Tools/swift-rules/config-decoding.pm Tools/check-swift-sources.sh
-# fixture reads: Tools/lib/output.sh Tools/install-dead-code-tool.sh Tools/lib/tool-cache.sh
-# fixture reads: Tools/lib/dead-code-tool.sh Tools/lib/package-pins.sh Tools/DeadCode
 
 set -uo pipefail
 

@@ -4,8 +4,6 @@
 # hashes, and that an install leaves an entry whole and verified or nothing —
 # when its build or verification fails, when its inputs change under it, when
 # it is interrupted, and when two installs race — and what it prunes.
-#
-# fixture reads: Tools/lib/tool-cache.sh
 
 set -uo pipefail
 

@@ -3,8 +3,6 @@
 # platforms' reports, the index filter, the build graph that names the
 # targets only tests reach, and the reading of what only a Debug build
 # compiles, each against inputs the tests write.
-#
-# fixture reads: Tools/lib/dead-code-tool.sh Tools/lib/package-pins.sh Tools/DeadCode
 
 set -uo pipefail
 

@@ -2,8 +2,6 @@
 # Fixture tests for .githooks/: a tool a hook runs, started the way git starts
 # the hook (GIT_DIR naming a linked worktree's gitdir), sees none of the hook's
 # repository variables and still finds that worktree from its directory.
-#
-# fixture reads: .githooks/pre-push .githooks/post-checkout
 
 set -uo pipefail
 

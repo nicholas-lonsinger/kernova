@@ -2,10 +2,6 @@
 # Fixture tests for the logging rule (Tools/swift-rules/logging.pm): which
 # platform-log and console calls it flags, on which line, and which paths each
 # finding covers.
-#
-# fixture reads: Tools/swift-rules/logging.pm Tools/check-swift-sources.sh Tools/lib/output.sh
-# fixture reads: Tools/install-dead-code-tool.sh Tools/lib/tool-cache.sh Tools/lib/dead-code-tool.sh
-# fixture reads: Tools/lib/package-pins.sh Tools/DeadCode
 
 set -uo pipefail
 

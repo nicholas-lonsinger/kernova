@@ -2,8 +2,6 @@
 # Fixture tests for Tools/check-core-imports.sh's hub check: every blocking
 # form and every spelling of the main actor fails, and prose in a comment and
 # the async forms pass.
-#
-# fixture reads: Tools/check-core-imports.sh Tools/lib/output.sh
 
 set -uo pipefail
 

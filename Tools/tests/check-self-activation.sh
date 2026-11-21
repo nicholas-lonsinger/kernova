@@ -2,8 +2,6 @@
 # Fixture tests for Tools/check-self-activation.sh: which spellings it flags,
 # that AppKitSessionFocus.swift alone may reach the session's focus, and that
 # KernovaUITests/ may order its own windows.
-#
-# fixture reads: Tools/check-self-activation.sh Tools/lib/output.sh
 
 set -uo pipefail
 

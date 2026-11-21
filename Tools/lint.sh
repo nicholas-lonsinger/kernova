@@ -7,11 +7,12 @@
 #      agent's .command installers, and the git hooks.
 #   2. Every tracked Tools/check-*.sh that declares no order, with no arguments.
 #   3. swift-format lint --strict over the roots Tools/lib/swift-roots.sh names.
-#   4. The fixture suites whose stage changed since a recorded pass, through
-#      `Tools/fixture-suites.sh --reuse`. A suite needs no Xcode, which is
-#      what lets lint and the pre-push hook gate it; the release
-#      dead-code-sources the Swift source rules' suites run is the tool
-#      cache's, built once per machine in minutes.
+#   4. The fixture suites, through Tools/fixture-suites.sh, which skips them
+#      when a pass is recorded for the same tooling. A suite needs no Xcode,
+#      which is what lets lint and the pre-push hook gate it; the dead-code
+#      tools' swift-syntax builds once per checkout, and the release
+#      dead-code-sources the Swift source rules' suites run once per machine,
+#      in the tool cache, in minutes.
 #   5. The checks whose header declares `# make lint: runs last — <why>`.
 #
 # Tools/lib/lint-inputs.sh lists each step's files and reads a check's order
@@ -84,7 +85,7 @@ pass "swift-format: ${#swift[@]} roots"
 suites=()
 while IFS= read -r suite; do suites+=("$suite"); done < <(lint_fixture_suites)
 [ "${#suites[@]}" -gt 0 ] || die 'git tracks no fixture suites — not a git checkout?'
-Tools/fixture-suites.sh --reuse "${suites[@]}" || exit 1
+Tools/fixture-suites.sh "${suites[@]}" || exit 1
 
 # ---- 5. the checks that run last -------------------------------------------------
 

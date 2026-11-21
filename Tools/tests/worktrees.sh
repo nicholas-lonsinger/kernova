@@ -4,8 +4,6 @@
 # checks the layout it reads, which directories its orphan scan reports, and
 # which worktrees it reads as abandoned and removes.
 # Local git only — no network.
-#
-# fixture reads: Tools/lib/worktrees.sh Tools/lib/holders.sh
 
 set -uo pipefail
 

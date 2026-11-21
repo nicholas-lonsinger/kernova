@@ -6,9 +6,6 @@
 # of the scripts in a fixture clone and a linked worktree of it, with a stub
 # xcodebuild; every wait is on
 # a fifo or a process, never a sleep, and ends if the process under test exits.
-#
-# fixture reads: Makefile Tools/checkout-lock.sh Tools/built-app.sh Tools/lib/output.sh
-# fixture reads: Tools/lib/swift-roots.sh Tools/lib/xcodebuild-flags.sh
 
 set -uo pipefail
 

@@ -9,10 +9,6 @@
 # repo-relative), @BUNDLE@ the directory holding the fake .xcresult bundles.
 # A fake bundle is an empty directory; the fake xcresulttool answers for it
 # from fixtures/xcresult/<bundle name>/{summary,tests}.json.
-#
-# fixture reads: .agents/skills/make-verdict Makefile Tools/built-app.sh Tools/check-weak-links.sh
-# fixture reads: Tools/checkout-lock.sh Tools/hooks-installed.sh Tools/lib/output.sh
-# fixture reads: Tools/lib/swift-roots.sh Tools/lib/xcodebuild-flags.sh
 
 set -uo pipefail
 

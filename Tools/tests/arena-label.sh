@@ -4,10 +4,6 @@
 # worktree git does not list at its path still reads as live. Runs a copy of
 # the scripts inside a fixture clone, with HOME in the fixture so the default
 # arena root is too.
-#
-# fixture reads: Tools/arena-label.sh Tools/derived-data-path.sh Tools/lib/output.sh
-# fixture reads: Tools/lib/arena-records.sh Tools/lib/worktrees.sh Tools/lib/holders.sh
-# fixture reads: Tools/lib/xcodebuild-flags.sh
 
 set -uo pipefail
 

@@ -17,8 +17,11 @@ lint_shell_sources() { tracked '**/*.sh' '**/*.command' '.githooks/*'; }
 
 lint_checks() { tracked 'Tools/check-*.sh'; }
 
-# lint_fixture_suites — the Tools/tests scripts and each skill's tests/run.sh.
-lint_fixture_suites() { tracked 'Tools/tests/*.sh' '.agents/skills/*/tests/run.sh'; }
+# lint_fixture_suites — every suite git-isolation.sh runs: the Tools/tests
+# scripts but that runner itself, and each skill's tests/run.sh.
+lint_fixture_suites() {
+    tracked 'Tools/tests/*.sh' '.agents/skills/*/tests/run.sh' | awk '$0 != "Tools/tests/git-isolation.sh"'
+}
 
 # lint_order <check> — `first`, `last` or `not-run`, from the check's header:
 # the comment block it opens with. A header line

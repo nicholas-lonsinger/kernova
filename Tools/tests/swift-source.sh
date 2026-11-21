@@ -4,9 +4,6 @@
 # worked by hand from the lexical structure in The Swift Programming Language
 # and checked against `xcrun swiftc -parse -swift-version 6`'s reading, never
 # produced by the code under test.
-#
-# fixture reads: Tools/install-dead-code-tool.sh Tools/lib/tool-cache.sh Tools/lib/dead-code-tool.sh
-# fixture reads: Tools/lib/package-pins.sh Tools/DeadCode
 
 set -uo pipefail
 
