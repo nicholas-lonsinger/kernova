@@ -3,6 +3,8 @@
 # xcodebuild named for fixed project paths, and spellings of one path that
 # xcodebuild resolves to the same arena. `defaults` is faked first on PATH, so
 # the machine's derived-data preference cannot change the answer.
+#
+# fixture reads: Tools/derived-data-path.sh Tools/lib/xcodebuild-flags.sh
 
 set -uo pipefail
 

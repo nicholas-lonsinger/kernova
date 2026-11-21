@@ -6,6 +6,10 @@
 # the check outright: a file that does not parse, a rule module that is no
 # rule, and a malformed command line. Each rule's own findings are its fixture
 # suite's.
+#
+# fixture reads: Tools/swift-rules Tools/check-swift-sources.sh Tools/lib/output.sh
+# fixture reads: Tools/install-dead-code-tool.sh Tools/lib/tool-cache.sh Tools/lib/dead-code-tool.sh
+# fixture reads: Tools/lib/package-pins.sh Tools/DeadCode
 
 set -uo pipefail
 

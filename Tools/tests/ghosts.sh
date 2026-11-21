@@ -7,6 +7,10 @@
 # the Trash. Runs a copy of the scripts inside a fixture clone, with HOME in the
 # fixture and fakes for every tool that reaches past it (lsregister, defaults,
 # pgrep, mdfind, trash, launchctl). Local git only.
+#
+# fixture reads: Tools/ghosts.sh Tools/arena-label.sh Tools/derived-data-path.sh
+# fixture reads: Tools/lib/arena-records.sh Tools/lib/build-arenas.sh Tools/lib/holders.sh
+# fixture reads: Tools/lib/output.sh Tools/lib/worktrees.sh Tools/lib/xcodebuild-flags.sh
 
 set -uo pipefail
 

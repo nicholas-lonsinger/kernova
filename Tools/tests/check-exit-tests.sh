@@ -2,6 +2,10 @@
 # Fixture tests for the exit-tests rule (Tools/swift-rules/exit-tests.pm):
 # which exit tests outside the exit-test target, and which tests inside it, it
 # flags, and on which line.
+#
+# fixture reads: Tools/swift-rules/exit-tests.pm Tools/check-swift-sources.sh Tools/lib/output.sh
+# fixture reads: Tools/install-dead-code-tool.sh Tools/lib/tool-cache.sh Tools/lib/dead-code-tool.sh
+# fixture reads: Tools/lib/package-pins.sh Tools/DeadCode
 
 set -uo pipefail
 
