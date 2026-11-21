@@ -20,12 +20,12 @@
 # compiles. A source file or a target the manifest adds enters the hash with
 # no list edited here.
 #
-# Two builds with one set of inputs are byte-identical from checkout paths of
-# one length, as .github/workflows/linux-agent-reproducibility.yml checks: the
-# prefix maps take the checkout's path out of every string the compilers embed,
-# the frontend embeds no IR hash, and stripping takes out the rest of the debug
-# info. An -O build still passes withoutActuallyEscaping's escape check the
-# length of each source file's path (issue #2059).
+# Each set of inputs gives one agent because it is built once and copied, not
+# because two builds agree: an -O build passes withoutActuallyEscaping's escape
+# check the length of each source file's path (issue #2059), so a build from a
+# checkout whose path has another length differs. The prefix maps keep the
+# checkout's path out of any path text the compilers embed; no byte of the
+# agent depends on them today.
 #
 # KERNOVA_AGENT_FAULT=hang-before-hello builds an agent that never dials,
 # for the update rollback gate, and only in a Debug build.

@@ -1,6 +1,6 @@
 # The Linux guest agent as built: what it is built from, its label, and what it
 # must be before Kernova bundles it. Sourced, never run, by the scripts that
-# build, label and compare it.
+# build and label it.
 
 # shellcheck shell=bash
 
