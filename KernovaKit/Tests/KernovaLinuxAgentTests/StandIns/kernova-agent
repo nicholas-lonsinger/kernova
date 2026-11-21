@@ -1,0 +1,2 @@
+#!/bin/sh
+echo "$(id -u) $*" >> "$STAND_IN_CALLS"
