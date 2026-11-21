@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Fixture tests for the lock-values rule (Tools/swift-rules/lock-values.pm):
 # which lock-box type arguments it flags, and on which line.
+#
+# fixture reads: Tools/swift-rules/lock-values.pm Tools/check-swift-sources.sh Tools/lib/output.sh
+# fixture reads: Tools/install-dead-code-tool.sh Tools/lib/tool-cache.sh Tools/lib/dead-code-tool.sh
+# fixture reads: Tools/lib/package-pins.sh Tools/DeadCode
 
 set -uo pipefail
 

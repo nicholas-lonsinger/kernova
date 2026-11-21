@@ -4,6 +4,9 @@
 # after-merge.sh from inside the worktree through every verdict. Local git
 # only — no network — and it takes a few seconds. Run it after editing the
 # skill.
+#
+# fixture reads: .agents/skills/after-merge/after-merge.sh Tools/lib/worktrees.sh
+# fixture reads: Tools/lib/holders.sh
 
 set -uo pipefail
 

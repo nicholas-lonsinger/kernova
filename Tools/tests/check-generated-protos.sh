@@ -2,6 +2,9 @@
 # Fixture test for Tools/check-generated-protos.sh: building protoc with a git
 # hook's environment, GIT_DIR naming the checkout being pushed, fetches and
 # builds swift-protobuf without touching that checkout.
+#
+# fixture reads: Tools/check-generated-protos.sh Tools/install-protoc.sh Tools/lib/output.sh
+# fixture reads: Tools/lib/tool-cache.sh
 
 set -uo pipefail
 

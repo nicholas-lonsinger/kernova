@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Fixture tests for Tools/check-package-origins.sh: which package references it
 # flags in each source, on which line, and which forms it refuses to skip.
+#
+# fixture reads: Tools/check-package-origins.sh Tools/lib/output.sh
 
 set -uo pipefail
 

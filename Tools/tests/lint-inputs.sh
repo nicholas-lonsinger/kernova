@@ -3,6 +3,8 @@
 # step takes, at the root, nested and in .githooks, and how a check's
 # `# make lint:` header line orders it — each valid value, a typo in the value,
 # a typo in the prefix, a missing reason, and the line below the header.
+#
+# fixture reads: Tools/lib/lint-inputs.sh
 
 set -uo pipefail
 
@@ -31,7 +33,7 @@ for path in \
     root.sh deep/a/b.sh installer.command deep/installer.command notes.txt \
     .githooks/pre-push .githooks/commit-msg \
     Tools/check-one.sh Tools/check-two.sh Tools/sub/check-nested.sh Tools/checker.sh \
-    Tools/tests/suite.sh Tools/tests/git-isolation.sh Tools/tests/fixtures/data.sh \
+    Tools/tests/suite.sh Tools/tests/fixtures/data.sh \
     .agents/skills/alpha/tests/run.sh .agents/skills/beta/tests/other.sh .agents/skills/alpha/tests/deep/run.sh; do
     mkdir -p "$repo/$(dirname "$path")"
     printf '#!/bin/bash\n' >"$repo/$path"
@@ -45,7 +47,7 @@ in_repo() { (cd "$repo" && "$@") | sort | lines; }
 check "shell sources" "$(in_repo lint_shell_sources)" \
     "$(printf '%s\n' .agents/skills/alpha/tests/deep/run.sh .agents/skills/alpha/tests/run.sh .agents/skills/beta/tests/other.sh \
         .githooks/commit-msg .githooks/pre-push Tools/check-one.sh Tools/check-two.sh Tools/checker.sh Tools/sub/check-nested.sh \
-        Tools/tests/fixtures/data.sh Tools/tests/git-isolation.sh Tools/tests/suite.sh deep/a/b.sh deep/installer.command \
+        Tools/tests/fixtures/data.sh Tools/tests/suite.sh deep/a/b.sh deep/installer.command \
         installer.command root.sh | sort | lines)"
 check "checks" "$(in_repo lint_checks)" 'Tools/check-one.sh Tools/check-two.sh'
 check "fixture suites" "$(in_repo lint_fixture_suites)" '.agents/skills/alpha/tests/run.sh Tools/tests/suite.sh'
