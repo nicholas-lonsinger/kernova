@@ -8,6 +8,7 @@ on:
     paths:
       - 'KernovaKit/**'
       - '.github/workflows/**'
+      - '.github/actions/swiftpm-build/**'
       - '.swift-version'
       - 'Tools/build-linux-guest-agent.sh'
       - 'Tools/check-linux-guest-agent.sh'
@@ -20,6 +21,7 @@ on:
     paths:
       - 'KernovaKit/**'
       - '.github/workflows/**'
+      - '.github/actions/swiftpm-build/**'
       - '.swift-version'
       - 'Tools/build-linux-guest-agent.sh'
       - 'Tools/check-linux-guest-agent.sh'
@@ -76,14 +78,15 @@ jobs:
         run: apt-get update && apt-get install --yes --no-install-recommends dbus file xorriso
 
       - name: Build
-        shell: bash
-        run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift build --
+        uses: ./.github/actions/swiftpm-build
+        with:
+          package: KernovaKit
 
       # The static SDK has no Testing module, so the tests run on the
       # container's glibc toolchain.
       - name: Test
         shell: bash
-        run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift test --
+        run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift test -- --skip-build
 
       - name: Install the Static Linux SDK
         shell: bash
@@ -148,9 +151,10 @@ jobs:
       # Git for Windows' bash, so the build takes its pins the way every
       # other platform does.
       - name: Build
-        shell: bash
-        run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift build --
+        uses: ./.github/actions/swiftpm-build
+        with:
+          package: KernovaKit
 
       - name: Test
         shell: bash
-        run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift test --
+        run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift test -- --skip-build
