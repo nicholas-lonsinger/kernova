@@ -1,0 +1,62 @@
+name: Build a Swift package and its tests
+description: >-
+  Build a package's targets and tests with `swift build --build-tests`, its
+  tracked pins held by with_package_pins (Tools/lib/package-pins.sh), with
+  SwiftPM's shared cache restored from the Actions cache and saved when no
+  entry for this platform, toolchain and set of pins exists, as tool-cache
+  saves its entries. The shared cache holds the dependencies' repositories
+  and the evaluated manifests, so a run that finds an entry neither fetches
+  the dependencies nor evaluates their manifests again.
+
+inputs:
+  package:
+    description: The package directory, relative to the repository root.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # with_package_pins copies the pins it builds against beside the manifest,
+    # so `true` in place of the swift command leaves exactly those pins there.
+    #
+    # SwiftPM keeps the shared cache in Foundation's user caches directory
+    # (FileSystem.swiftPMCacheDirectory): $XDG_CACHE_HOME or ~/.cache on
+    # Linux, and on Windows the temporary directory
+    # (FileManager+WindowsSearchPaths.swift in swift-foundation), which
+    # GetTempPath2 reads from TMP, which Git Bash hands a native process as
+    # `cygpath -w "$TMP"`.
+    - id: key
+      shell: bash
+      env:
+        PACKAGE: ${{ inputs.package }}
+      run: |
+        set -euo pipefail
+        . Tools/lib/package-pins.sh
+        with_package_pins "$PACKAGE" true --
+        platform="$RUNNER_OS-$RUNNER_ARCH"
+        if [ -r /etc/os-release ]; then
+          platform="$platform-$(. /etc/os-release && echo "$ID$VERSION_ID")"
+        fi
+        case "$RUNNER_OS" in
+          Windows) cache="$(cygpath -m "$TMP")/org.swift.swiftpm" ;;
+          *) cache="${XDG_CACHE_HOME:-$HOME/.cache}/org.swift.swiftpm" ;;
+        esac
+        echo "path=$cache" >> "$GITHUB_OUTPUT"
+        echo "key=swiftpm-$platform-swift$(tr -d '[:space:]' < .swift-version)-$(sha256sum < "$PACKAGE/Package.resolved" | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+    - id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.key.outputs.path }}
+        key: ${{ steps.key.outputs.key }}
+
+    - shell: bash
+      env:
+        PACKAGE: ${{ inputs.package }}
+      run: . Tools/lib/package-pins.sh && with_package_pins "$PACKAGE" swift build -- --build-tests
+
+    - if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.key.outputs.path }}
+        key: ${{ steps.key.outputs.key }}
