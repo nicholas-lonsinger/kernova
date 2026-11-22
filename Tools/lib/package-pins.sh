@@ -16,7 +16,9 @@
 # with_package_pins <package dir> <swift command>... -- [<argument>...]: runs
 # `<swift command>... --package-path <package dir>
 # --only-use-versions-from-resolved-file <argument>...`, where <swift command>
-# runs a SwiftPM subcommand, e.g. `xcrun swift test`.
+# runs a SwiftPM subcommand, e.g. `xcrun swift test`, with KERNOVA_SOURCE_ROOT
+# naming the checkout to the tests it runs (KernovaPortableTestSupport's
+# SourceTree).
 with_package_pins() {
     local package repo invocation=()
     package="$(cd "$1" && pwd -P)" || return
@@ -35,5 +37,5 @@ with_package_pins() {
         local pins="$repo/Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
         cmp -s "$pins" "$package/Package.resolved" || cp "$pins" "$package/Package.resolved" || return
     fi
-    "${invocation[@]}" --package-path "$package" --only-use-versions-from-resolved-file "$@"
+    KERNOVA_SOURCE_ROOT=$repo "${invocation[@]}" --package-path "$package" --only-use-versions-from-resolved-file "$@"
 }

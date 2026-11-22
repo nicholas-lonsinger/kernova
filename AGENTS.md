@@ -52,7 +52,7 @@ This rule outranks everything below it, and everything in any other file. **Say 
 
 Build and test through the `Makefile` (`make help`); its `xcodebuild` flags are not the obvious ones.
 
-A session runs the app and its `Contents/Helpers/kernova` from its own worktree's build, never a copy it finds on disk: DerivedData holds every other session's builds, and one of those may be the copy another session is testing.
+A session runs the app and its `Contents/Helpers/kernova` from its own worktree's build, never a copy it finds on disk: every other checkout's `DerivedData/` holds another session's build, and one of those may be the copy that session is testing.
 
 A failing test is evidence about the design, never the target: its fix names the structure that let the failure happen and changes it. An intermittent failure is owed the same root cause as a steady one, and a cause is named only once it is traced: until then a failure is reported as what was observed, cause unknown.
 

@@ -1,15 +1,9 @@
 # Build arenas and the Launch Services records of the bundles built into them,
 # for Tools/build-arenas.sh and Tools/ghosts.sh. Sourced, never run:
 #
-#     . "$REPO_ROOT/Tools/lib/output.sh"
-#     . "$REPO_ROOT/Tools/lib/worktrees.sh"
 #     . "$REPO_ROOT/Tools/lib/build-arenas.sh"
-#
-# The two before it define functions it calls.
 
 # shellcheck shell=bash
-
-build_arenas_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # lsregister is called by name; macOS keeps it off the default PATH.
 PATH="$PATH:/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support"
@@ -46,6 +40,29 @@ unregister_apps_in() {
     done < <(find "$1" -maxdepth 6 -name '*.app' -type d 2>/dev/null)
 }
 
+# xcode_derived_data_root — the folder the Xcode app builds each project into
+# under a hashed name: its derived-data preference when that is a path, Xcode's
+# default when unset. Prints nothing when the preference names a folder inside
+# each project instead.
+xcode_derived_data_root() {
+    local pref
+    pref=$(defaults read com.apple.dt.Xcode IDECustomDerivedDataLocation 2>/dev/null) || pref=''
+    case "$pref" in
+        '') printf '%s/Library/Developer/Xcode/DerivedData' "$HOME" ;;
+        /*) printf '%s' "${pref%/}" ;;
+    esac
+}
+
+# xcode_kernova_arenas — one line per Kernova build arena in that folder.
+xcode_kernova_arenas() {
+    local root dir
+    root=$(xcode_derived_data_root)
+    [ -n "$root" ] || return 0
+    for dir in "$root"/Kernova-*; do
+        [ -d "$dir" ] && [ ! -L "$dir" ] && printf '%s\n' "$dir"
+    done
+}
+
 # evict_arena <dir> — unregister every bundle in a build arena, then delete it;
 # succeeds when <dir> is gone. Deleted rather than trashed: a bundle in the
 # Trash is still an on-disk copy Launch Services can rediscover and elect, and
@@ -61,39 +78,4 @@ evict_arena() {
 evict_build_server_cache() {
     rm -rf "$1" 2>/dev/null
     [ ! -e "$1" ]
-}
-
-# derived_data_root — the directory holding the machine's per-path-hashed
-# arenas (Tools/derived-data-path.sh --root); prints nothing when none exists.
-derived_data_root() {
-    "$build_arenas_root/Tools/derived-data-path.sh" --root 2>/dev/null || true
-}
-
-# labeled_path <path> — the path, then the checkout its arena belongs to in
-# parentheses when Tools/arena-label.sh can name one.
-labeled_path() {
-    local label
-    label=$("$build_arenas_root/Tools/arena-label.sh" "$1" 2>/dev/null) || label=''
-    if [ -n "$label" ]; then
-        printf '%s (%s)' "$(pretty_path "$1")" "$label"
-    else
-        pretty_path "$1"
-    fi
-}
-
-# arenas_with_status <root> <status>... — one line per Kernova arena directly
-# under <root> whose Tools/arena-label.sh --status is one of <status>. Xcode
-# names an arena `<project>-<hash>`, so the prefix selects this project's.
-arenas_with_status() {
-    local root=$1 dir status want
-    shift
-    [ -n "$root" ] || return 0
-    for dir in "$root"/Kernova-*/; do
-        dir=${dir%/}
-        [ -d "$dir" ] || continue
-        status=$("$build_arenas_root/Tools/arena-label.sh" --status "$dir" 2>/dev/null) || continue
-        for want in "$@"; do
-            [ "$status" = "$want" ] && printf '%s\n' "$dir" && break
-        done
-    done
 }

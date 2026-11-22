@@ -1,16 +1,18 @@
 # Kernova build & test invocations.
 #
-# These targets own the `xcodebuild` invocations, with the flags
-# Tools/lib/xcodebuild-flags.sh gives them — they are not the obvious ones, so
-# never hand-write one. Inside Xcode, just use the IDE
-# (CMD-B / CMD-U); this Makefile is for terminal, CI, and tooling use.
+# These targets own the `xcodebuild` invocations, through Tools/xcodebuild.sh
+# with the flags Tools/lib/xcodebuild-flags.sh gives them — they are not the
+# obvious ones, so never hand-write one. Every build lands in this checkout's
+# DerivedData/. Inside Xcode, just use the IDE (CMD-B / CMD-U), which builds
+# in Xcode's own DerivedData folder; this Makefile is for terminal, CI, and
+# tooling use.
 
-XCODEBUILD_LIB := . Tools/lib/xcodebuild-flags.sh
-PROJECT        := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_project"')
-SCHEME         := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_scheme"')
-DESTINATION    := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_destination"')
-
-DERIVED_DATA_ROOT := DerivedData
+XCODEBUILD_LIB    := . Tools/lib/xcodebuild-flags.sh
+PROJECT           := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_project"')
+SCHEME            := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_scheme"')
+DESTINATION       := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_destination"')
+DERIVED_DATA_ROOT := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_derived_data_root"')
+DERIVED_DATA      := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_derived_data"')
 RESULT_BUNDLE     := artifacts/TestResults.xcresult
 
 ifneq ($(strip $(CI)),)
@@ -21,10 +23,8 @@ endif
 # `make build CONFIGURATION=Release`. `make test` tests Debug only.
 CONFIGURATION ?= Debug
 
-# Tools/lib/xcodebuild-flags.sh owns the flags; CI is passed in so a
-# command-line `CI=1` reaches it as an environment one does.
+XCODEBUILD               = Tools/xcodebuild.sh '$(CONFIGURATION)'
 XCODEBUILD_PROJECT_FLAGS := $(shell bash -c '$(XCODEBUILD_LIB) && xcodebuild_project_flags')
-XCODEBUILD_FLAGS = $(shell CI='$(CI)' bash -c '$(XCODEBUILD_LIB) && xcodebuild_flags "$$1"' _ '$(CONFIGURATION)')
 
 # Every command that runs xcodebuild against this checkout — Periphery's
 # included, which resolves packages into the checkout's shared files — runs
@@ -54,7 +54,7 @@ help:
 	@printf '\n'
 	@printf '  make test-suite requires SUITE=<Target/Suite>, e.g. SUITE=KernovaVirtualizationTests/ConfigurationBuilderTests or SUITE=KernovaCoreTests/VMConfigurationTests\n'
 	@printf '  Append CONFIGURATION=Release to build or test-without-building in Release (default: Debug); make test runs Debug only\n'
-	@printf '  Prefix CI=1 to build/test with the CI-only settings (fixed DerivedData path, no index store)\n'
+	@printf '  Prefix CI=1 to build/test with the CI-only settings (a result bundle in artifacts/, a compilation cache store that rolls over every build)\n'
 
 # Everything a fresh clone needs beyond Xcode itself, composed from the
 # targets below so each piece is also runnable on its own. Every step is
@@ -106,17 +106,17 @@ build: check-hooks ## Build the app for macOS
 	$(LOCKED_TWIN)
 
 locked-build:
-	xcodebuild $(XCODEBUILD_FLAGS) build
-	@Tools/built-app.sh $(XCODEBUILD_FLAGS)
+	$(XCODEBUILD) build
+	@Tools/built-app.sh '$(CONFIGURATION)'
 
 build-for-testing: check-hooks ## Compile the app and test bundles without running them, then check the built app's weak links
 	$(LOCKED_TWIN)
 
 locked-build-for-testing:
-	xcodebuild $(XCODEBUILD_FLAGS) build-for-testing
-	@Tools/built-app.sh --check-weak-links $(XCODEBUILD_FLAGS)
+	$(XCODEBUILD) build-for-testing
+	@Tools/built-app.sh --check-weak-links '$(CONFIGURATION)'
 
-clean: ## Remove this checkout's build arenas (in-worktree DerivedData/ and its arenas in Xcode's DerivedData folder)
+clean: ## Remove this checkout's builds: its DerivedData/
 	$(LOCKED_TWIN)
 
 locked-clean:
@@ -134,7 +134,7 @@ attest: check-hooks ## Post the `Commit Attestation` status on the pushed HEAD, 
 # passes no such flag and must not touch artifacts/.
 test-without-building: check-hooks ## Run the test plan against an existing build-for-testing product
 	@test -z '$(RESULT_BUNDLE_FLAG)' || rm -rf '$(RESULT_BUNDLE)'
-	$(LOCKED) xcodebuild $(XCODEBUILD_FLAGS) $(RESULT_BUNDLE_FLAG) test-without-building
+	$(LOCKED) $(XCODEBUILD) test-without-building $(RESULT_BUNDLE_FLAG)
 
 # The local packages' own test targets, which run with no app as their host:
 # every top-level directory holding a Package.swift, derived like
@@ -163,7 +163,7 @@ test-unhosted-tsan: ## Run the unhosted lanes under Thread Sanitizer
 # Xcode workspace's, which every top-level package takes, and Tools/DeadCode's.
 .PHONY: resolve-packages
 resolve-packages: ## Re-resolve the tracked Package.resolved files after a package requirement changes
-	$(LOCKED) xcodebuild -project $(PROJECT) -resolvePackageDependencies
+	$(LOCKED) xcodebuild -project $(PROJECT) -derivedDataPath $(DERIVED_DATA) -resolvePackageDependencies
 	xcrun swift package resolve --disable-experimental-prebuilts --package-path Tools/DeadCode
 
 swift-toolchain: ## Install swiftly, the swift.org toolchain .swift-version pins, and its Static Linux SDK
@@ -184,7 +184,7 @@ test-suite: check-hooks ## Run a single test suite (SUITE=<Target/Suite>; see be
 		echo 'Example: make test-suite SUITE=KernovaCoreTests/VMConfigurationTests' >&2; \
 		exit 2; \
 	fi
-	$(LOCKED) xcodebuild $(XCODEBUILD_FLAGS) test -only-testing:$(SUITE)
+	$(LOCKED) $(XCODEBUILD) test -only-testing:$(SUITE)
 
 format: ## Rewrite Swift sources in place via swift-format
 	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
@@ -197,14 +197,15 @@ lint: ## Run Tools/lint.sh: shell analysis, the Tools/check-*.sh checks, swift-f
 # arena per checkout. Periphery's own build would go to
 # ~/Library/Caches/com.github.peripheryapp under a name hashed from its schemes
 # in a Swift `Set`'s per-process order, a new multi-gigabyte arena most runs;
-# the GUI's arena, indexed while editing, is no single build's index. The
-# build flags are Periphery 3.x's own plus the compilation cache off: a compile
-# the cache serves writes no index unit, leaving the unit an earlier compile
-# wrote — after a revert, a cached scan reported 27 findings in code that no
-# longer existed (Xcode 27.1). Each scheme is built for testing, so the one
-# index serves both views — the full scan, and the production scan with every
-# target only tests reach excluded — and the bundle written from it holds both
-# and that index's declaration sites. With the Ubuntu SDK installed,
+# the checkout's build arena holds no index, and the GUI's is no single
+# build's index. The build flags are Periphery 3.x's own plus the compilation
+# cache off: a compile the cache serves writes no index unit, leaving the unit
+# an earlier compile wrote — after a revert, a cached scan reported 27
+# findings in code that no longer existed (Xcode 27.1). Each scheme is built
+# for testing, so the one index serves both views — the full scan, and the
+# production scan with every target only tests reach excluded — and the bundle
+# written from it holds both and that index's declaration sites. With the
+# Ubuntu SDK installed,
 # Tools/dead-code-linux.sh writes the Linux bundle beside it and the report on
 # stdout combines the two, as .github/workflows/dead-code.yml does; without it
 # the report covers macOS alone and names what installs the rest. The built

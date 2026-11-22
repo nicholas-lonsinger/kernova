@@ -9,17 +9,14 @@ import Testing
 @Suite("The agent disk's install.sh")
 struct AgentDiskScriptTests {
     /// The script, from the source tree, where KernovaCore bundles it for the disk.
-    static let script = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        .appendingPathComponent("../../../KernovaCore/Sources/KernovaCore/Resources/LinuxAgentDisk/agent-disk.sh")
-        .standardizedFileURL.path
+    static let script = SourceTree.url("KernovaCore/Sources/KernovaCore/Resources/LinuxAgentDisk/agent-disk.sh").path
 
     /// The stand-ins, checked in because Linux refuses to run a file some process holds open for writing, and a
     /// child this process spawns concurrently can inherit the descriptor of a file it writes. Each appends a line
     /// to the file `STAND_IN_CALLS` names: the agent `<uid> <arguments>`, and `bin/sudo` `sudo <arguments>`
     /// before refusing `-n` with sudo's own message when `STAND_IN_SUDO_REFUSES` is set, and otherwise running
     /// the rest.
-    static let standIns = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        .appendingPathComponent("StandIns").path
+    static let standIns = SourceTree.url("KernovaKit/Tests/KernovaLinuxAgentTests/StandIns").path
 
     /// A disk directory holding the script as install.sh, the stand-in agent, and the `calls` they record to.
     final class Disk {

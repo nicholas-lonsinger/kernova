@@ -54,7 +54,7 @@
                 {
                   "name": "Expectation failed: error is nil\nerror → nil",
                   "nodeType": "Failure Message",
-                  "sourceLocation": { "filePath": "@ROOT@/KernovaTests/VMConfigurationTests.swift", "lineNumber": 58 }
+                  "sourceLocation": { "filePath": "/^src/KernovaTests/VMConfigurationTests.swift", "lineNumber": 58 }
                 }
               ]
             },

@@ -5,6 +5,7 @@ import Darwin
 import Glibc
 #endif
 import Foundation
+import KernovaPortableTestSupport
 import Testing
 
 @testable import KernovaAgentInstall
@@ -14,7 +15,7 @@ struct SelfTestTests {
     /// A stand-in, checked in: Linux refuses to run a file some process holds open for writing, and a child this
     /// process spawns concurrently can inherit the descriptor of a file it writes.
     static func standIn(_ name: String) -> String {
-        URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("StandIns/" + name).path
+        SourceTree.url("KernovaKit/Tests/KernovaAgentInstallTests/StandIns/" + name).path
     }
 
     @Test("The self-test passes a binary that runs and exits 0, and fails every other")

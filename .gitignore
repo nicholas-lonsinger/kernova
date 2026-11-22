@@ -6,9 +6,8 @@ artifacts/
 # Per-developer signing team, hand-set in Config/Local.xcconfig — see
 # Config/Base.xcconfig.
 Config/Local.xcconfig
-# Written next to the .xcodeproj by Xcode's Relative Derived Data setting
-# (see Tools/derived-data-path.sh); the suffix is a per-install identifier,
-# hence the glob.
+# Written next to the .xcodeproj by Xcode's Relative Derived Data setting; the
+# suffix is a per-install identifier, hence the glob.
 .derived-data-log-*
 *.pbxuser
 !default.pbxuser

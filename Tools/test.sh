@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Tests the checkout: what `Tools/attest.sh record test` runs, under the
-# checkout's build lock, for `make test`. Runs the full test plan in Debug,
-# with the flags Tools/lib/xcodebuild-flags.sh gives every make target, then
+# checkout's build lock, for `make test`. Runs the full test plan in Debug
+# through Tools/xcodebuild.sh, with the flags every make target passes, then
 # Tools/check-weak-links.sh on the Kernova.app that same run built. Takes no
 # arguments, so nothing a caller passes changes what a test record covers.
 
@@ -10,10 +10,5 @@ set -uo pipefail
 [ $# -eq 0 ] || { echo 'usage: Tools/test.sh' >&2; exit 2; }
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
-# shellcheck source=lib/xcodebuild-flags.sh
-. Tools/lib/xcodebuild-flags.sh
-flags=()
-while IFS= read -r flag; do flags+=("$flag"); done < <(xcodebuild_flags Debug)
-
-xcodebuild "${flags[@]}" test || exit
-Tools/built-app.sh --check-weak-links "${flags[@]}"
+Tools/xcodebuild.sh Debug test || exit
+Tools/built-app.sh --check-weak-links Debug
