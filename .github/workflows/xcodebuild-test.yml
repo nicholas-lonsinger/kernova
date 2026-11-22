@@ -66,6 +66,13 @@ jobs:
       - name: Install the swift.org toolchain
         uses: ./.github/actions/swift-toolchain
 
+      # The Linux guest agent the "Build Linux Guest Agent" phase labels and
+      # bundles, built once per set of inputs; a cold build takes minutes.
+      - name: Build the Linux guest agent
+        uses: ./.github/actions/tool-cache
+        with:
+          installer: Tools/install-linux-guest-agent.sh
+
       # Debug signs ad-hoc (Config/Base.xcconfig's CODE_SIGN_IDENTITY = "-"),
       # which needs no identity or team.
       # Raw xcodebuild output throughout this workflow, not xcbeautify: its

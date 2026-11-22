@@ -43,23 +43,27 @@ stale_kernova_sdks() {
     done
 }
 
-# linux_swift <build|package> <argument>...: runs that SwiftPM command over
-# KernovaKit with the toolchain .swift-version pins, its dependencies held to
-# the tracked pins by with_package_pins. The arguments name the destination's
-# SDK.
-#
-# On macOS the toolchain is swiftly's, run with the environment scrubbed so
-# Xcode's SDKROOT, TOOLCHAINS and DEVELOPER_DIR cannot reach it, and with
-# KERNOVA_PORTABLE_ONLY set, so the manifest declares what it declares on Linux.
-# On Linux it is the `swift` on PATH.
-linux_swift() {
-    local command=$1
-    shift
-    local swift=(swift "$command")
+# pinned_swift <argument>...: runs `swift <argument>...` with the toolchain
+# .swift-version pins. On macOS that is swiftly's, run with the environment
+# scrubbed so Xcode's SDKROOT, TOOLCHAINS and DEVELOPER_DIR cannot reach it,
+# and with KERNOVA_PORTABLE_ONLY set, so KernovaKit's manifest declares what it
+# declares on Linux. On Linux it is the `swift` on PATH.
+pinned_swift() {
     if [ "$(uname -s)" = Darwin ]; then
-        swift=(env -i "HOME=$HOME" PATH=/usr/bin:/bin KERNOVA_PORTABLE_ONLY=1)
-        [ -z "${SWIFTLY_HOME_DIR:-}" ] || swift+=("SWIFTLY_HOME_DIR=$SWIFTLY_HOME_DIR")
-        swift+=("$(swiftly_binary)" run swift "$command" "+$(pinned_swift_version)" --swift-sdks-path "$(swift_sdks_dir)")
+        local run=(env -i "HOME=$HOME" PATH=/usr/bin:/bin KERNOVA_PORTABLE_ONLY=1)
+        [ -z "${SWIFTLY_HOME_DIR:-}" ] || run+=("SWIFTLY_HOME_DIR=$SWIFTLY_HOME_DIR")
+        "${run[@]}" "$(swiftly_binary)" run swift "$1" "+$(pinned_swift_version)" "${@:2}"
+    else
+        swift "$@"
     fi
+}
+
+# linux_swift <build|package> <argument>...: runs that SwiftPM command over
+# KernovaKit with pinned_swift, its dependencies held to the tracked pins by
+# with_package_pins. The arguments name the destination's SDK.
+linux_swift() {
+    local swift=(pinned_swift "$1")
+    shift
+    [ "$(uname -s)" != Darwin ] || swift+=(--swift-sdks-path "$(swift_sdks_dir)")
     with_package_pins "$(dirname "${BASH_SOURCE[0]}")/../../KernovaKit" "${swift[@]}" -- "$@"
 }

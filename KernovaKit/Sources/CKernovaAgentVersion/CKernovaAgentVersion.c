@@ -1,16 +1,14 @@
 #include "CKernovaAgentVersion.h"
 
-// Tools/build-linux-guest-agent.sh writes this header into a directory it adds
-// to the include path, so only this file depends on the label: a label passed
-// as a -D flag would change every module's command line and rebuild them all.
-#if __has_include("KernovaAgentVersionLabel.h")
-#include "KernovaAgentVersionLabel.h"
+// In an ELF build the label is the whole of its own section, which
+// Tools/build-linux-guest-agent.sh rewrites in the built binary
+// (stamp_linux_agent_label in Tools/lib/linux-agent.sh), so compiling the agent
+// never depends on the label and one build serves every label.
+#if defined(__ELF__)
+__attribute__((used, section("kernova_agent_label")))
 #endif
-
-#ifndef KERNOVA_AGENT_VERSION_LABEL
-#define KERNOVA_AGENT_VERSION_LABEL "development"
-#endif
+static const char label[64] = "development";
 
 const char *kernova_agent_version_label(void) {
-    return KERNOVA_AGENT_VERSION_LABEL;
+    return label;
 }
