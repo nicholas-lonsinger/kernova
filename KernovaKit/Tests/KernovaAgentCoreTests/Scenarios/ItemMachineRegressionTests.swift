@@ -43,6 +43,16 @@ enum Regression {
         run.streamResets.filter { $0.stream == stream }.map(\.code)
     }
 
+    /// The limits the endpoint's RESETs on `stream` report.
+    static func resetLimits(_ run: HostileRun, on stream: UInt32) -> [UInt64] {
+        run.written.compactMap { frame in
+            guard frame.type == .reset, frame.streamID.rawValue == stream,
+                let error = try? Kernova_V2_Error(serializedBytes: frame.payload)
+            else { return nil }
+            return error.limit
+        }
+    }
+
     static func localFaults(_ run: HostileRun) -> [Diagnostic] {
         run.hostEvents.compactMap {
             if case .diagnostic(let diagnostic) = $0, case .localFault = diagnostic { diagnostic } else { nil }
@@ -68,6 +78,7 @@ struct ItemMachineRegressionTests {
             WireFrames.open(3, .clipboardOfferByPeer, body: HostileItems.header(token: Regression.token(3), count: 1))
         ])
         #expect(Regression.resets(run, on: 3) == [.tooLarge])
+        #expect(Regression.resetLimits(run, on: 3) == [16_384])
         // The far side withdraws the full offer; its whole charge returns.
         run.feed([WireFrames.reset(1, code: ErrorCode.cancelled.rawValue)])
         run.feed([
@@ -91,6 +102,7 @@ struct ItemMachineRegressionTests {
         ])
         guard fits else {
             #expect(Regression.resets(run, on: 1) == [.tooLarge])
+            #expect(Regression.resetLimits(run, on: 1) == [16_384])
             #expect(run.host?.itemOffersForTesting.remoteHoldingForTesting.charged == 0)
             return
         }
