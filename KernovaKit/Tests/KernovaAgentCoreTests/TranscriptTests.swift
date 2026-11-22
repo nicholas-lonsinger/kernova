@@ -6,11 +6,12 @@ import Foundation
 
 import KernovaAgentSimulation
 import KernovaDigest
+import KernovaPortableTestSupport
 import Testing
 
 /// The golden transcripts, read from the source tree beside this file.
 enum TranscriptFiles {
-    static let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Transcripts")
+    static let root = SourceTree.url("KernovaKit/Tests/KernovaAgentCoreTests/Transcripts")
     static let frozen = root.appendingPathComponent("frozen")
     static let current = root.appendingPathComponent("current")
     static let manifest = frozen.appendingPathComponent("frozen.sha256")

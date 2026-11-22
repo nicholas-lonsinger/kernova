@@ -7,19 +7,16 @@
 # The moment Xcode builds an app bundle into a worktree's DerivedData, Launch
 # Services' filesystem scanner discovers and registers it — the guest agent
 # included, since nothing about that bundle is "guest-only" at the bundle
-# level. If the worktree directory is then removed by hand, that registration
-# is never unregistered and lingers pointing at a path that no longer resolves.
+# level. If the worktree directory is then removed, that registration is never
+# unregistered and lingers pointing at a path that no longer resolves.
 #
 # Checks for:
 #   - Launch Services registrations whose `path:` no longer exists on disk,
 #     under the current app.kernova.* identifiers and the legacy
 #     pre-#471-rename `com.kernova.app` one alike
-#   - Xcode DerivedData build arenas in the global per-path-hashed
-#     ~/Library location whose recorded source checkout no longer exists —
-#     on default-location machines every checkout the GUI opens leaves a
-#     permanent, LS-registered app copy there that keeps competing in the
-#     version election after the checkout is torn down
-#     (Tools/derived-data-path.sh)
+#   - Kernova build arenas in Xcode's own DerivedData folder, where the Xcode
+#     app builds (`make` builds in each checkout's DerivedData/): counted and
+#     sized, and never removed here, since one may be a build in use.
 #   - xcode-build-server caches under ~/Library/Caches/xcode-build-server
 #     named for a checkout of this clone that no longer exists — each holds
 #     that checkout's editor index, and nothing removes it with the checkout
@@ -52,10 +49,11 @@
 #     CFBundleVersion (= squash-aware git commit count, see
 #     Tools/set-build-number.sh), so a ghost build can shadow the real app
 #     indefinitely even though version ordering can never favor the installed
-#     copy on its own (#454). Deregistration/eviction is the only lever — and only for a copy
-#     no checkout still builds into: a live checkout's build is reported as
-#     the winner but never evicted, since its next build recreates and
-#     re-registers it, so trashing costs a rebuild and fixes nothing.
+#     copy on its own (#454). Deregistration/eviction is the only lever — and
+#     only for a copy no build writes to: a checkout's build, or one in
+#     Xcode's DerivedData folder, is reported as the winner but never evicted,
+#     since its next build recreates and re-registers it, so trashing costs a
+#     rebuild and fixes nothing.
 #
 # Run via `make ghosts` (report only) or `make clean-ghosts` (also fixes).
 # Direct invocation: Tools/ghosts.sh [--fix]. The build pipeline's own
@@ -87,21 +85,11 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=lib/build-arenas.sh
 . "$REPO_ROOT/Tools/lib/build-arenas.sh"
 
-# Empty when no machine-wide arena directory exists: Relative mode nests each
-# arena inside its own checkout, where it cannot outlive the worktree.
-XCODE_DD_ROOT=$(derived_data_root)
+XCODE_DD_ROOT=$(xcode_derived_data_root)
 
 # xcode-build-server's per-checkout caches; Tools/lib/worktrees.sh
 # (stale_build_server_caches) says which ones outlived their checkout.
 BUILD_SERVER_CACHE="$HOME/Library/Caches/xcode-build-server"
-
-# Every arena whose recorded checkout is gone, or that records none and matches
-# no checkout of this clone (Tools/arena-label.sh). Wider than what
-# `Tools/build-arenas.sh sweep` evicts unattended: a checkout outside this
-# clone's worktrees that reads as removed may only be out of reach.
-orphaned_dd_arenas() {
-    arenas_with_status "$XCODE_DD_ROOT" worktree-removed other-removed unclaimed
-}
 
 # The process's own executable path. lsof's `txt` fd is the mapped binary,
 # which is the only reliable source here: the arena holds bundles whose paths
@@ -293,54 +281,27 @@ if read_worktree_layout "$REPO_ROOT"; then
         done
     fi
 
-    # Ahead of the arena section on purpose: a removed worktree's arena in the
-    # machine-wide DerivedData root then reads as orphaned and is evicted in
-    # the same run. An in-checkout DerivedData/ is evicted here, since it goes
-    # with the directory.
     report_abandoned_worktrees "$REPO_ROOT" "$FIX" holder_blocked_lines dispose_worktree
     # After the worktree pass, so the branch of a worktree it removed goes too.
     report_orphaned_branches "$REPO_ROOT" "$FIX"
 fi
 
-# ---- orphaned DerivedData build arenas ----------------------------------------
+# ---- Xcode's DerivedData folder ------------------------------------------------
 
-section 'DerivedData build arenas'
+section "Xcode's DerivedData folder"
 
-# Unlike the live-copy election check below, which prompts, --fix evicts these
-# without asking: an arena holds only build products its checkout regenerates.
-# An arena a process is still running from is skipped with a pointer instead,
-# since quitting a possibly-in-use app is not this script's call.
-dd_orphans=()
+xcode_arenas=()
 while IFS= read -r dir; do
-    [ -z "$dir" ] && continue
-    dd_orphans+=("$dir")
-done < <(orphaned_dd_arenas)
+    xcode_arenas+=("$dir")
+done < <(xcode_kernova_arenas)
 
-if [ "${#dd_orphans[@]}" -eq 0 ]; then
-    pass 'No DerivedData arenas left by removed checkouts'
+# Information, not a finding: each is some checkout's build with Xcode's own
+# location, the Xcode app's included, and nothing here says whose, or whether a
+# build is writing it.
+if [ "${#xcode_arenas[@]}" -eq 0 ]; then
+    pass 'No Kernova build arenas'
 else
-    refresh_holders "$XCODE_DD_ROOT"
-    for dir in "${dd_orphans[@]}"; do
-        # Resolved once, up front, because the label is read out of the arena's
-        # own records — evicting the arena destroys the evidence, so a
-        # lookup after the delete falls back to the bare hashed path on the one
-        # line where naming the worktree matters most.
-        dir_label=$(labeled_path "$dir")
-        ghost "Orphaned arena: $dir_label — $(disk_size "$dir")"
-        if path_held "$dir"; then
-            while IFS= read -r blocked; do
-                detail "$blocked"
-            done < <(holder_blocked_lines "$dir")
-            continue
-        fi
-        if [ "$FIX" = 1 ]; then
-            if evict_arena "$dir"; then
-                fixed "deleted: $(pretty_path "$dir")"
-            else
-                detail "delete failed for $dir_label"
-            fi
-        fi
-    done
+    pass "${#xcode_arenas[@]} Kernova build arena(s), $(du -sch "${xcode_arenas[@]}" 2>/dev/null | awk 'END { print $1 }'): builds with Xcode's own location, the Xcode app's included"
 fi
 
 # ---- stale xcode-build-server caches -----------------------------------------
@@ -404,18 +365,29 @@ kernova_app_copies() {
     {
         mdfind "kMDItemCFBundleIdentifier == 'app.kernova'" 2>/dev/null
         find "$HOME/.Trash" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
-        # Same resolved root as the orphan scan above, for the same reason.
         if [ -n "$XCODE_DD_ROOT" ]; then
             find "$XCODE_DD_ROOT" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
         fi
-        # Every checkout's in-checkout DerivedData/, not just this one's: it
-        # holds the Relative-mode arena and `make dead-code`'s Periphery build,
-        # and a sibling worktree's copy competes as much as this checkout's.
+        # Every checkout's DerivedData/, not just this one's: a sibling
+        # worktree's copy competes as much as this checkout's.
         while IFS= read -r checkout; do
             [ -n "$checkout" ] || continue
             find "$checkout/DerivedData" -maxdepth 6 -iname 'Kernova.app' -type d 2>/dev/null
         done <<<"$checkouts"
     } | grep -v '/Index\.noindex/' | sort -u
+}
+
+# build_location <path> — whether <path> lies where a build writes: a
+# registered checkout's DerivedData/, or Xcode's DerivedData folder.
+build_location() {
+    local checkout checkouts=$REPO_ROOT
+    read_worktree_layout "$REPO_ROOT" && checkouts=$worktree_paths
+    case "$1" in "$XCODE_DD_ROOT"/*) [ -n "$XCODE_DD_ROOT" ] && return 0 ;; esac
+    while IFS= read -r checkout; do
+        [ -n "$checkout" ] || continue
+        case "$1" in "$checkout"/DerivedData/*) return 0 ;; esac
+    done <<<"$checkouts"
+    return 1
 }
 
 # Only registered copies enter the election, so only they are listed: a build
@@ -569,24 +541,20 @@ else
             # a tie-break — only a build that would actually outrank
             # /Applications is a ghost.
             if is_numeric "$ver" && [ "$ver" -gt "$blessed_version" ]; then
-                # A build some existing checkout still builds into is the
+                # A build a checkout or the Xcode app still writes to is the
                 # ordinary state of a branch ahead of main, and eviction is
                 # no lever against it: the next build recreates and
                 # re-registers the copy. Report the shadowing, leave the
-                # bundle. The orphan scan above already evicts arenas whose
-                # checkout is gone, so `*-removed` and unattributable paths
-                # (Trash) are the ones eviction can actually settle.
-                case "$("$REPO_ROOT/Tools/arena-label.sh" --status "$path" 2>/dev/null)" in
-                    worktree-live | main | other)
-                        add_item "$path" "$(basename "$path")" "version $ver, $sign — outranks the installed copy, wins the election; live checkout, not evicted" 'live'
-                        live_count=$((live_count + 1))
-                        ;;
-                    *)
-                        add_item "$path" "$(basename "$path")" "version $ver, $sign — outranks the installed copy, wins the election" 'ghost'
-                        competing_copies+=("$path")
-                        ghost_count=$((ghost_count + 1))
-                        ;;
-                esac
+                # bundle; a removed worktree's builds went with it, so the
+                # Trash holds the copies eviction can actually settle.
+                if build_location "$path"; then
+                    add_item "$path" "$(basename "$path")" "version $ver, $sign — outranks the installed copy, wins the election; a build location, not evicted" 'live'
+                    live_count=$((live_count + 1))
+                else
+                    add_item "$path" "$(basename "$path")" "version $ver, $sign — outranks the installed copy, wins the election" 'ghost'
+                    competing_copies+=("$path")
+                    ghost_count=$((ghost_count + 1))
+                fi
             else
                 add_item "$path" "$(basename "$path")" "version $ver, $sign" ''
             fi
@@ -660,18 +628,11 @@ for (( li = 0; li < ${#loc_paths[@]}; li++ )); do
         [ "${#item_name[$j]}" -gt "$width" ] && width=${#item_name[$j]}
     done
 
-    # Plain, not bold: bold is the section-header weight, and a long hashed path
-    # set at the same weight one level down flattens the hierarchy — it became
-    # the loudest thing on screen while saying the least. The blank line and
-    # indent delimit the block; the cyan worktree line below anchors it.
+    # Plain, not bold: bold is the section-header weight, and a long path set
+    # at the same weight one level down flattens the hierarchy. The blank line
+    # and indent delimit the block.
     printf '\n'
     printf '    %s\n' "$(pretty_path "${loc_paths[$li]}")"
-    # Cyan, not dim: the worktree name is the line a reader scans a block for —
-    # the hashed path above it is reference detail they already know how to
-    # ignore. Dimming the identifier buried the one thing this whole feature
-    # exists to surface.
-    loc_label=$("$REPO_ROOT/Tools/arena-label.sh" "${loc_paths[$li]}" 2>/dev/null) || loc_label=''
-    [ -n "$loc_label" ] && printf '    %s%s%s\n' "$c_cyan" "$loc_label" "$c_reset"
 
     for (( j = 0; j < ${#item_name[@]}; j++ )); do
         [ "${item_loc[$j]}" = "$li" ] || continue

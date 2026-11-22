@@ -10,8 +10,8 @@
 #   --path <bundle>  an explicit bundle, e.g. a downloaded CI artifact
 #   --from-log <log> the bundle an xcodebuild log names (its last `.xcresult`
 #                    path), binding the report to that run
-#   --latest         the newest bundle in this checkout's build arena, via
-#                    Tools/derived-data-path.sh (the default)
+#   --latest         the newest bundle in the build arena `make` uses in this
+#                    checkout (the default)
 #   --failures       print only the `=== <test>` blocks, uncapped, for tooling
 #
 # Output (default mode, stdout):
@@ -32,6 +32,11 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# Named from the repo root, where `make lint` runs shellcheck: ShellCheck 0.11
+# tries a source path from its working directory first, and from a worktree's
+# root `../../../` reaches the checkout that holds it.
+# shellcheck source=Tools/lib/xcodebuild-flags.sh
+. "$ROOT/Tools/lib/xcodebuild-flags.sh"
 
 usage() {
     sed -n '2,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
@@ -74,8 +79,7 @@ case "$source" in
         [ -n "$bundle" ] || unreadable "log '$arg' names no .xcresult bundle" no-bundle-in-log
         ;;
     latest)
-        arena="$("$ROOT/Tools/derived-data-path.sh" 2>/dev/null)" \
-            || unreadable "could not resolve this checkout's build arena" no-arena
+        arena="$ROOT/$kernova_derived_data"
         for candidate in "$arena"/Logs/Test/*.xcresult; do
             [ -d "$candidate" ] || continue
             if [ -z "$bundle" ] || [ "$candidate" -nt "$bundle" ]; then bundle="$candidate"; fi
@@ -100,6 +104,8 @@ fetch() {
 }
 
 # Recursive descent (`..`) keeps the parse independent of the tree's nesting.
+# A location is repo-relative whether its build named the checkout by path or
+# by the placeholder `make` builds with.
 failure_blocks() {
     jq -r '
         [ .. | objects
@@ -111,7 +117,7 @@ failure_blocks() {
                     | if . then .filePath + ":" + (.lineNumber | tostring) + ": " else "" end )
                   + .name ]
               | unique | join("\n") )
-    ' "$tmp/tests.json" | sed "s#$ROOT/##g"
+    ' "$tmp/tests.json" | sed -e "s#$ROOT/##g" -e "s#${kernova_source_placeholder//^/\\^}/##g"
 }
 
 case "$mode" in

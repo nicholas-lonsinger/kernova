@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Fixture tests for `Tools/ghosts.sh --fix` on checkouts under
 # .claude/worktrees/ that git does not register: a worktree moved by hand is
-# registered again, keeping its arena and editor cache, before stale records
+# registered again, keeping its builds and editor cache, before stale records
 # are pruned; one whose record is gone and a copy of a live worktree keep their
 # files and change nothing; a directory Xcode recreated after a removal goes to
-# the Trash. Runs a copy of the scripts inside a fixture clone, with HOME in the
-# fixture and fakes for every tool that reaches past it (lsregister, defaults,
-# pgrep, mdfind, trash, launchctl). Local git only.
+# the Trash; Kernova arenas in Xcode's DerivedData folder are left. Runs a copy
+# of the scripts inside a fixture clone, with HOME in the fixture and fakes for
+# every tool that reaches past it (lsregister, defaults, pgrep, mdfind, trash,
+# launchctl). Local git only.
 
 set -uo pipefail
 
@@ -45,20 +46,13 @@ mkdir -p "$clone/Kernova.xcodeproj"
 touch "$clone/Kernova.xcodeproj/project.pbxproj"
 git -C "$clone" add Kernova.xcodeproj && git -C "$clone" commit -q -m init
 mkdir -p "$clone/Tools/lib"
-cp "$ROOT/Tools/ghosts.sh" "$ROOT/Tools/arena-label.sh" "$ROOT/Tools/derived-data-path.sh" "$clone/Tools/"
-cp "$ROOT/Tools/lib/build-arenas.sh" "$ROOT/Tools/lib/arena-records.sh" "$ROOT/Tools/lib/output.sh" \
-    "$ROOT/Tools/lib/worktrees.sh" "$ROOT/Tools/lib/holders.sh" "$ROOT/Tools/lib/xcodebuild-flags.sh" \
-    "$clone/Tools/lib/"
+cp "$ROOT/Tools/ghosts.sh" "$clone/Tools/"
+cp "$ROOT/Tools/lib/build-arenas.sh" "$ROOT/Tools/lib/output.sh" "$ROOT/Tools/lib/worktrees.sh" \
+    "$ROOT/Tools/lib/holders.sh" "$clone/Tools/lib/"
 
-# --fix evicts in this root, so the suite stops unless it is in the fixture.
-dd_root=$("$clone/Tools/derived-data-path.sh" --root)
-case "$dd_root" in
-    "$base"/*) ;;
-    *)
-        echo "ghosts fixtures: the scripts' DerivedData root '$dd_root' is outside $base" >&2
-        exit 1
-        ;;
-esac
+# The Xcode app's arenas, under HOME, which is in the fixture.
+xcode_arena="$HOME/Library/Developer/Xcode/DerivedData/Kernova-$(printf 'a%.0s' {1..28})"
+mkdir -p "$xcode_arena/Build/Products/Debug/Kernova.app"
 
 wts="$clone/.claude/worktrees"
 common="$clone/.git"
@@ -72,10 +66,8 @@ git -C "$clone" worktree prune
 # Moved by hand: its record names the old path.
 add before
 mv "$wts/before" "$wts/after"
-arena=$("$clone/Tools/derived-data-path.sh" "$wts/after/Kernova.xcodeproj")
-mkdir -p "$arena"
-printf '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>WorkspacePath</key><string>%s</string></dict></plist>\n' \
-    "$wts/after/Kernova.xcodeproj" >"$arena/info.plist"
+arena="$wts/after/DerivedData/Make"
+mkdir -p "$arena/Build/Products/Debug/Kernova.app"
 cache="$HOME/Library/Caches/xcode-build-server/${wts//\//-}-after"
 mkdir -p "$cache"
 
@@ -96,7 +88,7 @@ out=$("$clone/Tools/ghosts.sh" --fix </dev/null 2>&1)
 check "moved: its files" "$(cat "$wts/after/edit.txt" 2>/dev/null)" uncommitted
 check "moved: git works in it" "$(git -C "$wts/after" rev-parse --show-toplevel 2>/dev/null)" "$wts/after"
 check "moved: registered again" "$(git -C "$clone" worktree list --porcelain | grep -cxF "worktree $wts/after")" 1
-check "moved: its arena" "$(present "$arena")" present
+check "moved: its builds" "$(present "$arena")" present
 check "moved: its xcode-build-server cache" "$(present "$cache")" present
 check "stale record: pruned" "$(present "$common/worktrees/stale")" gone
 check "record gone: its files" "$(cat "$wts/lost moved/edit.txt" 2>/dev/null)" uncommitted
@@ -106,6 +98,7 @@ check "copy: the original's record still names the original" \
     "$(cat "$common/worktrees/original/gitdir")" "$wts/original/.git"
 check "copy: reported" "$(grep -c "Copy of the worktree at .*original: .*original copy" <<<"$out")" 1
 check "recreated directory: trashed" "$(present "$wts/gone")$(present "$HOME/.Trash/gone")" gonepresent
+check "Xcode's arenas: left" "$(present "$xcode_arena")" present
 
 "$clone/Tools/ghosts.sh" --fix </dev/null >/dev/null 2>&1
 check "a second --fix: exit status" "$?" 0

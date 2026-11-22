@@ -282,7 +282,7 @@ for kind in lint test test-linux; do
 done
 
 reset
-make_in_clone test 'XCODEBUILD_FLAGS=-only-testing:KernovaCoreTests' SCHEME=Other
+make_in_clone test 'XCODEBUILD=Tools/xcodebuild.sh Debug -only-testing:KernovaCoreTests' SCHEME=Other
 check "make test with flag variables passes Tools/test.sh nothing" "$(calls ran)" test
 
 reset

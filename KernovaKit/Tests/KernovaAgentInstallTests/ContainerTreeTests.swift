@@ -102,8 +102,7 @@ final class BundleFixture {
 @Suite("The update profile's packer and lander")
 struct ContainerTreeTests {
     /// The payload the packer must reproduce byte for byte: the update profile, frozen.
-    static let golden = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        .appendingPathComponent("Golden/update-profile.payload")
+    static let golden = SourceTree.url("KernovaKit/Tests/KernovaAgentInstallTests/Golden/update-profile.payload")
 
     static let itemName = "Item.app"
 

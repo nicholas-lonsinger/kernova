@@ -194,29 +194,15 @@ fi
 
 section 'Build arena'
 
-# Where builds land. Kernova follows the machine's Xcode derived-data
-# preference rather than prescribing one — a flag-less terminal build and the
-# GUI share one arena in every mode (Tools/derived-data-path.sh). Purely
-# informational: every mode works; this just says where the products are.
-arena=$(Tools/derived-data-path.sh 2>/dev/null || true)
-if [ -n "$arena" ]; then
-    dd_pref=$(defaults read com.apple.dt.Xcode IDECustomDerivedDataLocation 2>/dev/null || true)
-    case "$dd_pref" in
-        '') dd_mode='Xcode default (per-path-hashed ~/Library location)' ;;
-        /*) dd_mode="custom location ($dd_pref)" ;;
-        *)  dd_mode="relative location ($dd_pref/ inside the checkout)" ;;
-    esac
-    pass "Derived data: $dd_mode"
-    # Label from the checkout rather than the arena: in default mode the arena
-    # is a bare hash, and it may not exist yet on a checkout that has never
-    # built — the checkout path always resolves.
-    arena_label=$(Tools/arena-label.sh "$PWD" 2>/dev/null || true)
-    [ -n "$arena_label" ] && arena_label=" ($arena_label)"
-    value "this checkout's build arena: ${arena/#$HOME/~}$arena_label"
-    detail 'orphaned worktree arenas are swept at worktree creation; audit with `make ghosts`'
-else
-    warn 'Could not resolve the derived-data arena (Tools/derived-data-path.sh failed)'
-fi
+# Where builds land: every `make` build in this checkout's DerivedData/, which
+# goes with the checkout, and the Xcode app's in Xcode's own folder.
+# Informational.
+# shellcheck source=lib/xcodebuild-flags.sh
+. Tools/lib/xcodebuild-flags.sh
+# shellcheck source=lib/build-arenas.sh
+. Tools/lib/build-arenas.sh
+pass "make builds in $kernova_derived_data/ (the Xcode app keeps its own location)"
+value "Kernova build arenas in Xcode's DerivedData folder: $(xcode_kernova_arenas | grep -c .) (sized by make ghosts)"
 
 # ---- signing ------------------------------------------------------------
 
@@ -335,9 +321,13 @@ done < <(stale_kernova_sdks "$pinned_swift")
 # warn. The config is per checkout (it pins an absolute build root), which is
 # why an installed tool still leaves this checkout unconfigured.
 if command -v xcode-build-server >/dev/null 2>&1; then
-    if [ -f buildServer.json ]; then
+    build_root=$(plutil -extract build_root raw buildServer.json -o - 2>/dev/null || true)
+    if [ -f buildServer.json ] && [ "$build_root" = "$(pwd -P)/$kernova_index_derived_data" ]; then
         pass "Swift language server configured (buildServer.json + xcode-build-server)"
-        detail 'flags come from Xcode build logs — build this checkout once for the server to resolve symbols'
+        detail 'flags and index come from `make index` — run it for the server to resolve symbols, and after a change'
+    elif [ -f buildServer.json ]; then
+        warn "buildServer.json reads another build arena (${build_root:-none}), not this checkout's $kernova_index_derived_data"
+        detail "Rewrite it with: make install-lsp"
     else
         warn "buildServer.json absent — this checkout has no Swift language-server context"
         detail "Write it with: make install-lsp"

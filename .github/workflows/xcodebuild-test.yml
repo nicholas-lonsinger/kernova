@@ -40,6 +40,13 @@ jobs:
         id: xcode
         uses: ./.github/actions/select-xcode
 
+      - name: Read where the build writes
+        id: paths
+        run: |
+          . Tools/lib/xcodebuild-flags.sh
+          echo "derived-data=$kernova_derived_data" >> "$GITHUB_OUTPUT"
+          echo "compilation-cache=$kernova_compilation_cache" >> "$GITHUB_OUTPUT"
+
       # Package.resolved pins each dependency to a commit, so the hash misses
       # exactly when a dependency is bumped and hits otherwise. No
       # restore-keys: a prefix fallback would restore an older checkout and
@@ -49,7 +56,7 @@ jobs:
       - name: Cache SwiftPM checkouts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: DerivedData/Kernova/SourcePackages
+          path: ${{ steps.paths.outputs.derived-data }}/SourcePackages
           key: ${{ runner.os }}-spm-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       # The store is content-addressed, so any earlier snapshot is a valid
@@ -60,7 +67,7 @@ jobs:
         id: restore-cas
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: DerivedData/Kernova/CompilationCache*
+          path: ${{ steps.paths.outputs.compilation-cache }}
           key: ${{ runner.os }}-cas-${{ env.XCODE_BUILD }}-${{ github.sha }}
           restore-keys: ${{ runner.os }}-cas-${{ env.XCODE_BUILD }}-
 
@@ -87,12 +94,16 @@ jobs:
       # read-through fallback) and deletes the rest. The listing shows which
       # generations survive and the size that will be saved.
       - name: Prune the compilation cache
+        env:
+          STORE: ${{ steps.paths.outputs.compilation-cache }}
         run: |
-          for store in DerivedData/Kernova/CompilationCache*/builtin; do
-            xcrun llvm-cas --cas "$store" --prune
-            ls "$store"
-          done
-          du -sh DerivedData/Kernova/CompilationCache* 2>/dev/null || echo "No compilation cache store found."
+          if [ ! -d "$STORE/builtin" ]; then
+            echo "No compilation cache store found."
+            exit 0
+          fi
+          xcrun llvm-cas --cas "$STORE/builtin" --prune
+          ls "$STORE/builtin"
+          du -sh "$STORE"
 
       # A re-run saves nothing: its entry would postdate entries main saved
       # since, and prune-compilation-cache would delete those instead.
@@ -101,7 +112,7 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.run_attempt == 1 && steps.restore-cas.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: DerivedData/Kernova/CompilationCache*
+          path: ${{ steps.paths.outputs.compilation-cache }}
           key: ${{ steps.restore-cas.outputs.cache-primary-key }}
 
       # The admission width caps concurrent test cases per host process (three

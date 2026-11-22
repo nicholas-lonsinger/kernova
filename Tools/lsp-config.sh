@@ -10,9 +10,10 @@
 #
 # The config pins an absolute build root, so every checkout writes its own and
 # the file must never be copied between worktrees (which is why it is not in
-# .worktreeinclude). xcode-build-server reads Xcode's build log at language-
-# server time: writing the config needs no build, but the language server has
-# no flags to serve until this checkout has been built once.
+# .worktreeinclude). xcode-build-server reads the build log and index of the
+# arena `make index` builds in at language-server time: writing the config
+# needs no build, but the language server has no flags or index to serve until
+# `make index` has run in this checkout.
 #
 # Exits 0 when xcode-build-server is absent, after naming the remedy — the hook
 # calls this, and an optional tool must never fail a checkout.
@@ -36,7 +37,9 @@ fi
 # Given the build root, `config` writes it without asking xcodebuild, whose
 # settings query would resolve packages without the tracked pins
 # (xcode-build-server 1.3.0, config/cmd.py).
-arena="$(Tools/derived-data-path.sh "$project")" || exit 1
+# shellcheck source=lib/xcodebuild-flags.sh
+. Tools/lib/xcodebuild-flags.sh
+arena="$(pwd -P)/$kernova_index_derived_data"
 workspace="$(cd "$project" && pwd)/project.xcworkspace" || exit 1
 xcode-build-server config -workspace "$workspace" -scheme "$scheme" --build_root "$arena" || exit 1
 pass "buildServer.json written for the $scheme scheme"
