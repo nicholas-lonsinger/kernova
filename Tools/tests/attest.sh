@@ -2,15 +2,19 @@
 # Fixture tests for Tools/attest.sh: `record <kind>` runs Tools/<kind>.sh, passes
 # its output and status through and records only a passing run whose
 # fingerprint held, never a lint run beside an untracked file; the clean-tree
-# content tree is HEAD's; the Makefile's `lint` and `test` record a passing run
-# of their script under plain make and nothing under `make -n` or over a
-# failing script under `make -i`, `make test` passes its script nothing
-# whatever variables the command line sets and refuses a configuration other
-# than Debug; `attest` refuses a dirty or unpushed HEAD before any run, reuses
-# a lint and a test record or runs `make lint` and `make test` for the ones
-# missing and posts success only on both; and `post` takes only success or
-# failure. Runs in a fixture clone with stub xcodebuild, sw_vers, gh, the two
-# scripts, and make — the real make for the Makefile's own recipes.
+# content tree is HEAD's; a test-linux run is handed the content tree, and its
+# fingerprint follows the Linux tests' inputs and nothing else; the Makefile's
+# `lint`, `test` and `test-linux` record a passing run of their script under
+# plain make and nothing under `make -n` or over a failing script under
+# `make -i`, `make test` passes its script nothing whatever variables the
+# command line sets and refuses a configuration other than Debug; `attest`
+# refuses a dirty or unpushed HEAD before any run, reuses the lint, test-linux
+# and test records or runs `make lint`, `make test-linux` and `make test` for
+# the ones missing and posts success only on all three, and when the Linux
+# tests lack a record and cannot run, names what is missing and runs and posts
+# nothing; and `post` takes only success or failure. Runs in a fixture clone
+# with stub xcodebuild, sw_vers, gh, container, sysctl, the three scripts, and
+# make — the real make for the Makefile's own recipes.
 
 set -uo pipefail
 
@@ -31,13 +35,14 @@ isolate_git "$tmp"
 
 clone="$tmp/clone"
 git init -q -b main "$clone"
-mkdir -p "$clone/Tools/lib" "$clone/Config"
+mkdir -p "$clone/Tools/lib" "$clone/Config" "$clone/KernovaKit"
 cp "$ROOT/Tools/attest.sh" "$ROOT/Tools/checkout-lock.sh" "$clone/Tools/"
-cp "$ROOT/Tools/lib/attest-records.sh" "$ROOT/Tools/lib/swift-roots.sh" "$ROOT/Tools/lib/xcodebuild-flags.sh" "$clone/Tools/lib/"
+cp "$ROOT/Tools/lib/attest-records.sh" "$ROOT/Tools/lib/linux-tests.sh" "$ROOT/Tools/lib/swift-roots.sh" \
+    "$ROOT/Tools/lib/xcodebuild-flags.sh" "$clone/Tools/lib/"
 cp "$ROOT/Makefile" "$clone/"
-# Tools/lint.sh and Tools/test.sh log their run, arguments included, then run
-# $FIXTURE/<kind>.run.
-for script in lint test; do
+# Tools/lint.sh, Tools/test.sh and Tools/test-linux.sh log their run,
+# arguments included, then run $FIXTURE/<kind>.run.
+for script in lint test test-linux; do
     cat >"$clone/Tools/$script.sh" <<'EOF'
 #!/bin/bash
 kind=${0##*/}
@@ -50,6 +55,8 @@ printf '#!/bin/bash\n' >"$clone/Tools/hooks-installed.sh"
 chmod +x "$clone/Tools"/*.sh
 printf 'Config/Local.xcconfig\n' >"$clone/.gitignore"
 echo one >"$clone/file"
+echo 9.8.7 >"$clone/.swift-version"
+echo kit >"$clone/KernovaKit/Package.swift"
 git -C "$clone" add -A && git -C "$clone" commit -q -m init
 attest="$clone/Tools/attest.sh"
 records="$clone/.git/kernova-attest"
@@ -84,20 +91,44 @@ case "$(cat "$FIXTURE/$1.mode")" in
     norecord) exit 0 ;;
 esac
 EOF
+# container logs each call but --version; `system status` and `system start`
+# exit their files' statuses.
+cat >"$stubs/container" <<'EOF'
+#!/bin/bash
+case "$*" in
+    --version) echo 'container CLI version 9.9.9 (build: release, commit: fixture)' ;;
+    'system status') echo "$*" >>"$FIXTURE/container.log"; exit "$(cat "$FIXTURE/status.status")" ;;
+    'system start'*) echo "$*" >>"$FIXTURE/container.log"; exit "$(cat "$FIXTURE/start.status")" ;;
+    *) echo "$*" >>"$FIXTURE/container.log" ;;
+esac
+EOF
+cat >"$stubs/sysctl" <<'EOF'
+#!/bin/bash
+[ "$*" = '-n kern.hv_support' ] && cat "$FIXTURE/hv"
+EOF
 chmod +x "$stubs"/*
-export FIXTURE="$tmp" ATTEST="$attest" MAKE="$stubs/make" PATH="$stubs:$PATH"
+# Every directory on PATH but those holding a container, so the stub is the
+# only one and moving it away leaves none.
+bare_path=$(printf '%s\n' "$PATH" | tr ':' '\n' | while IFS= read -r dir; do [ -x "$dir/container" ] || printf '%s:' "$dir"; done)
+export FIXTURE="$tmp" ATTEST="$attest" MAKE="$stubs/make" PATH="$stubs:${bare_path%:}"
 
 reset() {
-    rm -rf "$records" "$tmp/gh.log" "$tmp/make.log" "$tmp/ran.log"
-    echo record >"$tmp/lint.mode"
-    echo record >"$tmp/test.mode"
-    echo 'exit 0' >"$tmp/lint.run"
-    echo 'exit 0' >"$tmp/test.run"
+    rm -rf "$records" "$tmp/gh.log" "$tmp/make.log" "$tmp/ran.log" "$tmp/container.log"
+    for kind in lint test test-linux; do
+        echo record >"$tmp/$kind.mode"
+        echo 'exit 0' >"$tmp/$kind.run"
+    done
+    echo 0 >"$tmp/status.status"
+    echo 0 >"$tmp/start.status"
+    echo 1 >"$tmp/hv"
 }
 # runs <kind> <bash> — what Tools/<kind>.sh does after logging its run.
 runs() { printf '%s\n' "$2" >"$tmp/$1.run"; }
 record_count() { find "$records" -type f 2>/dev/null | wc -l | tr -d ' '; }
 record_line() { awk -v key="$1" '$1 == key { print $2 }' "$records"/*/* 2>/dev/null; }
+# linux_line <key> — the value of <key> in the test-linux record, past the key.
+linux_line() { awk -v key="$1" '$1 == key { sub(/^[^ ]* /, ""); print }' "$records"/test-linux/* 2>/dev/null; }
+linux_count() { find "$records/test-linux" -type f 2>/dev/null | wc -l | tr -d ' '; }
 calls() { cat "$tmp/$1.log" 2>/dev/null; }
 in_clone() { (cd "$clone" && "$@"); }
 
@@ -176,7 +207,53 @@ check "a run whose record cannot be written keeps its status" "$?" 0
 check "a run whose record cannot be written says so" "$(grep -c 'cannot write the record' "$tmp/err")" 1
 rm -f "$records"
 
-# ---- make lint, make test --------------------------------------------------------
+# ---- record test-linux -------------------------------------------------------------
+
+head_tree=$(git -C "$clone" rev-parse 'HEAD^{tree}')
+# The tree of the clone's Linux test inputs, from a repository holding copies
+# of them alone.
+inputs_repo="$tmp/inputs"
+git init -q "$inputs_repo"
+for f in .swift-version KernovaKit/Package.swift Tools/lib/linux-tests.sh Tools/test-linux.sh; do
+    mkdir -p "$inputs_repo/$(dirname "$f")" && cp -p "$clone/$f" "$inputs_repo/$f"
+done
+inputs_tree=$(git -C "$inputs_repo" add -A && git -C "$inputs_repo" write-tree)
+
+reset
+in_clone "$attest" record test-linux
+check "record runs Tools/test-linux.sh over the content tree" "$(calls ran)" "test-linux $head_tree"
+check "a passing Linux run is recorded" "$(linux_count)" 1
+check "the Linux record's tree holds the Linux test inputs alone" "$(linux_line linux-tests)" "$inputs_tree"
+check "the Linux record's container release" "$(linux_line container)" 'container CLI version 9.9.9 (build: release, commit: fixture)'
+check "the Linux record names no Xcode or macOS build" "$(cat "$records"/test-linux/* | grep -cE '^(xcode|macos) ')" 0
+
+echo two >"$clone/file"
+in_clone "$attest" record test-linux
+check "an app-only edit keeps the Linux fingerprint" "$(linux_count)" 1
+echo edited >"$clone/KernovaKit/Package.swift"
+in_clone "$attest" record test-linux
+check "a KernovaKit edit makes a new Linux fingerprint" "$(linux_count)" 2
+git -C "$clone" checkout -q -- file KernovaKit/Package.swift
+
+reset
+runs test-linux 'echo three >"$FIXTURE/clone/file"'
+in_clone "$attest" record test-linux
+check "a Linux run during an app-only edit is recorded" "$(linux_count)" 1
+git -C "$clone" checkout -q -- file
+
+reset
+runs test-linux 'echo edited >"$FIXTURE/clone/KernovaKit/Package.swift"'
+in_clone "$attest" record test-linux 2>/dev/null
+check "a Linux run during an input edit is not recorded" "$(linux_count)" 0
+git -C "$clone" checkout -q -- KernovaKit/Package.swift
+
+reset
+runs test-linux 'exit 4'
+in_clone "$attest" record test-linux
+check "a failing Linux run's status" "$?" 4
+check "a failing Linux run is not recorded" "$(linux_count)" 0
+
+# ---- make lint, make test, make test-linux -------------------------------------------
 
 # make_in_clone <make argument>... — the clone's Makefile under the real make,
 # with nothing inherited from a make that runs this suite.
@@ -184,10 +261,13 @@ make_in_clone() {
     (cd "$clone" && env -u MAKE -u MAKEFLAGS -u MFLAGS -u MAKELEVEL "$real_make" --no-print-directory "$@" >/dev/null 2>&1)
 }
 
-for kind in lint test; do
+# ran <kind> — what Tools/<kind>.sh logs for its run on the clean clone.
+ran() { if [ "$1" = test-linux ]; then echo "test-linux $head_tree"; else echo "$1"; fi; }
+
+for kind in lint test test-linux; do
     reset
     make_in_clone "$kind"
-    check "make $kind runs Tools/$kind.sh" "$(calls ran)" "$kind"
+    check "make $kind runs Tools/$kind.sh" "$(calls ran)" "$(ran "$kind")"
     check "make $kind records a passing run" "$(record_count)" 1
 
     reset
@@ -198,7 +278,7 @@ for kind in lint test; do
     reset
     runs "$kind" 'exit 1'
     make_in_clone -i "$kind"
-    check "make -i $kind runs Tools/$kind.sh" "$(calls ran)" "$kind"
+    check "make -i $kind runs Tools/$kind.sh" "$(calls ran)" "$(ran "$kind")"
     check "make -i $kind records a failing run" "$(record_count)" 0
 done
 
@@ -215,7 +295,9 @@ check "make test in Release records" "$(record_count)" 0
 # ---- attest ---------------------------------------------------------------------
 
 sha=$(git -C "$clone" rev-parse HEAD)
-status_call() { printf 'api -X POST repos/{owner}/{repo}/statuses/%s -f state=%s -f context=Commit Attestation -f description=make attest: Xcode 27A100, macOS 26Z42' "$sha" "$1"; }
+status_call() { printf 'api -X POST repos/{owner}/{repo}/statuses/%s -f state=%s -f context=Commit Attestation -f description=make attest: Xcode 27A100, macOS 26Z42, Linux on swift:9.8.7-noble' "$sha" "$1"; }
+# record_all — a passing record of each kind for the clone as it is.
+record_all() { for kind in lint test-linux test; do in_clone "$attest" record "$kind"; done; }
 
 reset
 touch "$tmp/pushed"
@@ -236,27 +318,100 @@ check "an unpushed HEAD runs make" "$(calls make)" ''
 touch "$tmp/pushed"
 
 reset
-in_clone "$attest" record lint
-in_clone "$attest" record test
+record_all
+echo 1 >"$tmp/status.status"
 out=$(in_clone "$attest")
 check "a recorded HEAD's attest status" "$?" 0
-check "a recorded HEAD says it reused the lint run" "$(printf '%s\n' "$out" | grep -c '^attest: reusing the passing make lint of ')" 1
-check "a recorded HEAD says it reused the test run" "$(printf '%s\n' "$out" | grep -c '^attest: reusing the passing make test of ')" 1
+for kind in lint test-linux test; do
+    check "a recorded HEAD says it reused the $kind run" "$(printf '%s\n' "$out" | grep -c "^attest: reusing the passing make $kind of ")" 1
+done
 check "a recorded HEAD runs make" "$(calls make)" ''
+check "a recorded HEAD leaves container's service alone" "$(calls container)" ''
 check "a recorded HEAD posts success" "$(calls gh | tail -1)" "$(status_call success)"
 
 reset
 in_clone "$attest" record test
+in_clone "$attest" record test-linux
 in_clone "$attest" >/dev/null
-check "a HEAD with only a test record: attest status" "$?" 0
-check "a HEAD with only a test record runs make lint" "$(calls make)" lint
-check "a HEAD with only a test record posts success" "$(calls gh | tail -1)" "$(status_call success)"
+check "a HEAD with test and Linux records: attest status" "$?" 0
+check "a HEAD with test and Linux records runs make lint" "$(calls make)" lint
+check "a HEAD with test and Linux records posts success" "$(calls gh | tail -1)" "$(status_call success)"
+
+reset
+in_clone "$attest" record lint
+in_clone "$attest" record test
+in_clone "$attest" >/dev/null
+check "a HEAD without a Linux record runs make test-linux" "$(calls make)" test-linux
+check "a HEAD without a Linux record posts success" "$(calls gh | tail -1)" "$(status_call success)"
 
 reset
 in_clone "$attest" >/dev/null
 check "an unrecorded HEAD's attest status" "$?" 0
-check "an unrecorded HEAD runs make lint, then make test" "$(calls make | tr '\n' ' ')" 'lint test '
+check "an unrecorded HEAD runs make lint, make test-linux, then make test" "$(calls make | tr '\n' ' ')" 'lint test-linux test '
 check "a passing run posts success" "$(calls gh | tail -1)" "$(status_call success)"
+
+# A commit that changes app code alone reruns lint and the tests and reuses
+# the Linux tests; one that changes KernovaKit reruns all three.
+reset
+record_all
+echo four >"$clone/file"
+git -C "$clone" commit -q -am 'app only'
+sha=$(git -C "$clone" rev-parse HEAD)
+in_clone "$attest" >/dev/null
+check "an app-only commit reruns lint and the tests alone" "$(calls make | tr '\n' ' ')" 'lint test '
+rm "$tmp/make.log"
+echo kit2 >"$clone/KernovaKit/Package.swift"
+git -C "$clone" commit -q -am 'KernovaKit'
+sha=$(git -C "$clone" rev-parse HEAD)
+in_clone "$attest" >/dev/null
+check "a KernovaKit commit reruns all three" "$(calls make | tr '\n' ' ')" 'lint test-linux test '
+git -C "$clone" reset -q --hard HEAD~2
+sha=$(git -C "$clone" rev-parse HEAD)
+
+# cannot_run <name> <message> — attest with no Linux record, as set up, fails
+# naming what is missing and the `ci` route, before any run or post.
+cannot_run() {
+    in_clone "$attest" record lint
+    in_clone "$attest" record test
+    err=$(in_clone "$attest" 2>&1 >/dev/null)
+    check "$1: attest status" "$?" 1
+    check "$1: refusal" "$(printf '%s\n' "$err" | tail -1)" "attest: the Linux tests need $2. Where they cannot run, label the PR \`ci\`: CI then lints and runs both test suites on each push, and posts Commit Attestation."
+    check "$1 runs make" "$(calls make)" ''
+    check "$1 posts" "$(calls gh | grep -c statuses)" 0
+}
+
+reset
+mv "$stubs/container" "$tmp/container.away"
+cannot_run 'no container' "Apple's container, which \`make setup\` installs with Homebrew"
+mv "$tmp/container.away" "$stubs/container"
+
+reset
+echo 0 >"$tmp/hv"
+cannot_run 'no hypervisor' 'a hypervisor for container to run Linux in: this Mac has none (sysctl kern.hv_support is not 1)'
+
+reset
+echo 1 >"$tmp/status.status"
+echo 1 >"$tmp/start.status"
+cannot_run 'a service that will not start' "container's service, which \`container system start\` did not start"
+
+reset
+echo 1 >"$tmp/status.status"
+in_clone "$attest" >/dev/null 2>&1
+check "a stopped service is started before any run" "$(calls container | head -2 | tr '\n' ' ')" 'system status system start --enable-kernel-install '
+check "a started service lets attest post success" "$(calls gh | tail -1)" "$(status_call success)"
+
+reset
+echo fail >"$tmp/test-linux.mode"
+in_clone "$attest" >/dev/null
+check "a failing Linux run's attest status" "$?" 1
+check "a failing Linux run posts failure" "$(calls gh | tail -1)" "$(status_call failure)"
+check "a failing Linux run stops before make test" "$(calls make | tr '\n' ' ')" 'lint test-linux '
+
+reset
+echo norecord >"$tmp/test-linux.mode"
+err=$(in_clone "$attest" 2>&1 >/dev/null)
+check "a Linux run that recorded nothing: refusal" "$err" 'attest: make test-linux recorded nothing; did files change during it?'
+check "a Linux run that recorded nothing posts" "$(calls gh | grep -c statuses)" 0
 
 reset
 in_clone "$attest" record test

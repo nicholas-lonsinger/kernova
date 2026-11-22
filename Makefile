@@ -44,7 +44,7 @@ SWIFT_FORMAT := xcrun swift-format
 SWIFT_SOURCE_DIRS := $(shell bash -c '. Tools/lib/swift-roots.sh && swift_roots')
 
 .DEFAULT_GOAL := help
-.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain ubuntu-sdk linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code locked-dead-code dead-code-targets doctor ghosts clean-ghosts
+.PHONY: help build locked-build build-for-testing locked-build-for-testing test test-linux attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain ubuntu-sdk linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code locked-dead-code dead-code-targets doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -61,7 +61,7 @@ help:
 # idempotent, so rerun it whenever the environment drifts. It ends with
 # `doctor`, which reports the state the run produced.
 setup: install-hooks ## Set up a clone: hooks, Homebrew tools, the swift.org toolchain, the Ubuntu SDK, LSP config, Periphery, then doctor
-	@Tools/brew-install.sh shellcheck gh xcode-build-server
+	@Tools/brew-install.sh shellcheck gh xcode-build-server container
 	@Tools/install-swift-toolchain.sh >/dev/null
 	@Tools/install-ubuntu-sdk.sh >/dev/null
 	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
@@ -126,7 +126,10 @@ test: check-hooks ## Run the full test suite (every test target in Kernova.xctes
 	@test '$(CONFIGURATION)' = Debug || { echo 'make test runs Debug only, the build its record covers; build-for-testing and test-without-building take CONFIGURATION=$(CONFIGURATION)' >&2; exit 2; }
 	Tools/attest.sh record test
 
-attest: check-hooks ## Post the `Commit Attestation` status on the pushed HEAD, reusing a passing `make lint` and `make test` of the same content or running them
+test-linux: ## Run KernovaKit's Linux tests in Apple's container, as CI's Linux job does; a passing run is recorded for `make attest`
+	@Tools/attest.sh record test-linux
+
+attest: check-hooks ## Post the `Commit Attestation` status on the pushed HEAD, reusing a passing `make lint`, `make test-linux` and `make test` of the same content or running them
 	@Tools/attest.sh
 
 # The `rm -rf` fires only when RESULT_BUNDLE_FLAG is set (CI): xcodebuild

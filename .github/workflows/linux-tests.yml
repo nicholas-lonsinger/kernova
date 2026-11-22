@@ -1,0 +1,34 @@
+name: Linux Tests
+
+# KernovaKit's Linux tests, over the tree and in the image `make test-linux`
+# uses (Tools/lib/linux-tests.sh), built and run with Docker.
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: The commit to test; empty tests the triggering event's.
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux (aarch64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          ref: ${{ inputs.ref }}
+
+      - name: Build the image
+        shell: bash
+        run: . Tools/lib/linux-tests.sh && linux_tests_build_image docker HEAD
+
+      - name: Test
+        shell: bash
+        run: . Tools/lib/linux-tests.sh && linux_tests_run docker HEAD

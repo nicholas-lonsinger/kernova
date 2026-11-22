@@ -305,6 +305,21 @@ else
     detail "Install with: make ubuntu-sdk"
 fi
 
+# shellcheck source=lib/linux-tests.sh
+. Tools/lib/linux-tests.sh
+missing_container="$(linux_tests_container_missing)"
+if [ -n "$missing_container" ]; then
+    warn "'make test-linux' and 'make attest' need $missing_container"
+    detail 'Until then, label a PR `ci` for CI to run the Linux tests and attest it'
+else
+    container_version="$(container --version 2>/dev/null | sed -n 's/^container CLI version \([^ ]*\).*/\1/p')"
+    if container system status >/dev/null 2>&1; then
+        pass "container ${container_version:-unknown} — make test-linux; its service is running"
+    else
+        pass "container ${container_version:-unknown} — make test-linux, which starts its stopped service"
+    fi
+fi
+
 sdks_path_flag=''
 [ -z "${KERNOVA_SWIFT_SDKS_PATH:-}" ] || sdks_path_flag=" --swift-sdks-path '$KERNOVA_SWIFT_SDKS_PATH'"
 while IFS= read -r stale; do
