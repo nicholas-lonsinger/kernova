@@ -19,7 +19,7 @@
 # The fingerprint covers what a run's outcome depends on: the content tree
 # (what `git add -A` would stage), the Xcode and macOS builds, and the
 # gitignored Config/Local.xcconfig, which sets signing and entitlements.
-# Records live in the common git dir, so every worktree shares them. Statuses
+# Records are kept in the store Tools/lib/attest-records.sh describes. Statuses
 # on this public repo are world-readable, so a description names no host or
 # user.
 
@@ -36,53 +36,22 @@ usage() {
 
 die() { echo "attest: $1" >&2; exit 1; }
 
-top() { git rev-parse --show-toplevel; }
-records_dir() { printf '%s/kernova-attest' "$(git rev-parse --path-format=absolute --git-common-dir)"; }
-xcode_build() { xcodebuild -version 2>/dev/null | awk '/^Build version/ { print $3 }'; }
-macos_build() { sw_vers -buildVersion; }
+# shellcheck source=lib/attest-records.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/attest-records.sh"
 
-# content_tree — the tree `git add -A` would stage, built in a copy of the
-# index so its stat data is reused and the real index stays untouched.
-content_tree() {
-    local index scratch tree
-    index=$(git rev-parse --path-format=absolute --git-path index) || return 1
-    scratch=$(mktemp -d) || return 1
-    if [ -e "$index" ]; then cp "$index" "$scratch/index" || { rm -rf "$scratch"; return 1; }; fi
-    tree=$(cd "$(top)" && GIT_INDEX_FILE="$scratch/index" git add -A && GIT_INDEX_FILE="$scratch/index" git write-tree)
-    local status=$?
-    rm -rf "$scratch"
-    [ "$status" -eq 0 ] && printf '%s\n' "$tree"
-}
+top() { git rev-parse --show-toplevel; }
 
 # fingerprint_inputs <tree> — the lines the fingerprint hashes.
 fingerprint_inputs() {
-    local xcode macos local_config
-    xcode=$(xcode_build) && [ -n "$xcode" ] || return 1
-    macos=$(macos_build) && [ -n "$macos" ] || return 1
+    local machine local_config
+    machine=$(machine_lines) || return 1
     local_config="$(top)/Config/Local.xcconfig"
     if [ -e "$local_config" ]; then
         local_config=$(git hash-object "$local_config") || return 1
     else
         local_config=none
     fi
-    printf 'tree %s\nxcode %s\nmacos %s\nlocal-xcconfig %s\n' "$1" "$xcode" "$macos" "$local_config"
-}
-
-fingerprint() { git hash-object --stdin <<<"$1"; }
-
-# write_record <kind> <fingerprint> <inputs> — the record, plus pruning records
-# of every kind older than 30 days.
-write_record() {
-    local root dir
-    root=$(records_dir) || return 1
-    dir="$root/$1"
-    mkdir -p "$dir" || return 1
-    if ! { printf '%s\ndate %s\n' "$3" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$dir/$2.tmp" &&
-        mv "$dir/$2.tmp" "$dir/$2"; }; then
-        rm -f "$dir/$2.tmp"
-        return 1
-    fi
-    find "$root" -type f -mtime +30 -delete
+    printf 'tree %s\n%s\nlocal-xcconfig %s\n' "$1" "$machine" "$local_config"
 }
 
 record() {
@@ -96,14 +65,14 @@ record() {
     esac
     local tree inputs='' before='' after='' status untracked
     if tree=$(content_tree) && inputs=$(fingerprint_inputs "$tree"); then
-        before=$(fingerprint "$inputs")
+        before=$(record_name "$inputs")
     else
         echo 'attest: cannot fingerprint the working tree; this run will not be recorded' >&2
     fi
     "${run[@]}"
     status=$?
     [ "$status" -eq 0 ] && [ -n "$before" ] || return "$status"
-    if ! { tree=$(content_tree) && after=$(fingerprint_inputs "$tree") && [ "$(fingerprint "$after")" = "$before" ]; }; then
+    if ! { tree=$(content_tree) && after=$(fingerprint_inputs "$tree") && [ "$(record_name "$after")" = "$before" ]; }; then
         echo 'attest: the files changed during the run, so it is not recorded' >&2
     elif [ "$kind" = lint ] && untracked=$(cd "$root" && git ls-files -o --exclude-standard) && [ -n "$untracked" ]; then
         echo "attest: untracked files are present, so this lint run is not recorded: $(printf '%s\n' "$untracked" | head -5 | paste -sd ' ' -)" >&2
@@ -132,7 +101,7 @@ attest() {
     sha=$(git rev-parse HEAD) || die 'no HEAD to attest'
     gh api "repos/{owner}/{repo}/commits/$sha" >/dev/null 2>&1 || die "GitHub does not have $sha; push first"
     inputs=$(fingerprint_inputs "$(git rev-parse 'HEAD^{tree}')") || die 'cannot read the Xcode or macOS build'
-    fp=$(fingerprint "$inputs")
+    fp=$(record_name "$inputs")
     records=$(records_dir)
     description="make attest: Xcode $(xcode_build), macOS $(macos_build)"
     # Lint first: it is the faster of the two to fail.

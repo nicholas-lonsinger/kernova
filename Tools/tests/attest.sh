@@ -33,7 +33,7 @@ clone="$tmp/clone"
 git init -q -b main "$clone"
 mkdir -p "$clone/Tools/lib" "$clone/Config"
 cp "$ROOT/Tools/attest.sh" "$ROOT/Tools/checkout-lock.sh" "$clone/Tools/"
-cp "$ROOT/Tools/lib/swift-roots.sh" "$ROOT/Tools/lib/xcodebuild-flags.sh" "$clone/Tools/lib/"
+cp "$ROOT/Tools/lib/attest-records.sh" "$ROOT/Tools/lib/swift-roots.sh" "$ROOT/Tools/lib/xcodebuild-flags.sh" "$clone/Tools/lib/"
 cp "$ROOT/Makefile" "$clone/"
 # Tools/lint.sh and Tools/test.sh log their run, arguments included, then run
 # $FIXTURE/<kind>.run.
