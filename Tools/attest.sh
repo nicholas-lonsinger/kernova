@@ -18,6 +18,7 @@
 #         lack a record and cannot run on this Mac, it names what is missing
 #         and posts nothing: it brings up container and the tests' image
 #         before any run, and a Tools/test-linux.sh exit of 3 is the same.
+#         Interrupted, it posts nothing and stops.
 #     Tools/attest.sh post <success|failure> <description> [<target-url>]
 #         Posts the status on HEAD.
 #
@@ -125,6 +126,11 @@ post() {
 attest() {
     local sha tree records description fp linux_fp base missing kind key status
     local ci_route="Where they cannot run, label the PR \`ci\`: CI then lints and runs both test suites on each push, and posts $CONTEXT."
+    # A run that was interrupted posts nothing: xcodebuild exits 75 on SIGINT
+    # rather than dying of it, and container's first process ignores it, so
+    # neither run's status says it was interrupted. bash runs this once the
+    # run in the foreground returns.
+    trap 'die "interrupted; nothing posted"' INT TERM HUP
     [ -z "$(git status --porcelain)" ] || die 'attest certifies HEAD; commit or stash first'
     sha=$(git rev-parse HEAD) || die 'no HEAD to attest'
     gh api "repos/{owner}/{repo}/commits/$sha" >/dev/null 2>&1 || die "GitHub does not have $sha; push first"

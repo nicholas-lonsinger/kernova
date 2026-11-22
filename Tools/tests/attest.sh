@@ -11,8 +11,9 @@
 # refuses a dirty or unpushed HEAD before any run, reuses the lint, test-linux
 # and test records or runs those it lacks and posts success only on all three,
 # and when the Linux tests lack a record and cannot run — before any run, or
-# as Tools/test-linux.sh's exit 3 — names what is missing and posts nothing;
-# and `post` takes only success or failure. Runs in a fixture clone with stub
+# as Tools/test-linux.sh's exit 3 — names what is missing and posts nothing,
+# and interrupted during a run posts nothing and stops; and `post` takes only
+# success or failure. Runs in a fixture clone with stub
 # xcodebuild, sw_vers, gh, container, sysctl and the three scripts, and the
 # real make for the Makefile's own recipes.
 
@@ -432,6 +433,38 @@ err=$(in_clone "$attest" 2>&1 >/dev/null)
 check "a Linux run that recorded nothing: refusal" "$(printf '%s\n' "$err" | tail -1)" 'attest: this test-linux run recorded nothing; did files change during it?'
 check "a Linux run that recorded nothing posts" "$(calls gh | grep -c statuses)" 0
 git -C "$clone" checkout -q -- KernovaKit/Package.swift
+
+# Ctrl-C at a terminal signals its foreground process group, so attest runs
+# in a group of its own, with the signals' default handling, and the script
+# whose run is interrupted signals that group.
+in_group() {
+    (cd "$clone" && perl -e '$SIG{$_} = "DEFAULT" for qw(INT TERM HUP); setpgrp(0, 0); exec @ARGV or die "exec: $!\n"' "$attest")
+}
+
+# xcodebuild prints ** TEST INTERRUPTED ** and exits 75.
+reset
+in_clone "$attest" record lint
+in_clone "$attest" record test-linux
+rm "$tmp/ran.log"
+runs test 'trap "exit 75" INT; kill -INT 0; sleep 5'
+err=$(in_group 2>&1 >/dev/null)
+status=$?
+check "an interrupted test run: attest status" "$([ "$status" -ne 0 ] && echo non-zero || echo 0)" non-zero
+check "an interrupted test run: message" "$(printf '%s\n' "$err" | tail -1)" 'attest: interrupted; nothing posted'
+check "an interrupted test run posts" "$(calls gh | grep -c statuses)" 0
+
+# container hands SIGINT to the container's first process, which ignores it,
+# so the run ends with its own status.
+reset
+in_clone "$attest" record lint
+rm "$tmp/ran.log"
+runs test-linux 'trap "" INT; kill -INT 0'
+err=$(in_group 2>&1 >/dev/null)
+status=$?
+check "an interrupted Linux run: attest status" "$([ "$status" -ne 0 ] && echo non-zero || echo 0)" non-zero
+check "an interrupted Linux run: message" "$(printf '%s\n' "$err" | tail -1)" 'attest: interrupted; nothing posted'
+check "an interrupted Linux run starts the tests" "$(kinds_ran)" 'test-linux '
+check "an interrupted Linux run posts" "$(calls gh | grep -c statuses)" 0
 
 reset
 in_clone "$attest" record test

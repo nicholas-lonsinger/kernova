@@ -5,7 +5,7 @@
 # cannot happen exits 3; the image is named by its recipe alone and built from
 # the tree's recipe, not the disk's; the store keeps the three images built
 # last, so two recipes in turn delete neither and a fourth deletes the oldest,
-# and no base is deleted; a stopped service is started, and nothing runs when
+# an image with no build time counts as the oldest, and no base is deleted; a stopped service is started, and nothing runs when
 # the service will not start, container is absent, the Mac has no hypervisor,
 # or the image cannot be built; an image gone when the run starts exits 3.
 # Runs in a fixture clone with stub container and sysctl.
@@ -223,6 +223,15 @@ for n in 1 2 3 4; do in_clone "$test_linux" "$(recipe "$n")" 2>/dev/null; done
 check "a fourth recipe deletes the oldest image" "$(for n in 1 2 3 4; do own "$(image_of "$(recipe "$n")")"; done | paste -sd ' ' -)" \
     'gone held held held'
 check "the base stays" "$(own "$base")" held
+
+# An image with no build time, as one built by an older container may be.
+reset
+jq '. + [{configuration: {name: "docker.io/library/kernova-linux-tests:000000000000", descriptor: {annotations: {}}}}]' \
+    "$tmp/store.json" >"$tmp/store.new" && mv "$tmp/store.new" "$tmp/store.json"
+for n in 1 2 3; do in_clone "$test_linux" "$(recipe "$n")" 2>/dev/null; done
+check "an image with no build time is the oldest" \
+    "$(own kernova-linux-tests:000000000000) $(for n in 1 2 3; do own "$(image_of "$(recipe "$n")")"; done | paste -sd ' ' -)" \
+    'gone held held held'
 
 # An image another session deleted after this run listed the store.
 reset
