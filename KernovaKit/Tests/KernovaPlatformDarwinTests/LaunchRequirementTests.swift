@@ -11,7 +11,7 @@ import Testing
 struct LaunchRequirementTests {
     /// An app bundle around a copy of `/usr/bin/true`, signed ad-hoc by `codesign`: its designated requirement is
     /// its own cdhash, which the bundle's `CFBundleVersion` changes.
-    static func adHocBundle(in directory: URL, version: String) throws -> String {
+    static func adHocBundle(in directory: URL, version: String) async throws -> String {
         let bundle = directory.appending(path: "Agent-\(version).app")
         let executables = bundle.appending(path: "Contents/MacOS")
         try FileManager.default.createDirectory(at: executables, withIntermediateDirectories: true)
@@ -22,7 +22,7 @@ struct LaunchRequirementTests {
         ]
         let plist = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
         try plist.write(to: bundle.appending(path: "Contents/Info.plist"))
-        let codesign = try ChildProcess(
+        let codesign = try await ChildProcess(
             URL(fileURLWithPath: "/usr/bin/codesign"), ["--force", "--sign", "-", bundle.path]
         ).exit()
         try #require(codesign.status == 0, "codesign \(bundle.path)")
@@ -36,10 +36,10 @@ struct LaunchRequirementTests {
     }
 
     @Test("A bundle meets its own designated requirement; one signed ad-hoc from other content is refused")
-    func adHocBundles() throws {
+    func adHocBundles() async throws {
         let directory = try Self.scratch()
-        let installed = try Self.adHocBundle(in: directory, version: "1")
-        let update = try Self.adHocBundle(in: directory, version: "2")
+        let installed = try await Self.adHocBundle(in: directory, version: "1")
+        let update = try await Self.adHocBundle(in: directory, version: "2")
         var code: SecStaticCode?
         try #require(
             SecStaticCodeCreateWithPath(URL(fileURLWithPath: installed) as CFURL, SecCSFlags(), &code) == errSecSuccess)
@@ -55,7 +55,7 @@ struct LaunchRequirementTests {
     }
 
     @Test("The running code meets its own designated requirement, and another ad-hoc bundle does not")
-    func runningCode() throws {
+    func runningCode() async throws {
         var running: SecCode?
         try #require(SecCodeCopySelf(SecCSFlags(), &running) == errSecSuccess)
         var code: SecStaticCode?
@@ -65,7 +65,7 @@ struct LaunchRequirementTests {
         let path = (try #require(url) as URL).path
 
         #expect(LaunchRequirement.refusal(ofBundleAt: path) == nil)
-        let adHoc = try Self.adHocBundle(in: try Self.scratch(), version: "1")
+        let adHoc = try await Self.adHocBundle(in: try Self.scratch(), version: "1")
         #expect(LaunchRequirement.refusal(ofBundleAt: adHoc)?.code == .updateLaunchRefused)
     }
 }

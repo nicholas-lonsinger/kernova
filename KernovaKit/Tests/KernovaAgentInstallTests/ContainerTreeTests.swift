@@ -131,7 +131,7 @@ struct ContainerTreeTests {
     }
 
     @Test("An update lands the golden payload as the item in the spare slot, once its self-test passes")
-    func updateLandsGolden() throws {
+    func updateLandsGolden() async throws {
         let frozen = try #require(FileManager.default.contents(atPath: Self.golden.path))
         let fixture = try SlotFixture()
         let ran = BlockingInbox<String>()
@@ -151,8 +151,8 @@ struct ContainerTreeTests {
             try piece.withUnsafeBytes { try landing.write($0) }
         }
         try landing.publish()
-        #expect(try checked.next() == fixture.root + "/slots/b/" + Self.itemName)
-        #expect(try ran.next() == fixture.root + "/slots/b/" + Self.itemName + "/Contents/MacOS/agent")
+        #expect(try await checked.next() == fixture.root + "/slots/b/" + Self.itemName)
+        #expect(try await ran.next() == fixture.root + "/slots/b/" + Self.itemName + "/Contents/MacOS/agent")
         #expect(try BundleFixture.describe(fixture.root + "/slots/b/" + Self.itemName) == BundleFixture.expected)
         #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.root + "/slots/b") == [Self.itemName])
     }

@@ -147,25 +147,25 @@ enum Payloads {
     }
 
     /// Writes `bytes` in three pieces, each reported consumed.
-    static func write(_ run: InstallerRun, _ bytes: Data = bytes) throws {
+    static func write(_ run: InstallerRun, _ bytes: Data = bytes) async throws {
         let third = bytes.count / 3
         let pieces = [bytes[..<third], bytes[third..<(2 * third)], bytes[(2 * third)...]]
         for piece in pieces { run.installer.write(id, Data(piece)) }
-        #expect(try run.reports.next(3) == pieces.map { .consumed(id, $0.count) })
+        #expect(try await run.reports.next(3) == pieces.map { .consumed(id, $0.count) })
     }
 }
 
 @Suite("The slot update installer")
 struct SlotUpdateInstallerTests {
     @Test("write, complete and switch: the payload lands in the spare slot, current moves, the switch is pending")
-    func switches() throws {
+    func switches() async throws {
         let fixture = try SlotFixture()
         let run = try InstallerRun(fixture)
-        _ = try run.reports.next()
-        try Payloads.write(run)
+        _ = try await run.reports.next()
+        try await Payloads.write(run)
         run.installer.complete(Payloads.id, Payloads.manifest)
-        #expect(try run.reports.next() == .installed(Payloads.id))
-        _ = try run.switched.next()
+        #expect(try await run.reports.next() == .installed(Payloads.id))
+        _ = try await run.switched.next()
 
         #expect(fixture.contents("slots/b/" + TestLander.name) == Payloads.bytes)
         #expect(!fixture.exists("slots/b/" + TestLander.stagedName))
@@ -200,14 +200,14 @@ struct SlotUpdateInstallerTests {
                 .updateFormatUnsupported
             ),
         ])
-    func rejects(manifest: UpdateManifestValue, code: ErrorCode) throws {
+    func rejects(manifest: UpdateManifestValue, code: ErrorCode) async throws {
         let fixture = try SlotFixture()
         let run = try InstallerRun(fixture)
-        _ = try run.reports.next()
-        try Payloads.write(run)
+        _ = try await run.reports.next()
+        try await Payloads.write(run)
         run.installer.complete(Payloads.id, manifest)
-        #expect(try run.reports.next() == Payloads.available(rejected: manifest.payloadHash, code: code))
-        guard case .rejected(let id, let error) = try run.reports.next() else {
+        #expect(try await run.reports.next() == Payloads.available(rejected: manifest.payloadHash, code: code))
+        guard case .rejected(let id, let error) = try await run.reports.next() else {
             Issue.record("no rejection")
             return
         }
@@ -218,29 +218,29 @@ struct SlotUpdateInstallerTests {
     }
 
     @Test("A write failing ENOSPC fails the pull DISK_FULL, drops the staged file, and ignores the pull's rest")
-    func diskFull() throws {
+    func diskFull() async throws {
         let fixture = try SlotFixture()
         let run = try InstallerRun(fixture, lander: TestLander(writeFailure: ENOSPC))
-        _ = try run.reports.next()
+        _ = try await run.reports.next()
         run.installer.write(Payloads.id, Payloads.bytes)
-        #expect(try run.reports.next() == .failed(Payloads.id, WireError(.diskFull, posixErrno: ENOSPC)))
+        #expect(try await run.reports.next() == .failed(Payloads.id, WireError(.diskFull, posixErrno: ENOSPC)))
         run.installer.write(Payloads.id, Payloads.bytes)
         run.installer.complete(Payloads.id, Payloads.manifest)
         // Sequenced behind both on the installer's queue: nothing reported between.
         run.installer.recordRejected(Data(repeating: 1, count: 32))
-        #expect(try run.reports.next() == Payloads.available(rejected: Data(repeating: 1, count: 32)))
+        #expect(try await run.reports.next() == Payloads.available(rejected: Data(repeating: 1, count: 32)))
         try Self.expectUnswitched(fixture)
     }
 
     @Test("A publish that fails on the install's own account is refused without recording the payload")
-    func installFails() throws {
+    func installFails() async throws {
         let fixture = try SlotFixture()
         let refusal = PayloadRefusal(.updateInstallFailed, "rename into the slot", errno: EIO, rejectsPayload: false)
         let run = try InstallerRun(fixture, lander: TestLander(refusal: refusal))
-        _ = try run.reports.next()
-        try Payloads.write(run)
+        _ = try await run.reports.next()
+        try await Payloads.write(run)
         run.installer.complete(Payloads.id, Payloads.manifest)
-        guard case .rejected(_, let error) = try run.reports.next() else {
+        guard case .rejected(_, let error) = try await run.reports.next() else {
             Issue.record("no rejection")
             return
         }
@@ -250,28 +250,28 @@ struct SlotUpdateInstallerTests {
     }
 
     @Test("abort drops the staged file")
-    func abort() throws {
+    func abort() async throws {
         let fixture = try SlotFixture()
         let run = try InstallerRun(fixture)
-        _ = try run.reports.next()
-        try Payloads.write(run)
+        _ = try await run.reports.next()
+        try await Payloads.write(run)
         #expect(fixture.exists("slots/b/" + TestLander.stagedName))
         run.installer.abort(Payloads.id)
         run.installer.clearRejected()
         run.installer.recordRejected(Data(repeating: 1, count: 32))
-        _ = try run.reports.next()
+        _ = try await run.reports.next()
         #expect(!fixture.exists("slots/b/" + TestLander.stagedName))
     }
 
     @Test("The new version confirms the switch to itself once connected: the marker goes, the record clears")
-    func confirms() throws {
+    func confirms() async throws {
         let fixture = try SlotFixture()
-        try Self.switchToB(fixture)
+        try await Self.switchToB(fixture)
         let next = try InstallerRun(fixture, running: "b")
-        #expect(try next.reports.next() == Payloads.available())
+        #expect(try await next.reports.next() == Payloads.available())
         #expect(try fixture.state().pendingSwitch != nil)
         next.installer.confirm()
-        _ = try next.confirmed.next()
+        _ = try await next.confirmed.next()
         #expect(!fixture.exists("switch-pending"))
         let state = try fixture.state()
         #expect(state.pendingSwitch == nil)
@@ -279,18 +279,18 @@ struct SlotUpdateInstallerTests {
     }
 
     @Test("A version the switch did not make current drops the switch as it starts, and confirms nothing")
-    func confirmsOnlyItsOwnSwitch() throws {
+    func confirmsOnlyItsOwnSwitch() async throws {
         let fixture = try SlotFixture()
-        try Self.switchToB(fixture)
+        try await Self.switchToB(fixture)
         // Slot a running again with the switch still pending can only be a crash before current moved: the
         // switch never took effect, and starting drops it.
         try FileManager.default.removeItem(atPath: fixture.root + "/current")
         try FileManager.default.createSymbolicLink(atPath: fixture.root + "/current", withDestinationPath: "slots/a")
         let old = try InstallerRun(fixture, running: "a")
-        #expect(try old.reports.next() == Payloads.available())
+        #expect(try await old.reports.next() == Payloads.available())
         old.installer.confirm()
         old.installer.recordRejected(Data(repeating: 1, count: 32))
-        _ = try old.reports.next()
+        _ = try await old.reports.next()
         #expect(!fixture.exists("switch-pending"))
         let state = try fixture.state()
         #expect(state.pendingSwitch == nil)
@@ -299,12 +299,12 @@ struct SlotUpdateInstallerTests {
     }
 
     /// Switches the fixture to slot b through the installer, as the running version a does.
-    static func switchToB(_ fixture: SlotFixture) throws {
+    static func switchToB(_ fixture: SlotFixture) async throws {
         let run = try InstallerRun(fixture)
-        _ = try run.reports.next()
-        try Payloads.write(run)
+        _ = try await run.reports.next()
+        try await Payloads.write(run)
         run.installer.complete(Payloads.id, Payloads.manifest)
-        #expect(try run.reports.next() == .installed(Payloads.id))
+        #expect(try await run.reports.next() == .installed(Payloads.id))
     }
 
     static func expectUnswitched(_ fixture: SlotFixture) throws {
@@ -334,9 +334,9 @@ struct RollbackCheckTests {
     }
 
     @Test("Runs 1–4 count and change nothing; run 5 reverts, kills the new version, and the old one records it")
-    func reverts() throws {
+    func reverts() async throws {
         let fixture = try SlotFixture()
-        try SlotUpdateInstallerTests.switchToB(fixture)
+        try await SlotUpdateInstallerTests.switchToB(fixture)
         let kills = Kills()
         let check = try Self.check(fixture, kills: kills)
         for runs in 1..<RollbackCheck.runsToRevert {
@@ -355,7 +355,7 @@ struct RollbackCheckTests {
 
         // The service manager restarts the peer through current: the previous version, which records the payload.
         let previous = try InstallerRun(fixture, running: "a")
-        #expect(try previous.reports.next() == Payloads.available(rejected: Payloads.hash))
+        #expect(try await previous.reports.next() == Payloads.available(rejected: Payloads.hash))
         let state = try fixture.state()
         #expect(state.rejected?.payloadSHA256 == lowercaseHex(Payloads.hash))
         #expect(state.pendingSwitch == nil)
@@ -373,9 +373,9 @@ struct RollbackCheckTests {
     }
 
     @Test("It kills the process that ran the version it reverts, never the restored version's fresh launch")
-    func killsTheRevertedVersion() throws {
+    func killsTheRevertedVersion() async throws {
         let fixture = try SlotFixture()
-        try SlotUpdateInstallerTests.switchToB(fixture)
+        try await SlotUpdateInstallerTests.switchToB(fixture)
         let kills = Kills()
         let check = RollbackCheck(
             root: try fixture.slotRoot(),
@@ -389,9 +389,9 @@ struct RollbackCheckTests {
     }
 
     @Test("A unit with no main process — waiting to restart — is reverted and nothing is killed")
-    func revertsWithoutProcess() throws {
+    func revertsWithoutProcess() async throws {
         let fixture = try SlotFixture()
-        try SlotUpdateInstallerTests.switchToB(fixture)
+        try await SlotUpdateInstallerTests.switchToB(fixture)
         let kills = Kills()
         let check = try Self.check(fixture, mainPID: 0, kills: kills)
         for _ in 1..<RollbackCheck.runsToRevert { _ = try check.run() }
@@ -401,19 +401,19 @@ struct RollbackCheckTests {
     }
 
     @Test("A switch reverted before the new version connects is not confirmed")
-    func revertedFirst() throws {
+    func revertedFirst() async throws {
         let fixture = try SlotFixture()
-        try SlotUpdateInstallerTests.switchToB(fixture)
+        try await SlotUpdateInstallerTests.switchToB(fixture)
         let kills = Kills()
         let check = try Self.check(fixture, kills: kills)
         // The new version is up but has not connected yet.
         let next = try InstallerRun(fixture, running: "b")
-        _ = try next.reports.next()
+        _ = try await next.reports.next()
         for _ in 1..<RollbackCheck.runsToRevert { _ = try check.run() }
         #expect(try check.run() == .reverted(killed: 4242))
         next.installer.confirm()
         next.installer.recordRejected(Data(repeating: 1, count: 32))
-        _ = try next.reports.next()
+        _ = try await next.reports.next()
         #expect(fixture.exists("switch-rejected"))
         #expect(try fixture.state().pendingSwitch != nil)
     }
@@ -481,19 +481,19 @@ struct RejectedHashThroughTheCoreTests {
     }
 
     @Test("A payload the install rejected is not pulled on a later connection until the offer changes")
-    func rejectedUntilTheOfferChanges() throws {
+    func rejectedUntilTheOfferChanges() async throws {
         let fixture = try SlotFixture()
         let bad = UpdateManifestValue(
             payloadHash: Data(repeating: 7, count: 32), payloadSize: UInt64(Payloads.bytes.count), format: .executable)
         let first = try InstallerRun(fixture)
-        _ = try first.reports.next()
-        try Payloads.write(first)
+        _ = try await first.reports.next()
+        try await Payloads.write(first)
         first.installer.complete(Payloads.id, bad)
-        _ = try first.reports.next(2)
+        _ = try await first.reports.next(2)
 
         // The next process, and its next connection, offered the same payload.
         let later = try InstallerRun(fixture)
-        let availability = try later.reports.next()
+        let availability = try await later.reports.next()
         #expect(availability == Payloads.available(rejected: bad.payloadHash, code: .updateHashMismatch))
         let run = HostileRun(local: .peer, seed: 41)
         run.input(.update(availability))
@@ -507,7 +507,7 @@ struct RejectedHashThroughTheCoreTests {
         #expect(effects == [.clearRejected])
         #expect(Self.pulls(run) == [Payloads.hash])
         later.installer.clearRejected()
-        #expect(try later.reports.next() == Payloads.available())
+        #expect(try await later.reports.next() == Payloads.available())
         #expect(try fixture.state().rejected == nil)
     }
 }

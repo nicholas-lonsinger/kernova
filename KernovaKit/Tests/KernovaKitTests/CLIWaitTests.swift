@@ -20,8 +20,8 @@ struct CLIWaitTests {
     // MARK: - A Failure Ends the Wait
 
     @Test("A failure reported while the wait runs ends it carrying Kernova's own message")
-    func aFailureEndsTheWaitWithItsMessage() throws {
-        let ended = try outcome(
+    func aFailureEndsTheWaitWithItsMessage() async throws {
+        let ended = try await outcome(
             .running,
             answering: [
                 info(status: "installing"),
@@ -33,11 +33,11 @@ struct CLIWaitTests {
     }
 
     @Test("The status change into error ahead of the failure does not cost the message")
-    func theStatusChangeIntoErrorDoesNotCostTheMessage() throws {
+    func theStatusChangeIntoErrorDoesNotCostTheMessage() async throws {
         // The order the app emits them in: one batch carrying the status change
         // and the failure behind it, so a wait that settled for the first frame
         // would report a failure it could not explain.
-        let ended = try outcome(
+        let ended = try await outcome(
             .running,
             answering: [
                 info(status: "installing"),
@@ -49,8 +49,8 @@ struct CLIWaitTests {
     }
 
     @Test("A failure that reaches the wire ahead of the info answer ends the wait too")
-    func aFailureAheadOfTheInfoAnswerEndsTheWait() throws {
-        let ended = try outcome(
+    func aFailureAheadOfTheInfoAnswerEndsTheWait() async throws {
+        let ended = try await outcome(
             .agent,
             answering: [
                 event(.failure(id: alpha, name: "Alpha", message: "The disk went away.")),
@@ -61,8 +61,8 @@ struct CLIWaitTests {
     }
 
     @Test("A virtual machine that leaves the library ends the wait")
-    func aRemovedVirtualMachineEndsTheWait() throws {
-        let ended = try outcome(
+    func aRemovedVirtualMachineEndsTheWait() async throws {
+        let ended = try await outcome(
             .stopped,
             answering: [info(status: "running"), event(.removed(id: alpha, name: "Alpha"))])
         #expect(ended.failure?.code == .notFound)
@@ -72,8 +72,8 @@ struct CLIWaitTests {
     // MARK: - Another Virtual Machine's Events
 
     @Test("A failure naming another virtual machine is not this wait's")
-    func anotherVirtualMachinesFailureIsIgnored() throws {
-        let ended = try outcome(
+    func anotherVirtualMachinesFailureIsIgnored() async throws {
+        let ended = try await outcome(
             .running,
             answering: [
                 info(status: "stopped"),
@@ -89,12 +89,12 @@ struct CLIWaitTests {
     // MARK: - An Error Found at the Start
 
     @Test("A virtual machine already in the error status when the wait starts keeps it waiting")
-    func anErrorInTheBaselineKeepsTheWaitRunning() throws {
+    func anErrorInTheBaselineKeepsTheWaitRunning() async throws {
         // The failure behind it happened before this wait, and the virtual
         // machine can be started from there, so nothing here says the state
         // being waited for is not coming. Ending on the event *after* that
         // baseline is what proves the wait read it and went on.
-        let ended = try outcome(
+        let ended = try await outcome(
             .running,
             answering: [
                 info(status: "error"),
@@ -107,15 +107,15 @@ struct CLIWaitTests {
     // MARK: - Reaching the State
 
     @Test("A virtual machine already in the state ends the wait on the snapshot")
-    func theBaselineEndsTheWait() throws {
-        let ended = try outcome(.running, answering: [info(status: "running")])
+    func theBaselineEndsTheWait() async throws {
+        let ended = try await outcome(.running, answering: [info(status: "running")])
         #expect(ended.failure == nil)
         #expect(ended.verbs == subscribeThenRead)
     }
 
     @Test("A current agent ends an agent wait")
-    func theAgentConditionEndsOnACurrentAgent() throws {
-        let ended = try outcome(
+    func theAgentConditionEndsOnACurrentAgent() async throws {
+        let ended = try await outcome(
             .agent,
             answering: [
                 info(status: "running", agentStatus: "outdated"),
@@ -127,10 +127,10 @@ struct CLIWaitTests {
     // MARK: - The Deadline
 
     @Test("The deadline ends a wait nothing else does, naming what was waited for")
-    func theDeadlineEndsTheWait() throws {
+    func theDeadlineEndsTheWait() async throws {
         // The deadline is the assertion here, so it is the one place a small
         // injected timeout is the correct value.
-        let ended = try outcome(
+        let ended = try await outcome(
             .running, timeout: 1,
             answering: [info(status: "stopped")], holdingOpen: true)
         #expect(ended.failure?.code == .timedOut)
@@ -151,7 +151,7 @@ struct CLIWaitTests {
     private func outcome(
         _ until: WaitCondition, timeout: Double = testWaitBackstop,
         answering frames: [VMCommandResponse], holdingOpen: Bool = false
-    ) throws -> WaitOutcome {
+    ) async throws -> WaitOutcome {
         let listener = try TestCommandSocket()
         defer { listener.close() }
         let client = try VMCommandClient(socketPath: listener.path)
@@ -168,7 +168,7 @@ struct CLIWaitTests {
         // Ends the double's held-open read the way the tool exiting would, so
         // reading what it received is not queued behind that read.
         client.close()
-        return (ended, try listener.requests().map(\.verb))
+        return (ended, try await listener.requests().map(\.verb))
     }
 
     /// The library the subscription answers with before any event.

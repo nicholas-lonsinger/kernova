@@ -183,20 +183,22 @@ struct MacPowerTests {
     }
 
     @Test("A cancel while shutdown runs reports nothing: the accepted request ends with shutdown")
-    func cancelWhileShutdownRuns() throws {
-        let running = DispatchSemaphore(value: 0)
+    func cancelWhileShutdownRuns() async throws {
+        let running = Locked(false)
+        let started = AsyncGate()
         let release = DispatchSemaphore(value: 0)
         let waits = OffTaskWaits()
         let harness = Harness(
             .shutdownCommand(run: { _ in
-                running.signal()
+                running.withLock { $0 = true }
+                started.notify()
                 waits.run { try Backstop("the test's release of the shutdown").wait(for: release) }
                 return 0
             }), console: .off)
         _ = harness.take()
 
         harness.adapter.perform(Self.id, .shutdown, ignoringApps: true)
-        try Backstop("the shutdown's start").wait(for: running)
+        try await started.wait(named: "the shutdown's start") { running.withLock { $0 } }
         harness.adapter.cancel(Self.id)
         release.signal()
         #expect(harness.take() == [.accepted(Self.id), .handedOff(Self.id)])
@@ -245,15 +247,17 @@ struct MacPowerTests {
     }
 
     @Test("A cancel while the call is blocked lets the request go unconfirmed, and its late answer reports nothing")
-    func cancelWhileCalling() throws {
-        let calling = DispatchSemaphore(value: 0)
+    func cancelWhileCalling() async throws {
+        let calling = Locked(false)
+        let started = AsyncGate()
         let release = DispatchSemaphore(value: 0)
         let waits = OffTaskWaits()
         let mechanism = MacPowerMechanism(
             graceful: .init(
                 absentDetail: "",
                 call: .answering {
-                    calling.signal()
+                    calling.withLock { $0 = true }
+                    started.notify()
                     waits.run { try Backstop("the test's release of the call").wait(for: release) }
                     return .tookIt
                 }),
@@ -262,7 +266,7 @@ struct MacPowerTests {
         _ = harness.take()
 
         harness.adapter.perform(Self.id, .shutdown, ignoringApps: false)
-        try Backstop("the call's start").wait(for: calling)
+        try await started.wait(named: "the call's start") { calling.withLock { $0 } }
         harness.adapter.cancel(Self.id)
         release.signal()
         #expect(harness.take() == [.unconfirmed(Self.id)])

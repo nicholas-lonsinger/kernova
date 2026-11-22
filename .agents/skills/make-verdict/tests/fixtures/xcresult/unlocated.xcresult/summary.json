@@ -1,0 +1,33 @@
+{
+  "devicesAndConfigurations": [],
+  "environmentDescription": "Kernova · Built with macOS 26.0",
+  "expectedFailures": 0,
+  "failedTests": 0,
+  "finishTime": 1757000012.5,
+  "passedTests": 3,
+  "result": "Passed",
+  "runtimeWarnings": [
+    {
+      "issueType": "Runtime Warning",
+      "message": "Thread running at User-initiated quality-of-service class waiting on a lower QoS thread running at Default quality-of-service class. Investigate ways to avoid priority inversions",
+      "sourceURL": "file:///%5Esrc/KernovaKit/Sources/KernovaPortableTestSupport/Backstop.swift"
+    },
+    {
+      "issueType": "Runtime Warning",
+      "message": "Thread running at User-initiated quality-of-service class waiting on a lower QoS thread running at Default quality-of-service class. Investigate ways to avoid priority inversions",
+      "sourceURL": "file:///%5Esrc/KernovaKit/Sources/KernovaPortableTestSupport/Backstop.swift"
+    },
+    {
+      "issueType": "Runtime Warning",
+      "message": "Thread running at User-initiated quality-of-service class waiting on a lower QoS thread running at Default quality-of-service class. Investigate ways to avoid priority inversions",
+      "sourceURL": "file:///%5Esrc/KernovaKit/Sources/KernovaPortableTestSupport/Backstop.swift"
+    }
+  ],
+  "skippedTests": 0,
+  "startTime": 1756999600.1,
+  "statistics": [],
+  "testFailures": [],
+  "title": "Test - Kernova",
+  "topInsights": [],
+  "totalTestCount": 3
+}

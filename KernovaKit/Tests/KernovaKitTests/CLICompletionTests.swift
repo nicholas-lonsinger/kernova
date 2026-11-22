@@ -144,7 +144,7 @@ struct CLICompletionTests {
     }
 
     @Test("A USB detachment offers only what the named machine is actually holding")
-    func usbDevicesComeFromTheMachine() throws {
+    func usbDevicesComeFromTheMachine() async throws {
         let listener = try TestCommandSocket()
         defer { listener.close() }
         listener.serve([[VMCommandResponse(result: .usbAccessories(accessories))]])
@@ -155,11 +155,11 @@ struct CLICompletionTests {
         // A row carrying no attachment is one no guest holds, so there is
         // nothing there to detach and nothing to offer.
         #expect(devices == ["AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"])
-        #expect(try listener.requests().map(\.verb) == [.usbAccessories(.idOrName("Alpha"))])
+        #expect(try await listener.requests().map(\.verb) == [.usbAccessories(.idOrName("Alpha"))])
     }
 
     @Test("A USB attachment offers the free accessories, described by what they are")
-    func availableUSBAccessoriesComeFromTheHost() throws {
+    func availableUSBAccessoriesComeFromTheHost() async throws {
         let listener = try TestCommandSocket()
         defer { listener.close() }
         listener.serve([[VMCommandResponse(result: .usbAccessories([accessories[1]]))]])
@@ -170,11 +170,11 @@ struct CLICompletionTests {
         // Nothing tells two accessories apart by identifier, so the description
         // is what a person completes against.
         #expect(offered == ["12:05ac:12a8 \u{00B7} Composite"])
-        #expect(try listener.requests().map(\.verb) == [.availableUSBAccessories])
+        #expect(try await listener.requests().map(\.verb) == [.availableUSBAccessories])
     }
 
     @Test("Forgetting a USB accessory offers the keys the named machine remembers")
-    func usbPairingKeysComeFromTheMachine() throws {
+    func usbPairingKeysComeFromTheMachine() async throws {
         let listener = try TestCommandSocket()
         defer { listener.close() }
         listener.serve([
@@ -194,7 +194,7 @@ struct CLICompletionTests {
         // The key carries colons, which zsh would otherwise read as the start
         // of the description.
         #expect(keys == ["04e8\\:6300\\:0100\\:0373:Samsung Type-C"])
-        #expect(try listener.requests().map(\.verb) == [.usbPairings(.idOrName("Alpha"))])
+        #expect(try await listener.requests().map(\.verb) == [.usbPairings(.idOrName("Alpha"))])
     }
 
     @Test("Under --id a virtual machine argument that is not one asks nothing")
@@ -230,7 +230,7 @@ struct CLICompletionTests {
     }
 
     @Test("get and set offer the keyspace, set with the = its value follows")
-    func keysComeFromTheKeyspace() throws {
+    func keysComeFromTheKeyspace() async throws {
         let keyspace = [
             ConfigurationKeyDescriptor(
                 name: "cpus", summary: "Virtual CPU cores.",
@@ -241,7 +241,7 @@ struct CLICompletionTests {
         defer { plain.close() }
         plain.serve([[VMCommandResponse(result: .configurationKeys(keyspace))]])
         #expect(CompletionSource.configurationKeys(in: context(to: plain)) == ["cpus"])
-        #expect(try plain.requests().map(\.verb) == [.configurationKeys])
+        #expect(try await plain.requests().map(\.verb) == [.configurationKeys])
 
         let assigning = try TestCommandSocket()
         defer { assigning.close() }
@@ -252,7 +252,7 @@ struct CLICompletionTests {
     }
 
     @Test("--smart-group and --folder each offer their own kind's groups by name, described by their size")
-    func groupNamesComeFromTheGroups() throws {
+    func groupNamesComeFromTheGroups() async throws {
         let answer = VMCommandResponse(
             result: .groups([
                 GroupSummary(id: UUID(), name: "Linux: Lab", kind: .smartGroup, members: [alpha, beta]),
@@ -269,8 +269,8 @@ struct CLICompletionTests {
             CompletionSource.groupNames(of: .smartGroup, in: context(to: smart, asking: .zsh))
                 == ["Linux\\: Lab:2 VMs"])
         #expect(CompletionSource.groupNames(of: .folder, in: context(to: folders, asking: .zsh)) == ["Client:1 VMs"])
-        #expect(try smart.requests().map(\.verb) == [.groups])
-        #expect(try folders.requests().map(\.verb) == [.groups])
+        #expect(try await smart.requests().map(\.verb) == [.groups])
+        #expect(try await folders.requests().map(\.verb) == [.groups])
     }
 
     @Test("A --network value offers every mode with no app to ask, then the named networks")
