@@ -1,11 +1,17 @@
 name: Select Xcode
 description: >-
   Select the newest release Xcode the runner carries and export its build
-  number as XCODE_BUILD. AccessoryAccess and VZUSBPassthroughDeviceConfiguration
-  are macOS 27 SDK APIs an Xcode 26 toolchain cannot resolve at all, so every
-  job runs on `xcode-27`, the only image carrying one, and the step fails when
-  the newest release is older than 27. That image is a preview, so a run can
-  sit queued for a while before a runner picks it up.
+  number as XCODE_BUILD and the xcode-build output. AccessoryAccess and
+  VZUSBPassthroughDeviceConfiguration are macOS 27 SDK APIs an Xcode 26
+  toolchain cannot resolve at all, so every job runs on `xcode-27`, the only
+  image carrying one, and the step fails when the newest release is older
+  than 27. That image is a preview, so a run can sit queued for a while before
+  a runner picks it up.
+
+outputs:
+  xcode-build:
+    description: The selected Xcode's build number.
+    value: ${{ steps.select.outputs.xcode-build }}
 
 runs:
   using: composite
@@ -18,7 +24,8 @@ runs:
     # Symlinks only alias real bundles. `--sdk macosx` is the SDKROOT builds use;
     # a bare `xcrun` resolved the Command Line Tools SDK under that 27.2 beta.
     # `xcodebuild -version` names the lint run's swift-format (`--version`: main).
-    - shell: bash
+    - id: select
+      shell: bash
       run: |
         shopt -s nocasematch
         newest='' newest_version=''
@@ -41,4 +48,6 @@ runs:
         xcodebuild -version
         xcrun --sdk macosx --show-sdk-version
         swift --version
-        echo "XCODE_BUILD=$(xcodebuild -version | awk '/Build version/ {print $3}')" >> "$GITHUB_ENV"
+        build="$(xcodebuild -version | awk '/Build version/ {print $3}')"
+        echo "XCODE_BUILD=$build" >> "$GITHUB_ENV"
+        echo "xcode-build=$build" >> "$GITHUB_OUTPUT"

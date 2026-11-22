@@ -5,19 +5,18 @@ name: Portable Targets
 on:
   push:
     branches: [main]
-    paths:
-      - 'KernovaKit/**'
+    paths: &inputs
       - '.github/workflows/**'
       - '.swift-version'
-      - 'Tools/lib/package-pins.sh'
       - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
+      - 'KernovaCore/Sources/KernovaCore/Resources/LinuxAgentDisk/agent-disk.sh'
+      - 'KernovaKit/**'
+      - 'Tools/lib/linux-tests.sh'
+      - 'Tools/lib/package-pins.sh'
+      - 'Tools/linux-tests.Containerfile'
+      - 'Tools/test-linux.sh'
   pull_request:
-    paths:
-      - 'KernovaKit/**'
-      - '.github/workflows/**'
-      - '.swift-version'
-      - 'Tools/lib/package-pins.sh'
-      - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
+    paths: *inputs
   workflow_dispatch:
 
 permissions:
@@ -49,31 +48,7 @@ jobs:
         run: echo "version=$(tr -d '[:space:]' < .swift-version)" >> "$GITHUB_OUTPUT"
 
   linux:
-    name: Linux (aarch64)
-    needs: swift-version
-    runs-on: ubuntu-24.04-arm
-    container: swift:${{ needs.swift-version.outputs.version }}-noble
-    timeout-minutes: 30
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 1
-
-      # KernovaPlatformLinuxTests start their own dbus-daemon; ISO9660WriterTests
-      # read the image back with xorriso.
-      - name: Install dbus-daemon and xorriso
-        run: apt-get update && apt-get install --yes --no-install-recommends dbus xorriso
-
-      - name: Build
-        shell: bash
-        run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift build --
-
-      # The static SDK has no Testing module, so the tests run on the
-      # container's glibc toolchain.
-      - name: Test
-        shell: bash
-        run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift test --
+    uses: ./.github/workflows/linux-tests.yml
 
   windows:
     name: Windows (arm64)

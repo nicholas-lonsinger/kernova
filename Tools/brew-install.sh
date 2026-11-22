@@ -7,9 +7,9 @@
 # Usage: Tools/brew-install.sh <command>...
 #   e.g. Tools/brew-install.sh shellcheck gh xcode-build-server
 #
-# None of these tools is needed to build or test Kernova, so a machine without
-# Homebrew gets one line naming what stayed missing and a zero exit — the
-# caller carries on, and `make doctor` reports the resulting state.
+# None of these tools is needed to build Kernova or run its macOS tests, so a
+# machine without Homebrew gets one line naming what stayed missing and a zero
+# exit — the caller carries on, and `make doctor` reports the resulting state.
 
 set -uo pipefail
 
