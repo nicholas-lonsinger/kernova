@@ -10,11 +10,10 @@ on:
 
 permissions:
   contents: read
-  statuses: write
 
 jobs:
   build-and-test:
-    if: github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'ci') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'ci'))
+    if: &requested github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'ci') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'ci'))
     # Job-level, so a run whose job is skipped never cancels the real run:
     # adding a second label mid-run left the labeled-`ci` run in progress while
     # the new run's job was skipped (observed 2026-10-18).
@@ -29,6 +28,7 @@ jobs:
     timeout-minutes: 30
     outputs:
       cas-key: ${{ steps.save-cas.outcome == 'success' && steps.restore-cas.outputs.cache-primary-key || '' }}
+      xcode-build: ${{ steps.xcode.outputs.xcode-build }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,6 +37,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Select Xcode
+        id: xcode
         uses: ./.github/actions/select-xcode
 
       # Package.resolved pins each dependency to a commit, so the hash misses
@@ -217,11 +218,40 @@ jobs:
         timeout-minutes: 10
         run: make lint
 
+  # The Linux tests `make attest` runs beside lint and the tests: the same
+  # Containerfile, script and tree, with Docker and the runner's resources in
+  # place of container and the Mac's limits.
+  linux:
+    if: *requested
+    concurrency:
+      group: ${{ github.workflow }}-linux-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    uses: ./.github/workflows/linux-tests.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+  # Posts once both jobs have an outcome; a cancelled one posts nothing.
+  attest:
+    needs: [build-and-test, linux]
+    if: ${{ !cancelled() && contains(fromJSON('["success", "failure"]'), needs.build-and-test.result) && contains(fromJSON('["success", "failure"]'), needs.linux.result) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          sparse-checkout: Tools
+
       - name: Post the Commit Attestation status
-        if: success() || failure()
         env:
           GH_TOKEN: ${{ github.token }}
-        run: Tools/attest.sh post "${{ job.status }}" "Lint, Build & Test on Xcode ${XCODE_BUILD}" "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          STATE: ${{ needs.build-and-test.result == 'success' && needs.linux.result == 'success' && 'success' || 'failure' }}
+        run: Tools/attest.sh post "$STATE" "Lint, Build & Test on Xcode ${{ needs.build-and-test.outputs.xcode-build }} and Linux" "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
   # Its own job, so the build that runs the tree's scripts never holds a token
   # that can delete caches.
