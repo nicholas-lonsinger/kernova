@@ -54,6 +54,16 @@ package final class SimLink {
         }
     }
 
+    /// `side`'s adverts: what its connection publishes, what its machines hold, and the far side's as received.
+    func adverts(_ side: SimSide)
+        -> (published: [FeatureAdvertValue], machines: [FeatureAdvertValue], remote: [FeatureAdvertValue])?
+    {
+        switch side {
+        case .host: host?.advertsForTesting
+        case .peer: peer?.advertsForTesting
+        }
+    }
+
     func pendingEventCount(_ side: SimSide) -> Int {
         switch side {
         case .host: host?.pendingEventCountForTesting ?? 0
@@ -312,6 +322,7 @@ package final class SimWorld {
         drainOutputs(link, side)
         checker.footprint(link, side, world: self)
         checker.clipboardOffers(link, side)
+        checker.publishedAdverts(link, side)
         for stall in stalledTestConsumers where stall.side == side && stall.peer == link.peerIndex {
             if testFlows(link, side, stall.kind).contains(where: { $0.held > 0 }) { faultTookEffect(stall.fault) }
         }

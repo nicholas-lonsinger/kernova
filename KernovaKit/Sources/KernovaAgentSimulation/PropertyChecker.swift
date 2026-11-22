@@ -212,6 +212,8 @@ package struct TraceChecker: Sendable {
 /// 13. Every item command that carries a request id is answered exactly once, before any event it caused:
 ///     an offer's `.offerEnded`, a clipboard offer request's `.requestEnded`, a pull's `.pullEnded`, a take's
 ///     `.ended`.
+/// 14. After every drain each side's connection publishes exactly the adverts its machines hold; at
+///     quiescence each side's view of the far side's adverts is what the far side publishes.
 ///
 /// Beyond these, a conforming run never closes INTERNAL or PROTOCOL_ERROR, and
 /// every injected fault takes effect.
@@ -337,6 +339,14 @@ package final class PropertyChecker {
         if footprint.streamRecords > 3 * 64 + 64 { fail("\(where_) holds \(footprint.streamRecords) stream records") }
         let ring = world.peers[link.peerIndex].ring
         if ring.count > LogRing.capacity { fail("\(where_) ring holds \(ring.count)") }
+    }
+
+    /// Property 14 after a drain of `side`: its connection publishes its machines' adverts.
+    func publishedAdverts(_ link: SimLink, _ side: SimSide) {
+        guard let adverts = link.adverts(side), adverts.published != adverts.machines else { return }
+        fail(
+            "property 14: link \(link.id) \(side) publishes \(adverts.published) while its machines hold \(adverts.machines)"
+        )
     }
 
     /// Property 12 after a drain of `side`.
@@ -540,6 +550,7 @@ package final class PropertyChecker {
                 }
             }
             checkConservation(link)
+            checkAdvertViews(link)
         }
         for violation in Self.routingViolations(world.hub.routingLog) { fail(violation) }
         for ask in world.hub.asks where ask.expectedFirst != ask.peer {
@@ -569,6 +580,20 @@ package final class PropertyChecker {
                     "property 4: link \(link.id) \(name) conserves \(total): credit \(sender.connectionSendCredit) queued \(sender.queuedRawBytes) held \(receiver.heldRawBytes) unreturned \(receiver.unreturnedConnectionCredit)"
                 )
             }
+        }
+    }
+
+    /// Property 14 at quiescence: each side's view of the far side's adverts is what the far side publishes.
+    private func checkAdvertViews(_ link: SimLink) {
+        guard link.toHost.isEmpty, link.toPeer.isEmpty, !link.toHost.writePending, !link.toPeer.writePending,
+            link.state(.host) == .established, link.state(.peer) == .established,
+            let host = link.adverts(.host), let peer = link.adverts(.peer)
+        else { return }
+        for (viewer, publisher, name) in [
+            (host, peer, "host's view of the peer's"), (peer, host, "peer's view of the host's"),
+        ]
+        where viewer.remote != publisher.published {
+            fail("property 14: link \(link.id) \(name) adverts is \(viewer.remote), not \(publisher.published)")
         }
     }
 

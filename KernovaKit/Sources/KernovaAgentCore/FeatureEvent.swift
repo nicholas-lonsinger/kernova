@@ -40,15 +40,15 @@ package protocol FeatureMachine: Sendable {
     /// What the machine asks its endpoint's adapters to do.
     associatedtype Effect: Sendable & Equatable
 
-    /// The machine's advert. It changes only while the role handles an input
-    /// (`RoleMachines.handle(_:connection:now:)`), after which the endpoint republishes it.
+    /// The machine's advert.
     var localAdvert: LocalAdvert { get }
     /// When the machine next needs `.deadline`; nil when it waits on none.
     func nextDeadline(on clock: JudgedClock) -> CoreInstant?
     /// Handles a connection-wide event, or an event of one of the machine's streams.
     mutating func handle(_ event: FeatureEvent, connection: inout Connection)
-    /// Everything the machine emitted since the last call, each kind in its emission order.
-    mutating func takeOutputs() -> (effects: [Effect], events: [Event], diagnostics: [Diagnostic])
+    /// Everything the machine emitted since the last call, each kind in its emission order, and whether its
+    /// advert changed since then.
+    mutating func takeOutputs() -> (effects: [Effect], events: [Event], diagnostics: [Diagnostic], advertChanged: Bool)
 }
 
 extension Connection {
