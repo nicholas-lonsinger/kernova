@@ -7,14 +7,14 @@
 # in Xcode's own DerivedData folder; this Makefile is for terminal, CI, and
 # tooling use.
 
-XCODEBUILD_LIB    := . Tools/lib/xcodebuild-flags.sh
-PROJECT           := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_project"')
-SCHEME            := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_scheme"')
-DESTINATION       := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_destination"')
-DERIVED_DATA_ROOT := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_derived_data_root"')
-DERIVED_DATA      := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_derived_data"')
-INDEX_DERIVED_DATA := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_index_derived_data"')
-RESULT_BUNDLE     := artifacts/TestResults.xcresult
+XCODEBUILD_LIB         := . Tools/lib/xcodebuild-flags.sh
+PROJECT                := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_project"')
+SCHEME                 := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_scheme"')
+DESTINATION            := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_destination"')
+DERIVED_DATA           := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_derived_data"')
+INDEX_DERIVED_DATA     := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_index_derived_data"')
+DEAD_CODE_DERIVED_DATA := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_dead_code_derived_data"')
+RESULT_BUNDLE          := artifacts/TestResults.xcresult
 
 ifneq ($(strip $(CI)),)
 RESULT_BUNDLE_FLAG := -resultBundlePath $(RESULT_BUNDLE)
@@ -105,14 +105,15 @@ install-lsp: ## Install xcode-build-server and write this checkout's buildServer
 
 # The build the language server reads: uncached and unmapped, so every compile
 # writes an index unit naming the real file, which no `make` build does
-# (Tools/lib/xcodebuild-flags.sh). Its bundles are unregistered on the way
-# out, so this build never wins the version election.
+# (Tools/lib/xcodebuild-flags.sh). `Tools/build-arenas.sh build` unregisters
+# its bundles once it has exited, so this build never wins the version
+# election.
 index: ## Build this checkout's index for the Swift language server (minutes the first time, seconds after); rerun after a change for cross-file results
 	$(LOCKED_TWIN)
 
 locked-index:
-	@trap "Tools/build-arenas.sh unregister '$(INDEX_DERIVED_DATA)/Build/Products' >&2" EXIT; \
-	xcodebuild $(XCODEBUILD_PROJECT_FLAGS) -scheme $(SCHEME) -destination '$(DESTINATION)' -configuration Debug \
+	@exec Tools/build-arenas.sh build '$(INDEX_DERIVED_DATA)/Build/Products' \
+		xcodebuild $(XCODEBUILD_PROJECT_FLAGS) -scheme $(SCHEME) -destination '$(DESTINATION)' -configuration Debug \
 		-derivedDataPath $(INDEX_DERIVED_DATA) -enableCodeCoverage NO build-for-testing \
 		CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=YES INDEX_ENABLE_DATA_STORE=YES \
 		COMPILATION_CACHE_ENABLE_CACHING=NO
@@ -208,63 +209,12 @@ format: ## Rewrite Swift sources in place via swift-format
 lint: ## Run Tools/lint.sh: shell analysis, the Tools/check-*.sh checks, swift-format --strict and the fixture suites; a passing run is recorded for `make attest`
 	@Tools/attest.sh record lint
 
-# The macOS half of the dead-code scan, reading .periphery.yml, over one fixed
-# arena per checkout. Periphery's own build would go to
-# ~/Library/Caches/com.github.peripheryapp under a name hashed from its schemes
-# in a Swift `Set`'s per-process order, a new multi-gigabyte arena most runs;
-# the checkout's other arenas index one scheme or none, and the GUI's is no
-# single build's index. The build flags are Periphery 3.x's own plus the
-# compilation cache off: a compile the cache serves writes no index unit,
-# leaving the unit an earlier compile wrote — after a revert, a cached scan
-# reported 27
-# findings in code that no longer existed (Xcode 27.1). Each scheme is built
-# for testing, so the one index serves both views — the full scan, and the
-# production scan with every target only tests reach excluded — and the bundle
-# written from it holds both and that index's declaration sites. With the
-# Ubuntu SDK installed,
-# Tools/dead-code-linux.sh writes the Linux bundle beside it and the report on
-# stdout combines the two, as .github/workflows/dead-code.yml does; without it
-# the report covers macOS alone and names what installs the rest. The built
-# apps are unregistered from Launch Services on the way out, whatever the
-# outcome, so a scan's build never wins the version election.
-PERIPHERY_DERIVED_DATA := $(DERIVED_DATA_ROOT)/Periphery
-PERIPHERY_SCHEMES      := Kernova KernovaMacOSAgent KernovaRelaunchHelper KernovaCLI KernovaBench
-PERIPHERY_INDEX_STORE  := $(PERIPHERY_DERIVED_DATA)/Index.noindex/DataStore
-DEAD_CODE_BUNDLE       := $(PERIPHERY_DERIVED_DATA)/Report/macos
-DEAD_CODE_LINUX_BUNDLE := $(PERIPHERY_DERIVED_DATA)/Report/linux
-
+# The scan and its arena are Tools/dead-code.sh's.
 dead-code: ## Scan for unused code with Periphery on macOS and, once `make ubuntu-sdk` has run, Linux: the combined scan CI runs (builds every scheme first; minutes)
 	$(LOCKED_TWIN)
 
 locked-dead-code:
-	@trap "Tools/build-arenas.sh unregister '$(PERIPHERY_DERIVED_DATA)/Build/Products' >&2" EXIT; \
-	periphery=$$(Tools/install-periphery.sh) || exit 1; \
-	indexutil=$$(Tools/install-periphery.sh --indexutil-export) || exit 1; \
-	dead_code=$$(Tools/install-dead-code-tool.sh dead-code) || exit 1; \
-	sources=$$(Tools/install-dead-code-tool.sh dead-code-sources) || exit 1; \
-	raw=$(PERIPHERY_DERIVED_DATA)/Report/raw; \
-	mkdir -p "$$raw" || exit 1; \
-	"$$dead_code" test-only-targets --project $(PROJECT) > "$$raw/test-only-targets.txt" || exit 1; \
-	for scheme in $(PERIPHERY_SCHEMES); do \
-		xcodebuild $(XCODEBUILD_PROJECT_FLAGS) -scheme "$$scheme" -destination '$(DESTINATION)' \
-			-derivedDataPath $(PERIPHERY_DERIVED_DATA) -parallelizeTargets -quiet \
-			build-for-testing \
-			CODE_SIGNING_ALLOWED=NO DEBUG_INFORMATION_FORMAT=dwarf \
-			COMPILER_INDEX_STORE_ENABLE=YES INDEX_ENABLE_DATA_STORE=YES \
-			COMPILATION_CACHE_ENABLE_CACHING=NO >&2 || exit 1; \
-	done; \
-	"$$sources" bundle --root '$(CURDIR)' --base '$(CURDIR)' --periphery "$$periphery" \
-		--store $(PERIPHERY_INDEX_STORE) --indexutil-export "$$indexutil" \
-		--test-only-targets "$$raw/test-only-targets.txt" --output $(DEAD_CODE_BUNDLE) \
-		-- --project $(PROJECT) --schemes $(PERIPHERY_SCHEMES) || exit 1; \
-	missing=$$(bash -c '. Tools/lib/linux-swift.sh && ubuntu_sdk_missing "$$(pinned_swift_version)"'); \
-	if [ -z "$$missing" ]; then \
-		Tools/dead-code-linux.sh "$$raw/test-only-targets.txt" $(DEAD_CODE_LINUX_BUNDLE) >&2 && \
-		"$$dead_code" report --platform macos=$(DEAD_CODE_BUNDLE) --platform linux=$(DEAD_CODE_LINUX_BUNDLE); \
-	else \
-		"$$dead_code" report --platform macos=$(DEAD_CODE_BUNDLE) \
-			--remedy "The Linux half builds with $$missing, which is not installed: run \`make ubuntu-sdk\` once, and \`make dead-code\` then scans both."; \
-	fi
+	@exec Tools/build-arenas.sh build '$(DEAD_CODE_DERIVED_DATA)/Build/Products' Tools/dead-code.sh
 
 dead-code-targets: ## Print the targets only tests reach, which the dead-code scan's production view excludes
 	@dead_code=$$(Tools/install-dead-code-tool.sh dead-code) && "$$dead_code" test-only-targets --project $(PROJECT)

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Fixture tests for Tools/build-arenas.sh: what `clean` removes and when it
-# refuses, what `sweep` unregisters and evicts, and what `unregister`
-# unregisters. Runs a copy of the scripts inside a fixture clone, with HOME in
-# the fixture and a fake lsregister first on PATH, so nothing reaches this
-# machine's Launch Services database. Local git only.
+# refuses, what `sweep` unregisters and evicts, what `unregister` unregisters,
+# and that `make index`, stopped by a TERM to make alone, ends only once its
+# build has, with the bundles that build made unregistered. Runs a copy of the
+# scripts and the Makefile inside a fixture clone, with HOME in the fixture and
+# fakes for lsregister and xcodebuild first on PATH, so nothing reaches this
+# machine's Launch Services database or builds. Every wait is on a fifo or a
+# process. Local git only.
 
 set -uo pipefail
 
@@ -57,9 +60,11 @@ clone="$tmp/clone"
 git init -q -b main "$clone"
 git -C "$clone" commit -q --allow-empty -m init
 mkdir -p "$clone/Tools/lib"
-cp "$ROOT/Tools/build-arenas.sh" "$clone/Tools/"
+cp "$ROOT/Tools/build-arenas.sh" "$ROOT/Tools/checkout-lock.sh" "$clone/Tools/"
 cp "$ROOT/Tools/lib/build-arenas.sh" "$ROOT/Tools/lib/output.sh" "$ROOT/Tools/lib/worktrees.sh" \
-    "$ROOT/Tools/lib/holders.sh" "$clone/Tools/lib/"
+    "$ROOT/Tools/lib/holders.sh" "$ROOT/Tools/lib/xcodebuild-flags.sh" "$ROOT/Tools/lib/swift-roots.sh" \
+    "$clone/Tools/lib/"
+cp "$ROOT/Makefile" "$clone/"
 wts="$clone/.claude/worktrees"
 
 # Every arena holds two bundles, one with a space in its name.
@@ -158,6 +163,36 @@ rm -rf "$dd"
 run_clean
 check "clean, nothing there: exit status" "$clean_status" 0
 check "clean, nothing there: says so" "$(grep -c '^No build arena of this checkout to remove' <<<"$clean_out")" 1
+
+# ---- make index, stopped -------------------------------------------------------
+
+# xcodebuild stands in for a build that a TERM ends after it writes its app:
+# it names itself on $FIXTURE/started, then waits; TERM makes the bundle and
+# exits.
+cat >"$fakes/xcodebuild" <<'EOF'
+#!/bin/bash
+products=DerivedData/Index/Build/Products/Debug
+sleep 300 &
+sleeper=$!
+trap 'kill "$sleeper"; mkdir -p "$products/Kernova.app"; exit 143' TERM
+echo "$$" >"$FIXTURE/started"
+wait "$sleeper"
+EOF
+chmod +x "$fakes/xcodebuild"
+mkfifo "$tmp/started"
+: >"$unregistered"
+FIXTURE=$tmp make -C "$clone" --no-print-directory index >/dev/null 2>&1 &
+make_pid=$!
+children+=("$make_pid")
+read -r build_pid <"$tmp/started"
+children+=("$build_pid")
+kill -TERM "$make_pid"
+wait "$make_pid" 2>/dev/null
+check "make index, TERM to make alone: exit status" "$?" 143
+check "make index, TERM to make alone: its build when make has ended" \
+    "$(kill -0 "$build_pid" 2>/dev/null && echo running || echo gone)" gone
+check "make index, TERM to make alone: the bundle its build made, unregistered" \
+    "$(cat "$unregistered")" "$clone/DerivedData/Index/Build/Products/Debug/Kernova.app"
 
 # ---- unregister ----------------------------------------------------------------
 

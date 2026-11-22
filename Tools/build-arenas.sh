@@ -2,7 +2,8 @@
 # The build-arena operations the build pipeline runs. `make ghosts` reports on
 # the same debris across the machine (Tools/ghosts.sh).
 #
-# Usage: Tools/build-arenas.sh clean | sweep | unregister <dir>
+# Usage: Tools/build-arenas.sh clean | sweep | unregister <dir> |
+#                              build <dir> <command> [<arg>...]
 #
 #   clean             Remove the DerivedData/ of the checkout holding this
 #                     script, where every `make` build of it lands, after
@@ -18,6 +19,17 @@
 #                     every new worktree.
 #   unregister <dir>  Unregister every bundle under <dir> from Launch Services,
 #                     leaving the files; a missing <dir> is a no-op.
+#   build <dir> <command> [<arg>...]
+#                     Run <command> as a build whose bundles under <dir> must
+#                     not stay registered, then unregister them, and exit as
+#                     <command> did. <command> runs in a process group of its
+#                     own, which TERM, HUP and INT sent to this process are
+#                     passed on to, and the unregistering waits until no
+#                     process of that group is left: a build this outlives
+#                     cannot register a bundle after it, and a caller that
+#                     waits for this — make, and the checkout lock above it —
+#                     outlives the build. A make recipe `exec`s it, so the
+#                     TERM make passes to its recipe reaches it.
 
 set -uo pipefail
 
@@ -30,7 +42,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$REPO_ROOT/Tools/lib/build-arenas.sh"
 
 usage() {
-    printf 'Usage: Tools/build-arenas.sh clean | sweep | unregister <dir>\n' >&2
+    printf 'Usage: Tools/build-arenas.sh clean | sweep | unregister <dir> | build <dir> <command> [<arg>...]\n' >&2
     exit 2
 }
 
@@ -97,6 +109,60 @@ case "${1:-}" in
     unregister)
         [ $# -eq 2 ] && [ -n "$2" ] || usage
         unregister_apps_in "$(absolute "$2")"
+        ;;
+    build)
+        [ $# -ge 3 ] && [ -n "$2" ] || usage
+        dir=$(absolute "$2")
+        shift 2
+        exec perl -e '
+            use strict;
+            use warnings;
+            use POSIX qw(:sys_wait_h :signal_h setpgid);
+
+            my ($self, $dir, @command) = @ARGV;
+
+            # Blocked across the fork, so a signal cannot arrive before $pid
+            # names the group it is to be passed to.
+            my $forwarded = POSIX::SigSet->new(SIGTERM, SIGHUP, SIGINT);
+            my $previous = POSIX::SigSet->new;
+            sigprocmask(SIG_BLOCK, $forwarded, $previous) or die "build-arenas.sh: sigprocmask: $!\n";
+
+            my $pid = fork;
+            defined $pid or die "build-arenas.sh: fork: $!\n";
+            if ($pid == 0) {
+                setpgid(0, 0);
+                sigprocmask(SIG_SETMASK, $previous);
+                { no warnings "exec"; exec { $command[0] } @command; }
+                print STDERR "build-arenas.sh: cannot run $command[0]: $!\n";
+                POSIX::_exit(127);
+            }
+            # Set on both sides of the fork, so the group exists before either
+            # goes on.
+            setpgid($pid, $pid);
+
+            $SIG{$_} = sub { kill $_[0], -$pid } for qw(TERM HUP INT);
+            sigprocmask(SIG_SETMASK, $previous);
+
+            my $status;
+            while (1) {
+                my $reaped = waitpid($pid, 0);
+                if ($reaped == $pid) { $status = $?; last }
+                $!{EINTR} or die "build-arenas.sh: waitpid: $!\n";
+            }
+            # What the command started outside its own children is no child
+            # of this process, so the group is all that names it.
+            select(undef, undef, undef, 0.1) while kill 0, -$pid;
+            system($self, "unregister", $dir);
+
+            if (WIFSIGNALED($status)) {
+                my $signal = WTERMSIG($status);
+                $SIG{$_} = "DEFAULT" for qw(TERM HUP INT);
+                kill $signal, $$;
+                sigprocmask(SIG_UNBLOCK, POSIX::SigSet->new($signal));
+                exit 128 + $signal;
+            }
+            exit WEXITSTATUS($status);
+        ' "$REPO_ROOT/Tools/build-arenas.sh" "$dir" "$@"
         ;;
     *) usage ;;
 esac
