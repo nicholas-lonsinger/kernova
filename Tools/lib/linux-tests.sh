@@ -2,7 +2,8 @@
 # `make attest` and CI's Linux job: in the image Tools/linux-tests.Containerfile
 # describes, over a tar of the tree that holds only linux_tests_paths. That
 # tree is all a run reads from the checkout, so a build or test that reads any
-# other file fails instead of passing under a key that does not name it.
+# other file fails instead of passing under a key that does not name it. The
+# linux_tests_container_* functions are the Mac's side, in Apple's container.
 # Sourced, never run; run from inside the checkout.
 
 # shellcheck shell=bash
@@ -67,14 +68,14 @@ linux_tests_build_image() {
     return "$status"
 }
 
-# linux_tests_run <cli> <tree-ish> [<flag>...] — runs the tests over
-# <tree-ish> in its image with <cli>, passing `<cli> run` the flags, and
-# returns their status.
+# linux_tests_run <cli> <tree-ish> <image> [<flag>...] — runs the tests over
+# <tree-ish> in <image> with <cli>, passing `<cli> run` the flags, and returns
+# their status.
 linux_tests_run() (
     set -o pipefail
-    cli=$1
-    tree=$(linux_tests_tree "$2") && image=$(linux_tests_image "$2") || exit 1
-    shift 2
+    cli=$1 image=$3
+    tree=$(linux_tests_tree "$2") || exit 1
+    shift 3
     git archive --format=tar "$tree" | "$cli" run -i --rm "$@" "$image"
 )
 
@@ -105,3 +106,59 @@ linux_tests_container_up() {
         return 1
     fi
 }
+
+# The images this Mac keeps: the three built last, by the build time container
+# records for each (its index annotation org.opencontainers.image.created).
+LINUX_TESTS_IMAGES_KEPT=3
+
+# linux_tests_container_image <tree-ish> — makes sure this Mac holds the image
+# for <tree-ish>'s recipe, building it when it does not, then deletes every
+# kernova-linux-tests image past the LINUX_TESTS_IMAGES_KEPT built last, and
+# each base a build here pulled that no kept image is built on. Two labels
+# on each image say what that takes: the base it is built on, and whether a
+# build here pulled that base — which a build on a base that is already here
+# takes from the images built on it. Fails, printing what is missing on
+# stdout, when the image cannot be built; a deletion that fails is reported
+# and the image stays usable.
+linux_tests_container_image() {
+    local image base pulled=true
+    if ! { image=$(linux_tests_image "$1") && base=$(linux_tests_base "$1"); }; then
+        echo "a recipe for their image in $1: Tools/linux-tests.Containerfile and .swift-version"
+        return 1
+    fi
+    container image inspect "$image" >/dev/null 2>&1 && return 0
+    if container image inspect "$base" >/dev/null 2>&1; then
+        pulled=$(container image list --format json | jq -r --arg base "$base" '
+            any(.[].variants[]?.config.config.Labels // {};
+                .["app.kernova.linux-tests.base"] == $base and .["app.kernova.linux-tests.base-pulled"] == "true")')
+    fi
+    echo "Building $image on $base" >&2
+    if ! linux_tests_build_image container "$1" --platform linux/arm64 --progress plain \
+        --label "app.kernova.linux-tests.base=$base" --label "app.kernova.linux-tests.base-pulled=$pulled" >&2; then
+        echo "their image $image, which \`container build\` did not build on $base (its output is above)"
+        return 1
+    fi
+    linux_tests_container_prune ||
+        echo "Could not delete the kernova-linux-tests images past the $LINUX_TESTS_IMAGES_KEPT built last" >&2
+    return 0
+}
+
+# linux_tests_container_prune — the deletions linux_tests_container_image
+# describes. Deleting an image another session deleted first is no failure.
+linux_tests_container_prune() (
+    set -o pipefail
+    stale=$(container image list --format json | jq -r --argjson kept "$LINUX_TESTS_IMAGES_KEPT" '
+        [.[] | select(.configuration.name | startswith("docker.io/library/kernova-linux-tests:"))
+            | (.variants[0].config.config.Labels // {}) as $labels
+            | {name: .configuration.name,
+               built: (.configuration.descriptor.annotations["org.opencontainers.image.created"] // ""),
+               base: $labels["app.kernova.linux-tests.base"],
+               pulled: ($labels["app.kernova.linux-tests.base-pulled"] == "true")}]
+        | sort_by(.built) | reverse
+        | .[:$kept] as $keep | .[$kept:] as $gone
+        | ($gone[].name),
+          ([$gone[] | select(.pulled) | .base] | unique[] | select(. as $base | all($keep[]; .base != $base)))') ||
+        exit 1
+    # shellcheck disable=SC2086 # one image name per word
+    [ -z "$stale" ] || container image delete --force $stale >&2
+)

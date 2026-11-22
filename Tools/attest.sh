@@ -3,20 +3,21 @@
 # `Commit Attestation` commit status on HEAD.
 #
 #     Tools/attest.sh record <lint|test|test-linux>
-#         Runs the kind's script — Tools/lint.sh, Tools/test.sh under the
-#         checkout's build lock, or Tools/test-linux.sh over the content
-#         tree — and exits with its status. On exit 0 with the kind's
-#         fingerprint unchanged across the run, records the fingerprint under
-#         that kind. A lint run with untracked files present is not recorded:
-#         lint lists what it checks from git, while a check such as a link's
-#         target reads the disk, so an untracked file is read without being
-#         checked.
+#         What `make <kind>` runs. Runs the kind's script — Tools/lint.sh,
+#         Tools/test.sh under the checkout's build lock, or Tools/test-linux.sh
+#         over the content tree — and exits with its status. On exit 0 with
+#         the kind's fingerprint unchanged across the run, records the
+#         fingerprint under that kind. A lint run with untracked files present
+#         is not recorded: lint lists what it checks from git, while a check
+#         such as a link's target reads the disk, so an untracked file is read
+#         without being checked.
 #     Tools/attest.sh
 #         Attests a clean, pushed HEAD: posts success once each kind has a
-#         record of its fingerprint, running `make lint`, `make test-linux`
-#         and `make test` for the ones it lacks, and posts failure when one of
-#         those fails. When the Linux tests lack a record and cannot run on
-#         this Mac, it names what is missing and runs and posts nothing.
+#         record of its fingerprint, recording a run of each kind it lacks,
+#         and posts failure when one of those runs fails. When the Linux tests
+#         lack a record and cannot run on this Mac, it names what is missing
+#         and posts nothing: it brings up container and the tests' image
+#         before any run, and a Tools/test-linux.sh exit of 3 is the same.
 #     Tools/attest.sh post <success|failure> <description> [<target-url>]
 #         Posts the status on HEAD.
 #
@@ -54,7 +55,8 @@ top() { git rev-parse --show-toplevel; }
 fingerprint_inputs() {
     local machine local_config linux container
     if [ "$1" = test-linux ]; then
-        linux=$(linux_tests_tree "$2") && container=$(container --version 2>/dev/null) && [ -n "$container" ] || return 1
+        linux=$(linux_tests_tree "$2") || return 1
+        container=$(container --version 2>/dev/null) || container=none
         printf 'linux-tests %s\ncontainer %s\n' "$linux" "$container"
         return
     fi
@@ -121,7 +123,8 @@ post() {
 }
 
 attest() {
-    local sha tree records description fp linux_fp base missing kind key
+    local sha tree records description fp linux_fp base missing kind key status
+    local ci_route="Where they cannot run, label the PR \`ci\`: CI then lints and runs both test suites on each push, and posts $CONTEXT."
     [ -z "$(git status --porcelain)" ] || die 'attest certifies HEAD; commit or stash first'
     sha=$(git rev-parse HEAD) || die 'no HEAD to attest'
     gh api "repos/{owner}/{repo}/commits/$sha" >/dev/null 2>&1 || die "GitHub does not have $sha; push first"
@@ -131,11 +134,10 @@ attest() {
     records=$(records_dir)
     # Whether the Linux tests can run is settled before anything runs, so a
     # Mac that cannot run them spends no lint or test run first.
-    linux_fp=$(fingerprint test-linux "$tree")
-    if [ -z "$linux_fp" ] || [ ! -f "$records/test-linux/$linux_fp" ]; then
-        missing=$(linux_tests_container_up) ||
-            die "the Linux tests need $missing. Where they cannot run, label the PR \`ci\`: CI then lints and runs both test suites on each push, and posts $CONTEXT."
-        linux_fp=$(fingerprint test-linux "$tree") || die "cannot read the container release"
+    linux_fp=$(fingerprint test-linux "$tree") || die 'cannot read the tree of the Linux tests'
+    if [ ! -f "$records/test-linux/$linux_fp" ]; then
+        missing=$(linux_tests_container_up) || die "the Linux tests need $missing. $ci_route"
+        missing=$(linux_tests_container_image "$tree") || die "the Linux tests need $missing. $ci_route"
     fi
     description="make attest: Xcode $(xcode_build), macOS $(macos_build), Linux on ${base##*/}"
     # Cheapest to fail first.
@@ -144,11 +146,17 @@ attest() {
         [ "$kind" = test-linux ] && key=$linux_fp
         if [ -f "$records/$kind/$key" ]; then
             echo "attest: reusing the passing make $kind of $(awk '/^date / { print $2 }' "$records/$kind/$key")"
-        elif ! "${MAKE:-make}" "$kind"; then
+            continue
+        fi
+        record "$kind"
+        status=$?
+        if [ "$kind" = test-linux ] && [ "$status" -eq 3 ]; then
+            die "the Linux tests could not run, as said above. $ci_route"
+        elif [ "$status" -ne 0 ]; then
             post failure "$description"
             exit 1
         elif [ ! -f "$records/$kind/$key" ]; then
-            die "make $kind recorded nothing; did files change during it?"
+            die "this $kind run recorded nothing; did files change during it?"
         fi
     done
     post success "$description"

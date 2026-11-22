@@ -31,4 +31,4 @@ jobs:
 
       - name: Test
         shell: bash
-        run: . Tools/lib/linux-tests.sh && linux_tests_run docker HEAD
+        run: . Tools/lib/linux-tests.sh && linux_tests_run docker HEAD "$(linux_tests_image HEAD)"

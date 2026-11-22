@@ -218,8 +218,9 @@ jobs:
         timeout-minutes: 10
         run: make lint
 
-  # The Linux tests `make attest` runs beside lint and the tests, so both
-  # routes to the status attest the same runs.
+  # The Linux tests `make attest` runs beside lint and the tests: the same
+  # Containerfile, script and tree, with Docker and the runner's resources in
+  # place of container and the Mac's limits.
   linux:
     if: *requested
     concurrency:
@@ -236,6 +237,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
+      contents: read
       statuses: write
     steps:
       - name: Checkout repository
