@@ -3,8 +3,9 @@
 # build-for-testing, test, test-without-building, test-suite, or lint — with
 # the whole xcodebuild stream captured to a file, and prints only the verdict:
 # counts from the result bundle, deduplicated compile errors, failing tests
-# with their messages and source locations, and the binary, log and bundle
-# paths. The make targets stream everything for people and CI.
+# with their messages and source locations, the bundle's runtime warnings by
+# site, and the binary, log and bundle paths. The make targets stream
+# everything for people and CI.
 #
 # Usage:
 #   .agents/skills/make-verdict/make-verdict.sh build | build-for-testing | test | test-without-building | lint
@@ -28,6 +29,8 @@
 #   result=Failed total=3948 passed=3945 failed=3 skipped=0 xfail=0
 #   === VMConfigurationTests/defaultsMatchTemplate()
 #   VMConfigurationTests.swift:42: Expectation failed: (config.cpuCount → 2) == 4
+#   runtime-warnings=2                 (test targets; reported only, never the verdict)
+#     2 in 2 tests  KernovaKit/Sources/KernovaPlatformDarwin/DarwinVsockConnect.swift:153: Thread running at …
 #   errors:                            (build-failed and lint-failed only)
 #     Kernova/Services/VMSession.swift:42:9: error: cannot find 'foo' in scope
 #   make-verdict: verdict=test-failed target=test suite=- total=3948 failed=3 log=… xcresult=…

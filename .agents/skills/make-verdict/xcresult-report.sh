@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Reads an .xcresult bundle and prints the test verdict: the counts from the
-# bundle's summary, each failing test with its failure messages, and one
-# verdict line. The make-verdict skill's parser: make-verdict.sh calls it for
+# bundle's summary, each failing test with its failure messages, the runtime
+# warnings and their sites, and one verdict line. The make-verdict skill's parser: make-verdict.sh calls it for
 # every test run, and it answers follow-up questions about a run on its own.
 #
 # Usage:
@@ -19,7 +19,13 @@
 #   === VMConfigurationTests/defaultsMatchTemplate()
 #   KernovaTests/VMConfigurationTests.swift:42: Expectation failed: (config.cpuCount → 2) == 4
 #   ...
+#   runtime-warnings=3
+#     2 in 2 tests  KernovaKit/Sources/KernovaPlatformDarwin/DarwinVsockConnect.swift:153: Thread running at …
+#     1 in 1 test  KernovaCore/Sources/KernovaCore/Services/GuestDragDelivery.swift:191: Thread running at …
 #   xcresult-report: verdict=failed total=3948 failed=3 path=<bundle>
+#
+# Runtime warnings are reported only: they change neither the verdict nor the
+# exit code.
 #
 # Exit codes, default mode:
 #   0  passed, and at least one test ran
@@ -120,6 +126,36 @@ failure_blocks() {
     ' "$tmp/tests.json" | sed -e "s#$ROOT/##g" -e "s#${kernova_source_placeholder//^/\\^}/##g"
 }
 
+# Runtime warnings (Thread Performance Checker reports, say) pass or fail
+# nothing, and only Xcode's own UI lists them: the count from the summary,
+# then each site — `<warnings> in <tests>  <file>:<line>: <message>` — from the
+# details of each test case that recorded one, since the test tree collapses a
+# case's several into one "Multiple Runtime Warnings" node with no location.
+runtime_warnings() {
+    printf 'runtime-warnings=%s\n' "$(jq '.runtimeWarnings // [] | length' "$tmp/summary.json")"
+    jq -r '.. | objects | select(.nodeType? == "Test Case")
+           | select(any(.. | objects; .nodeType? == "Runtime Warning")) | .nodeIdentifier' "$tmp/tests.json" |
+        sort -u | while IFS= read -r id; do
+            if ! xcrun xcresulttool get test-results test-details --test-id "$id" --path "$bundle" --format json \
+                >"$tmp/details.json" 2>"$tmp/err"; then
+                printf -- '-\txcresulttool could not read its details: %s\t%s\n' "$(tr '\n' ' ' <"$tmp/err")" "$id"
+                continue
+            fi
+            jq -r --arg id "$id" '.. | objects | select(.nodeType? == "Runtime Warning")
+                | [ (.sourceLocation | if . then .filePath + ":" + (.lineNumber | tostring) else "-" end),
+                    .name, $id ] | @tsv' "$tmp/details.json"
+        done |
+        sed -e "s#$ROOT/##g" -e "s#${kernova_source_placeholder//^/\\^}/##g" |
+        awk -F '\t' '{ site = $1 ": " $2; warnings[site]++; if (!seen[site, $3]++) tests[site]++ }
+            END { for (site in warnings) printf "%d\t%d\t%s\n", warnings[site], tests[site], site }' |
+        sort -t "$(printf '\t')" -k1,1nr -k3,3 |
+        awk -F '\t' -v width=400 '{
+            line = sprintf("  %d in %d test%s  %s", $1, $2, $2 == 1 ? "" : "s", $3)
+            if (length(line) > width) line = substr(line, 1, width) " …"
+            print line
+        }'
+}
+
 case "$mode" in
     failures) fetch tests; failure_blocks; exit 0 ;;
 esac
@@ -155,6 +191,7 @@ failure_blocks | awk -v cap=40 -v lines=20 -v width=400 -v bundle="$bundle" '
             printf "+%d more failing tests (.agents/skills/make-verdict/xcresult-report.sh --path %s --failures lists them all)\n", blocks - cap, bundle
     }
 '
+runtime_warnings
 
 if [ "$total" -eq 0 ]; then
     verdict=no-tests status=3

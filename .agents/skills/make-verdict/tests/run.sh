@@ -8,7 +8,8 @@
 # Fixture placeholders: @ROOT@ is this checkout's root (the scripts rewrite it
 # repo-relative), @BUNDLE@ the directory holding the fake .xcresult bundles.
 # A fake bundle is an empty directory; the fake xcresulttool answers for it
-# from fixtures/xcresult/<bundle name>/{summary,tests}.json.
+# from fixtures/xcresult/<bundle name>/{summary,tests}.json, and for a test's
+# details from that test's entry in its test-details.json.
 
 set -uo pipefail
 
@@ -23,7 +24,8 @@ pass() { printf '  %s✓%s %s\n' "$c_green" "$c_reset" "$1"; }
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/nox" "$tmp/logs" "$tmp/out" \
-    "$tmp/bundles/failed.xcresult" "$tmp/bundles/passed.xcresult" "$tmp/bundles/empty.xcresult"
+    "$tmp/bundles/failed.xcresult" "$tmp/bundles/passed.xcresult" "$tmp/bundles/empty.xcresult" \
+    "$tmp/bundles/warned.xcresult"
 # nox is a PATH with no xcodebuild; before it looks for xcodebuild the script
 # makes its temp file and clears its verdict file, and the setup error renames
 # a new one into place, so give it just the tools those steps reach for.
@@ -59,17 +61,23 @@ exit "${FAKE_MAKE_STATUS:-0}"
 FAKE
 cat >"$tmp/bin/xcrun" <<'FAKE'
 #!/bin/sh
-# xcrun xcresulttool get test-results <summary|tests> --path <bundle> --format json
+# xcrun xcresulttool get test-results <summary|tests|test-details> [--test-id <id>] --path <bundle> --format json
 [ "$1" = xcresulttool ] || { echo "fake xcrun: unexpected $*" >&2; exit 1; }
 kind="$4"
 path=
+id=
 while [ $# -gt 0 ]; do
     [ "$1" = --path ] && path="$2"
+    [ "$1" = --test-id ] && id="$2"
     shift
 done
 fixture="$FAKE_XCRESULT_FIXTURES/$(basename "$path")/$kind.json"
 [ -f "$fixture" ] || { echo "fake xcresulttool: no fixture for $path ($kind)" >&2; exit 1; }
-sed "s#@ROOT@#$FAKE_ROOT#g" "$fixture"
+if [ "$kind" = test-details ]; then
+    jq -e --arg id "$id" '.[$id]' "$fixture" || { echo "fake xcresulttool: no details for $id" >&2; exit 1; }
+else
+    sed "s#@ROOT@#$FAKE_ROOT#g" "$fixture"
+fi
 FAKE
 chmod +x "$tmp/bin"/*
 # A PATH with no xcodebuild at all: macOS keeps an xcode-select shim at
@@ -155,8 +163,14 @@ expect_last "^make-verdict: verdict=test-failed target=test suite=- total=3948 f
 
 run "test green" 0 with_log test-passed.log 0 test
 expect '^result=Passed total=3948 passed=3948 failed=0 skipped=0 xfail=0$'
+expect '^runtime-warnings=0$'
 expect_last "^make-verdict: verdict=green target=test suite=- total=3948 failed=0 log=$tmp/out/test/$RUN_LOG xcresult=.*/passed\.xcresult\$"
-expect_lines 3
+expect_lines 4
+
+run "runtime warnings keep a run green" 0 with_log test-warned.log 0 test
+expect '^runtime-warnings=4$'
+expect_count '^  [0-9]+ in ' 2
+expect_last '^make-verdict: verdict=green target=test suite=- total=4 failed=0 ' 
 
 run "suite matched nothing" 3 with_log test-none.log 0 test-suite KernovaTests/NoSuchSuite
 expect '^make-verdict: target=test-suite suite=KernovaTests/NoSuchSuite '
@@ -338,8 +352,25 @@ expect_count '^=== ' 2
 expect_last "^xcresult-report: verdict=failed total=3948 failed=2 path=$tmp/bundles/failed\.xcresult$"
 
 run "report passed bundle" 0 report --path "$tmp/bundles/passed.xcresult"
+expect '^runtime-warnings=0$'
 expect_last '^xcresult-report: verdict=passed total=3948 failed=0 '
-expect_lines 2
+expect_lines 3
+
+# The test tree names one warning's site and collapses a case's several into
+# "Multiple Runtime Warnings"; every site comes from the cases' details, most
+# warnings first, then by path.
+run "report runtime warnings" 0 report --path "$tmp/bundles/warned.xcresult"
+expect '^result=Passed total=4 passed=4 failed=0 skipped=0 xfail=0$'
+expect '^runtime-warnings=4$'
+vsock='KernovaKit/Sources/KernovaPlatformDarwin/DarwinVsockConnect\.swift:153'
+backstop='KernovaKit/Sources/KernovaPortableTestSupport/Backstop\.swift:157'
+message='Thread running at User-initiated quality-of-service class waiting on a lower QoS thread running at Default quality-of-service class\. Investigate ways to avoid priority inversions'
+expect_count "^  2 in 2 tests  $vsock: $message\$" 1
+expect_count "^  2 in 1 test  $backstop: $message\$" 1
+sed -n 3p "$tmp/last" | grep -qE "$vsock" || fail "$name: sites with as many warnings are not in path order"
+reject '\^src|Multiple Runtime Warnings'
+expect_last '^xcresult-report: verdict=passed total=4 failed=0 '
+expect_lines 5
 
 run "report empty bundle" 3 report --path "$tmp/bundles/empty.xcresult"
 expect_last '^xcresult-report: verdict=no-tests total=0 failed=0 '
