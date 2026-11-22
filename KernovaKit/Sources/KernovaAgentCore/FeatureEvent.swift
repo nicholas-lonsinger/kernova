@@ -46,8 +46,9 @@ package protocol FeatureMachine: Sendable {
     func nextDeadline(on clock: JudgedClock) -> CoreInstant?
     /// Handles a connection-wide event, or an event of one of the machine's streams.
     mutating func handle(_ event: FeatureEvent, connection: inout Connection)
-    /// Everything the machine emitted since the last call, each kind in its emission order.
-    mutating func takeOutputs() -> (effects: [Effect], events: [Event], diagnostics: [Diagnostic])
+    /// Everything the machine emitted since the last call, each kind in its emission order, and whether its
+    /// advert changed since then.
+    mutating func takeOutputs() -> (effects: [Effect], events: [Event], diagnostics: [Diagnostic], advertChanged: Bool)
 }
 
 extension Connection {

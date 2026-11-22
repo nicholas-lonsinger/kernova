@@ -34,7 +34,7 @@ public enum LogDelivery: Sendable, Equatable {
 
 /// The peer's log forwarder: at most one LOG_FORWARD per connection.
 package struct LogForwarder: FeatureMachine {
-    private var availability: Availability<NoParams>
+    private let availability: Availability<NoParams>
     private var stream: StreamID?
     private var ending = false
     /// After a RESET other than the host's DISABLED_BY_POLICY, no reopening
@@ -59,13 +59,13 @@ package struct LogForwarder: FeatureMachine {
     package func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     package mutating func takeOutputs() -> (
-        effects: [PeerRoleEffect], events: [PeerRoleEvent], diagnostics: [Diagnostic]
+        effects: [PeerRoleEffect], events: [PeerRoleEvent], diagnostics: [Diagnostic], advertChanged: Bool
     ) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
         }
-        return (outbox, [], diagnostics)
+        return (outbox, [], diagnostics, false)
     }
 
     /// Handles a connection event.
@@ -178,13 +178,13 @@ package struct LogReceiver: FeatureMachine {
     package func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     package mutating func takeOutputs() -> (
-        effects: [HostRoleEffect], events: [HostRoleEvent], diagnostics: [Diagnostic]
+        effects: [HostRoleEffect], events: [HostRoleEvent], diagnostics: [Diagnostic], advertChanged: Bool
     ) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
         }
-        return ([], outbox, diagnostics)
+        return ([], outbox, diagnostics, false)
     }
 
     /// Handles a connection event.

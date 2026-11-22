@@ -101,7 +101,11 @@ package struct UpdateClient: FeatureMachine {
         var settled = false
     }
 
-    private var availability: Availability<UpdateOffer>
+    /// What the advert carries; every write to it is reported by `takeOutputs()`.
+    private var availability: Availability<UpdateOffer> {
+        didSet { advertChanged = true }
+    }
+    private var advertChanged = false
     private let ownHash: Data
     private let generation: ConnectionGeneration
     private var offered: UpdateManifestValue?
@@ -128,13 +132,14 @@ package struct UpdateClient: FeatureMachine {
     package func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     package mutating func takeOutputs() -> (
-        effects: [PeerRoleEffect], events: [PeerRoleEvent], diagnostics: [Diagnostic]
+        effects: [PeerRoleEffect], events: [PeerRoleEvent], diagnostics: [Diagnostic], advertChanged: Bool
     ) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
+            advertChanged = false
         }
-        return (outbox, [], diagnostics)
+        return (outbox, [], diagnostics, advertChanged)
     }
 
     /// The host's latest offer.
@@ -284,14 +289,14 @@ package struct UpdateServer: FeatureMachine {
     package func nextDeadline(on clock: JudgedClock) -> CoreInstant? { nil }
 
     package mutating func takeOutputs() -> (
-        effects: [HostRoleEffect], events: [HostRoleEvent], diagnostics: [Diagnostic]
+        effects: [HostRoleEffect], events: [HostRoleEvent], diagnostics: [Diagnostic], advertChanged: Bool
     ) {
         defer {
             outbox.removeAll()
             reads.removeAll()
             diagnostics.removeAll()
         }
-        return (reads, outbox, diagnostics)
+        return (reads, outbox, diagnostics, false)
     }
 
     /// Handles a connection event.

@@ -130,7 +130,11 @@ package struct PowerResponder: FeatureMachine {
         var pending: Data?
     }
 
-    private var availability: Availability<PowerOffer>
+    /// What the advert carries; every write to it is reported by `takeOutputs()`.
+    private var availability: Availability<PowerOffer> {
+        didSet { advertChanged = true }
+    }
+    private var advertChanged = false
     private var ledger: PowerLedger
     private var request: Request?
     private let generation: ConnectionGeneration
@@ -156,13 +160,14 @@ package struct PowerResponder: FeatureMachine {
     }
 
     package mutating func takeOutputs() -> (
-        effects: [PeerRoleEffect], events: [PeerRoleEvent], diagnostics: [Diagnostic]
+        effects: [PeerRoleEffect], events: [PeerRoleEvent], diagnostics: [Diagnostic], advertChanged: Bool
     ) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
+            advertChanged = false
         }
-        return (outbox, [], diagnostics)
+        return (outbox, [], diagnostics, advertChanged)
     }
 
     /// Handles a stream event for POWER_REQUEST.
@@ -387,13 +392,13 @@ package struct PowerRequester: FeatureMachine {
     }
 
     package mutating func takeOutputs() -> (
-        effects: [HostRoleEffect], events: [HostRoleEvent], diagnostics: [Diagnostic]
+        effects: [HostRoleEffect], events: [HostRoleEvent], diagnostics: [Diagnostic], advertChanged: Bool
     ) {
         defer {
             outbox.removeAll()
             diagnostics.removeAll()
         }
-        return ([], outbox, diagnostics)
+        return ([], outbox, diagnostics, false)
     }
 
     /// Starts a request: opens POWER_REQUEST and ends it at once. `ignoringApps` is sent only toward a peer

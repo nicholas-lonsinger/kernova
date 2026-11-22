@@ -247,6 +247,17 @@ package struct Endpoint<Role: RoleMachines>: Sendable {
     /// The item offers both sides hold open.
     package var itemOffersForTesting: ItemOfferRegistry { items.transfer.offers }
 
+    /// The adverts the connection publishes, the ones the machines hold now, and the far side's as this side
+    /// received them.
+    package var advertsForTesting:
+        (published: [FeatureAdvertValue], machines: [FeatureAdvertValue], remote: [FeatureAdvertValue])
+    {
+        (
+            connection.localAdverts, Connection.sortedAdverts(Self.adverts(role, items)),
+            connection.remoteAdverts.map { $0.value }
+        )
+    }
+
     /// Events not yet polled.
     package var pendingEventCountForTesting: Int { events.countForTesting }
 
@@ -285,14 +296,16 @@ package struct Endpoint<Role: RoleMachines>: Sendable {
     }
 
     private mutating func route() {
+        var advertsChanged = false
         while true {
-            collect()
+            if collect() { advertsChanged = true }
             if let routed = connection.pollRoutedEvent() {
                 dispatch(routed)
-            } else if republishAdverts() {
-                usabilityChanged()
+            } else if advertsChanged {
+                advertsChanged = false
+                if republishAdverts() { usabilityChanged() }
             } else {
-                break
+                return
             }
         }
     }
@@ -392,9 +405,16 @@ package struct Endpoint<Role: RoleMachines>: Sendable {
         }
     }
 
-    private mutating func collect() {
-        let machines = [role.power.takeOutputs(), role.logs.takeOutputs(), role.update.takeOutputs()]
-        for effect in machines.flatMap(\.effects) { effects.append(.role(effect)) }
+    /// Queues the machines' outputs; whether a machine's advert changed.
+    private mutating func collect() -> Bool {
+        let power = role.power.takeOutputs()
+        let logs = role.logs.takeOutputs()
+        let update = role.update.takeOutputs()
+        let machines = [power, logs, update]
+        // Closures, not key paths: in an unoptimized build the runtime instantiates a key path to a member of this
+        // generic type's outputs (`swift_getKeyPath`) each time it is evaluated, and this runs on every pass of
+        // `route()`.
+        for effect in machines.flatMap({ $0.effects }) { effects.append(.role(effect)) }
         let outputs = items.takeOutputs()
         for output in outputs.items {
             switch output {
@@ -405,7 +425,8 @@ package struct Endpoint<Role: RoleMachines>: Sendable {
             }
         }
         for event in outputs.drag { events.append(.dragTake(event)) }
-        for event in machines.flatMap(\.events) { emit(event) }
-        for diagnostic in outputs.diagnostics + machines.flatMap(\.diagnostics) { connection.diagnose(diagnostic) }
+        for event in machines.flatMap({ $0.events }) { emit(event) }
+        for diagnostic in outputs.diagnostics + machines.flatMap({ $0.diagnostics }) { connection.diagnose(diagnostic) }
+        return power.advertChanged || logs.advertChanged || update.advertChanged
     }
 }
