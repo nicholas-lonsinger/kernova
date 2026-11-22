@@ -44,7 +44,7 @@ SWIFT_FORMAT := xcrun swift-format
 SWIFT_SOURCE_DIRS := $(shell bash -c '. Tools/lib/swift-roots.sh && swift_roots')
 
 .DEFAULT_GOAL := help
-.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain ubuntu-sdk linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code locked-dead-code dead-code-targets doctor ghosts clean-ghosts
+.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain ubuntu-sdk linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code locked-dead-code dead-code-targets outdated-pins doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -251,6 +251,9 @@ locked-dead-code:
 
 dead-code-targets: ## Print the targets only tests reach, which the dead-code scan's production view excludes
 	@dead_code=$$(Tools/install-dead-code-tool.sh dead-code) && "$$dead_code" test-only-targets --project $(PROJECT)
+
+outdated-pins: ## Report each pinned version behind its newest upstream release, with the edit that moves it (network)
+	@Tools/outdated-pins.sh
 
 # Environment sanity check: verifies the local toolchain (macOS, Xcode, Swift,
 # swift-format), signing, optional tooling, and repo setup (git hooks,
