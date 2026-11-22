@@ -214,6 +214,8 @@ public struct ReceiverPolicy: Sendable, Equatable {
     public var closingDeadline: CoreDuration
     /// Diagnostics emitted per minute before the rest are counted.
     public var diagnosticsPerMinute: Int
+    /// The most the far side's open item offers may hold at once: their reserved overhead and their items' bytes.
+    public var remoteItemByteLimit: Int
 
     /// The values a shipping endpoint runs with.
     public static let production = ReceiverPolicy(
@@ -221,14 +223,16 @@ public struct ReceiverPolicy: Sendable, Equatable {
         pingInterval: .seconds(4),
         expiryConfirmation: .seconds(1), suspendedStep: .seconds(10), bulkReceiveTarget: 8_388_608,
         connectionReplenishThreshold: 4_194_304, senderRawBudget: 2_097_152, openBucketCapacity: 64,
-        openBucketRefillPerSecond: 32, closingDeadline: .seconds(1), diagnosticsPerMinute: 20)
+        openBucketRefillPerSecond: 32, closingDeadline: .seconds(1), diagnosticsPerMinute: 20,
+        remoteItemByteLimit: 16_777_216)
 
     /// Creates a policy.
     public init(
         unresponsiveAfter: CoreDuration, closeAfter: CoreDuration, helloTimeout: CoreDuration,
         pingInterval: CoreDuration, expiryConfirmation: CoreDuration, suspendedStep: CoreDuration,
         bulkReceiveTarget: Int, connectionReplenishThreshold: Int, senderRawBudget: Int, openBucketCapacity: Int,
-        openBucketRefillPerSecond: Int, closingDeadline: CoreDuration, diagnosticsPerMinute: Int
+        openBucketRefillPerSecond: Int, closingDeadline: CoreDuration, diagnosticsPerMinute: Int,
+        remoteItemByteLimit: Int
     ) {
         self.unresponsiveAfter = unresponsiveAfter
         self.closeAfter = closeAfter
@@ -243,6 +247,7 @@ public struct ReceiverPolicy: Sendable, Equatable {
         self.openBucketRefillPerSecond = openBucketRefillPerSecond
         self.closingDeadline = closingDeadline
         self.diagnosticsPerMinute = diagnosticsPerMinute
+        self.remoteItemByteLimit = remoteItemByteLimit
     }
 }
 

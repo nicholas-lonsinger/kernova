@@ -333,16 +333,19 @@ struct ItemTransfer: Sendable {
         offers.carryLocal(token, items: items)
     }
 
-    /// Gives the far side's whole, unlisted DRAG offer of `token` the `count` items its take lists; nil when it
-    /// did, or why not.
-    mutating func reserveCarried(_ token: Data, count: Int) -> WireError? {
-        offers.reserveCarried(token, count: count)
+    /// Gives the far side's whole, unlisted DRAG offer of `token` the `count` items its take lists, within a
+    /// budget of `limit`; nil when it did, or why not.
+    mutating func reserveCarried(_ token: Data, count: Int, limit: Int) -> WireError? {
+        offers.reserveCarried(token, count: count, limit: limit)
     }
 
     /// Holds `message`, one encoded Item, as the next item the take of the far side's DRAG offer of `token`
-    /// lists, reserving what `judge` answers beyond its bytes; nil when it did, or why not.
-    mutating func appendCarried(_ token: Data, _ message: Data, reserving judge: (OfferedItem) -> Int?) -> WireError? {
-        offers.appendCarried(token, message, reserving: judge)
+    /// lists, reserving what `judge` answers beyond its bytes within a budget of `limit`; nil when it did, or why
+    /// not.
+    mutating func appendCarried(
+        _ token: Data, _ message: Data, limit: Int, reserving judge: (OfferedItem) -> Int?
+    ) -> WireError? {
+        offers.appendCarried(token, message, limit: limit, reserving: judge)
     }
 
     /// Opens an offer of `offer` on a stream of `kind`, an item-set offer kind this role opens; nil when sent,

@@ -84,9 +84,9 @@ struct DragDeliveryTests {
 
     // MARK: - Reports a hostile peer writes
 
-    /// A real host holding the far peer's DRAG_OFFER on stream 1, and its take of it.
-    static func opened() throws -> (HostileRun, DragTakeID) {
-        let run = HostileRun(local: .host, seed: 1, items: true)
+    /// A real host judging by `policy`, holding the far peer's DRAG_OFFER on stream 1, and its take of it.
+    static func opened(policy: ReceiverPolicy = .production) throws -> (HostileRun, DragTakeID) {
+        let run = HostileRun(local: .host, seed: 1, items: true, receiverPolicy: policy)
         run.feed(
             [
                 HostileItems.peerHello,
@@ -272,10 +272,11 @@ struct DragDeliveryTests {
     }
 
     @Test(
-        "a listing's count is reserved whole: 131,072 items fill the 16 MiB budget, and one more resets the take TOO_LARGE",
-        arguments: [(UInt32(131_072), true), (131_073, false)])
-    func aListingsCountIsReserved(count: UInt32, fits: Bool) throws {
-        let (run, id) = try Self.opened()
+        "a listing's count is reserved whole: 131,072 items fill production's 16 MiB budget and 128 a 16 KiB one, and one more resets the take TOO_LARGE",
+        arguments: [(true, UInt32(131_072), true), (true, 131_073, false), (false, 128, true), (false, 129, false)])
+    func aListingsCountIsReserved(production: Bool, count: UInt32, fits: Bool) throws {
+        let budget = production ? 16_777_216 : 16_384
+        let (run, id) = try Self.opened(policy: production ? .production : HostileItems.smallItemBudget)
         run.feed([Self.report(id, .itemCount(count))])
         guard fits else {
             let error = try #require(
@@ -283,28 +284,26 @@ struct DragDeliveryTests {
                     if case .closed(.resetLocally(let error)) = result { error } else { nil }
                 })
             #expect(error.code == .tooLarge)
-            #expect(error.limit == 16_777_216)
+            #expect(error.limit == UInt64(budget))
             return
         }
         #expect(Self.ended(run).isEmpty)
-        #expect(run.host?.itemOffersForTesting.remoteHoldingForTesting.charged == 16_777_216)
+        #expect(run.host?.itemOffersForTesting.remoteHoldingForTesting.charged == budget)
     }
 
-    /// A host whose take of the drag listed 255 items of 65,408 bytes, each charged 65,536 with its
-    /// overhead, so 65,536 of the 16 MiB budget remain for the 256th, its overhead among them.
+    /// A host with a 16 KiB item budget whose take of the drag listed 15 items of 896 bytes, each charged 1,024
+    /// with its overhead, so 1,024 bytes of the budget remain for the 16th, its overhead among them.
     static func nearlyFull() throws -> (HostileRun, DragTakeID) {
-        let (run, id) = try opened()
-        let filler = try (0..<255).map { try item(ofBytes: 65_408, named: "f\($0)") }
-        // Fed in large pieces: 16 MiB in the default 4 KiB ones takes the run most of a minute.
-        let listing = [report(id, .itemCount(256))] + filler.map { report(id, .item($0)) }
-        run.feed(WireFrames.bytes(listing, preamble: false), maxSplit: 1 << 20)
+        let (run, id) = try opened(policy: HostileItems.smallItemBudget)
+        let filler = try (0..<15).map { try item(ofBytes: 896, named: "f\($0)") }
+        run.feed([report(id, .itemCount(16))] + filler.map { report(id, .item($0)) })
         try #require(ended(run).isEmpty, "the filler was refused: \(ended(run))")
         return (run, id)
     }
 
     @Test(
         "the last item fills the budget to the byte, a promise holding 255 + 128 bytes more for its name; one byte more resets the take TOO_LARGE",
-        arguments: [(false, 65_408, true), (false, 65_409, false), (true, 65_025, true), (true, 65_026, false)])
+        arguments: [(false, 896, true), (false, 897, false), (true, 513, true), (true, 514, false)])
     func theLastItemFillsTheBudget(promised: Bool, bytes: Int, fits: Bool) throws {
         let (run, id) = try Self.nearlyFull()
         run.feed([Self.report(id, .item(try Self.item(ofBytes: bytes, named: "last", promised: promised)))])
@@ -314,25 +313,24 @@ struct DragDeliveryTests {
             return
         }
         #expect(Self.ended(run).isEmpty)
-        #expect(Self.reports(run).map { if case .listed(let items) = $0 { items.count } else { 0 } } == [256])
-        #expect(run.host?.itemOffersForTesting.remoteHoldingForTesting.charged == 16_777_216)
+        #expect(Self.reports(run).map { if case .listed(let items) = $0 { items.count } else { 0 } } == [16])
+        #expect(run.host?.itemOffersForTesting.remoteHoldingForTesting.charged == 16_384)
     }
 
-    @Test("the host's release of a drag that filled the budget returns it whole: an offer of 131,072 items opens")
+    @Test("the host's release of a drag that filled the budget returns it whole: an offer of 128 items opens")
     func aReleaseReturnsTheBudget() throws {
         let (run, id) = try Self.nearlyFull()
-        run.feed([Self.report(id, .item(try Self.item(ofBytes: 65_408, named: "last")))])
+        run.feed([Self.report(id, .item(try Self.item(ofBytes: 896, named: "last")))])
         try #require(Self.ended(run).isEmpty)
         run.feed([Self.caught(id)])
         run.item(.release(token: Self.token))
         #expect(run.host?.itemOffersForTesting.remoteHoldingForTesting.charged == 0)
 
         run.feed([
-            WireFrames.open(
-                3, .clipboardOfferByPeer, body: HostileItems.header(token: SimItems.token(3), count: 131_072))
+            WireFrames.open(3, .clipboardOfferByPeer, body: HostileItems.header(token: SimItems.token(3), count: 128))
         ])
         #expect(run.streamResets.isEmpty, "\(run.streamResets)")
-        #expect(run.host?.itemOffersForTesting.remoteHoldingForTesting.charged == 16_777_216)
+        #expect(run.host?.itemOffersForTesting.remoteHoldingForTesting.charged == 16_384)
     }
 
     @Test("a DRAG_OFFER listing items is reset MALFORMED_MESSAGE, and a peer offers none")
