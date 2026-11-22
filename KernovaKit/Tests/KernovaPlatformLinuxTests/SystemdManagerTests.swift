@@ -38,21 +38,23 @@ final class FakeSystemd: Sendable {
 @Suite("systemd's manager API")
 struct SystemdManagerTests {
     @Test("A loaded service's MainPID is read through its unit object")
-    func mainPID() throws {
-        let bus = try PrivateBus()
-        let systemd = try FakeSystemd(on: bus, mainPID: 4242)
-        let manager = SystemdManager(connection: try bus.connect())
-        #expect(try manager.mainPID(ofService: FakeSystemd.unit) == 4242)
-        _ = systemd
+    func mainPID() async throws {
+        try await PrivateBus.with { bus in
+            let systemd = try FakeSystemd(on: bus, mainPID: 4242)
+            let manager = SystemdManager(connection: try bus.connect())
+            #expect(try manager.mainPID(ofService: FakeSystemd.unit) == 4242)
+            _ = systemd
+        }
     }
 
     @Test("A unit the manager has not loaded has no main process")
-    func unloaded() throws {
-        let bus = try PrivateBus()
-        let systemd = try FakeSystemd(on: bus, mainPID: 4242)
-        let manager = SystemdManager(connection: try bus.connect())
-        #expect(try manager.mainPID(ofService: "other.service") == 0)
-        _ = systemd
+    func unloaded() async throws {
+        try await PrivateBus.with { bus in
+            let systemd = try FakeSystemd(on: bus, mainPID: 4242)
+            let manager = SystemdManager(connection: try bus.connect())
+            #expect(try manager.mainPID(ofService: "other.service") == 0)
+            _ = systemd
+        }
     }
 }
 #endif

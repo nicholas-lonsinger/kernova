@@ -5,15 +5,33 @@ import KernovaPlatformLinux
 import KernovaPortableTestSupport
 import Testing
 
-/// A private session bus: a `dbus-daemon` of its own, stopped on deinit.
+/// A private session bus: a `dbus-daemon` of its own, for the length of a ``with(_:)``.
 final class PrivateBus {
     let address: String
     private let daemon: ChildProcess
 
-    init() throws {
+    /// Starts a bus and runs `body` with it, then kills the daemon whether `body` returns or throws.
+    static func with<T>(_ body: (PrivateBus) async throws -> T) async throws -> T {
+        let bus = try await started()
+        let outcome: Result<T, any Error>
+        do {
+            outcome = .success(try await body(bus))
+        } catch {
+            outcome = .failure(error)
+        }
+        await bus.killDaemon()
+        return try outcome.get()
+    }
+
+    private init(address: String, daemon: ChildProcess) {
+        self.address = address
+        self.daemon = daemon
+    }
+
+    private static func started() async throws -> PrivateBus {
         // An abstract socket leaves nothing in the file system once the
         // daemon is gone.
-        daemon = try ChildProcess(
+        let daemon = try ChildProcess(
             URL(fileURLWithPath: "/usr/bin/env"),
             [
                 "dbus-daemon", "--session", "--nofork", "--print-address=1",
@@ -21,25 +39,17 @@ final class PrivateBus {
             ])
         // The daemon prints its address once it listens, and holds its
         // output open for as long as it runs.
-        guard let address = try daemon.firstLine() else {
-            throw PrivateBusError.exitedEarly(String(decoding: try daemon.exit().errors, as: UTF8.self))
+        guard let address = try await daemon.firstLine() else {
+            throw PrivateBusError.exitedEarly(String(decoding: try await daemon.exit().errors, as: UTF8.self))
         }
-        self.address = address.trimmingCharacters(in: .whitespaces)
+        return PrivateBus(address: address.trimmingCharacters(in: .whitespaces), daemon: daemon)
     }
 
-    /// Kills the daemon now, closing every connection to it.
-    func killDaemon() {
-        Self.stop(daemon)
-    }
-
-    deinit {
-        Self.stop(daemon)
-    }
-
-    private static func stop(_ daemon: ChildProcess) {
+    /// Kills the daemon and waits for it to end, closing every connection to it.
+    func killDaemon() async {
         daemon.kill()
         do {
-            _ = try daemon.exit()
+            _ = try await daemon.exit()
         } catch {
             Issue.record(error)
         }

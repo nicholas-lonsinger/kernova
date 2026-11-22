@@ -195,7 +195,7 @@ func createCompressedDirectly(_ path: String, _ sample: CompressedSample) throws
     return descriptor
 }
 
-/// A 64 MB exFAT disk image attached under a scratch directory, detached and deleted when this goes.
+/// A 64 MB exFAT disk image attached under a scratch directory for the length of a ``with(_:)``.
 ///
 /// A detach that fails records a warning, not an error, with hdiutil's message and the processes then holding
 /// the image's device nodes: a forced detach unmounts past descriptors open on the volume and fails only while a
@@ -206,29 +206,49 @@ final class ExFATVolume {
     /// The device nodes the image attached as, from `hdiutil attach -plist`'s `dev-entry` keys.
     private let devices: [String]
 
-    init() throws {
-        scratch = try PortableScratchDirectory(prefix: "exfat")
+    /// Attaches a volume and runs `body` with it, then detaches it whether `body` returns or throws; the image
+    /// is deleted with the volume.
+    static func with<T>(_ body: (ExFATVolume) async throws -> T) async throws -> T {
+        let volume = try await attached()
+        let outcome: Result<T, any Error>
+        do {
+            outcome = .success(try await body(volume))
+        } catch {
+            outcome = .failure(error)
+        }
+        await volume.detach()
+        return try outcome.get()
+    }
+
+    private init(scratch: PortableScratchDirectory, devices: [String]) {
+        self.scratch = scratch
+        self.devices = devices
+    }
+
+    private static func attached() async throws -> ExFATVolume {
+        let scratch = try PortableScratchDirectory(prefix: "exfat")
         let image = scratch.path + "/volume.dmg"
         let mountPoint = scratch.path + "/mount"
-        try Self.hdiutil(["create", "-size", "64m", "-fs", "ExFAT", "-volname", "KTEST", image]).require()
+        try await hdiutil(["create", "-size", "64m", "-fs", "ExFAT", "-volname", "KTEST", image]).require()
         try #require(mkdir(mountPoint, 0o755) == 0)
-        let attached = try Self.hdiutil([
+        let attached = try await hdiutil([
             "attach", "-plist", "-nobrowse", "-noverify", "-mountpoint", mountPoint, image,
         ])
         try attached.require()
         let plist = try PropertyListSerialization.propertyList(from: attached.output, format: nil)
         let entities = try #require((plist as? [String: Any])?["system-entities"] as? [[String: Any]])
-        devices = entities.compactMap { $0["dev-entry"] as? String }
+        let devices = entities.compactMap { $0["dev-entry"] as? String }
         try #require(!devices.isEmpty, "hdiutil attach named no device")
+        return ExFATVolume(scratch: scratch, devices: devices)
     }
 
-    deinit {
+    private func detach() async {
         do {
-            let detached = try Self.hdiutil(["detach", "-force", mountPoint])
+            let detached = try await Self.hdiutil(["detach", "-force", mountPoint])
             guard detached.status != 0 else { return }
+            let holders = await Self.holders(of: devices)
             Issue.record(
-                "\(detached.failure); holding \(devices.joined(separator: " ")): \(Self.holders(of: devices))",
-                severity: .warning)
+                "\(detached.failure); holding \(devices.joined(separator: " ")): \(holders)", severity: .warning)
         } catch {
             Issue.record("hdiutil detach -force \(mountPoint) did not run: \(error)", severity: .warning)
         }
@@ -248,20 +268,20 @@ final class ExFATVolume {
         }
     }
 
-    private static func hdiutil(_ arguments: [String]) throws -> Run {
-        try run("/usr/bin/hdiutil", arguments)
+    private static func hdiutil(_ arguments: [String]) async throws -> Run {
+        try await run("/usr/bin/hdiutil", arguments)
     }
 
     /// `lsof`'s report of every process holding `devices` or their raw nodes, or that none does.
-    private static func holders(of devices: [String]) -> String {
+    private static func holders(of devices: [String]) async -> String {
         let nodes = devices.flatMap { [$0, $0.replacingOccurrences(of: "/dev/disk", with: "/dev/rdisk")] }
-        guard let listed = try? run("/usr/sbin/lsof", ["-nP"] + nodes) else { return "lsof did not run" }
+        guard let listed = try? await run("/usr/sbin/lsof", ["-nP"] + nodes) else { return "lsof did not run" }
         let report = String(decoding: listed.output, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         return report.isEmpty ? "no process holds them now" : report
     }
 
-    private static func run(_ tool: String, _ arguments: [String]) throws -> Run {
-        let ran = try ChildProcess(URL(fileURLWithPath: tool), arguments).exit()
+    private static func run(_ tool: String, _ arguments: [String]) async throws -> Run {
+        let ran = try await ChildProcess(URL(fileURLWithPath: tool), arguments).exit()
         return Run(
             command: ([URL(fileURLWithPath: tool).lastPathComponent] + arguments).joined(separator: " "),
             status: ran.status, output: ran.output,

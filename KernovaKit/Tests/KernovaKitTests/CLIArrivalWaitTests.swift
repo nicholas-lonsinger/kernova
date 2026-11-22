@@ -33,7 +33,7 @@ struct CLIArrivalWaitTests {
     }
 
     @Test("An import waits in its one request, and --timeout bounds that request end to end")
-    func importDeadlineBoundsTheOneRequest() throws {
+    func importDeadlineBoundsTheOneRequest() async throws {
         let source = "/Users/somebody/Alpha.kernova"
         let listener = try TestCommandSocket()
         defer { listener.close() }
@@ -55,11 +55,11 @@ struct CLIArrivalWaitTests {
 
         // Ends the double's held-open read the way the tool exiting would.
         client.close()
-        #expect(try listener.requests().map(\.verb) == [.importVM(path: source, waitForOutcome: true)])
+        #expect(try await listener.requests().map(\.verb) == [.importVM(path: source, waitForOutcome: true)])
     }
 
     @Test("A waited import answers the settled row from its one request")
-    func aWaitedImportAnswersTheSettledRow() throws {
+    func aWaitedImportAnswersTheSettledRow() async throws {
         let source = "/Users/somebody/Alpha.kernova"
         let listener = try TestCommandSocket()
         defer { listener.close() }
@@ -71,7 +71,7 @@ struct CLIArrivalWaitTests {
         #expect(
             try PreparingCopy.importing(source, waitingForTheCopy: true, within: nil, on: client)
                 == settled)
-        #expect(try listener.requests().map(\.verb) == [.importVM(path: source, waitForOutcome: true)])
+        #expect(try await listener.requests().map(\.verb) == [.importVM(path: source, waitForOutcome: true)])
     }
 
     @Test("An answer of the wrong shape refuses rather than being printed as a row")

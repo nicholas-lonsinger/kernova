@@ -50,13 +50,13 @@ struct AgentDiskScriptTests {
         /// `nonInteractive` and `input` on standard input, answering its exit status.
         func run(
             _ arguments: [String], as prefix: [String] = [], nonInteractive: Bool = true, input: String = ""
-        ) throws -> Int32 {
+        ) async throws -> Int32 {
             var environment = ProcessInfo.processInfo.environment
             environment["PATH"] = path
             environment["NONINTERACTIVE"] = nonInteractive ? "1" : nil
             environment["STAND_IN_CALLS"] = calls
             environment["STAND_IN_SUDO_REFUSES"] = sudoRefuses ? "1" : nil
-            return try ChildProcess(
+            return try await ChildProcess(
                 URL(fileURLWithPath: "/usr/bin/env"), prefix + ["sh", directory.path + "/install.sh"] + arguments,
                 environment: environment, input: Data(input.utf8)
             ).exit().status
@@ -71,32 +71,32 @@ struct AgentDiskScriptTests {
     @Test(
         "A root shell's --system runs only the system step, without sudo; without --system it refuses",
         .enabled(if: geteuid() == 0, "needs a root shell, which the CI container is"))
-    func rootShell() throws {
+    func rootShell() async throws {
         let disk = try Disk()
-        #expect(try disk.run(["--system"]) == 0)
+        #expect(try await disk.run(["--system"]) == 0)
         #expect(disk.recorded() == ["0 install --system --dry-run", "0 install --system"])
-        #expect(try disk.run([]) == 64)
+        #expect(try await disk.run([]) == 64)
         #expect(disk.recorded() == ["0 install --system --dry-run", "0 install --system"])
     }
 
     @Test(
         "Without NONINTERACTIVE it shows the plan and waits for Return, changing nothing without one",
         .enabled(if: geteuid() == 0, "needs a root shell, which the CI container is"))
-    func waitsForReturn() throws {
+    func waitsForReturn() async throws {
         let disk = try Disk()
-        #expect(try disk.run(["--system"], nonInteractive: false) == 1)
+        #expect(try await disk.run(["--system"], nonInteractive: false) == 1)
         #expect(disk.recorded() == ["0 install --system --dry-run"])
-        #expect(try disk.run(["--system"], nonInteractive: false, input: "\n") == 0)
+        #expect(try await disk.run(["--system"], nonInteractive: false, input: "\n") == 0)
         #expect(disk.recorded().suffix(2) == ["0 install --system --dry-run", "0 install --system"])
     }
 
     @Test(
         "NONINTERACTIVE skips the wait and runs sudo -n, after the plan and before the user step",
         .enabled(if: geteuid() == 0, "needs root to become another user"))
-    func nonInteractiveUsesSudoN() throws {
+    func nonInteractiveUsesSudoN() async throws {
         let disk = try Disk()
         disk.addSudo(refusesNonInteractive: false)
-        #expect(try disk.run(["--system"], as: Self.nobody) == 0)
+        #expect(try await disk.run(["--system"], as: Self.nobody) == 0)
         let calls = disk.recorded()
         #expect(
             calls.prefix(4) == [
@@ -111,10 +111,10 @@ struct AgentDiskScriptTests {
     @Test(
         "A sudo -n that needs a password stops before anything is changed",
         .enabled(if: geteuid() == 0, "needs root to become another user"))
-    func refusedSudoChangesNothing() throws {
+    func refusedSudoChangesNothing() async throws {
         let disk = try Disk()
         disk.addSudo(refusesNonInteractive: true)
-        #expect(try disk.run(["--system"], as: Self.nobody) == 1)
+        #expect(try await disk.run(["--system"], as: Self.nobody) == 1)
         #expect(disk.recorded() == ["65534 install --dry-run", "65534 install --system --dry-run", "sudo -n true"])
     }
 
@@ -123,11 +123,11 @@ struct AgentDiskScriptTests {
     @Test(
         "A user's --system without sudo refuses before the user step runs",
         .enabled(if: geteuid() == 0 && !Self.hasSudo, "needs root to become another user, and no sudo"))
-    func userWithoutSudo() throws {
+    func userWithoutSudo() async throws {
         let disk = try Disk()
-        #expect(try disk.run(["--system"], as: Self.nobody) == 1)
+        #expect(try await disk.run(["--system"], as: Self.nobody) == 1)
         #expect(disk.recorded() == [])
-        #expect(try disk.run([], as: Self.nobody) == 0)
+        #expect(try await disk.run([], as: Self.nobody) == 0)
         #expect(disk.recorded() == ["65534 install --dry-run", "65534 install"])
     }
 
