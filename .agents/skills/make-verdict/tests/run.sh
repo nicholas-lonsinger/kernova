@@ -25,7 +25,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin" "$tmp/nox" "$tmp/logs" "$tmp/out" \
     "$tmp/bundles/failed.xcresult" "$tmp/bundles/passed.xcresult" "$tmp/bundles/empty.xcresult" \
-    "$tmp/bundles/warned.xcresult"
+    "$tmp/bundles/warned.xcresult" "$tmp/bundles/unlocated.xcresult"
 # nox is a PATH with no xcodebuild; before it looks for xcodebuild the script
 # makes its temp file and clears its verdict file, and the setup error renames
 # a new one into place, so give it just the tools those steps reach for.
@@ -74,6 +74,9 @@ done
 fixture="$FAKE_XCRESULT_FIXTURES/$(basename "$path")/$kind.json"
 [ -f "$fixture" ] || { echo "fake xcresulttool: no fixture for $path ($kind)" >&2; exit 1; }
 if [ "$kind" = test-details ]; then
+    # Reads whatever standard input it is given, so a caller that lends it its
+    # own loses that input.
+    cat >/dev/null
     jq -e --arg id "$id" '.[$id]' "$fixture" || { echo "fake xcresulttool: no details for $id" >&2; exit 1; }
 else
     sed "s#@ROOT@#$FAKE_ROOT#g" "$fixture"
@@ -371,6 +374,18 @@ sed -n 3p "$tmp/last" | grep -qE "$vsock" || fail "$name: sites with as many war
 reject '\^src|Multiple Runtime Warnings'
 expect_last '^xcresult-report: verdict=passed total=4 failed=0 '
 expect_lines 5
+
+# A case whose details cannot be read, sorted first, and one whose details
+# name no warning: the warnings they hold are counted as not located, each
+# case named under that count, and every case after them is still read.
+run "report unlocated runtime warnings" 0 report --path "$tmp/bundles/unlocated.xcresult"
+expect '^runtime-warnings=3$'
+expect_count "^  1 in 1 test  $backstop: $message\$" 1
+expect_count '^  2 not located$' 1
+expect_count '^    ChildProcessTests/bothPipesDrain\(\): xcresulttool could not read its details: .*no details for ' 1
+expect_count '^    DarwinPeerTests/slotLinkWatcherRemoval\(\): its details name no runtime warning$' 1
+expect_last '^xcresult-report: verdict=passed total=3 failed=0 '
+expect_lines 7
 
 run "report empty bundle" 3 report --path "$tmp/bundles/empty.xcresult"
 expect_last '^xcresult-report: verdict=no-tests total=0 failed=0 '

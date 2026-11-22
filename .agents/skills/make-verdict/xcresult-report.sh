@@ -131,21 +131,31 @@ failure_blocks() {
 # then each site — `<warnings> in <tests>  <file>:<line>: <message>` — from the
 # details of each test case that recorded one, since the test tree collapses a
 # case's several into one "Multiple Runtime Warnings" node with no location.
+# Warnings no case's details name are counted as not located, above the cases
+# whose details could not be read or named none.
 runtime_warnings() {
-    printf 'runtime-warnings=%s\n' "$(jq '.runtimeWarnings // [] | length' "$tmp/summary.json")"
+    local count id located
+    count="$(jq '.runtimeWarnings // [] | length' "$tmp/summary.json")"
+    printf 'runtime-warnings=%s\n' "$count"
+    : >"$tmp/sites"
+    : >"$tmp/unlocated"
     jq -r '.. | objects | select(.nodeType? == "Test Case")
            | select(any(.. | objects; .nodeType? == "Runtime Warning")) | .nodeIdentifier' "$tmp/tests.json" |
-        sort -u | while IFS= read -r id; do
-            if ! xcrun xcresulttool get test-results test-details --test-id "$id" --path "$bundle" --format json \
-                >"$tmp/details.json" 2>"$tmp/err"; then
-                printf -- '-\txcresulttool could not read its details: %s\t%s\n' "$(tr '\n' ' ' <"$tmp/err")" "$id"
-                continue
-            fi
-            jq -r --arg id "$id" '.. | objects | select(.nodeType? == "Runtime Warning")
-                | [ (.sourceLocation | if . then .filePath + ":" + (.lineNumber | tostring) else "-" end),
-                    .name, $id ] | @tsv' "$tmp/details.json"
-        done |
-        sed -e "s#$ROOT/##g" -e "s#${kernova_source_placeholder//^/\\^}/##g" |
+        sort -u >"$tmp/warned"
+    while IFS= read -r id; do
+        if ! xcrun xcresulttool get test-results test-details --test-id "$id" --path "$bundle" --format json \
+            </dev/null >"$tmp/details.json" 2>"$tmp/err"; then
+            printf '    %s: xcresulttool could not read its details: %s\n' "$id" "$(tr '\n' ' ' <"$tmp/err")" \
+                >>"$tmp/unlocated"
+            continue
+        fi
+        jq -r --arg id "$id" '.. | objects | select(.nodeType? == "Runtime Warning")
+            | [ (.sourceLocation | if . then .filePath + ":" + (.lineNumber | tostring) else "-" end),
+                .name, $id ] | @tsv' "$tmp/details.json" >"$tmp/case"
+        [ -s "$tmp/case" ] || printf '    %s: its details name no runtime warning\n' "$id" >>"$tmp/unlocated"
+        cat "$tmp/case" >>"$tmp/sites"
+    done <"$tmp/warned"
+    sed -e "s#$ROOT/##g" -e "s#${kernova_source_placeholder//^/\\^}/##g" "$tmp/sites" |
         awk -F '\t' '{ site = $1 ": " $2; warnings[site]++; if (!seen[site, $3]++) tests[site]++ }
             END { for (site in warnings) printf "%d\t%d\t%s\n", warnings[site], tests[site], site }' |
         sort -t "$(printf '\t')" -k1,1nr -k3,3 |
@@ -154,6 +164,9 @@ runtime_warnings() {
             if (length(line) > width) line = substr(line, 1, width) " …"
             print line
         }'
+    located="$(grep -c . "$tmp/sites")"
+    [ "$located" -ge "$count" ] || printf '  %d not located\n' "$((count - located))"
+    cat "$tmp/unlocated"
 }
 
 case "$mode" in
