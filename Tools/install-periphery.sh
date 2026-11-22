@@ -26,6 +26,8 @@
 #
 # Status text goes to stderr: stdout carries the path alone, so callers can
 # read it with a command substitution.
+#
+# pin: git https://github.com/peripheryapp/periphery.git PERIPHERY_VERSION
 
 set -euo pipefail
 

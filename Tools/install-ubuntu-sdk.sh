@@ -13,6 +13,8 @@
 #
 # Status text goes to stderr: stdout carries the id alone, so callers can read
 # it with a command substitution.
+#
+# pin: none — generates the SDK for the release .swift-version names
 
 set -euo pipefail
 

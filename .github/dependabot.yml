@@ -16,3 +16,22 @@ updates:
       actions:
         patterns:
           - "*"
+
+  # Tools/outdated-pins.sh reports every Package.resolved this leaves out. The
+  # Xcode workspace's stays out: for a package only a local package's manifest
+  # requires, Dependabot's Xcode mode takes the newest tag whatever that
+  # manifest admits ("This may produce a pin that is not resolvable", in
+  # dependabot-core's swift/lib/dependabot/swift/update_checker/xcode_version_resolver.rb).
+  - package-ecosystem: swift
+    directories:
+      - /Tools/DeadCode
+    schedule:
+      interval: weekly
+    labels:
+      - "Area: Build & CI"
+      - "ci"
+    # Its major names the Swift release it parses, so it moves with
+    # .swift-version, which Tools/outdated-pins.sh reports.
+    ignore:
+      - dependency-name: github.com/swiftlang/swift-syntax
+        update-types: ["version-update:semver-major"]
