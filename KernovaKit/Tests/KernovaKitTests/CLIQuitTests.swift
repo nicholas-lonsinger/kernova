@@ -10,7 +10,7 @@ import Testing
 @Suite("CLI quit", .caseScoped)
 struct CLIQuitTests {
     @Test("The tool returns from a quit only once the app closes the connection")
-    func quitWaitsForTheConnectionToClose() throws {
+    func quitWaitsForTheConnectionToClose() async throws {
         let listener = try TestCommandSocket()
         defer { listener.close() }
 
@@ -32,6 +32,6 @@ struct CLIQuitTests {
         // nothing it needs runs on an actor this call could be starving. The
         // socket's own receive deadline is the backstop.
         #expect(throws: Never.self) { try KernovaCommand.Quit.awaitExit(of: client) }
-        #expect(try listener.requests().map(\.verb) == [.quit])
+        #expect(try await listener.requests().map(\.verb) == [.quit])
     }
 }

@@ -160,14 +160,14 @@ struct ISO9660WriterTests {
     #if os(Linux)
     /// xorriso, the reference reader on Linux CI, lists the names and modes, and extracts the bytes.
     @Test("xorriso lists the names and modes, and osirrox extracts the same bytes and modes")
-    func xorrisoAgrees() throws {
+    func xorrisoAgrees() async throws {
         let directory = try PortableScratchDirectory(prefix: "iso9660")
         let scratch = directory.url
         let iso = scratch.appending(path: "agent.iso")
         let entries = Self.entries()
         try Data(try Self.write(entries)).write(to: iso)
 
-        let listing = try Self.run(["xorriso", "-indev", iso.path, "-find", "/", "-type", "f", "-exec", "lsdl"])
+        let listing = try await Self.run(["xorriso", "-indev", iso.path, "-find", "/", "-type", "f", "-exec", "lsdl"])
         var listed: [String: String] = [:]
         for line in listing.split(separator: "\n") where line.hasPrefix("-") {
             let mode = String(line.prefix(10))
@@ -181,7 +181,7 @@ struct ISO9660WriterTests {
             ], "\(listing)")
 
         let extracted = scratch.appending(path: "extracted")
-        _ = try Self.run(["xorriso", "-osirrox", "on", "-indev", iso.path, "-extract", "/", extracted.path])
+        _ = try await Self.run(["xorriso", "-osirrox", "on", "-indev", iso.path, "-extract", "/", extracted.path])
         for entry in entries {
             let path = extracted.appending(path: entry.name).path
             var bytes: [UInt8] = []
@@ -194,8 +194,8 @@ struct ISO9660WriterTests {
     }
 
     /// Runs `arguments` from PATH and answers its standard output; a non-zero exit fails.
-    private static func run(_ arguments: [String]) throws -> String {
-        let ran = try ChildProcess(URL(filePath: "/usr/bin/env"), arguments).exit()
+    private static func run(_ arguments: [String]) async throws -> String {
+        let ran = try await ChildProcess(URL(filePath: "/usr/bin/env"), arguments).exit()
         let text = String(decoding: ran.output, as: UTF8.self)
         guard ran.status == 0 else {
             throw ISO9660Reader.Failure(description: "\(arguments) exited \(ran.status): \(text)")

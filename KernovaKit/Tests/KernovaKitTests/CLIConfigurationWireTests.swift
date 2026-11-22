@@ -21,14 +21,14 @@ struct CLIConfigurationWireTests {
     // MARK: - Reads
 
     @Test("A bare get asks for every key, and a named one asks for those")
-    func getAsksForTheKeysItWasGiven() throws {
+    func getAsksForTheKeysItWasGiven() async throws {
         let answered = VMCommandResponse(result: .configuration(settings))
 
-        let everything = try CLIWire.exchange(["get", "Alpha"], answering: answered)
+        let everything = try await CLIWire.exchange(["get", "Alpha"], answering: answered)
         #expect(everything.sent == [.configuration(.idOrName("Alpha"), keys: nil)])
         #expect(try everything.answer.payload() == .configuration(settings))
 
-        let named = try CLIWire.exchange(
+        let named = try await CLIWire.exchange(
             ["get", "Alpha", "memory", "cpus"], answering: answered)
         #expect(named.sent == [.configuration(.idOrName("Alpha"), keys: ["memory", "cpus"])])
     }
@@ -36,8 +36,8 @@ struct CLIConfigurationWireTests {
     // MARK: - Writes
 
     @Test("A set crosses as one request carrying every assignment, in the order typed")
-    func setSendsOneRequestForEveryAssignment() throws {
-        let exchanged = try CLIWire.exchange(
+    func setSendsOneRequestForEveryAssignment() async throws {
+        let exchanged = try await CLIWire.exchange(
             ["set", "Alpha", "cpus=4", "memory=8"],
             answering: VMCommandResponse(result: .configuration(settings)))
 
@@ -53,19 +53,19 @@ struct CLIConfigurationWireTests {
     // MARK: - Shares
 
     @Test("A share list asks for the folders of the virtual machine its argument names")
-    func shareListSendsTheSelector() throws {
+    func shareListSendsTheSelector() async throws {
         let shares = [
             SharedDirectorySummary(path: "/tmp/Work", readOnly: false),
             SharedDirectorySummary(path: "/tmp/Reference", readOnly: true),
         ]
-        let named = try CLIWire.exchange(
+        let named = try await CLIWire.exchange(
             ["share", "list", "Alpha"],
             answering: VMCommandResponse(result: .sharedDirectories(shares)))
 
         #expect(named.sent == [.sharedDirectories(.idOrName("Alpha"))])
         #expect(try named.answer.payload() == .sharedDirectories(shares))
 
-        let identified = try CLIWire.exchange(
+        let identified = try await CLIWire.exchange(
             ["share", "list", identifier.uuidString, "--id"],
             answering: VMCommandResponse(result: .sharedDirectories(shares)))
         #expect(identified.sent == [.sharedDirectories(.id(identifier))])

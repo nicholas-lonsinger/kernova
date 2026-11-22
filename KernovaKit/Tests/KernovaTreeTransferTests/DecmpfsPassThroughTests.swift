@@ -285,85 +285,93 @@ struct DecmpfsPassThroughTests {
     /// claim of the name — an empty file, or an empty folder — and Keep Both counts past a name exFAT folds case
     /// onto.
     @Test("an exFAT destination accepts no type, and files and folders land there plain, onto their own claims")
-    func exFATDestination() throws {
-        let volume = try ExFATVolume()
-        let exFAT = try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD)
-        defer { fileSystem.close(exFAT) }
-        #expect(try !fileSystem.volumeStoresCompressedFiles(exFAT))
-        #expect(try !fileSystem.renamesExclusively(in: exFAT))
-        let types = try DecmpfsMatrix.acceptedTypes(landingIn: exFAT, on: fileSystem)
-        #expect(types.isEmpty)
+    func exFATDestination() async throws {
+        try await ExFATVolume.with { volume in
+            let exFAT = try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD)
+            defer { fileSystem.close(exFAT) }
+            #expect(try !fileSystem.volumeStoresCompressedFiles(exFAT))
+            #expect(try !fileSystem.renamesExclusively(in: exFAT))
+            let types = try DecmpfsMatrix.acceptedTypes(landingIn: exFAT, on: fileSystem)
+            #expect(types.isEmpty)
 
-        let bench = try FidelityBench()
-        let item = bytes("item")
-        try bench.makeDirectory([item])
-        for (source, name) in [("/bin/ls", "ls"), ("/usr/bin/pp", "pp")] {
-            try #require(copyfile(source, bench.sourcePath + "/item/" + name, nil, copyfile_flags_t(COPYFILE_ALL)) == 0)
-        }
-        try #require(mkdir(volume.mountPoint + "/ITEM", 0o755) == 0)
-        let landings: [(PublishName, [UInt8])] = [
-            (.exactly(bytes("Landed")), bytes("Landed")), (.keepingBoth(bytes("item")), bytes("item 2")),
-        ]
-        for (publishing, landed) in landings {
-            let acceptance = ContainerAcceptance(
-                storage: .folder, byteCeiling: 1 << 30, decmpfsTypes: types, acceptsLZ4: false)
-            let reader = try TreeReader(fileSystem: fileSystem, root: bench.path([item]), accepting: acceptance)
-            let writer = TreeWriter(
-                name: publishing, fileSystem: fileSystem,
-                destination: try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD),
-                destinationPathByteCount: volume.mountPoint.utf8.count, accepting: acceptance)
-            while let event = try reader.next() { try writer.write(event) }
-            #expect(try writer.publish() == landed)
-            for file in ["ls", "pp"] {
-                let path = volume.mountPoint + "/" + String(decoding: landed, as: UTF8.self) + "/" + file
-                #expect(try rawStatus(path).st_flags & UInt32(UF_COMPRESSED) == 0)
-                #expect(try contents(of: path) == contents(of: bench.sourcePath + "/item/" + file))
+            let bench = try FidelityBench()
+            let item = bytes("item")
+            try bench.makeDirectory([item])
+            for (source, name) in [("/bin/ls", "ls"), ("/usr/bin/pp", "pp")] {
+                try #require(
+                    copyfile(source, bench.sourcePath + "/item/" + name, nil, copyfile_flags_t(COPYFILE_ALL)) == 0)
             }
-        }
+            try #require(mkdir(volume.mountPoint + "/ITEM", 0o755) == 0)
+            let landings: [(PublishName, [UInt8])] = [
+                (.exactly(bytes("Landed")), bytes("Landed")), (.keepingBoth(bytes("item")), bytes("item 2")),
+            ]
+            for (publishing, landed) in landings {
+                let acceptance = ContainerAcceptance(
+                    storage: .folder, byteCeiling: 1 << 30, decmpfsTypes: types, acceptsLZ4: false)
+                let reader = try TreeReader(fileSystem: fileSystem, root: bench.path([item]), accepting: acceptance)
+                let writer = TreeWriter(
+                    name: publishing, fileSystem: fileSystem,
+                    destination: try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD),
+                    destinationPathByteCount: volume.mountPoint.utf8.count, accepting: acceptance)
+                while let event = try reader.next() { try writer.write(event) }
+                #expect(try writer.publish() == landed)
+                for file in ["ls", "pp"] {
+                    let path = volume.mountPoint + "/" + String(decoding: landed, as: UTF8.self) + "/" + file
+                    #expect(try rawStatus(path).st_flags & UInt32(UF_COMPRESSED) == 0)
+                    #expect(try contents(of: path) == contents(of: bench.sourcePath + "/item/" + file))
+                }
+            }
 
-        try #require(close(open(volume.mountPoint + "/LS", O_WRONLY | O_CREAT | O_EXCL, 0o644)) == 0)
-        let fileAcceptance = ContainerAcceptance(
-            storage: .file, byteCeiling: 1 << 30, decmpfsTypes: [], acceptsLZ4: false)
-        for (publishing, landed) in [(PublishName.exactly(bytes("tool")), "tool"), (.keepingBoth(bytes("ls")), "ls 2")]
-        {
-            let reader = try TreeReader(
-                fileSystem: fileSystem, root: bench.path([item, bytes("ls")]), accepting: fileAcceptance)
-            let writer = TreeWriter(
-                name: publishing, fileSystem: fileSystem,
-                destination: try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD),
-                destinationPathByteCount: volume.mountPoint.utf8.count, accepting: fileAcceptance)
-            while let event = try reader.next() { try writer.write(event) }
-            #expect(try writer.publish() == bytes(landed))
-            #expect(try contents(of: volume.mountPoint + "/" + landed) == contents(of: "/bin/ls"))
+            try #require(close(open(volume.mountPoint + "/LS", O_WRONLY | O_CREAT | O_EXCL, 0o644)) == 0)
+            let fileAcceptance = ContainerAcceptance(
+                storage: .file, byteCeiling: 1 << 30, decmpfsTypes: [], acceptsLZ4: false)
+            for (publishing, landed) in [
+                (PublishName.exactly(bytes("tool")), "tool"), (.keepingBoth(bytes("ls")), "ls 2"),
+            ] {
+                let reader = try TreeReader(
+                    fileSystem: fileSystem, root: bench.path([item, bytes("ls")]), accepting: fileAcceptance)
+                let writer = TreeWriter(
+                    name: publishing, fileSystem: fileSystem,
+                    destination: try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD),
+                    destinationPathByteCount: volume.mountPoint.utf8.count, accepting: fileAcceptance)
+                while let event = try reader.next() { try writer.write(event) }
+                #expect(try writer.publish() == bytes(landed))
+                #expect(try contents(of: volume.mountPoint + "/" + landed) == contents(of: "/bin/ls"))
+            }
+            #expect(try contents(of: volume.mountPoint + "/LS").isEmpty)
+            let left = try fileSystem.names(in: exFAT).map { String(decoding: $0, as: UTF8.self) }
+                .filter { !$0.hasPrefix("._") && !$0.hasPrefix(".fseventsd") }
+            #expect(left.sorted() == ["ITEM", "LS", "Landed", "item 2", "ls 2", "tool"].sorted())
         }
-        #expect(try contents(of: volume.mountPoint + "/LS").isEmpty)
-        let left = try fileSystem.names(in: exFAT).map { String(decoding: $0, as: UTF8.self) }
-            .filter { !$0.hasPrefix("._") && !$0.hasPrefix(".fseventsd") }
-        #expect(left.sorted() == ["ITEM", "LS", "Landed", "item 2", "ls 2", "tool"].sorted())
     }
 
     @Test("decmpfs storage forced onto exFAT fails by name: the volume refuses the flag")
-    func exFATRefusesTheFlag() throws {
-        let volume = try ExFATVolume()
-        let sample = try CompressedSample.read("/bin/ls", on: fileSystem)
-        var header = file(depth: 0, size: 0)
-        header.decmpfs.attribute = Data(sample.attribute)
-        header.resourceForkSize = UInt64(sample.resourceFork.count)
-        let acceptance = ContainerAcceptance(storage: .file, byteCeiling: 1 << 30, decmpfsTypes: [8], acceptsLZ4: false)
-        let writer = TreeWriter(
-            name: .exactly(bytes("ls")), fileSystem: fileSystem,
-            destination: try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD),
-            destinationPathByteCount: volume.mountPoint.utf8.count, accepting: acceptance)
-        let events: [TreeEvent] = [.beginFile(header), .resourceFork, .bytes(Data(sample.resourceFork)), .finishFile]
-        let refusal = try #require(Self.failure(writing: events, to: writer))
-        #expect(refusal.path == [bytes("ls")])
-        #expect(refusal.reason == .notCompressed(.flagRefused(TreeFileSystemError(code: EINVAL))))
-        #expect(refusal.wireError.code == .itemDecmpfsRefused)
-        let mount = try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD)
-        defer { fileSystem.close(mount) }
-        let left = try fileSystem.names(in: mount)
-        #expect(
-            left.filter { !$0.starts(with: Array("._".utf8)) && !$0.starts(with: Array(".fseventsd".utf8)) }.isEmpty)
+    func exFATRefusesTheFlag() async throws {
+        try await ExFATVolume.with { volume in
+            let sample = try CompressedSample.read("/bin/ls", on: fileSystem)
+            var header = file(depth: 0, size: 0)
+            header.decmpfs.attribute = Data(sample.attribute)
+            header.resourceForkSize = UInt64(sample.resourceFork.count)
+            let acceptance = ContainerAcceptance(
+                storage: .file, byteCeiling: 1 << 30, decmpfsTypes: [8], acceptsLZ4: false)
+            let writer = TreeWriter(
+                name: .exactly(bytes("ls")), fileSystem: fileSystem,
+                destination: try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD),
+                destinationPathByteCount: volume.mountPoint.utf8.count, accepting: acceptance)
+            let events: [TreeEvent] = [
+                .beginFile(header), .resourceFork, .bytes(Data(sample.resourceFork)), .finishFile,
+            ]
+            let refusal = try #require(Self.failure(writing: events, to: writer))
+            #expect(refusal.path == [bytes("ls")])
+            #expect(refusal.reason == .notCompressed(.flagRefused(TreeFileSystemError(code: EINVAL))))
+            #expect(refusal.wireError.code == .itemDecmpfsRefused)
+            let mount = try fileSystem.openDirectory(bytes(volume.mountPoint), in: AT_FDCWD)
+            defer { fileSystem.close(mount) }
+            let left = try fileSystem.names(in: mount)
+            #expect(
+                left.filter { !$0.starts(with: Array("._".utf8)) && !$0.starts(with: Array(".fseventsd".utf8)) }.isEmpty
+            )
+        }
     }
 }
 

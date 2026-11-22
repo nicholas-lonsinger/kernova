@@ -132,10 +132,10 @@ final class TestCommandSocket: Sendable {
     /// Throws at ``testWaitBackstop`` when the loop is still reading: a test
     /// that queued an answer the tool never asks for, or held the connection
     /// open without closing its client first.
-    func requests(fileID: String = #fileID, line: Int = #line) throws -> [VMCommandRequest] {
-        let loopEnded = DispatchSemaphore(value: 0)
-        queue.async { loopEnded.signal() }
-        try Backstop("the command socket double's serve loop", fileID: fileID, line: line).wait(for: loopEnded)
+    func requests(fileID: String = #fileID, line: Int = #line) async throws -> [VMCommandRequest] {
+        try await Backstop("the command socket double's serve loop", fileID: fileID, line: line).park { resume in
+            queue.async { resume(()) }
+        }
         return state.withLock { $0.received }
     }
 
@@ -180,7 +180,7 @@ enum CLIWire {
     /// one the tool would have sent — only the socket it reaches is the test's.
     static func exchange(
         _ arguments: [String], answering response: VMCommandResponse
-    ) throws -> (sent: [VMCommandRequest.Verb], answer: VMCommandResponse) {
+    ) async throws -> (sent: [VMCommandRequest.Verb], answer: VMCommandResponse) {
         let command = try #require(
             try KernovaCommand.parseAsRoot(arguments) as? any VerbCommand,
             "\(arguments) did not parse to a command that builds its own request")
@@ -194,6 +194,6 @@ enum CLIWire {
         listener.serve([[response]])
 
         let answer = try client.send(request)
-        return (try listener.requests().map(\.verb), answer)
+        return (try await listener.requests().map(\.verb), answer)
     }
 }

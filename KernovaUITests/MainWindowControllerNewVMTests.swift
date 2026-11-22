@@ -3,6 +3,7 @@ import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
+@testable import KernovaCore
 @testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
