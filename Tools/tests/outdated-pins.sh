@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Fixture tests for Tools/outdated-pins.sh: which newer release it reports for
-# each pin and at which level, the move it gives against each requirement form,
-# which Package.resolved files it leaves to Dependabot, and that a lookup that
-# fails, or whose upstream does not list the pinned release, fails the run and
-# writes nothing. The upstreams are stubs: curl serves the fixture's swift.org
-# feed and `git ls-remote` its tag lists.
+# Fixture tests for Tools/outdated-pins.sh: which newest release it reports
+# for each pin and at which level, the move it gives, which Package.resolved
+# it leaves to Dependabot, and that a lookup that fails, or whose upstream does
+# not list the pinned release, fails the run and writes nothing. The upstreams
+# are stubs: curl serves the fixture's swift.org feed and `git ls-remote` its
+# tag lists.
 
 set -uo pipefail
 
@@ -26,34 +26,15 @@ isolate_git "$tmp"
 
 workspace='App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
 repo="$tmp/repo"
-mkdir -p "$repo/Tools/lib" "$repo/Tools/Dep" "$repo/Kit" "$repo/Core" "$repo/.github" "$repo/$(dirname "$workspace")"
+mkdir -p "$repo/Tools/lib" "$repo/Tools/Dep" "$repo/Kit" "$repo/Core" "$repo/Other" "$repo/.github" "$repo/$(dirname "$workspace")"
 cp "$ROOT/Tools/outdated-pins.sh" "$repo/Tools/"
 cp "$ROOT/Tools/lib/output.sh" "$ROOT/Tools/lib/static-linux-sdk.sh" "$repo/Tools/lib/"
 printf '#!/bin/bash\n[ "$1" = --version ] && cat "$FIXTURE/periphery.version"\n' >"$repo/Tools/install-periphery.sh"
 chmod +x "$repo/Tools/install-periphery.sh"
-# Every requirement form: up to the next major, written both ways; a
-# half-open and a closed range; up to the next minor; exact. A commented-out
-# one is not a requirement.
-cat >"$repo/Kit/Package.swift" <<'EOF'
-let package = Package(dependencies: [
-    // .package(url: "https://github.com/example/direct.git", exact: "1.2.0"),
-    .package(url: "https://github.com/example/direct.git", from: "1.2.0"),
-    .package(
-        url: "https://github.com/example/narrow.git", .upToNextMinor(from: "3.1.0")),
-    .package(url: "https://github.com/example/exact.git", exact: "5.0.0"),
-    .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.39.0"),
-    .package(url: "https://github.com/example/current.git", .upToNextMajor(from: "4.0.0")),
-    .package(url: "https://github.com/example/within.git", from: "2.0.0"),
-    .package(url: "https://github.com/example/closed.git", from: "4.0.0"),
-])
-EOF
-cat >"$repo/Core/Package.swift" <<'EOF'
-let package = Package(dependencies: [
-    .package(path: "../Kit"),
-    .package(url: "https://github.com/Example/Direct", "1.0.0"..<"2.0.0"),
-    .package(url: "https://github.com/example/closed.git", "4.0.0"..."4.2.0"),
-])
-EOF
+# Two manifests name swift-protobuf, one in another case and without .git.
+echo '.package(url: "https://github.com/apple/swift-protobuf.git", from: "1.39.0")' >"$repo/Kit/Package.swift"
+echo '.package(url: "https://github.com/Apple/Swift-Protobuf", "1.0.0"..<"2.0.0")' >"$repo/Core/Package.swift"
+echo '.package(url: "https://github.com/example/current.git", from: "4.0.0")' >"$repo/Other/Package.swift"
 echo '.package(url: "https://github.com/swiftlang/swift-syntax.git", from: "604.0.0")' >"$repo/Tools/Dep/Package.swift"
 cat >"$repo/Tools/Dep/Package.resolved" <<'EOF'
 { "pins" : [ { "identity" : "swift-syntax", "location" : "https://github.com/swiftlang/swift-syntax.git",
@@ -86,128 +67,91 @@ chmod +x "$stubs"/*
 export FIXTURE="$tmp" REAL_GIT="$real_git" PATH="$stubs:$PATH"
 
 tags() { mkdir -p "$tmp/tags"; printf '%s\n' "${@:2}" >"$tmp/tags/$(printf '%s' "$1" | tr '/:' '__')"; }
-release() { printf '{"name": "%s", "tag": "swift-%s-RELEASE", "platforms": [%s]}' "$1" "$1" "${2:-}"; }
-static_sdk() { printf '{"name": "Static SDK", "platform": "static-sdk", "version": "%s", "checksum": "%s"}' "$1" "$2"; }
+release() { printf '{"name": "%s", "tag": "swift-%s-RELEASE", "platforms": [{"platform": "static-sdk", "version": "%s", "checksum": "%s"}]}' "$1" "$1" "${2:-0.1.0}" "${3:-0000}"; }
 feed() { local IFS=,; printf '[%s]\n' "$*" >"$tmp/feed.json"; }
-# pins <identity>=<version>... — the workspace's Package.resolved, each pin at
-# https://github.com/example/<identity>.git but swift-protobuf at apple's.
+url() { case "$1" in swift-protobuf) echo https://github.com/apple/swift-protobuf.git ;; *) echo "https://github.com/example/$1.git" ;; esac; }
+# pins <identity>=<version>... — the workspace's Package.resolved, each pin at url's location.
 pins() {
-    local pin identity entries=()
+    local pin entries=()
     for pin; do
-        identity=${pin%%=*}
         entries+=("$(printf '{ "identity" : "%s", "location" : "%s", "state" : { "revision" : "%040d", "version" : "%s" } }' \
-            "$identity" "$(url "$identity")" 0 "${pin#*=}")")
+            "${pin%%=*}" "$(url "${pin%%=*}")" 0 "${pin#*=}")")
     done
     local IFS=,
     printf '{ "pins" : [ %s ], "version" : 3 }\n' "${entries[*]}" >"$repo/$workspace"
 }
-url() { case "$1" in swift-protobuf) echo https://github.com/apple/swift-protobuf.git ;; *) echo "https://github.com/example/$1.git" ;; esac; }
-dependabot() { printf 'version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directories:\n      - /\n%s\n' "$1" >"$repo/.github/dependabot.yml"; }
+dependabot() {
+    printf 'version: 2\nupdates:\n  - package-ecosystem: github-actions\n    directories:\n      - /\n  - package-ecosystem: swift\n    directories:\n      - %s\n    ignore:\n      - dependency-name: x\n' \
+        "$1" >"$repo/.github/dependabot.yml"
+}
 
 reset() {
     rm -rf "$tmp/tags" "$tmp/ls-remote.log" "$tmp/out.md" "$tmp/summary"
     echo 6.4.1 >"$repo/.swift-version"
-    feed "$(release 6.4.0)" "$(release 6.4.1)" "$(release 6.4.3 "$(static_sdk 0.1.0 aaaa)")" "$(release 6.5 "$(static_sdk 0.2.0 bbbb)")"
+    feed "$(release 6.4.1)"
     echo 3.8.0 >"$tmp/periphery.version"
-    tags https://github.com/peripheryapp/periphery.git 3.7.4 3.8.0 3.8.1 4.0.0
+    tags https://github.com/peripheryapp/periphery.git 3.7.4 3.8.0
     pins current=4.0.0
-    tags "$(url current)" 4.0.0 4.0.1-rc.1 5.0.0-beta
+    tags "$(url current)" 4.0.0 4.0.1-rc.1
     tags https://github.com/swiftlang/swift-syntax.git 604.0.0 604.0.1
-    dependabot $'  - package-ecosystem: swift\n    directories:\n      - /Tools/Dep'
+    dependabot /Tools/Dep
 }
 run() { (cd "$repo" && bash Tools/outdated-pins.sh --markdown "$tmp/out.md" --summary "$tmp/summary" >/dev/null 2>&1); }
-# row <pin> <release> — the line the markdown gives that release under that pin.
-row() {
-    awk -v pin="### $1 " -v release="- **$2**," '
-        index($0, "### ") == 1 { inside = index($0, pin) == 1 }
-        inside && index($0, release) == 1
-    ' "$tmp/out.md"
-}
-# releases <pin> — each `<release> <level>` the markdown lists under that pin.
-releases() {
-    awk -v pin="### $1 " '
-        index($0, "### ") == 1 { inside = index($0, pin) == 1; next }
-        inside && /^- \*\*/ {
-            line = $0; sub(/^- \*\*/, "", line)
-            release = line; sub(/\*\*.*/, "", release)
-            level = line; sub(/^[^*]*\*\*, an? /, "", level); sub(/ .*/, "", level)
-            print release, level
-        }
-    ' "$tmp/out.md" | paste -sd ' ' -
-}
+# row <pin> — the line the markdown gives under that pin's section.
+row() { awk -v pin="### $1 " 'index($0, "### ") == 1 { inside = index($0, pin) == 1; next } inside && /^- \*\*/' "$tmp/out.md"; }
+# newest <pin> — `<release> <level>` from that pin's line, or nothing when it is current.
+newest() { row "$1" | sed -E 's/^- \*\*([^*]*)\*\*, an? ([a-z]+) release.*/\1 \2/'; }
 
-# ---- what is behind, and the moves -------------------------------------------------
+# ---- what is behind, and the moves ---------------------------------------------------
 
 reset
-pins direct=1.2.0 narrow=3.1.0 exact=5.0.0 closed=4.0.0 swift-protobuf=1.39.0 within=2.0.0 transitive=3.0.0 current=4.0.0
-tags "$(url direct)" 1.2.0 1.2.1 1.3.0 2.0.0 2.1.0
-tags "$(url narrow)" 3.1.0 3.1.4 3.2.0
-tags "$(url exact)" 5.0.0 5.0.1
-tags "$(url closed)" 4.0.0 4.2.0 4.3.0
-tags "$(url swift-protobuf)" 1.39.0 1.41.0 2.0.0
-tags "$(url within)" 2.0.0 2.3.0
-tags "$(url transitive)" 3.0.0 3.0.5
+feed "$(release 6.3)" "$(release 6.4.0)" "$(release 6.4.1)" "$(release 6.4.3 0.1.0 aaaa)" "$(release 6.5 0.2.0 bbbb)"
+tags https://github.com/peripheryapp/periphery.git 3.7.4 3.8.0 3.8.1 4.0.0
+pins swift-protobuf=1.39.0 current=4.0.0
+tags "$(url swift-protobuf)" 1.39.0 1.41.0 protoc-artifactbundle-v31.1
 run
 check 'behind: exit status' "$?" 0
-check 'behind: summary' "$(cat "$tmp/summary")" $'verdict=findings\nbehind=9'
-check 'behind: Swift' "$(releases 'Swift toolchain')" '6.4.3 patch 6.5 minor'
-check 'behind: Periphery' "$(releases Periphery)" '3.8.1 patch 4.0.0 major'
-# A package's rows are the newest release its requirements admit and the
-# newest they exclude: what raising a lower bound, or widening, resolves to.
-check 'behind: from and a half-open range' "$(releases direct)" '1.3.0 minor 2.1.0 major'
-check 'behind: up to the next minor' "$(releases narrow)" '3.1.4 patch 3.2.0 minor'
-check 'behind: exact' "$(releases exact)" '5.0.1 patch'
-check 'behind: closed range' "$(releases closed)" '4.2.0 minor 4.3.0 minor'
-check 'behind: from excludes the next major' "$(releases swift-protobuf)" '1.41.0 minor 2.0.0 major'
-check 'behind: newest admitted' "$(releases within)" '2.3.0 minor'
-check 'behind: no manifest requires it' "$(releases transitive)" '3.0.5 patch'
+check 'behind: summary' "$(cat "$tmp/summary")" $'verdict=findings\nbehind=3'
+check 'behind: Swift' "$(newest 'Swift toolchain')" '6.5 minor'
+check 'behind: Periphery' "$(newest Periphery)" '4.0.0 major'
+check 'behind: package' "$(newest swift-protobuf)" '1.41.0 minor'
 check 'behind: current' "$(grep '^Current: ' "$tmp/out.md")" 'Current: current 4.0.0.'
 check 'behind: says what is not checked' "$(grep -c '^Not checked: ' "$tmp/out.md")" 1
-
-line=$(row 'Swift toolchain' 6.4.3)
-has 'swift patch: release notes' "$line" '(https://github.com/swiftlang/swift/releases/tag/swift-6.4.3-RELEASE)'
-has 'swift patch: its own SDK' "$line" '`STATIC_SDK_VERSION=0.1.0` and `STATIC_SDK_CHECKSUM=aaaa`'
-lacks 'swift patch: swift-syntax keeps its major' "$line" swift-syntax
-line=$(row 'Swift toolchain' 6.5)
-has 'swift minor: .swift-version' "$line" 'Write `6.5` to `.swift-version`'
-has 'swift minor: its own SDK' "$line" '`STATIC_SDK_VERSION=0.2.0` and `STATIC_SDK_CHECKSUM=bbbb`'
-has 'swift minor: swift-syntax follows' "$line" '`from: "605.0.0"` in `Tools/Dep/Package.swift`'
-has 'periphery: release notes' "$(row Periphery 3.8.1)" '(https://github.com/peripheryapp/periphery/releases/tag/3.8.1)'
-has 'periphery: move' "$(row Periphery 3.8.1)" "Set \`PERIPHERY_VERSION='3.8.1'\` in \`Tools/install-periphery.sh\`."
-has 'direct in range: either manifest' "$(row direct 1.3.0)" 'lower bound to `1.3.0` in `Core/Package.swift` or `Kit/Package.swift`'
-has 'direct excluded: every manifest' "$(row direct 2.1.0)" 'admit `2.1.0` in `Core/Package.swift` and `Kit/Package.swift`'
-has 'narrow in range' "$(row narrow 3.1.4)" 'lower bound to `3.1.4` in `Kit/Package.swift`'
-has 'narrow excluded' "$(row narrow 3.2.0)" 'admit `3.2.0` in `Kit/Package.swift`'
-has 'exact excluded' "$(row exact 5.0.1)" 'admit `5.0.1` in `Kit/Package.swift`'
-has 'closed in range' "$(row closed 4.2.0)" 'lower bound to `4.2.0` in `Core/Package.swift` or `Kit/Package.swift`'
-has 'closed excluded: only the manifest excluding it' "$(row closed 4.3.0)" 'admit `4.3.0` in `Core/Package.swift`, then'
-has 'swift-protobuf regenerates' "$(row swift-protobuf 1.41.0)" '`Tools/check-generated-protos.sh --write`'
-has 'transitive: release notes' "$(row transitive 3.0.5)" '(https://github.com/example/transitive/releases/tag/3.0.5)'
-has 'transitive: no manifest' "$(row transitive 3.0.5)" "deleting \`$workspace\`"
+has 'swift: release notes' "$(row 'Swift toolchain')" '(https://github.com/swiftlang/swift/releases/tag/swift-6.5-RELEASE)'
+has 'swift: the release and its own SDK' "$(row 'Swift toolchain')" \
+    'Write `6.5` to `.swift-version`, and in `Tools/lib/static-linux-sdk.sh` set `STATIC_SDK_VERSION=0.2.0` and `STATIC_SDK_CHECKSUM=bbbb`'
+has 'periphery: release notes' "$(row Periphery)" '(https://github.com/peripheryapp/periphery/releases/tag/4.0.0)'
+has 'periphery: move' "$(row Periphery)" "Set \`PERIPHERY_VERSION='4.0.0'\` in \`Tools/install-periphery.sh\`."
+has 'package: release notes' "$(row swift-protobuf)" '(https://github.com/apple/swift-protobuf/releases/tag/1.41.0)'
+has 'package: the manifests naming it' "$(row swift-protobuf)" 'In `Core/Package.swift`, `Kit/Package.swift`, make'
+has 'package: regenerates' "$(row swift-protobuf)" '`Tools/check-generated-protos.sh --write`'
 lacks 'dependabot: never looked up' "$(cat "$tmp/ls-remote.log")" swift-syntax
 lacks 'dependabot: never reported' "$(grep '^### ' "$tmp/out.md")" swift-syntax
 
 # ---- comparing releases ------------------------------------------------------------
 
-# Numeric, not lexical, at every level; a prerelease or another tag is not a
-# release; a `v` is optional; the newest at each level wins.
+# Numeric, not lexical, in every component; a prerelease or another tag is not a release.
 reset
 echo 1.4.2 >"$tmp/periphery.version"
-tags https://github.com/peripheryapp/periphery.git 1.4.1 1.4.2 1.4.10 v1.4.11 1.4.12-beta.1 1.9.9 1.12.3 1.5.0 \
-    2.0.0 10.1.0 protoc-artifactbundle-v31.1 latest
+tags https://github.com/peripheryapp/periphery.git 1.4.2 1.9.9 1.12.3 2.0.0 10.1.0 10.2.0-beta.1 latest
 run
-check 'newest at each level' "$(releases Periphery)" 'v1.4.11 patch 1.12.3 minor 10.1.0 major'
+check 'numeric major' "$(newest Periphery)" '10.1.0 major'
+reset
+echo 1.4.2 >"$tmp/periphery.version"
+tags https://github.com/peripheryapp/periphery.git 1.4.2 1.4.9 1.4.10
+run
+check 'numeric patch' "$(newest Periphery)" '1.4.10 patch'
 
-# A missing component is 0, in the pin and in a release.
+# A missing component is 0, in a release and in the pin.
 reset
 feed "$(release 6.3)" "$(release 6.4)" "$(release 6.4.1)"
 run
-check 'a missing component is 0' "$(releases 'Swift toolchain')" ''
+check 'a release of two components' "$(newest 'Swift toolchain')" ''
 reset
 echo 6.4 >"$repo/.swift-version"
-feed "$(release 6.3)" "$(release 6.4.0)" "$(release 6.4.1)" "$(release 6.5)"
+feed "$(release 6.4.0)" "$(release 6.4.1)"
 run
-check 'a pin of two components' "$(releases 'Swift toolchain')" '6.4.1 patch 6.5 minor'
+check 'a pin of two components' "$(newest 'Swift toolchain')" '6.4.1 patch'
 
 # Every release one step either side of 5.5.5 in each component: the level is
 # the first component that differs, when the release's is the greater.
@@ -228,37 +172,21 @@ for major in 4 5 6; do for minor in 4 5 6; do for patch in 4 5 6; do
     elif [ "$patch" -gt 5 ]; then
         want='patch'
     fi
-    check "5.5.5 against $major.$minor.$patch" "$(releases "sweep-$major-$minor-$patch")" "${want:+$major.$minor.$patch $want}"
+    check "5.5.5 against $major.$minor.$patch" "$(newest "sweep-$major-$minor-$patch")" "${want:+$major.$minor.$patch $want}"
 done; done; done
 
-# ---- Dependabot's directories ------------------------------------------------------
+# ---- Dependabot's directory --------------------------------------------------------
 
-# Each way dependabot.yml can name the directory leaves its pins to Dependabot;
-# another directory leaves them to this report.
-for form in list single quoted glob other; do
-    reset
-    case "$form" in
-        list) entry=$'    directories:\n      # the tool packages\n      - /Tools/Dep\n    schedule:\n      interval: weekly' ;;
-        single) entry='    directory: /Tools/Dep/' ;;
-        quoted) entry='    directory: "/Tools/Dep"' ;;
-        glob) entry=$'    directories:\n      - "/Tools/*"' ;;
-        other) entry=$'    directories:\n      - /Tools/Other' ;;
-    esac
-    dependabot "  - package-ecosystem: swift"$'\n'"$entry"
-    run
-    check "dependabot $form: exit status" "$?" 0
-    if [ "$form" = other ]; then
-        has "dependabot $form: reported" "$(cat "$tmp/ls-remote.log")" swift-syntax
-    else
-        lacks "dependabot $form: left to Dependabot" "$(cat "$tmp/ls-remote.log")" swift-syntax
-    fi
-done
+# A Package.resolved outside the directory dependabot.yml lists is this report's.
+reset
+dependabot /Tools/Other
+run
+check 'other directory: exit status' "$?" 0
+has 'other directory: reported' "$(cat "$tmp/ls-remote.log")" swift-syntax
 
 # ---- nothing behind ----------------------------------------------------------------
 
 reset
-feed "$(release 6.4.1)"
-tags https://github.com/peripheryapp/periphery.git 3.8.0
 run
 check 'current: exit status' "$?" 0
 check 'current: summary' "$(cat "$tmp/summary")" $'verdict=clean\nbehind=0'
@@ -266,9 +194,8 @@ check 'current: pins' "$(grep '^Current: ' "$tmp/out.md")" 'Current: Swift toolc
 
 # ---- what fails the run --------------------------------------------------------------
 
-# Each fails the run and writes nothing: a lookup that cannot be read, an
-# upstream that does not list the pinned release, and a pin or requirement
-# this cannot read.
+# Each fails the run and writes nothing: a lookup that cannot be read, or an
+# upstream that does not list the pinned release.
 unread() {
     local status
     run
@@ -305,29 +232,18 @@ reset
 tags "$(url current)" 4.0.1 5.0.0
 unread 'package tags without the pin'
 reset
-pins current=4.0.0 transitive=3.0.0
-unread 'package no manifest requires, unreachable'
-reset
 tags "$(url current)" 4.0.0-rc.1 nightly
 unread 'package with no release'
 reset
-pins current=3.9.0
-tags "$(url current)" 3.9.0 4.0.0
-unread 'pin its requirements exclude'
-reset
-pins current=4.0.0 odd=1.0.0
-tags "$(url odd)" 1.0.0
-cp "$repo/Kit/Package.swift" "$tmp/Kit.swift"
-printf '.package(url: "https://github.com/example/odd.git", from: oddVersion)\n' >>"$repo/Kit/Package.swift"
-unread 'requirement form unread'
-cp "$tmp/Kit.swift" "$repo/Kit/Package.swift"
+rm "$tmp/tags/$(url current | tr '/:' '__')"
+unread 'package unreachable'
 reset
 printf '{ "pins" : [ { "identity" : "current", "location" : "%s", "state" : { "revision" : "%040d", "branch" : "main" } } ], "version" : 3 }\n' \
     "$(url current)" 0 >"$repo/$workspace"
 unread 'pin to a revision'
 reset
-dependabot $'  - package-ecosystem: swift\n    schedule:\n      interval: weekly'
-unread 'dependabot swift entry without a directory'
+echo '{ "pins" : [' >"$repo/$workspace"
+unread 'Package.resolved unreadable'
 
 if [ "$FAIL" -gt 0 ]; then
     printf '%d outdated-pins fixture(s) failed\n' "$FAIL"
