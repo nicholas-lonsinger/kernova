@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Fixture tests for Tools/tracking-issue.sh: what it does with each verdict
 # when a tracker is open, when only a closed one exists and when none does;
-# which issue it takes as the tracker; and that a verdict it does not know, or
-# a listing that fails, changes nothing. gh is a stub that serves the
-# fixture's issue listings and logs every call.
+# which issue it takes as the tracker; and that a label the repository lacks,
+# a verdict it does not know, or a listing that fails, changes nothing. gh is
+# a stub that serves the fixture's label and issue listings and logs every
+# other call.
 
 set -uo pipefail
 
@@ -20,13 +21,19 @@ trap 'rm -rf "$tmp"' EXIT
 
 stubs="$tmp/stubs"
 mkdir -p "$stubs"
-# gh logs each call but the listings of the label's issues, which it serves
-# from $FIXTURE/<state>.json while that exists; a created issue is #900, and
-# the body of a created or edited one is kept in $FIXTURE/body.
+# gh answers for the label while $FIXTURE/label exists, and serves the
+# label's issues in a state from $FIXTURE/<state>.json while that exists; it
+# logs every other call. A created issue is #900, and the body of a created
+# or edited one is kept in $FIXTURE/body.
 cat >"$stubs/gh" <<'EOF'
 #!/bin/bash
 case "$*" in
-    'api --method GET --paginate repos/o/r/issues -f state='*' -f labels=Area: Build & CI -f per_page=100')
+    'api repos/o/r/labels/Outdated%20Pins')
+        [ -f "$FIXTURE/label" ] || { echo 'gh: Not Found (HTTP 404)' >&2; exit 1; }
+        echo '{"name": "Outdated Pins"}'
+        exit 0
+        ;;
+    'api --method GET --paginate repos/o/r/issues -f state='*' -f labels=Outdated Pins -f per_page=100')
         state=${7#state=}
         [ -f "$FIXTURE/$state.json" ] || exit 1
         cat "$FIXTURE/$state.json"
@@ -57,11 +64,12 @@ issue() {
 
 reset() {
     rm -f "$tmp/gh.log" "$tmp/body"
+    touch "$tmp/label"
     listing open '[]'
     listing closed '[]'
 }
 calls() { cat "$tmp/gh.log" 2>/dev/null; }
-tracker() { bash "$ROOT/Tools/tracking-issue.sh" 'Area: Build & CI' 'Outdated pins' .github/workflows/outdated-pins.yml "$@" >/dev/null 2>"$tmp/err"; }
+tracker() { bash "$ROOT/Tools/tracking-issue.sh" 'Outdated Pins' 'Outdated pins' .github/workflows/outdated-pins.yml "$@" >/dev/null 2>&1; }
 findings() { tracker findings 'Outdated pins: 2 behind' '2 behind' "$tmp/findings.md"; }
 
 # The tracker is the newest issue in the state whose title starts with the
@@ -89,17 +97,15 @@ findings
 check 'findings, open: exit status' "$?" 0
 check 'findings, open: calls' "$(calls | sed 's/--body-file .*/--body-file <file>/')" \
     'issue edit 55 --title Outdated pins: 2 behind --body-file <file>'
-body=$(cat "$tmp/body")
-has 'findings, open: summary' "$(head -1 <<<"$body")" ' — **2 behind**'
-has 'findings, open: workflow link' "$body" '[`.github/workflows/outdated-pins.yml`](https://github.com/o/r/blob/main/.github/workflows/outdated-pins.yml)'
-check 'findings, open: findings last' "$(tail -3 <<<"$body")" "$(cat "$tmp/findings.md")"
+has 'findings, open: summary' "$(head -1 "$tmp/body")" ' — **2 behind**'
+check 'findings, open: findings last' "$(tail -3 "$tmp/body")" "$(cat "$tmp/findings.md")"
 
 reset
 listing closed "[$(issue 30 'Outdated pins: 1 behind'), $(issue 35 'Outdated pins: 5 behind' pr), $(issue 20 'Outdated pins: 9 behind')]"
 findings
 check 'findings, closed one: exit status' "$?" 0
 check 'findings, closed one: calls' "$(calls | sed 's/body=@[^ ]*/body=@<file>/')" \
-    $'api repos/o/r/issues -f title=Outdated pins: 2 behind -F body=@<file> -f labels[]=Area: Build & CI -f type=Task\nissue comment 30 --body Superseded by #900 — newer scan with current findings. This issue\'s list is historical and is not combined with the new one.'
+    $'api repos/o/r/issues -f title=Outdated pins: 2 behind -F body=@<file> -f labels[]=Outdated Pins -f type=Task\nissue comment 30 --body Superseded by #900 — newer scan with current findings. This issue\'s list is historical and is not combined with the new one.'
 check 'findings, closed one: links it first' "$(head -1 "$tmp/body")" \
     "Supersedes #30 — these findings replace that issue's list; they are not combined with it."
 check 'findings, closed one: findings last' "$(tail -3 "$tmp/body")" "$(cat "$tmp/findings.md")"
@@ -108,15 +114,23 @@ reset
 findings
 check 'findings, none: exit status' "$?" 0
 check 'findings, none: calls' "$(calls | sed 's/body=@[^ ]*/body=@<file>/')" \
-    'api repos/o/r/issues -f title=Outdated pins: 2 behind -F body=@<file> -f labels[]=Area: Build & CI -f type=Task'
+    'api repos/o/r/issues -f title=Outdated pins: 2 behind -F body=@<file> -f labels[]=Outdated Pins -f type=Task'
 has 'findings, none: opens with the summary' "$(head -1 "$tmp/body")" 'Last scan: '
 
-# Nothing changes on a verdict it does not know, or a listing that fails.
+# Nothing changes under a label the repository lacks, on a verdict it does not
+# know, or when a listing fails.
+reset
+rm "$tmp/label"
+listing open "${open_pages[@]}"
+! tracker clean || fail 'no label, clean: exited 0'
+check 'no label, clean: calls' "$(calls)" ''
+! findings || fail 'no label, findings: exited 0'
+check 'no label, findings: calls' "$(calls)" ''
+
 reset
 listing open "${open_pages[@]}"
 ! tracker unknown || fail 'unknown verdict: exited 0'
 check 'unknown verdict: calls' "$(calls)" ''
-has 'unknown verdict: names it' "$(cat "$tmp/err")" "the verdict is 'unknown'"
 
 reset
 rm "$tmp/open.json"

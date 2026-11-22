@@ -50,6 +50,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
+      contents: read
       issues: write
     steps:
       - name: Checkout the tracking-issue script
@@ -73,7 +74,7 @@ jobs:
           VERDICT: ${{ needs.report.outputs.verdict }}
         run: |
           set -euo pipefail
-          tracker=(Tools/tracking-issue.sh "Area: Build & CI" "Outdated pins" .github/workflows/outdated-pins.yml)
+          tracker=(Tools/tracking-issue.sh "Outdated Pins" "Outdated pins" .github/workflows/outdated-pins.yml)
           if [ "$VERDICT" = clean ]; then
             "${tracker[@]}" clean
           else

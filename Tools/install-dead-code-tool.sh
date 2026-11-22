@@ -7,8 +7,6 @@
 #
 # Status text goes to stderr: stdout carries the path alone, so callers can
 # read it with a command substitution.
-#
-# pin: none — builds Tools/DeadCode from the tree
 
 set -euo pipefail
 

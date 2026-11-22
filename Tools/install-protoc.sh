@@ -10,8 +10,6 @@
 #
 # Status text goes to stderr: stdout carries the path alone, so callers can
 # read it with a command substitution.
-#
-# pin: none — builds the swift-protobuf revision Package.resolved pins
 
 set -euo pipefail
 

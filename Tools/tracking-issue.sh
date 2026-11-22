@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Keeps a scheduled scan's tracking issue: the one open issue labelled <label>
-# whose title starts with <prefix>, if any. Each scan writes a complete
-# snapshot, never merged with an earlier one, and a closed tracker is history:
+# whose title starts with <prefix>, if any. <label> is the tracker's own, on no
+# other issue, and the repository must already hold it. Each scan writes a
+# complete snapshot, never merged with an earlier one, and a closed tracker is
+# history:
 #
 #   clean, a tracker open      comment that the scan ran clean, and close it
 #   clean, none open           nothing
@@ -36,6 +38,11 @@ case "$verdict" in
 esac
 : "${GH_REPO:?tracking-issue: GH_REPO names no repository}"
 now=$(date -u +%Y-%m-%dT%H:%MZ)
+
+if ! gh api "repos/$GH_REPO/labels/$(jq -rn --arg label "$label" '$label | @uri')" >/dev/null; then
+    echo "tracking-issue: $GH_REPO has no label '$label' to keep the tracker under — create it first, for the tracker alone" >&2
+    exit 1
+fi
 
 # newest_tracker <open|closed> — the number of the newest tracker in that state.
 newest_tracker() {
