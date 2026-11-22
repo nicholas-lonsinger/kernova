@@ -21,11 +21,10 @@ import KernovaWire
 /// The far side's items are held as their encoded bytes, each an exact-size copy, and decoded one at a time
 /// when a pull or the owner names it, so what they hold is what is charged: an offer's OPEN, or a drag's
 /// listing as its take begins it, reserves `remoteItemOverhead` per item it counts, and each item its bytes as
-/// it arrives, a drag's promised item `carriedNameReservation` more. An offer the budget cannot hold is reset
-/// `TOO_LARGE`, as is the take of a drag whose listing it cannot hold.
+/// it arrives, a drag's promised item `carriedNameReservation` more, against the connection's
+/// ``ReceiverPolicy/remoteItemByteLimit``. An offer the budget cannot hold is reset `TOO_LARGE`, as is the take
+/// of a drag whose listing it cannot hold.
 package struct ItemOfferRegistry: Sendable {
-    /// The most the far side's open offers may hold at once: their reserved overhead and their items' bytes.
-    package static let remoteItemByteLimit = 16 << 20
     /// What one held item costs beyond its bytes, at most: its array slot, its `Data` storage object, and
     /// allocation rounding.
     package static let remoteItemOverhead = 128
@@ -48,7 +47,7 @@ package struct ItemOfferRegistry: Sendable {
         var header: ItemSetHeaderValue
         /// Each item's encoded bytes, as received.
         var items: [Data] = []
-        /// What this offer holds against `remoteItemByteLimit`.
+        /// What this offer holds against the budget.
         var charged: Int
         var complete = false
     }
@@ -127,7 +126,7 @@ package struct ItemOfferRegistry: Sendable {
     }
 
     #if DEBUG
-    /// What the far side's open offers hold against `remoteItemByteLimit`, and the bytes their items hold.
+    /// What the far side's open offers hold against the budget, and the bytes their items hold.
     package var remoteHoldingForTesting: (charged: Int, itemBytes: Int, items: Int) {
         (
             remoteCharged, remote.reduce(0) { $0 + $1.items.reduce(0) { $0 + $1.count } },
@@ -197,15 +196,15 @@ package struct ItemOfferRegistry: Sendable {
     }
 
     /// Gives the far side's whole DRAG offer of `token`, never listed, the `count` items its take lists, each to
-    /// follow through ``appendCarried(_:_:reserving:)``, and reserves their overhead as an offer's OPEN does; the
-    /// error refusing it when no such offer is open (`ITEM_OFFER_STALE`) or the budget cannot hold the count
-    /// (`TOO_LARGE`).
-    mutating func reserveCarried(_ token: Data, count: Int) -> WireError? {
+    /// follow through ``appendCarried(_:_:limit:reserving:)``, and reserves their overhead as an offer's OPEN
+    /// does; the error refusing it when no such offer is open (`ITEM_OFFER_STALE`) or a budget of `limit` cannot
+    /// hold the count (`TOO_LARGE`).
+    mutating func reserveCarried(_ token: Data, count: Int, limit: Int) -> WireError? {
         guard let index = remote.firstIndex(where: { $0.header.token == token }), remote[index].header.feature == .drag,
             remote[index].complete, remote[index].header.count == 0
         else { return WireError(.itemOfferStale, debugDetail: "no whole, unlisted drag offer of this token is open") }
-        guard count <= (Self.remoteItemByteLimit - remoteCharged) / Self.remoteItemOverhead else {
-            return WireError(.tooLarge, limit: UInt64(Self.remoteItemByteLimit))
+        guard count <= (limit - remoteCharged) / Self.remoteItemOverhead else {
+            return WireError(.tooLarge, limit: UInt64(limit))
         }
         let reserved = count * Self.remoteItemOverhead
         remote[index].header.count = count
@@ -215,13 +214,16 @@ package struct ItemOfferRegistry: Sendable {
     }
 
     /// Holds `message`, one encoded Item, as the next item the take of the far side's DRAG offer of `token`
-    /// lists, held to an offer's item's rules and charged as one; `judge` sees it decoded and answers what it
-    /// reserves beyond its bytes, or nil to refuse it `MALFORMED_MESSAGE`. The error refusing it, or nil.
-    mutating func appendCarried(_ token: Data, _ message: Data, reserving judge: (OfferedItem) -> Int?) -> WireError? {
+    /// lists, held to an offer's item's rules and charged as one against a budget of `limit`; `judge` sees it
+    /// decoded and answers what it reserves beyond its bytes, or nil to refuse it `MALFORMED_MESSAGE`. The error
+    /// refusing it, or nil.
+    mutating func appendCarried(
+        _ token: Data, _ message: Data, limit: Int, reserving judge: (OfferedItem) -> Int?
+    ) -> WireError? {
         guard let index = remote.firstIndex(where: { $0.header.token == token }), remote[index].header.feature == .drag,
             remote[index].complete
         else { return WireError(.itemOfferStale, debugDetail: "no whole drag offer of this token is open") }
-        return admit(message, at: index, reserving: judge)
+        return admit(message, at: index, limit: limit, reserving: judge)
     }
 
     // MARK: This side's offers
@@ -428,8 +430,9 @@ package struct ItemOfferRegistry: Sendable {
             return refuse(stream, .malformedMessage, "a DRAG_OFFER that lists items", &connection)
         }
         // The header's claim is reserved whole, so no count can outrun the budget.
-        guard header.count <= (Self.remoteItemByteLimit - remoteCharged) / Self.remoteItemOverhead else {
-            return connection.reset(stream, WireError(.tooLarge, limit: UInt64(Self.remoteItemByteLimit)))
+        let limit = connection.policy.remoteItemByteLimit
+        guard header.count <= (limit - remoteCharged) / Self.remoteItemOverhead else {
+            return connection.reset(stream, WireError(.tooLarge, limit: UInt64(limit)))
         }
         let reserved = header.count * Self.remoteItemOverhead
         remoteCharged += reserved
@@ -438,15 +441,20 @@ package struct ItemOfferRegistry: Sendable {
 
     private mutating func item(_ stream: StreamID, _ message: Data, _ connection: inout Connection) {
         guard let index = remote.firstIndex(where: { $0.stream == stream }),
-            let refusal = admit(message, at: index, reserving: { _ in 0 }), connection.canReset(stream)
+            let refusal = admit(
+                message, at: index, limit: connection.policy.remoteItemByteLimit, reserving: { _ in 0 }),
+            connection.canReset(stream)
         else { return }
         if refusal.code != .tooLarge { connection.diagnose(.remoteViolation(refusal.debugDetail)) }
         connection.reset(stream, refusal)
     }
 
     /// Holds `message`, one encoded Item, as the next item of the far side's offer at `index`, charging its
-    /// bytes and what `judge`, seeing it decoded, answers it reserves beyond them; the error refusing it, or nil.
-    private mutating func admit(_ message: Data, at index: Int, reserving judge: (OfferedItem) -> Int?) -> WireError? {
+    /// bytes and what `judge`, seeing it decoded, answers it reserves beyond them against a budget of `limit`; the
+    /// error refusing it, or nil.
+    private mutating func admit(
+        _ message: Data, at index: Int, limit: Int, reserving judge: (OfferedItem) -> Int?
+    ) -> WireError? {
         guard remote[index].items.count < remote[index].header.count else {
             return WireError(.streamProtocolError, debugDetail: "more items than the header's count")
         }
@@ -460,8 +468,8 @@ package struct ItemOfferRegistry: Sendable {
             return WireError(.malformedMessage, debugDetail: "an Item its offer cannot carry")
         }
         let cost = message.count + reserved
-        guard cost <= Self.remoteItemByteLimit - remoteCharged else {
-            return WireError(.tooLarge, limit: UInt64(Self.remoteItemByteLimit))
+        guard cost <= limit - remoteCharged else {
+            return WireError(.tooLarge, limit: UInt64(limit))
         }
         // A copy, so the item holds exactly its bytes rather than the received buffer it was cut from.
         remote[index].items.append(message.withUnsafeBytes { Data($0) })

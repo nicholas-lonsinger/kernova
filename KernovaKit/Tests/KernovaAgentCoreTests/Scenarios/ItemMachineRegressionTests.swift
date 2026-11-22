@@ -11,9 +11,9 @@ import Testing
 
 /// What the item-transfer machines hold against a far side shaped to break them.
 enum Regression {
-    /// A host that read the far peer's Hello, recording no trace when `trace` is false.
-    static func host(trace: Bool = true) -> HostileRun {
-        let run = HostileRun(local: .host, seed: 1, items: true) { connection in
+    /// A host judging by `policy` that read the far peer's Hello, recording no trace when `trace` is false.
+    static func host(trace: Bool = true, policy: ReceiverPolicy = .production) -> HostileRun {
+        let run = HostileRun(local: .host, seed: 1, items: true, receiverPolicy: policy) { connection in
             if !trace { connection.recordsTraceForTesting = false }
         }
         run.feed([HostileItems.peerHello], preamble: true)
@@ -43,6 +43,16 @@ enum Regression {
         run.streamResets.filter { $0.stream == stream }.map(\.code)
     }
 
+    /// The limits the endpoint's RESETs on `stream` report.
+    static func resetLimits(_ run: HostileRun, on stream: UInt32) -> [UInt64] {
+        run.written.compactMap { frame in
+            guard frame.type == .reset, frame.streamID.rawValue == stream,
+                let error = try? Kernova_V2_Error(serializedBytes: frame.payload)
+            else { return nil }
+            return error.limit
+        }
+    }
+
     static func localFaults(_ run: HostileRun) -> [Diagnostic] {
         run.hostEvents.compactMap {
             if case .diagnostic(let diagnostic) = $0, case .localFault = diagnostic { diagnostic } else { nil }
@@ -55,12 +65,11 @@ enum Regression {
 @Suite("Item machine regressions", .serialized)
 struct ItemMachineRegressionTests {
     static let overhead = ItemOfferRegistry.remoteItemOverhead
-    static let limit = ItemOfferRegistry.remoteItemByteLimit
 
     @Test("Empty Items cost their overhead: a full budget of them refuses the next offer until it is released")
     func emptyItemsCharged() {
-        let run = Regression.host(trace: false)
-        let fits = Self.limit / Self.overhead
+        let run = Regression.host(trace: false, policy: HostileItems.smallItemBudget)
+        let fits = 128
         run.feed([WireFrames.open(1, .clipboardOfferByPeer, body: HostileItems.header(count: UInt32(fits)))])
         Regression.feedRepeated(run, Unit.rawMessage(1, Data()), count: fits)
         run.feed([Unit.end(1)])
@@ -69,6 +78,7 @@ struct ItemMachineRegressionTests {
             WireFrames.open(3, .clipboardOfferByPeer, body: HostileItems.header(token: Regression.token(3), count: 1))
         ])
         #expect(Regression.resets(run, on: 3) == [.tooLarge])
+        #expect(Regression.resetLimits(run, on: 3) == [16_384])
         // The far side withdraws the full offer; its whole charge returns.
         run.feed([WireFrames.reset(1, code: ErrorCode.cancelled.rawValue)])
         run.feed([
@@ -77,6 +87,27 @@ struct ItemMachineRegressionTests {
         ])
         #expect(Regression.resets(run, on: 5).isEmpty)
         #expect(Regression.received(run).count == 2)
+    }
+
+    @Test(
+        "An offered Item fills the budget to the byte beside its overhead; two bytes more reset the offer TOO_LARGE",
+        arguments: [(16_256, true), (16_258, false)])
+    func anItemFillsTheBudget(bytes: Int, fits: Bool) throws {
+        let run = Regression.host(trace: false, policy: HostileItems.smallItemBudget)
+        // An Item of `bytes / 2` empty representations.
+        let item = Data((0..<bytes).map { $0 % 2 == 0 ? 0x0A : 0x00 })
+        run.feed([
+            WireFrames.open(1, .clipboardOfferByPeer, body: HostileItems.header(count: 1)), Unit.rawMessage(1, item),
+            Unit.end(1),
+        ])
+        guard fits else {
+            #expect(Regression.resets(run, on: 1) == [.tooLarge])
+            #expect(Regression.resetLimits(run, on: 1) == [16_384])
+            #expect(run.host?.itemOffersForTesting.remoteHoldingForTesting.charged == 0)
+            return
+        }
+        #expect(Regression.resets(run, on: 1).isEmpty)
+        #expect(run.host?.itemOffersForTesting.remoteHoldingForTesting.charged == 16_384)
     }
 
     @Test("Items that decode to far more than their bytes are held encoded; the one a pull names decodes alone")
@@ -93,7 +124,7 @@ struct ItemMachineRegressionTests {
         let holding = try #require(run.host?.itemOffersForTesting.remoteHoldingForTesting)
         #expect(holding.itemBytes == messages * payload.count)
         #expect(holding.charged == holding.itemBytes + holding.items * Self.overhead)
-        #expect(holding.charged <= Self.limit)
+        #expect(holding.charged <= ReceiverPolicy.production.remoteItemByteLimit)
         let item = try #require(run.readItem(HostileItems.header(count: 0).token))
         #expect(item.representations.count == 32_768)
     }
@@ -183,7 +214,8 @@ struct ClipboardOfferRequestTests {
     @Test("A request whose answer the host's registry resets over budget at its OPEN ends TOO_LARGE once released")
     func answerOverBudget() throws {
         let (run, stream) = try Self.asking()
-        let overBudget = UInt32(ItemOfferRegistry.remoteItemByteLimit / ItemOfferRegistry.remoteItemOverhead + 1)
+        let overBudget = UInt32(
+            ReceiverPolicy.production.remoteItemByteLimit / ItemOfferRegistry.remoteItemOverhead + 1)
         run.feed([Self.answerOpen(count: overBudget)])
         #expect(Regression.resets(run, on: 1) == [.tooLarge])
         #expect(Self.ends(run).isEmpty)

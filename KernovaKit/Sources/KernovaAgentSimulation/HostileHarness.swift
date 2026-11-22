@@ -140,11 +140,12 @@ package final class HostileRun {
     private var nextRequest: UInt64 = 0
 
     /// A real host endpoint (`local == .host`) holding `bundles`, or a real
-    /// session peer whose process's power ledger is `powerLedger`; with `items`, serving every item feature,
-    /// and a host's policy enabling them.
+    /// session peer whose process's power ledger is `powerLedger`, judging the far side by `receiverPolicy`; with
+    /// `items`, serving every item feature, and a host's policy enabling them.
     package init(
         local: SimSide, seed: UInt64, testKinds: Bool = false, items: Bool = false,
         bundles: [BundledPayload] = [SimHub.bundle(size: 100_000, tag: 1)], powerLedger: PowerLedger = PowerLedger(),
+        receiverPolicy: ReceiverPolicy = .production,
         tweak: @escaping @Sendable (inout ConnectionConfiguration) -> Void = { _ in }
     ) {
         rng = SplitMix64(seed: seed)
@@ -160,6 +161,7 @@ package final class HostileRun {
             var configuration = HostConfiguration(
                 claim: PeerClaim(role: .host), sessionToken: Data(repeating: 9, count: 16),
                 policy: items ? SimItems.policy(policy) : policy, bundles: bundles)
+            configuration.receiverPolicy = receiverPolicy
             configuration.tweakForTesting = configure
             if items { configuration.items = SimItems.served }
             host = HostEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: now)
@@ -170,6 +172,7 @@ package final class HostileRun {
                 claim: spec.claim, state: spec.state, power: spec.power.offer, logs: .available(NoParams()),
                 update: .available(UpdateOffer(formats: [.executable])))
             configuration.powerLedger = powerLedger
+            configuration.receiverPolicy = receiverPolicy
             configuration.tweakForTesting = configure
             if items { configuration.items = SimItems.served }
             peer = PeerEndpoint(configuration, generation: ConnectionGeneration(rawValue: 1), now: now)

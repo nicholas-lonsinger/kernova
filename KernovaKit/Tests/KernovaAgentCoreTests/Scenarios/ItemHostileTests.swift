@@ -18,6 +18,12 @@ enum HostileItems {
     static let request = SimItems.request(7)
     static let peerHello = WireFrames.hello(role: .sessionPeer, items: true)
     static let pullStream: UInt32 = 2
+    /// Production's receiver policy with a 16 KiB item budget, which a test fills in a few frames.
+    static let smallItemBudget: ReceiverPolicy = {
+        var policy = ReceiverPolicy.production
+        policy.remoteItemByteLimit = 16_384
+        return policy
+    }()
 
     static var container: Data {
         (try? SimItems.container(request, representation, accepting: ContainerAcceptance(request, storage: .folder)))

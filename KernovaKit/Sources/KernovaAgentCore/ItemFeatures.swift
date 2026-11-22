@@ -563,7 +563,8 @@ struct DragOffers: Sendable {
             return resetTake(
                 take.id.stream, WireError(.malformedMessage, debugDetail: "an item_count of 0"), &connection)
         }
-        if let refusal = items.reserveCarried(take.token, count: count) {
+        let limit = connection.policy.remoteItemByteLimit
+        if let refusal = items.reserveCarried(take.token, count: count, limit: limit) {
             return resetTake(take.id.stream, refusal, &connection)
         }
         opened[index].listing = .listing(expected: count, received: 0, estimate: 0)
@@ -583,7 +584,8 @@ struct DragOffers: Sendable {
         }
         var carried: Representation?
         var total = estimate
-        let refusal = items.appendCarried(token, item.encoded) { decoded in
+        let limit = connection.policy.remoteItemByteLimit
+        let refusal = items.appendCarried(token, item.encoded, limit: limit) { decoded in
             guard let representation = DragItems.carriedRepresentation(of: decoded)?.representation,
                 let sum = DragItems.adding(representation.sizeEstimate, to: total)
             else { return nil }
