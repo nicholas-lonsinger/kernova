@@ -22,8 +22,21 @@ struct LogindPeerStateTests {
             case system
         }
 
-        init(_ role: Role, prepare: (FakeLogind.Recorder) -> Void = { _ in }) throws {
-            bus = try PrivateBus()
+        /// Runs `body` with a watch on a bus of its own, for the length of a ``PrivateBus/with(_:)``, once
+        /// `prepare` has set up the fake.
+        static func with(
+            _ role: Role, prepare: (FakeLogind.Recorder) -> Void, _ body: (Watch) async throws -> Void
+        ) async throws {
+            try await PrivateBus.with { bus in try await body(try Watch(role, on: bus, prepare: prepare)) }
+        }
+
+        /// Runs `body` with a watch on a bus of its own, over the fake as it starts.
+        static func with(_ role: Role, _ body: (Watch) async throws -> Void) async throws {
+            try await with(role, prepare: { _ in }, body)
+        }
+
+        private init(_ role: Role, on bus: PrivateBus, prepare: (FakeLogind.Recorder) -> Void) throws {
+            self.bus = bus
             fake = try FakeLogind(on: bus)
             prepare(fake.recorder)
             connection = try bus.connect()
@@ -38,13 +51,13 @@ struct LogindPeerStateTests {
         }
 
         /// The next state delivered.
-        func next() throws -> PeerSessionState? {
-            try inbox.next().get()
+        func next() async throws -> PeerSessionState? {
+            try await inbox.next().get()
         }
 
         /// The next delivery, which must be a failure.
-        func nextFailure() throws -> DBusServiceError? {
-            guard case .failure(let error) = try inbox.next() else { return nil }
+        func nextFailure() async throws -> DBusServiceError? {
+            guard case .failure(let error) = try await inbox.next() else { return nil }
             return error
         }
 
@@ -83,210 +96,233 @@ struct LogindPeerStateTests {
     static let user = "user"
 
     @Test("The session peer starts from its user's display session, the console OFF while it is in the background")
-    func sessionPeerInitial() throws {
-        let watch = try Watch(.session(uid: FakeLogind.displayUID))
-        #expect(try watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
-        #expect(try watch.isSettled())
+    func sessionPeerInitial() async throws {
+        try await Watch.with(.session(uid: FakeLogind.displayUID)) { watch async throws in
+            #expect(try await watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
+            #expect(try watch.isSettled())
+        }
     }
 
     @Test("The session peer follows Active and Class: ON while its session is a user's in front, OFF otherwise")
-    func sessionPeerActiveFlips() throws {
-        let watch = try Watch(.session(uid: FakeLogind.displayUID))
-        let session = FakeLogind.userSession
-        #expect(try watch.next()?.console == .off)
+    func sessionPeerActiveFlips() async throws {
+        try await Watch.with(.session(uid: FakeLogind.displayUID)) { watch in
+            let session = FakeLogind.userSession
+            #expect(try await watch.next()?.console == .off)
 
-        // Logged in, or switched back to.
-        watch.fake.recorder.userSessionActive.withLock { $0 = true }
-        try watch.sessionChanged(session, [("Active", .boolean(true))])
-        #expect(try watch.next() == PeerSessionState(console: .on, sessionID: "2", userName: Self.user))
+            // Logged in, or switched back to.
+            watch.fake.recorder.userSessionActive.withLock { $0 = true }
+            try watch.sessionChanged(session, [("Active", .boolean(true))])
+            #expect(try await watch.next() == PeerSessionState(console: .on, sessionID: "2", userName: Self.user))
 
-        // A change that leaves the state as it was — the screen locking sets only LockedHint — is no update.
-        try watch.sessionChanged(session, [("LockedHint", .boolean(true))])
-        try watch.sessionChanged(session, [("Active", .boolean(true))])
-        #expect(try watch.isSettled())
+            // A change that leaves the state as it was — the screen locking sets only LockedHint — is no update.
+            try watch.sessionChanged(session, [("LockedHint", .boolean(true))])
+            try watch.sessionChanged(session, [("Active", .boolean(true))])
+            #expect(try watch.isSettled())
 
-        // Switched out: another session took the seat.
-        watch.fake.recorder.userSessionActive.withLock { $0 = false }
-        try watch.sessionChanged(session, [("Active", .boolean(false))])
-        #expect(try watch.next()?.console == .off)
+            // Switched out: another session took the seat.
+            watch.fake.recorder.userSessionActive.withLock { $0 = false }
+            try watch.sessionChanged(session, [("Active", .boolean(false))])
+            #expect(try await watch.next()?.console == .off)
 
-        // In front, but not yet a full user session.
-        watch.fake.recorder.userSessionClass.withLock { $0 = "user-incomplete" }
-        watch.fake.recorder.userSessionActive.withLock { $0 = true }
-        try watch.sessionChanged(session, [("Active", .boolean(true))])
-        #expect(try watch.isSettled())
-        watch.fake.recorder.userSessionClass.withLock { $0 = "user" }
-        try watch.sessionChanged(session, [("Class", .string("user"))])
-        #expect(try watch.next()?.console == .on)
+            // In front, but not yet a full user session.
+            watch.fake.recorder.userSessionClass.withLock { $0 = "user-incomplete" }
+            watch.fake.recorder.userSessionActive.withLock { $0 = true }
+            try watch.sessionChanged(session, [("Active", .boolean(true))])
+            #expect(try watch.isSettled())
+            watch.fake.recorder.userSessionClass.withLock { $0 = "user" }
+            try watch.sessionChanged(session, [("Class", .string("user"))])
+            #expect(try await watch.next()?.console == .on)
+        }
     }
 
     @Test("The session peer follows Display to the user's next session, and a change to the one it left is none")
-    func sessionPeerDisplayMoves() throws {
-        let watch = try Watch(.session(uid: FakeLogind.displayUID))
-        #expect(try watch.next()?.sessionID == "2")
+    func sessionPeerDisplayMoves() async throws {
+        try await Watch.with(.session(uid: FakeLogind.displayUID)) { watch in
+            #expect(try await watch.next()?.sessionID == "2")
 
-        watch.fake.recorder.display.withLock { $0 = FakeLogind.nextUserSession }
-        try watch.displayChanged()
-        #expect(try watch.next() == PeerSessionState(console: .on, sessionID: "3", userName: Self.user))
+            watch.fake.recorder.display.withLock { $0 = FakeLogind.nextUserSession }
+            try watch.displayChanged()
+            #expect(try await watch.next() == PeerSessionState(console: .on, sessionID: "3", userName: Self.user))
 
-        watch.fake.recorder.userSessionActive.withLock { $0 = true }
-        try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(true))])
-        #expect(try watch.isSettled())
+            watch.fake.recorder.userSessionActive.withLock { $0 = true }
+            try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(true))])
+            #expect(try watch.isSettled())
+        }
     }
 
     @Test("A logout re-elects Display before logind signals it: the old session's last change rereads it")
-    func sessionPeerLogout() throws {
-        let watch = try Watch(.session(uid: FakeLogind.displayUID)) { $0.userSessionActive.withLock { $0 = true } }
-        #expect(try watch.next()?.console == .on)
+    func sessionPeerLogout() async throws {
+        try await Watch.with(
+            .session(uid: FakeLogind.displayUID), prepare: { $0.userSessionActive.withLock { $0 = true } }
+        ) { watch in
+            #expect(try await watch.next()?.console == .on)
 
-        // The session stops: Display moves on with no signal, then the greeter takes the seat.
-        watch.fake.recorder.display.withLock { $0 = nil }
-        watch.fake.recorder.userSessionActive.withLock { $0 = false }
-        try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
-        #expect(try watch.next() == nil)
+            // The session stops: Display moves on with no signal, then the greeter takes the seat.
+            watch.fake.recorder.display.withLock { $0 = nil }
+            watch.fake.recorder.userSessionActive.withLock { $0 = false }
+            try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
+            #expect(try await watch.next() == nil)
 
-        // Finalized: logind's Display signal, to what was already read.
-        try watch.displayChanged()
-        #expect(try watch.isSettled())
+            // Finalized: logind's Display signal, to what was already read.
+            try watch.displayChanged()
+            #expect(try watch.isSettled())
 
-        // Logged back in.
-        watch.fake.recorder.display.withLock { $0 = FakeLogind.nextUserSession }
-        try watch.displayChanged()
-        #expect(try watch.next()?.sessionID == "3")
+            // Logged back in.
+            watch.fake.recorder.display.withLock { $0 = FakeLogind.nextUserSession }
+            try watch.displayChanged()
+            #expect(try await watch.next()?.sessionID == "3")
+        }
     }
 
     static let unknownObject = DBusServiceError.call(
         .remote(DBusRemoteError(name: "org.freedesktop.DBus.Error.UnknownObject", message: "Unknown object")))
 
     @Test("A read that fails delivers its error alone, keeps both subscriptions, and the next signal rereads")
-    func failedReadKeepsWatching() throws {
-        let watch = try Watch(.session(uid: FakeLogind.displayUID))
-        #expect(try watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
+    func failedReadKeepsWatching() async throws {
+        try await Watch.with(.session(uid: FakeLogind.displayUID)) { watch in
+            #expect(try await watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
 
-        // Display names a session whose properties are already gone.
-        watch.fake.recorder.vanishedSessions.withLock { $0 = [FakeLogind.nextUserSession.path] }
-        watch.fake.recorder.display.withLock { $0 = FakeLogind.nextUserSession }
-        try watch.displayChanged()
-        #expect(try watch.nextFailure() == Self.unknownObject)
-        #expect(try watch.isSettled())
+            // Display names a session whose properties are already gone.
+            watch.fake.recorder.vanishedSessions.withLock { $0 = [FakeLogind.nextUserSession.path] }
+            watch.fake.recorder.display.withLock { $0 = FakeLogind.nextUserSession }
+            try watch.displayChanged()
+            #expect(try await watch.nextFailure() == Self.unknownObject)
+            #expect(try watch.isSettled())
 
-        // The session subscription it had still rereads...
-        watch.fake.recorder.vanishedSessions.withLock { $0 = [] }
-        try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
-        #expect(try watch.next() == PeerSessionState(console: .on, sessionID: "3", userName: Self.user))
+            // The session subscription it had still rereads...
+            watch.fake.recorder.vanishedSessions.withLock { $0 = [] }
+            try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
+            #expect(try await watch.next() == PeerSessionState(console: .on, sessionID: "3", userName: Self.user))
 
-        // ...and so does the user's.
-        watch.fake.recorder.display.withLock { $0 = FakeLogind.userSession }
-        try watch.displayChanged()
-        #expect(try watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
+            // ...and so does the user's.
+            watch.fake.recorder.display.withLock { $0 = FakeLogind.userSession }
+            try watch.displayChanged()
+            #expect(try await watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
+        }
     }
 
     @Test("After a failed read, a state equal to the last one delivered is not delivered again")
-    func failedReadKeepsLastState() throws {
-        let watch = try Watch(.session(uid: FakeLogind.displayUID))
-        #expect(try watch.next()?.console == .off)
+    func failedReadKeepsLastState() async throws {
+        try await Watch.with(.session(uid: FakeLogind.displayUID)) { watch in
+            #expect(try await watch.next()?.console == .off)
 
-        watch.fake.recorder.vanishedSessions.withLock { $0 = [FakeLogind.userSession.path] }
-        try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
-        #expect(try watch.nextFailure() == Self.unknownObject)
-        watch.fake.recorder.vanishedSessions.withLock { $0 = [] }
-        try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
-        #expect(try watch.isSettled())
+            watch.fake.recorder.vanishedSessions.withLock { $0 = [FakeLogind.userSession.path] }
+            try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
+            #expect(try await watch.nextFailure() == Self.unknownObject)
+            watch.fake.recorder.vanishedSessions.withLock { $0 = [] }
+            try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
+            #expect(try watch.isSettled())
 
-        watch.fake.recorder.userSessionActive.withLock { $0 = true }
-        try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(true))])
-        #expect(try watch.next()?.console == .on)
+            watch.fake.recorder.userSessionActive.withLock { $0 = true }
+            try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(true))])
+            #expect(try await watch.next()?.console == .on)
+        }
     }
 
     @Test("A first read that fails delivers its error, and the next signal delivers the first state")
-    func failedFirstRead() throws {
-        let watch = try Watch(.session(uid: FakeLogind.displayUID)) { recorder in
-            recorder.vanishedSessions.withLock { $0 = [FakeLogind.userSession.path] }
+    func failedFirstRead() async throws {
+        try await Watch.with(
+            .session(uid: FakeLogind.displayUID),
+            prepare: { recorder in
+                recorder.vanishedSessions.withLock { $0 = [FakeLogind.userSession.path] }
+            }
+        ) { watch in
+            #expect(try await watch.nextFailure() == Self.unknownObject)
+            #expect(try watch.isSettled())
+            watch.fake.recorder.vanishedSessions.withLock { $0 = [] }
+            try watch.displayChanged()
+            #expect(try await watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
         }
-        #expect(try watch.nextFailure() == Self.unknownObject)
-        #expect(try watch.isSettled())
-        watch.fake.recorder.vanishedSessions.withLock { $0 = [] }
-        try watch.displayChanged()
-        #expect(try watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
     }
 
     @Test("A display session on no seat, which logind reports as always active, never holds the console")
-    func seatless() throws {
-        let watch = try Watch(.session(uid: FakeLogind.displayUID)) { recorder in
-            recorder.userSessionActive.withLock { $0 = true }
-            recorder.userSessionSeat.withLock { $0 = nil }
+    func seatless() async throws {
+        try await Watch.with(
+            .session(uid: FakeLogind.displayUID),
+            prepare: { recorder in
+                recorder.userSessionActive.withLock { $0 = true }
+                recorder.userSessionSeat.withLock { $0 = nil }
+            }
+        ) { watch async throws in
+            #expect(try await watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
         }
-        #expect(try watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
     }
 
     @Test("A user with no display session has no session peer state")
-    func sessionless() throws {
-        let watch = try Watch(.session(uid: FakeLogind.sessionlessUID))
-        #expect(try watch.next() == nil)
+    func sessionless() async throws {
+        try await Watch.with(.session(uid: FakeLogind.sessionlessUID)) { watch async throws in
+            #expect(try await watch.next() == nil)
+        }
     }
 
     @Test("A user logind does not know cannot be followed")
-    func unknownUser() throws {
-        #expect(throws: DBusServiceError.self) { _ = try Watch(.session(uid: 1002)) }
+    func unknownUser() async throws {
+        await #expect(throws: DBusServiceError.self) { try await Watch.with(.session(uid: 1002)) { _ in } }
     }
 
     @Test("The system peer follows seat0: OFF at the greeter, ON naming a user's session, OFF again on a switch")
-    func systemPeerFollows() throws {
-        let watch = try Watch(.system)
-        #expect(try watch.next() == PeerSessionState(console: .off))
+    func systemPeerFollows() async throws {
+        try await Watch.with(.system) { watch in
+            #expect(try await watch.next() == PeerSessionState(console: .off))
 
-        watch.fake.recorder.userSessionActive.withLock { $0 = true }
-        watch.fake.recorder.activeSession.withLock { $0 = FakeLogind.userSession }
-        try watch.activeSessionChanged()
-        #expect(try watch.next() == PeerSessionState(console: .on, consoleSessionID: "2"))
+            watch.fake.recorder.userSessionActive.withLock { $0 = true }
+            watch.fake.recorder.activeSession.withLock { $0 = FakeLogind.userSession }
+            try watch.activeSessionChanged()
+            #expect(try await watch.next() == PeerSessionState(console: .on, consoleSessionID: "2"))
 
-        // A user switch: the greeter becomes active, then the next user's session.
-        watch.fake.recorder.userSessionActive.withLock { $0 = false }
-        watch.fake.recorder.activeSession.withLock { $0 = FakeLogind.greeterSession }
-        try watch.activeSessionChanged()
-        #expect(try watch.next() == PeerSessionState(console: .off))
-        watch.fake.recorder.activeSession.withLock { $0 = FakeLogind.nextUserSession }
-        try watch.activeSessionChanged()
-        #expect(try watch.next() == PeerSessionState(console: .on, consoleSessionID: "3"))
+            // A user switch: the greeter becomes active, then the next user's session.
+            watch.fake.recorder.userSessionActive.withLock { $0 = false }
+            watch.fake.recorder.activeSession.withLock { $0 = FakeLogind.greeterSession }
+            try watch.activeSessionChanged()
+            #expect(try await watch.next() == PeerSessionState(console: .off))
+            watch.fake.recorder.activeSession.withLock { $0 = FakeLogind.nextUserSession }
+            try watch.activeSessionChanged()
+            #expect(try await watch.next() == PeerSessionState(console: .on, consoleSessionID: "3"))
 
-        // No foreground session, as a headless guest's.
-        watch.fake.recorder.activeSession.withLock { $0 = nil }
-        try watch.activeSessionChanged()
-        #expect(try watch.next() == PeerSessionState(console: .off))
+            // No foreground session, as a headless guest's.
+            watch.fake.recorder.activeSession.withLock { $0 = nil }
+            try watch.activeSessionChanged()
+            #expect(try await watch.next() == PeerSessionState(console: .off))
+        }
     }
 
     @Test("The system peer follows the active session's Class, and stops hearing a session that left the seat")
-    func systemPeerSessionChanges() throws {
-        let watch = try Watch(.system) { recorder in
-            recorder.userSessionActive.withLock { $0 = true }
-            recorder.userSessionClass.withLock { $0 = "user-incomplete" }
-            recorder.activeSession.withLock { $0 = FakeLogind.userSession }
-        }
-        #expect(try watch.next() == PeerSessionState(console: .off))
-        watch.fake.recorder.userSessionClass.withLock { $0 = "user" }
-        try watch.sessionChanged(FakeLogind.userSession, [("Class", .string("user"))])
-        #expect(try watch.next() == PeerSessionState(console: .on, consoleSessionID: "2"))
+    func systemPeerSessionChanges() async throws {
+        try await Watch.with(
+            .system,
+            prepare: { recorder in
+                recorder.userSessionActive.withLock { $0 = true }
+                recorder.userSessionClass.withLock { $0 = "user-incomplete" }
+                recorder.activeSession.withLock { $0 = FakeLogind.userSession }
+            }
+        ) { watch in
+            #expect(try await watch.next() == PeerSessionState(console: .off))
+            watch.fake.recorder.userSessionClass.withLock { $0 = "user" }
+            try watch.sessionChanged(FakeLogind.userSession, [("Class", .string("user"))])
+            #expect(try await watch.next() == PeerSessionState(console: .on, consoleSessionID: "2"))
 
-        watch.fake.recorder.activeSession.withLock { $0 = FakeLogind.nextUserSession }
-        try watch.activeSessionChanged()
-        #expect(try watch.next() == PeerSessionState(console: .on, consoleSessionID: "3"))
-        watch.fake.recorder.userSessionClass.withLock { $0 = "greeter" }
-        try watch.sessionChanged(FakeLogind.userSession, [("Class", .string("greeter"))])
-        #expect(try watch.isSettled())
+            watch.fake.recorder.activeSession.withLock { $0 = FakeLogind.nextUserSession }
+            try watch.activeSessionChanged()
+            #expect(try await watch.next() == PeerSessionState(console: .on, consoleSessionID: "3"))
+            watch.fake.recorder.userSessionClass.withLock { $0 = "greeter" }
+            try watch.sessionChanged(FakeLogind.userSession, [("Class", .string("greeter"))])
+            #expect(try watch.isSettled())
+        }
     }
 
     @Test("A logind that answers NoSuchSeat for seat0 reads the console OFF")
-    func noSuchSeat() throws {
-        let bus = try PrivateBus()
-        let fake = try NoSuchSeatLogind(on: bus)
-        defer { withExtendedLifetime(fake) {} }
-        let logind = Logind(connection: try bus.connect())
-        let inbox = BlockingInbox<Result<PeerSessionState?, DBusServiceError>>()
-        let watcher = try LogindPeerStateWatcher.systemPeer(logind, on: DispatchQueue(label: "test")) {
-            inbox.put($0)
+    func noSuchSeat() async throws {
+        try await PrivateBus.with { bus in
+            let fake = try NoSuchSeatLogind(on: bus)
+            defer { withExtendedLifetime(fake) {} }
+            let logind = Logind(connection: try bus.connect())
+            let inbox = BlockingInbox<Result<PeerSessionState?, DBusServiceError>>()
+            let watcher = try LogindPeerStateWatcher.systemPeer(logind, on: DispatchQueue(label: "test")) {
+                inbox.put($0)
+            }
+            defer { withExtendedLifetime(watcher) {} }
+            #expect(try await inbox.next().get() == PeerSessionState(console: .off))
         }
-        defer { withExtendedLifetime(watcher) {} }
-        #expect(try inbox.next().get() == PeerSessionState(console: .off))
     }
 }
 

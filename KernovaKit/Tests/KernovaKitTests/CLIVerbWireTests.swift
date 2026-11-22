@@ -31,8 +31,8 @@ struct CLIVerbWireTests {
     // MARK: - Reads
 
     @Test("list asks for the whole library and names no virtual machine")
-    func listAsksForTheLibrary() throws {
-        let exchanged = try CLIWire.exchange(
+    func listAsksForTheLibrary() async throws {
+        let exchanged = try await CLIWire.exchange(
             ["list"], answering: VMCommandResponse(result: .summaries([alpha])))
 
         #expect(exchanged.sent == [.list(VMListQuery(sort: .manual))])
@@ -40,8 +40,8 @@ struct CLIVerbWireTests {
     }
 
     @Test("list crosses as one query: repeated flags an include-set, different flags each constraining")
-    func listSendsItsFilter() throws {
-        let exchanged = try CLIWire.exchange(
+    func listSendsItsFilter() async throws {
+        let exchanged = try await CLIWire.exchange(
             [
                 "list", "--os", "linux", "--state", "running", "--state", "heldByAnotherCopy",
                 "--network", "nat", "--network", "unlisted", "--network", "Lab",
@@ -61,16 +61,16 @@ struct CLIVerbWireTests {
     }
 
     @Test("groups asks for the library's groups")
-    func groupsAsksForTheGroups() throws {
+    func groupsAsksForTheGroups() async throws {
         let group = GroupSummary(id: alpha.id, name: "Linux Lab", kind: .smartGroup, members: [alpha])
-        let exchanged = try CLIWire.exchange(["groups"], answering: VMCommandResponse(result: .groups([group])))
+        let exchanged = try await CLIWire.exchange(["groups"], answering: VMCommandResponse(result: .groups([group])))
 
         #expect(exchanged.sent == [.groups])
         #expect(try exchanged.answer.payload() == .groups([group]))
     }
 
     @Test("info asks for the VM its argument names, then its disks by the identifier that answered")
-    func infoAsksForTheVMThenItsDisks() throws {
+    func infoAsksForTheVMThenItsDisks() async throws {
         let disks = [
             StorageDiskSummary(
                 id: alpha.id, label: "Main Disk", kind: "virtio", readOnly: false,
@@ -79,21 +79,21 @@ struct CLIVerbWireTests {
         ]
         let answers = [[VMCommandResponse(result: .info(info))], [VMCommandResponse(result: .storageDisks(disks))]]
 
-        let named = try infoExchange(["info", "Alpha"], answering: answers)
+        let named = try await infoExchange(["info", "Alpha"], answering: answers)
         #expect(named.sent == [.info(.idOrName("Alpha")), .storageDisks(.id(alpha.id))])
         #expect(named.printed.contains("Main Disk: 100 GB, 10.1 GB used"))
 
-        let byID = try infoExchange(["info", alpha.id.uuidString, "--id"], answering: answers)
+        let byID = try await infoExchange(["info", alpha.id.uuidString, "--id"], answering: answers)
         #expect(byID.sent == [.info(.id(alpha.id)), .storageDisks(.id(alpha.id))])
 
-        let json = try infoExchange(["info", "Alpha", "--format", "json", "--quiet"], answering: answers)
+        let json = try await infoExchange(["info", "Alpha", "--format", "json", "--quiet"], answering: answers)
         #expect(json.sent == [.info(.idOrName("Alpha")), .storageDisks(.id(alpha.id))])
         #expect(json.printed.contains("\"storageDisks\""))
     }
 
     @Test("--quiet on info prints the name alone, and reads no disks for it")
-    func quietInfoIsTheNameAlone() throws {
-        let quiet = try infoExchange(
+    func quietInfoIsTheNameAlone() async throws {
+        let quiet = try await infoExchange(
             ["info", "Alpha", "--quiet"], answering: [[VMCommandResponse(result: .info(info))]])
 
         #expect(quiet.sent == [.info(.idOrName("Alpha"))])
@@ -104,7 +104,7 @@ struct CLIVerbWireTests {
     /// what it would print.
     private func infoExchange(
         _ arguments: [String], answering answers: [[VMCommandResponse]]
-    ) throws -> (sent: [VMCommandRequest.Verb], printed: String) {
+    ) async throws -> (sent: [VMCommandRequest.Verb], printed: String) {
         let command = try #require(try KernovaCommand.parseAsRoot(arguments) as? KernovaCommand.Info)
         let listener = try TestCommandSocket()
         defer { listener.close() }
@@ -114,7 +114,7 @@ struct CLIVerbWireTests {
         listener.serve(answers)
 
         let printed = try command.output(for: try command.selector(), from: client)
-        return (try listener.requests().map(\.verb), printed)
+        return (try await listener.requests().map(\.verb), printed)
     }
 
     @Test("info --id on something that is not an identifier refuses as a usage error before it connects")
@@ -134,22 +134,22 @@ struct CLIVerbWireTests {
     // MARK: - Lifecycle
 
     @Test("start crosses carrying --recovery when the line asks for it, and --yes as every consent")
-    func startSendsItsRecoveryFlag() throws {
-        let plain = try CLIWire.exchange(["start", "Alpha"], answering: accepted)
+    func startSendsItsRecoveryFlag() async throws {
+        let plain = try await CLIWire.exchange(["start", "Alpha"], answering: accepted)
         #expect(
             plain.sent == [
                 .start(.idOrName("Alpha"), recovery: false, consent: .none)
             ])
         #expect(try plain.answer.payload() == .ok)
 
-        let recovery = try CLIWire.exchange(
+        let recovery = try await CLIWire.exchange(
             ["start", "Alpha", "--recovery"], answering: accepted)
         #expect(
             recovery.sent == [
                 .start(.idOrName("Alpha"), recovery: true, consent: .none)
             ])
 
-        let anyway = try CLIWire.exchange(["start", "Alpha", "--yes"], answering: accepted)
+        let anyway = try await CLIWire.exchange(["start", "Alpha", "--yes"], answering: accepted)
         #expect(
             anyway.sent == [
                 .start(.idOrName("Alpha"), recovery: false, consent: .all)
@@ -157,7 +157,7 @@ struct CLIVerbWireTests {
     }
 
     @Test("A MAC address refusal prints each route as the command lines that take it, a start it ends with last")
-    func macAddressRefusalPrintsItsRoutes() throws {
+    func macAddressRefusalPrintsItsRoutes() async throws {
         let requirement = StepRequirement(
             title: "Duplicate MAC Address", message: "Change its network first.",
             routes: [
@@ -176,7 +176,7 @@ struct CLIVerbWireTests {
                             vm: alpha, assignments: [ConfigurationEntry(key: "network.mac", value: "new")]),
                     ], ending: .start(vm: alpha)),
             ])
-        let exchanged = try CLIWire.exchange(
+        let exchanged = try await CLIWire.exchange(
             ["resume", "Alpha"],
             answering: VMCommandResponse(result: .failure(.stepRequired(requirement: requirement))))
 
@@ -195,15 +195,15 @@ struct CLIVerbWireTests {
     }
 
     @Test("stop crosses with the disposition its method names, its consent, and its deadline")
-    func stopSendsItsDispositionAndDeadline() throws {
-        let graceful = try CLIWire.exchange(["stop", "Alpha"], answering: accepted)
+    func stopSendsItsDispositionAndDeadline() async throws {
+        let graceful = try await CLIWire.exchange(["stop", "Alpha"], answering: accepted)
         #expect(
             graceful.sent == [
                 .stop(
                     .idOrName("Alpha"), disposition: .graceful, consent: .none, timeout: nil)
             ])
 
-        let forced = try CLIWire.exchange(
+        let forced = try await CLIWire.exchange(
             ["stop", "Alpha", "--force", "--yes", "--timeout", "30"], answering: accepted)
         #expect(
             forced.sent == [
@@ -212,7 +212,7 @@ struct CLIVerbWireTests {
     }
 
     @Test("stop --yes on a paused guest exits 5, naming the resume as a command line")
-    func stopOfAPausedGuestNamesTheResume() throws {
+    func stopOfAPausedGuestNamesTheResume() async throws {
         let vm = VMSummary(
             id: UUID(), name: "My VM", status: "paused", ipAddress: .unavailable,
             heldByAnotherCopy: false)
@@ -220,7 +220,7 @@ struct CLIVerbWireTests {
             message:
                 "\u{201C}My VM\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses anything in the guest that isn\u{2019}t saved to disk.",
             routes: [StepRoute(title: "Resume", steps: [.resume(vm: vm)], ending: .refusedVerb)])
-        let exchanged = try CLIWire.exchange(
+        let exchanged = try await CLIWire.exchange(
             ["stop", "My VM", "--yes"],
             answering: VMCommandResponse(result: .failure(.stepRequired(requirement: refusal))))
 
@@ -240,46 +240,46 @@ struct CLIVerbWireTests {
     }
 
     @Test("suspend crosses as the verb that saves the session")
-    func suspendSendsItsVerb() throws {
-        let exchanged = try CLIWire.exchange(
+    func suspendSendsItsVerb() async throws {
+        let exchanged = try await CLIWire.exchange(
             ["suspend", "Alpha"], answering: accepted)
 
         #expect(exchanged.sent == [.suspend(.idOrName("Alpha"))])
     }
 
     @Test("pause crosses as the verb that holds the guest in memory")
-    func pauseSendsItsVerb() throws {
-        let exchanged = try CLIWire.exchange(["pause", "Alpha"], answering: accepted)
+    func pauseSendsItsVerb() async throws {
+        let exchanged = try await CLIWire.exchange(["pause", "Alpha"], answering: accepted)
 
         #expect(exchanged.sent == [.pause(.idOrName("Alpha"))])
     }
 
     @Test("resume crosses as the verb that lets a paused guest run again, --yes as every consent")
-    func resumeSendsItsVerb() throws {
-        let exchanged = try CLIWire.exchange(
+    func resumeSendsItsVerb() async throws {
+        let exchanged = try await CLIWire.exchange(
             ["resume", "Alpha"], answering: accepted)
         #expect(exchanged.sent == [.resume(.idOrName("Alpha"), consent: .none)])
 
-        let anyway = try CLIWire.exchange(["resume", "Alpha", "--yes"], answering: accepted)
+        let anyway = try await CLIWire.exchange(["resume", "Alpha", "--yes"], answering: accepted)
         #expect(anyway.sent == [.resume(.idOrName("Alpha"), consent: .all)])
     }
 
     @Test("restart crosses with the deadline bounding its shutdown half")
-    func restartSendsItsDeadline() throws {
-        let bare = try CLIWire.exchange(["restart", "Alpha"], answering: accepted)
+    func restartSendsItsDeadline() async throws {
+        let bare = try await CLIWire.exchange(["restart", "Alpha"], answering: accepted)
         #expect(
             bare.sent == [
                 .restart(.idOrName("Alpha"), disposition: .graceful, timeout: nil, consent: .none)
             ])
 
-        let bounded = try CLIWire.exchange(
+        let bounded = try await CLIWire.exchange(
             ["restart", "Alpha", "--timeout", "45"], answering: accepted)
         #expect(
             bounded.sent == [
                 .restart(.idOrName("Alpha"), disposition: .graceful, timeout: 45, consent: .none)
             ])
 
-        let anyway = try CLIWire.exchange(["restart", "Alpha", "--yes"], answering: accepted)
+        let anyway = try await CLIWire.exchange(["restart", "Alpha", "--yes"], answering: accepted)
         #expect(
             anyway.sent == [
                 .restart(.idOrName("Alpha"), disposition: .graceful, timeout: nil, consent: .all)
@@ -312,15 +312,15 @@ struct CLIVerbWireTests {
     @Test(
         "restart --force and --anyway cross as their dispositions; without --yes the consent refusal names --yes, as stop's do",
         arguments: restartPrompts.indices)
-    func restartMethodCrossesAndAsksForYes(row: Int) throws {
+    func restartMethodCrossesAndAsksForYes(row: Int) async throws {
         let (flag, disposition, prompt) = Self.restartPrompts[row]
-        let consented = try CLIWire.exchange(["restart", "Alpha", flag, "--yes"], answering: accepted)
+        let consented = try await CLIWire.exchange(["restart", "Alpha", flag, "--yes"], answering: accepted)
         #expect(
             consented.sent == [
                 .restart(.idOrName("Alpha"), disposition: disposition, timeout: nil, consent: .all)
             ])
 
-        let unconsented = try CLIWire.exchange(
+        let unconsented = try await CLIWire.exchange(
             ["restart", "Alpha", flag],
             answering: VMCommandResponse(result: .failure(.confirmationRequired(prompt: prompt))))
         #expect(
@@ -337,8 +337,8 @@ struct CLIVerbWireTests {
     }
 
     @Test("open is the one verb that crosses asking for something to come forward")
-    func openSendsItsVerb() throws {
-        let exchanged = try CLIWire.exchange(["open", "Alpha"], answering: accepted)
+    func openSendsItsVerb() async throws {
+        let exchanged = try await CLIWire.exchange(["open", "Alpha"], answering: accepted)
 
         #expect(exchanged.sent == [.open(.idOrName("Alpha"))])
     }
@@ -346,16 +346,16 @@ struct CLIVerbWireTests {
     // MARK: - Library
 
     @Test("rename crosses with the label to apply")
-    func renameSendsTheNewName() throws {
-        let exchanged = try CLIWire.exchange(
+    func renameSendsTheNewName() async throws {
+        let exchanged = try await CLIWire.exchange(
             ["rename", "Alpha", "Beta"], answering: accepted)
 
         #expect(exchanged.sent == [.rename(.idOrName("Alpha"), newName: "Beta")])
     }
 
     @Test("delete crosses to the Trash unless --permanent, and takes no external file with it")
-    func deleteSendsItsDisposalAndConsent() throws {
-        let trashed = try CLIWire.exchange(
+    func deleteSendsItsDisposalAndConsent() async throws {
+        let trashed = try await CLIWire.exchange(
             ["delete", "Alpha", "--yes"], answering: accepted)
         #expect(
             trashed.sent == [
@@ -363,7 +363,7 @@ struct CLIVerbWireTests {
                     .idOrName("Alpha"), permanently: false, alsoRemoving: [], consent: .all)
             ])
 
-        let permanent = try CLIWire.exchange(
+        let permanent = try await CLIWire.exchange(
             ["delete", "Alpha", "--permanent"], answering: accepted)
         #expect(
             permanent.sent == [
@@ -404,15 +404,15 @@ struct CLIVerbWireTests {
     }
 
     @Test("reveal crosses as the Finder verb, not as the app's own bring-up")
-    func revealSendsTheFinderVerb() throws {
-        let exchanged = try CLIWire.exchange(
+    func revealSendsTheFinderVerb() async throws {
+        let exchanged = try await CLIWire.exchange(
             ["reveal", "Alpha"], answering: accepted)
 
         #expect(exchanged.sent == [.showInFinder(.idOrName("Alpha"))])
     }
 
     @Test("usb rules names a machine only when the line did")
-    func usbRulesSendsAnOptionalSelector() throws {
+    func usbRulesSendsAnOptionalSelector() async throws {
         let pairings = [
             USBPairingSummary(
                 vm: "Alpha", key: "04e8:6300:0100:0373", name: "Samsung Type-C",
@@ -420,20 +420,20 @@ struct CLIVerbWireTests {
         ]
         let answered = VMCommandResponse(result: .usbPairings(pairings))
 
-        let everyMachine = try CLIWire.exchange(["usb", "rules"], answering: answered)
+        let everyMachine = try await CLIWire.exchange(["usb", "rules"], answering: answered)
         #expect(everyMachine.sent == [.usbPairings(nil)])
         #expect(try everyMachine.answer.payload() == .usbPairings(pairings))
 
-        let named = try CLIWire.exchange(
+        let named = try await CLIWire.exchange(
             ["usb", "rules", "Alpha"], answering: answered)
         #expect(named.sent == [.usbPairings(.idOrName("Alpha"))])
     }
 
     @Test("usb forget crosses as the durable key, verbatim")
-    func usbForgetSendsTheKey() throws {
+    func usbForgetSendsTheKey() async throws {
         // The key is what the user copied out of a listing, `@` and `:` and
         // all, so nothing may reinterpret it on the way.
-        let exchanged = try CLIWire.exchange(
+        let exchanged = try await CLIWire.exchange(
             ["usb", "forget", "Alpha", "04e8:6300:0100@hub/Port-A@1"], answering: accepted)
 
         #expect(
@@ -450,8 +450,8 @@ struct CLIVerbWireTests {
     }
 
     @Test("network list asks for the library's networks and names no virtual machine")
-    func networkListAsksForTheNetworks() throws {
-        let exchanged = try CLIWire.exchange(
+    func networkListAsksForTheNetworks() async throws {
+        let exchanged = try await CLIWire.exchange(
             ["network", "list"], answering: VMCommandResponse(result: .networks([lab])))
 
         #expect(exchanged.sent == [.networks])
@@ -459,27 +459,27 @@ struct CLIVerbWireTests {
     }
 
     @Test("network create crosses with its name and kind, the kind nat unless --kind names one")
-    func networkCreateSendsItsKind() throws {
+    func networkCreateSendsItsKind() async throws {
         let answered = VMCommandResponse(result: .network(lab))
 
-        let plain = try CLIWire.exchange(["network", "create", "Lab"], answering: answered)
+        let plain = try await CLIWire.exchange(["network", "create", "Lab"], answering: answered)
         #expect(plain.sent == [.createNetwork(name: "Lab", kind: .nat)])
         #expect(try plain.answer.payload() == .network(lab))
 
-        let hostOnly = try CLIWire.exchange(
+        let hostOnly = try await CLIWire.exchange(
             ["network", "create", "Lab", "--kind", "hostOnly"], answering: answered)
         #expect(hostOnly.sent == [.createNetwork(name: "Lab", kind: .hostOnly)])
     }
 
     @Test("network rename and delete cross with the network as the line spelled it")
-    func networkRenameAndDeleteSendTheirNetwork() throws {
+    func networkRenameAndDeleteSendTheirNetwork() async throws {
         // The app matches a name or an identifier, so the argument crosses
         // verbatim either way.
-        let renamed = try CLIWire.exchange(
+        let renamed = try await CLIWire.exchange(
             ["network", "rename", "Lab", "Bench"], answering: accepted)
         #expect(renamed.sent == [.renameNetwork(network: "Lab", newName: "Bench")])
 
-        let deleted = try CLIWire.exchange(
+        let deleted = try await CLIWire.exchange(
             ["network", "delete", lab.id.uuidString], answering: accepted)
         #expect(deleted.sent == [.deleteNetwork(network: lab.id.uuidString)])
     }

@@ -136,7 +136,7 @@ struct ShellCompletionInstallerTests {
     }
 
     @Test("The pasteable command writes the same loader the install would")
-    func theManualCommandWritesTheLoader() throws {
+    func theManualCommandWritesTheLoader() async throws {
         for shell in ShellCompletionInstaller.Shell.allCases {
             // A folder that is not there yet, which is what the `mkdir -p` is
             // for on a Mac where none of the default ones exist.
@@ -147,7 +147,7 @@ struct ShellCompletionInstallerTests {
 
             // One line, so it can be selected out of a callout and pasted.
             #expect(!command.contains("\n"))
-            let ran = try ChildProcess(URL(fileURLWithPath: "/bin/sh"), ["-c", command]).exit()
+            let ran = try await ChildProcess(URL(fileURLWithPath: "/bin/sh"), ["-c", command]).exit()
             #expect(ran.status == 0)
 
             let written = try String(contentsOf: destination, encoding: .utf8)

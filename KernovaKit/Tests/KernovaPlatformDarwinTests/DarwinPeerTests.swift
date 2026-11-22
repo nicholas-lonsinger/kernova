@@ -59,23 +59,23 @@ struct DarwinPeerTests {
     }
 
     @Test("The watcher reports the link's removal — an uninstall — apart from a move, so the peer stops for good")
-    func slotLinkWatcherRemoval() throws {
+    func slotLinkWatcherRemoval() async throws {
         let root = TestScratchDirectory(prefix: "kernova-link").url.path
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(atPath: root + "/current", withDestinationPath: "slots/a")
-        let changed = DispatchSemaphore(value: 0)
+        let changed = AsyncGate()
         let changes = Locked<[SlotLinkWatcher.Change]>([])
         let queue = DispatchQueue(label: "test.watcher")
         let watcher = try #require(
             SlotLinkWatcher(root: root, runningSlot: "a", queue: queue) { change in
                 changes.withLock { $0.append(change) }
-                changed.signal()
+                changed.notify()
             })
         defer { watcher.cancel() }
         queue.sync {}
         #expect(changes.withLock { $0 }.isEmpty)
         #expect(unlink(root + "/current") == 0)
-        try Backstop("the watcher's report").wait(for: changed)
+        try await changed.wait(named: "the watcher's report") { !changes.withLock(\.isEmpty) }
         #expect(changes.withLock { $0 } == [.removed])
     }
 }

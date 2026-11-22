@@ -92,24 +92,13 @@ public final class ChildProcess: Sendable {
     ///
     /// A wait expecting the child to end takes the `testWaitBackstop` default;
     /// a shorter `timeout` is for a deadline the test asserts.
-    @available(*, noasync, message: "Await exit(fileID:line:) instead of blocking a cooperative thread")
     public func exit(
         timeout: TimeInterval = testWaitBackstop, fileID: String = #fileID, line: Int = #line
-    ) throws -> Exit {
+    ) async throws -> Exit {
         do {
-            try changed.block(named: "the exit of \(name)", timeout: timeout, fileID: fileID, line: line) { ended }
-        } catch {
-            kill()
-            throw error
-        }
-        return try exited()
-    }
-
-    /// How it ended, waited for as the blocking overload does, suspending
-    /// instead of blocking.
-    public func exit(fileID: String = #fileID, line: Int = #line) async throws -> Exit {
-        do {
-            try await changed.wait(named: "the exit of \(name)", fileID: fileID, line: line) { ended }
+            try await changed.wait(named: "the exit of \(name)", timeout: timeout, fileID: fileID, line: line) {
+                ended
+            }
         } catch {
             kill()
             throw error
@@ -120,10 +109,9 @@ public final class ChildProcess: Sendable {
     /// The first line it writes to standard output, without its line break,
     /// once written — or `nil` when its output ends first; kills it and throws
     /// `Backstop.failure(_:)` when neither has happened by the deadline.
-    @available(*, noasync, message: "Read it on a thread of its own instead of blocking a cooperative thread")
-    public func firstLine(fileID: String = #fileID, line: Int = #line) throws -> String? {
+    public func firstLine(fileID: String = #fileID, line: Int = #line) async throws -> String? {
         do {
-            try changed.block(named: "the first line of \(name)", fileID: fileID, line: line) {
+            try await changed.wait(named: "the first line of \(name)", fileID: fileID, line: line) {
                 state.withLock { $0.output.contains(UInt8(ascii: "\n")) || $0.outputEnded }
             }
         } catch {

@@ -220,11 +220,11 @@ public func drainMainQueue(fileID: String = #fileID, line: Int = #line) async th
 // MARK: - BlockingInbox
 
 /// Values a handler on another thread delivers, which a test reads in order,
-/// blocking for each.
+/// waiting for each: a test body awaits them, and a thread of its own — a
+/// handler holding the code under test — blocks for them.
 public final class BlockingInbox<Value: Sendable>: Sendable {
     private let values = Locked<[Value]>([])
-    /// Signalled once per value put.
-    private let arrived = DispatchSemaphore(value: 0)
+    private let arrived = AsyncGate()
 
     /// An inbox holding nothing.
     public init() {}
@@ -232,24 +232,50 @@ public final class BlockingInbox<Value: Sendable>: Sendable {
     /// Delivers `value`.
     public func put(_ value: Value) {
         values.withLock { $0.append(value) }
-        arrived.signal()
+        arrived.notify()
     }
 
     /// Whether every value delivered so far has been read.
     public var isEmpty: Bool { values.withLock(\.isEmpty) }
 
     /// The oldest value not yet read, once one has arrived.
-    @available(*, noasync, message: "Await a value through Backstop.park instead of blocking a cooperative thread")
-    public func next(fileID: String = #fileID, line: Int = #line) throws(TestFailure) -> Value {
-        try Backstop("BlockingInbox.next()", fileID: fileID, line: line).wait(for: arrived)
-        return values.withLock { $0.removeFirst() }
+    public func next(fileID: String = #fileID, line: Int = #line) async throws -> Value {
+        var taken: Value?
+        try await arrived.wait(named: "BlockingInbox.next()", fileID: fileID, line: line) {
+            taken = take()
+            return taken != nil
+        }
+        return Self.taken(taken)
     }
 
     /// The next `count` values, each waited for as ``next(fileID:line:)`` waits.
-    @available(*, noasync, message: "Await values through Backstop.park instead of blocking a cooperative thread")
-    public func next(_ count: Int, fileID: String = #fileID, line: Int = #line) throws(TestFailure) -> [Value] {
+    public func next(_ count: Int, fileID: String = #fileID, line: Int = #line) async throws -> [Value] {
         var values: [Value] = []
-        for _ in 0..<count { values.append(try next(fileID: fileID, line: line)) }
+        for _ in 0..<count { values.append(try await next(fileID: fileID, line: line)) }
         return values
+    }
+
+    /// The oldest value not yet read, once one has arrived, blocking the
+    /// calling thread as ``next(fileID:line:)`` suspends.
+    @available(*, noasync, message: "Await next(fileID:line:) instead of blocking a cooperative thread")
+    public func next(fileID: String = #fileID, line: Int = #line) throws(TestFailure) -> Value {
+        var taken: Value?
+        try arrived.block(named: "BlockingInbox.next()", fileID: fileID, line: line) {
+            taken = take()
+            return taken != nil
+        }
+        return Self.taken(taken)
+    }
+
+    /// Removes and answers the oldest value, if any.
+    private func take() -> Value? {
+        values.withLock { $0.isEmpty ? nil : $0.removeFirst() }
+    }
+
+    /// What a gate wait's predicate took: the gate returns only once the
+    /// predicate held, so a value is always there.
+    private static func taken(_ taken: Value?) -> Value {
+        guard let taken else { preconditionFailure("the inbox's gate returned before a value was taken") }
+        return taken
     }
 }
