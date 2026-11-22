@@ -14,10 +14,9 @@
 #   - Launch Services registrations whose `path:` no longer exists on disk,
 #     under the current app.kernova.* identifiers and the legacy
 #     pre-#471-rename `com.kernova.app` one alike
-#   - Kernova build arenas in Xcode's own DerivedData folder, none of them a
-#     `make` build's: `make` builds in each checkout's DerivedData/. Reported
-#     with the command that removes them, and never removed here: one may be
-#     the Xcode app's live build.
+#   - Kernova build arenas in Xcode's own DerivedData folder, where the Xcode
+#     app builds (`make` builds in each checkout's DerivedData/): counted and
+#     sized, and never removed here, since one may be a build in use.
 #   - xcode-build-server caches under ~/Library/Caches/xcode-build-server
 #     named for a checkout of this clone that no longer exists — each holds
 #     that checkout's editor index, and nothing removes it with the checkout
@@ -296,14 +295,13 @@ while IFS= read -r dir; do
     xcode_arenas+=("$dir")
 done < <(xcode_kernova_arenas)
 
+# Information, not a finding: each is some checkout's build with Xcode's own
+# location, the Xcode app's included, and nothing here says whose, or whether a
+# build is writing it.
 if [ "${#xcode_arenas[@]}" -eq 0 ]; then
     pass 'No Kernova build arenas'
 else
-    # A warning, not a finding --fix acts on: nothing here says which arena is
-    # the Xcode app's live build.
-    warn "${#xcode_arenas[@]} Kernova build arena(s), $(du -sch "${xcode_arenas[@]}" 2>/dev/null | awk 'END { print $1 }'), none of them a \`make\` build's: \`make\` builds in each checkout's DerivedData/"
-    detail 'Remove them all — the Xcode app rebuilds its own on its next build, and a later `make clean-ghosts` unregisters their bundles:'
-    detail "rm -rf $(pretty_path "$XCODE_DD_ROOT")/Kernova-*"
+    pass "${#xcode_arenas[@]} Kernova build arena(s), $(du -sch "${xcode_arenas[@]}" 2>/dev/null | awk 'END { print $1 }'): builds with Xcode's own location, the Xcode app's included"
 fi
 
 # ---- stale xcode-build-server caches -----------------------------------------

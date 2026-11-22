@@ -195,18 +195,14 @@ fi
 section 'Build arena'
 
 # Where builds land: every `make` build in this checkout's DerivedData/, which
-# goes with the checkout. Informational; a Kernova arena in Xcode's own
-# DerivedData folder is the Xcode app's, which `make ghosts` reports.
+# goes with the checkout, and the Xcode app's in Xcode's own folder.
+# Informational.
 # shellcheck source=lib/xcodebuild-flags.sh
 . Tools/lib/xcodebuild-flags.sh
 # shellcheck source=lib/build-arenas.sh
 . Tools/lib/build-arenas.sh
 pass "make builds in $kernova_derived_data/ (the Xcode app keeps its own location)"
-xcode_arenas=$(xcode_kernova_arenas | grep -c .)
-if [ "$xcode_arenas" -gt 0 ]; then
-    warn "$xcode_arenas Kernova build arena(s) in Xcode's DerivedData folder, none of them a make build's"
-    detail 'Their size and the command that removes them: make ghosts'
-fi
+value "Kernova build arenas in Xcode's DerivedData folder: $(xcode_kernova_arenas | grep -c .) (sized by make ghosts)"
 
 # ---- signing ------------------------------------------------------------
 
@@ -308,11 +304,11 @@ done < <(stale_kernova_sdks "$pinned_swift")
 # why an installed tool still leaves this checkout unconfigured.
 if command -v xcode-build-server >/dev/null 2>&1; then
     build_root=$(plutil -extract build_root raw buildServer.json -o - 2>/dev/null || true)
-    if [ -f buildServer.json ] && [ "$build_root" = "$(pwd -P)/$kernova_derived_data" ]; then
+    if [ -f buildServer.json ] && [ "$build_root" = "$(pwd -P)/$kernova_index_derived_data" ]; then
         pass "Swift language server configured (buildServer.json + xcode-build-server)"
-        detail 'flags come from the build log of `make` — build this checkout once for the server to resolve symbols'
+        detail 'flags and index come from `make index` — run it for the server to resolve symbols, and after a change'
     elif [ -f buildServer.json ]; then
-        warn "buildServer.json reads another build arena (${build_root:-none}), not this checkout's $kernova_derived_data"
+        warn "buildServer.json reads another build arena (${build_root:-none}), not this checkout's $kernova_index_derived_data"
         detail "Rewrite it with: make install-lsp"
     else
         warn "buildServer.json absent — this checkout has no Swift language-server context"

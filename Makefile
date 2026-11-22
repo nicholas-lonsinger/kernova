@@ -13,6 +13,7 @@ SCHEME            := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_schem
 DESTINATION       := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_destination"')
 DERIVED_DATA_ROOT := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_derived_data_root"')
 DERIVED_DATA      := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_derived_data"')
+INDEX_DERIVED_DATA := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_index_derived_data"')
 RESULT_BUNDLE     := artifacts/TestResults.xcresult
 
 ifneq ($(strip $(CI)),)
@@ -44,7 +45,7 @@ SWIFT_FORMAT := xcrun swift-format
 SWIFT_SOURCE_DIRS := $(shell bash -c '. Tools/lib/swift-roots.sh && swift_roots')
 
 .DEFAULT_GOAL := help
-.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain ubuntu-sdk linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp dead-code locked-dead-code dead-code-targets doctor ghosts clean-ghosts
+.PHONY: help build locked-build build-for-testing locked-build-for-testing test attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain ubuntu-sdk linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp index locked-index dead-code locked-dead-code dead-code-targets doctor ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -54,7 +55,7 @@ help:
 	@printf '\n'
 	@printf '  make test-suite requires SUITE=<Target/Suite>, e.g. SUITE=KernovaVirtualizationTests/ConfigurationBuilderTests or SUITE=KernovaCoreTests/VMConfigurationTests\n'
 	@printf '  Append CONFIGURATION=Release to build or test-without-building in Release (default: Debug); make test runs Debug only\n'
-	@printf '  Prefix CI=1 to build/test with the CI-only settings (a result bundle in artifacts/, a compilation cache store that rolls over every build)\n'
+	@printf '  Prefix CI=1 to build/test with the CI-only settings (a result bundle in artifacts/; a compilation cache store of its own in DerivedData/, rolled over every build)\n'
 
 # Everything a fresh clone needs beyond Xcode itself, composed from the
 # targets below so each piece is also runnable on its own. Every step is
@@ -92,15 +93,29 @@ check-hooks:
 		printf 'Note: git hooks are not installed. Run `make install-hooks` (one-time per clone) to lint before push and auto-set-up new worktrees.\n' >&2; \
 	fi
 
-# One-time per checkout: sourcekit-lsp reads compiler flags from a
-# buildServer.json that xcode-build-server writes from Xcode's build log, so
-# editors and Claude Code's Swift language server resolve imports and symbols
-# across the project. The config names an absolute build root — every checkout
-# writes its own, and .githooks/post-checkout writes a new worktree's when the
-# tool is already installed.
+# One-time per checkout: sourcekit-lsp reads compiler flags and the index from
+# a buildServer.json that xcode-build-server writes, naming the build `make
+# index` makes, so editors and Claude Code's Swift language server resolve
+# imports and symbols across the project. The config names an absolute build
+# root — every checkout writes its own, and .githooks/post-checkout writes a
+# new worktree's when the tool is already installed.
 install-lsp: ## Install xcode-build-server and write this checkout's buildServer.json
 	@Tools/brew-install.sh xcode-build-server
 	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
+
+# The build the language server reads: uncached and unmapped, so every compile
+# writes an index unit naming the real file, which no `make` build does
+# (Tools/lib/xcodebuild-flags.sh). Its bundles are unregistered on the way
+# out, so this build never wins the version election.
+index: ## Build this checkout's index for the Swift language server (minutes the first time, seconds after); rerun after a change for cross-file results
+	$(LOCKED_TWIN)
+
+locked-index:
+	@trap "Tools/build-arenas.sh unregister '$(INDEX_DERIVED_DATA)/Build/Products' >&2" EXIT; \
+	xcodebuild $(XCODEBUILD_PROJECT_FLAGS) -scheme $(SCHEME) -destination '$(DESTINATION)' -configuration Debug \
+		-derivedDataPath $(INDEX_DERIVED_DATA) -enableCodeCoverage NO build-for-testing \
+		CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=YES INDEX_ENABLE_DATA_STORE=YES \
+		COMPILATION_CACHE_ENABLE_CACHING=NO
 
 build: check-hooks ## Build the app for macOS
 	$(LOCKED_TWIN)
@@ -197,10 +212,11 @@ lint: ## Run Tools/lint.sh: shell analysis, the Tools/check-*.sh checks, swift-f
 # arena per checkout. Periphery's own build would go to
 # ~/Library/Caches/com.github.peripheryapp under a name hashed from its schemes
 # in a Swift `Set`'s per-process order, a new multi-gigabyte arena most runs;
-# the checkout's build arena holds no index, and the GUI's is no single
-# build's index. The build flags are Periphery 3.x's own plus the compilation
-# cache off: a compile the cache serves writes no index unit, leaving the unit
-# an earlier compile wrote — after a revert, a cached scan reported 27
+# the checkout's other arenas index one scheme or none, and the GUI's is no
+# single build's index. The build flags are Periphery 3.x's own plus the
+# compilation cache off: a compile the cache serves writes no index unit,
+# leaving the unit an earlier compile wrote — after a revert, a cached scan
+# reported 27
 # findings in code that no longer existed (Xcode 27.1). Each scheme is built
 # for testing, so the one index serves both views — the full scan, and the
 # production scan with every target only tests reach excluded — and the bundle

@@ -42,6 +42,16 @@ MTL_FAST_MATH = YES
 ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES
 STRING_CATALOG_GENERATE_SYMBOLS = YES
 
+// Xcode's content-addressed compilation cache, for builds in the Xcode app:
+// the store Xcode keeps under its DerivedData folder, whose keys embed the
+// checkout path. It reaches the package targets too: with these lines all 33
+// targets of a Kernova build compile with the cache, and none without them
+// (Xcode 27.2). `make` builds pass their own store and limit on the command
+// line, which outranks this file (Tools/lib/xcodebuild-flags.sh). Unset, the
+// limit is half the volume's free space.
+COMPILATION_CACHE_ENABLE_CACHING = YES
+COMPILATION_CACHE_LIMIT_SIZE = 4G
+
 GCC_OPTIMIZATION_LEVEL[config=Debug] = 0
 SWIFT_OPTIMIZATION_LEVEL[config=Debug] = -Onone
 GCC_DYNAMIC_NO_PIC[config=Debug] = NO

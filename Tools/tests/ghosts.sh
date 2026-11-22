@@ -4,11 +4,10 @@
 # registered again, keeping its builds and editor cache, before stale records
 # are pruned; one whose record is gone and a copy of a live worktree keep their
 # files and change nothing; a directory Xcode recreated after a removal goes to
-# the Trash. Kernova arenas in Xcode's DerivedData folder are reported with the
-# command that removes them, and left. Runs a copy of the scripts inside a
-# fixture clone, with HOME in the fixture and fakes for every tool that reaches
-# past it (lsregister, defaults, pgrep, mdfind, trash, launchctl). Local git
-# only.
+# the Trash; Kernova arenas in Xcode's DerivedData folder are left. Runs a copy
+# of the scripts inside a fixture clone, with HOME in the fixture and fakes for
+# every tool that reaches past it (lsregister, defaults, pgrep, mdfind, trash,
+# launchctl). Local git only.
 
 set -uo pipefail
 
@@ -99,8 +98,6 @@ check "copy: the original's record still names the original" \
     "$(cat "$common/worktrees/original/gitdir")" "$wts/original/.git"
 check "copy: reported" "$(grep -c "Copy of the worktree at .*original: .*original copy" <<<"$out")" 1
 check "recreated directory: trashed" "$(present "$wts/gone")$(present "$HOME/.Trash/gone")" gonepresent
-check "Xcode's arenas: reported with the command removing them" \
-    "$(grep -c '^ *rm -rf ~/Library/Developer/Xcode/DerivedData/Kernova-\*$' <<<"$out")" 1
 check "Xcode's arenas: left" "$(present "$xcode_arena")" present
 
 "$clone/Tools/ghosts.sh" --fix </dev/null >/dev/null 2>&1

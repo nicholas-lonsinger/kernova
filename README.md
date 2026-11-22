@@ -199,7 +199,7 @@ make setup   # one-time per clone; idempotent, rerun any time
 | **Homebrew tools** | `shellcheck`, `gh`, `xcode-build-server` — skipped if present or if [Homebrew](https://brew.sh) is absent; none is needed to build or test, and `make lint` (and so the pre-push hook) needs `shellcheck`. |
 | **swift.org toolchain** | swiftly, the Swift release `.swift-version` pins and its Static Linux SDK, which the app build cross-builds the Linux guest agent with; Xcode's own toolchain stays the default `swift`. |
 | **Ubuntu SDK** | Generated for that release (minutes, about 850 MB); `make dead-code` cross-builds its Linux half with it, and without it reports macOS alone. |
-| **`buildServer.json`** | Gives editors and language servers the project's real compiler flags; `make build` once for them to resolve. |
+| **`buildServer.json`** | Gives editors and language servers the project's real compiler flags and index; `make index` builds them, and refreshes them after a change. |
 | **Periphery** | The pinned release `make dead-code` scans with, built from source with Kernova's fixes (minutes). |
 | **`make doctor`** | Checks toolchain, signing, and hooks against what Kernova needs. |
 
