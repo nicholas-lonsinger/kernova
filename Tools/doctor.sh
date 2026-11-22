@@ -315,6 +315,9 @@ else
     container_version="$(container --version 2>/dev/null | sed -n 's/^container CLI version \([^ ]*\).*/\1/p')"
     if container system status >/dev/null 2>&1; then
         pass "container ${container_version:-unknown} — make test-linux; its service is running"
+        bases="$(container image list --format json 2>/dev/null | jq -r '[.[] | select(.configuration.name | startswith("docker.io/library/swift:"))
+            | "\(.configuration.name | sub("^docker.io/library/"; "")) \(([.variants[]?.size] | add // 0) / 1e9 * 10 | round / 10) GB"] | join(", ")')"
+        [ -z "$bases" ] || value "base images: $bases — \`container image delete\` removes one no .swift-version names"
     else
         pass "container ${container_version:-unknown} — make test-linux, which starts its stopped service"
     fi

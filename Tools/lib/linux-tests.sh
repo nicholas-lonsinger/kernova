@@ -113,52 +113,28 @@ LINUX_TESTS_IMAGES_KEPT=3
 
 # linux_tests_container_image <tree-ish> — makes sure this Mac holds the image
 # for <tree-ish>'s recipe, building it when it does not, then deletes every
-# kernova-linux-tests image past the LINUX_TESTS_IMAGES_KEPT built last, and
-# each base a build here pulled that no kept image is built on. Two labels
-# on each image say what that takes: the base it is built on, and whether a
-# build here pulled that base — which a build on a base that is already here
-# takes from the images built on it. Fails, printing what is missing on
-# stdout, when the image cannot be built; a deletion that fails is reported
-# and the image stays usable.
+# kernova-linux-tests image past the LINUX_TESTS_IMAGES_KEPT built last; an
+# image another session deleted first is no failure, and a base image is never
+# deleted. Fails, printing what is missing on stdout, when the image cannot be
+# built; a deletion that fails is reported and the image stays usable.
 linux_tests_container_image() {
-    local image base pulled=true
+    local image base stale
     if ! { image=$(linux_tests_image "$1") && base=$(linux_tests_base "$1"); }; then
         echo "a recipe for their image in $1: Tools/linux-tests.Containerfile and .swift-version"
         return 1
     fi
     container image inspect "$image" >/dev/null 2>&1 && return 0
-    if container image inspect "$base" >/dev/null 2>&1; then
-        pulled=$(container image list --format json | jq -r --arg base "$base" '
-            any(.[].variants[]?.config.config.Labels // {};
-                .["app.kernova.linux-tests.base"] == $base and .["app.kernova.linux-tests.base-pulled"] == "true")')
-    fi
     echo "Building $image on $base" >&2
-    if ! linux_tests_build_image container "$1" --platform linux/arm64 --progress plain \
-        --label "app.kernova.linux-tests.base=$base" --label "app.kernova.linux-tests.base-pulled=$pulled" >&2; then
+    if ! linux_tests_build_image container "$1" --platform linux/arm64 --progress plain >&2; then
         echo "their image $image, which \`container build\` did not build on $base (its output is above)"
         return 1
     fi
-    linux_tests_container_prune ||
+    # shellcheck disable=SC2086 # one image name per word
+    if ! { stale=$(container image list --format json | jq -r --argjson kept "$LINUX_TESTS_IMAGES_KEPT" '
+        [.[] | select(.configuration.name | startswith("docker.io/library/kernova-linux-tests:"))]
+        | sort_by(.configuration.descriptor.annotations["org.opencontainers.image.created"] // "") | reverse
+        | .[$kept:][].configuration.name') && { [ -z "$stale" ] || container image delete --force $stale >&2; }; }; then
         echo "Could not delete the kernova-linux-tests images past the $LINUX_TESTS_IMAGES_KEPT built last" >&2
+    fi
     return 0
 }
-
-# linux_tests_container_prune — the deletions linux_tests_container_image
-# describes. Deleting an image another session deleted first is no failure.
-linux_tests_container_prune() (
-    set -o pipefail
-    stale=$(container image list --format json | jq -r --argjson kept "$LINUX_TESTS_IMAGES_KEPT" '
-        [.[] | select(.configuration.name | startswith("docker.io/library/kernova-linux-tests:"))
-            | (.variants[0].config.config.Labels // {}) as $labels
-            | {name: .configuration.name,
-               built: (.configuration.descriptor.annotations["org.opencontainers.image.created"] // ""),
-               base: $labels["app.kernova.linux-tests.base"],
-               pulled: ($labels["app.kernova.linux-tests.base-pulled"] == "true")}]
-        | sort_by(.built) | reverse
-        | .[:$kept] as $keep | .[$kept:] as $gone
-        | ($gone[].name),
-          ([$gone[] | select(.pulled) | .base] | unique[] | select(. as $base | all($keep[]; .base != $base)))') ||
-        exit 1
-    # shellcheck disable=SC2086 # one image name per word
-    [ -z "$stale" ] || container image delete --force $stale >&2
-)

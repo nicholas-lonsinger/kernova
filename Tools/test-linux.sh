@@ -11,10 +11,6 @@
 # starting, no hypervisor, or no image for the tree's recipe. Starts
 # container's service when it is not running, and builds the image when this
 # Mac lacks it.
-#
-# The run holds its image under a tag of its own, deleted when the script
-# exits, so another session deleting the recipe's image cannot take it from a
-# run that has it.
 
 set -uo pipefail
 
@@ -31,9 +27,7 @@ missing=$(linux_tests_container_up) || cannot_run "$missing"
 missing=$(linux_tests_container_image "$tree") || cannot_run "$missing"
 image=$(linux_tests_image "$tree") || cannot_run "a recipe for their image in $tree"
 
-held="kernova-linux-tests-run:$(date +%s)-$$-$RANDOM"
-trap 'container image delete --force "$held" >/dev/null 2>&1' EXIT
-container image tag "$image" "$held" >/dev/null 2>&1 ||
-    cannot_run "their image $image, which another session deleted before this run could hold it"
-
-linux_tests_run container "$tree" "$held" --cpus 4 --memory 4g --progress none || exit 1
+linux_tests_run container "$tree" "$image" --cpus 4 --memory 4g --progress none && exit 0
+container image inspect "$image" >/dev/null 2>&1 ||
+    cannot_run "their image $image, which another session deleted before this run started"
+exit 1
