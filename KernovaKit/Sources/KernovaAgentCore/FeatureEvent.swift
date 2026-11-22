@@ -40,7 +40,8 @@ package protocol FeatureMachine: Sendable {
     /// What the machine asks its endpoint's adapters to do.
     associatedtype Effect: Sendable & Equatable
 
-    /// The machine's advert.
+    /// The machine's advert. It changes only while the role handles an input
+    /// (`RoleMachines.handle(_:connection:now:)`), after which the endpoint republishes it.
     var localAdvert: LocalAdvert { get }
     /// When the machine next needs `.deadline`; nil when it waits on none.
     func nextDeadline(on clock: JudgedClock) -> CoreInstant?

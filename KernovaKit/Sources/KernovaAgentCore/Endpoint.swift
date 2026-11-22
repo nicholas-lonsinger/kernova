@@ -200,6 +200,10 @@ package struct Endpoint<Role: RoleMachines>: Sendable {
             guard let shared = endpoint.role.handle(input, connection: &endpoint.connection, now: now) else { return }
             endpoint.perform(shared)
         }
+        if republishAdverts() {
+            usabilityChanged()
+            route()
+        }
     }
 
     /// Closes the connection with `code` and no retry delay.
@@ -287,13 +291,8 @@ package struct Endpoint<Role: RoleMachines>: Sendable {
     private mutating func route() {
         while true {
             collect()
-            if let routed = connection.pollRoutedEvent() {
-                dispatch(routed)
-            } else if republishAdverts() {
-                usabilityChanged()
-            } else {
-                break
-            }
+            guard let routed = connection.pollRoutedEvent() else { return }
+            dispatch(routed)
         }
     }
 
@@ -394,7 +393,10 @@ package struct Endpoint<Role: RoleMachines>: Sendable {
 
     private mutating func collect() {
         let machines = [role.power.takeOutputs(), role.logs.takeOutputs(), role.update.takeOutputs()]
-        for effect in machines.flatMap(\.effects) { effects.append(.role(effect)) }
+        // Closures, not key paths: in an unoptimized build the runtime instantiates a key path to a member of this
+        // generic type's outputs (`swift_getKeyPath`) each time it is evaluated, and this runs on every pass of
+        // `route()`.
+        for effect in machines.flatMap({ $0.effects }) { effects.append(.role(effect)) }
         let outputs = items.takeOutputs()
         for output in outputs.items {
             switch output {
@@ -405,7 +407,7 @@ package struct Endpoint<Role: RoleMachines>: Sendable {
             }
         }
         for event in outputs.drag { events.append(.dragTake(event)) }
-        for event in machines.flatMap(\.events) { emit(event) }
-        for diagnostic in outputs.diagnostics + machines.flatMap(\.diagnostics) { connection.diagnose(diagnostic) }
+        for event in machines.flatMap({ $0.events }) { emit(event) }
+        for diagnostic in outputs.diagnostics + machines.flatMap({ $0.diagnostics }) { connection.diagnose(diagnostic) }
     }
 }
