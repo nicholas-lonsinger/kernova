@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Fixture tests for Tools/fixture-suites.sh: a passing run is recorded and the
-# next run with the same tooling reuses it; a change to a file under each path
-# of the tooling surface, the suite list, the Xcode build, or the bash or git
-# on PATH runs the suites again, and a change outside the surface does not; an
-# untracked file under the surface runs them and records nothing until git
-# tracks it; and a run whose suite fails, which leaves a decoy's core.bare set,
-# or during which the tooling changes records nothing. Runs a copy of the
-# script and the runner inside a fixture clone, with stub xcodebuild, sw_vers
-# and dead-code tool installer.
+# next run with the same tooling reuses it, from a hook's PATH too; a change to
+# a file under each path of the tooling surface, the suite list, the Xcode
+# build, or the version of the bash or git on PATH runs the suites again, and
+# a change outside the surface does not; an untracked file under the surface,
+# a new one or one git stopped tracking, runs them and records nothing until
+# git tracks it; and a run whose suite fails, which leaves a decoy's core.bare
+# set, during which the tooling changes, or with no Xcode build to read records
+# nothing. Runs a copy of the script and the runner inside a fixture clone,
+# with stub xcodebuild, sw_vers and dead-code tool installer.
 
 set -uo pipefail
 
@@ -52,11 +53,14 @@ git -C "$clone" add -A && git -C "$clone" commit -q -m init
 
 stubs="$tmp/stubs"
 mkdir -p "$stubs" "$tmp/other-bash" "$tmp/other-git"
-printf '#!/bin/bash\n[ "$*" = -version ] && printf '\''Xcode 27.0\\nBuild version %%s\\n'\'' "$(cat "$FIXTURE/xcode")"\n' >"$stubs/xcodebuild"
+printf '#!/bin/bash\n[ ! -e "$FIXTURE/no-xcode" ] || exit 1\n[ "$*" = -version ] && printf '\''Xcode 27.0\\nBuild version %%s\\n'\'' "$(cat "$FIXTURE/xcode")"\n' >"$stubs/xcodebuild"
 printf '#!/bin/bash\n[ "$*" = -buildVersion ] && echo 26Z42\n' >"$stubs/sw_vers"
-chmod +x "$stubs"/*
-ln -s "$(command -v bash)" "$tmp/other-bash/bash"
-ln -s "$(command -v git)" "$tmp/other-git/git"
+# A bash and a git that run the real ones and report another version.
+printf '#!/bin/sh\n[ "$1" != --version ] || { echo "GNU bash, version 9.9.9(1)-release (stub)"; exit 0; }\nexec %s "$@"\n' \
+    "$(command -v bash)" >"$tmp/other-bash/bash"
+printf '#!/bin/sh\n[ "$1" != --version ] || { echo "git version 9.9.9 (stub)"; exit 0; }\nexec %s "$@"\n' \
+    "$(command -v git)" >"$tmp/other-git/git"
+chmod +x "$stubs"/* "$tmp/other-bash/bash" "$tmp/other-git/git"
 echo 27A100 >"$tmp/xcode"
 export FIXTURE="$tmp" PATH="$stubs:$PATH"
 
@@ -81,6 +85,10 @@ step
 check "a recorded tooling: status" "$?" 0
 check "a recorded tooling runs nothing" "$(runs)" 1
 check "a recorded tooling says so" "$(said 'fixture suites: reused the pass of ')" 1
+# A hook runs with git's exec-path first on PATH, so `git` is the same git
+# reached by another path.
+FIRST_ON_PATH="$(git --exec-path)" step
+check "a run with git's exec-path first on PATH, as in a hook, reuses the pass" "$(runs)" 1
 
 echo two >"$clone/App/main.swift"
 echo new >"$clone/App/new.swift"
@@ -104,9 +112,9 @@ echo 27A200 >"$tmp/xcode"
 step
 check "another Xcode build runs the suites" "$(runs)" 8
 FIRST_ON_PATH="$tmp/other-bash" step
-check "another bash on PATH runs the suites" "$(runs)" 9
+check "another bash version on PATH runs the suites" "$(runs)" 9
 FIRST_ON_PATH="$tmp/other-git" step
-check "another git on PATH runs the suites" "$(runs)" 10
+check "another git version on PATH runs the suites" "$(runs)" 10
 
 # ---- what records nothing ----------------------------------------------------------
 
@@ -123,6 +131,12 @@ git -C "$clone" add Tools/new
 step
 check "the file, once tracked, runs the suites" "$(runs)" 13
 check "that run is recorded" "$(record_count)" "$((count + 1))"
+count=$(record_count)
+git -C "$clone" rm -q --cached Tools/new
+step
+check "a file under the tooling git stopped tracking runs the suites" "$(runs)" 14
+check "a run beside a file under the tooling git stopped tracking is not recorded" "$(record_count)" "$count"
+git -C "$clone" add Tools/new
 
 count=$(record_count)
 touch "$tmp/fail"
@@ -131,7 +145,7 @@ step
 check "a failing suite: status" "$?" 1
 check "a failing suite is not recorded" "$(record_count)" "$count"
 step
-check "a failing suite runs again" "$(runs)" 15
+check "a failing suite runs again" "$(runs)" 16
 rm "$tmp/fail"
 
 step Tools/tests/bare.sh
@@ -144,6 +158,15 @@ check "a run during which the tooling changes: status" "$?" 0
 check "a run during which the tooling changes is not recorded" "$(record_count)" "$count"
 check "a run during which the tooling changes says so" "$(said 'not recorded, as the tooling changed during the run')" 1
 rm "$tmp/edit"
+
+touch "$tmp/no-xcode"
+step
+check "a run with no Xcode build to read: status" "$?" 0
+check "a run with no Xcode build to read runs the suites" "$(runs)" 18
+check "a run with no Xcode build to read is not recorded" "$(record_count)" "$count"
+check "a run with no Xcode build to read says so" \
+    "$(said 'not recorded, as the tooling or the Xcode or macOS build it would be recorded under cannot be read')" 1
+rm "$tmp/no-xcode"
 
 if [ "$FAIL" -eq 0 ]; then
     printf '  %s✓%s fixture-suites: %d fixture checks\n' "$c_green" "$c_reset" "$PASS"

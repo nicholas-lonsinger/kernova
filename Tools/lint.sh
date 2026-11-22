@@ -10,9 +10,9 @@
 #   4. The fixture suites, through Tools/fixture-suites.sh, which skips them
 #      when a pass is recorded for the same tooling. A suite needs no Xcode,
 #      which is what lets lint and the pre-push hook gate it; the dead-code
-#      tools' swift-syntax builds once per checkout, and the release
-#      dead-code-sources the Swift source rules' suites run once per machine,
-#      in the tool cache, in minutes.
+#      tools' swift-syntax builds once per checkout, and the tool cache builds
+#      the release dead-code-sources the Swift source rules' suites run once
+#      per set of its inputs, in minutes.
 #   5. The checks whose header declares `# make lint: runs last — <why>`.
 #
 # Tools/lib/lint-inputs.sh lists each step's files and reads a check's order
