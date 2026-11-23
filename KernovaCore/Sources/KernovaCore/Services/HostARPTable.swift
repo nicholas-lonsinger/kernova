@@ -63,7 +63,7 @@ package struct HostARPTableReader: ARPTableReading {
     /// Room past the size the first call reports, for entries added before the
     /// copy runs; a table that outgrows it fails with `ENOMEM` and the next
     /// read tries again.
-    private static let headroom = 4096
+    private static let headroom = 8192
 
     package func entries() throws -> [ARPEntry] {
         var mib: [Int32] = [CTL_NET, PF_ROUTE, 0, AF_INET, NET_RT_FLAGS, RTF_LLINFO]
