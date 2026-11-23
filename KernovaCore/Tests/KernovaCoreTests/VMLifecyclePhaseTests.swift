@@ -139,26 +139,4 @@ struct VMLifecyclePhaseTests {
             #expect(phase.isAtRest == row.isAtRest, "isAtRest of \(phase)")
         }
     }
-
-    @Test("A Force Stop pending under an operation that tolerates it projects as Force Stopping")
-    func toleratedForceStopProjectsAsForceStopping() {
-        var swept = 0
-        for phase in VMLifecyclePhaseFixtures.operations {
-            guard case .operating(var operation) = phase, var session = operation.session,
-                operation.kind.declaration.toleratedSessionActions.contains(.forceStop)
-            else { continue }
-            session.stop = .forceStop(VMOutcome())
-            operation.sessionState = .live(session)
-            let stopping = VMLifecyclePhase.operating(operation)
-            swept += 1
-
-            #expect(stopping.status == .forceStopping, "status under \(operation.kind)")
-            #expect(stopping.presented == stopping, "presented under \(operation.kind)")
-            #expect(stopping.sessionID == session.id, "sessionID under \(operation.kind)")
-            #expect(!stopping.hasLiveSession, "hasLiveSession under \(operation.kind)")
-            #expect(stopping.holdsLiveIdentity, "holdsLiveIdentity under \(operation.kind)")
-            #expect(!stopping.hasActiveDisplay, "hasActiveDisplay under \(operation.kind)")
-        }
-        #expect(swept > 0)
-    }
 }

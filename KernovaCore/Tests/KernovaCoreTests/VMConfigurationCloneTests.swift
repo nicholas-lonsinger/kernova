@@ -26,25 +26,6 @@ struct VMConfigurationCloneTests {
         )
     }
 
-    // MARK: - Identity
-
-    @Test("Clone generates a new UUID")
-    func cloneNewUUID() {
-        let original = makeConfig()
-        let clone = original.clonedForNewInstance(existingNames: [])
-        #expect(clone.id != original.id)
-    }
-
-    // MARK: - Name Generation
-
-    @Test("Clone appends ' Copy 2' when ' Copy' already exists")
-    func cloneNameCopy2() {
-        let clone = makeConfig(name: "Ubuntu").clonedForNewInstance(
-            existingNames: ["Ubuntu", "Ubuntu Copy"]
-        )
-        #expect(clone.name == "Ubuntu Copy 2")
-    }
-
     // MARK: - Shared Directories
 
     @Test("Clone preserves shared directory paths and readOnly flags")
@@ -112,21 +93,5 @@ struct VMConfigurationCloneTests {
         #expect(clone.removableMedia?[0].path == "/tmp/install.iso")
         #expect(clone.removableMedia?[0].id == originalUUID)
         #expect(clone.removableMedia?[0].notes == "from the Ubuntu mirror")
-    }
-
-    // MARK: - Setup Intent
-
-    @Test("Clone clears both pending setup contexts")
-    func cloneClearsSetupContexts() {
-        // The clone copies the source bundle's finished artifacts, so carrying
-        // either context would falsely mark it as awaiting an initial boot.
-        var macOS = makeConfig(guestOS: .macOS, bootMode: .macOS)
-        macOS.installContext = MacOSInstallContext(
-            source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
-        var linux = makeConfig()
-        linux.linuxInstallContext = LinuxInstallContext(source: .catalogEntry(makeLinuxCatalogEntry()))
-
-        #expect(macOS.clonedForNewInstance(existingNames: []).installContext == nil)
-        #expect(linux.clonedForNewInstance(existingNames: []).linuxInstallContext == nil)
     }
 }

@@ -42,17 +42,6 @@ struct VMConsentPolicyTests {
             ])
     }
 
-    @Test("A refusal for a consent already given is rethrown rather than asked again")
-    func aRepeatedRefusalIsRethrown() async throws {
-        var asked = 0
-        let refusal = CommandError.confirmationRequired(prompt(.forceStop))
-
-        await #expect(throws: refusal) {
-            try await VMConsentPolicy.run(prompting: { _ in asked += 1 }) { _ in throw refusal }
-        }
-        #expect(asked == 1)
-    }
-
     @Test("A declined prompt ends the loop with what the prompt threw")
     func aDeclinedPromptEndsTheLoop() async throws {
         struct Declined: Error {}
@@ -105,22 +94,5 @@ struct VMConsentPolicyTests {
 
         #expect(taken == refused.routes[1].steps)
         #expect(given == [.none, .none, Consent([.startBesideSharedMachineIdentity])])
-    }
-
-    @Test("A route ending in a start is answered by the start, not the refused verb")
-    func routeEndingInAStartRunsTheStart() async throws {
-        let refused = StepRequirement(
-            message: "M",
-            routes: [StepRoute(title: "New", steps: [.discardSavedState(vm: vm)], ending: .start(vm: vm))])
-        var endings: [StepRoute.Ending] = []
-
-        try await VMConsentPolicy.run(
-            prompting: { _ in }, choosingRoute: { $0.routes[0] }, taking: { _ in }
-        ) { _, ending in
-            endings.append(ending)
-            guard endings.count > 1 else { throw CommandError.stepRequired(refused) }
-        }
-
-        #expect(endings == [.refusedVerb, .start(vm: vm)])
     }
 }

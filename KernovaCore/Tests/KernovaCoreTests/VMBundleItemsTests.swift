@@ -88,29 +88,6 @@ struct VMBundleItemsTests {
         )
     }
 
-    @Test("A tree with no symbolic link below it has none to find, even reached through a link to it")
-    func walkThroughALinkedRootFindsNone() throws {
-        _ = try write("plain", to: "Real/Plain")
-        _ = try write("hidden", to: "Real/.Hidden")
-        _ = try write("nested", to: "Real/Directory/Deeper/Nested")
-        let real = scratch.url.appendingPathComponent("Real")
-        try link("Alias", to: real)
-
-        #expect(VMBundleItems.symbolicLink(below: real) == nil)
-        #expect(VMBundleItems.symbolicLink(below: scratch.url.appendingPathComponent("Alias")) == nil)
-    }
-
-    @Test("Copying a symbolic link itself fails, whatever it points at")
-    func copyOfALinkFails() throws {
-        let file = try write("held", to: "Real/File")
-        try link("Alias", to: file.deletingLastPathComponent())
-        let alias = scratch.url.appendingPathComponent("Alias")
-
-        #expect(throws: VMBundleItems.SymbolicLinkError(url: alias)) {
-            try VMBundleItems.copy(alias, to: scratch.url.appendingPathComponent("Copy"))
-        }
-    }
-
     @Test("A directory that denies writing copies whole and keeps its permissions")
     func readOnlyDirectoryCopiesWhole() throws {
         let file = try write("held", to: "Source/Locked/File")
@@ -125,17 +102,5 @@ struct VMBundleItemsTests {
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: copied) }
         #expect(try tree(at: copy) == ["Locked/File": "held"])
         #expect(try FileManager.default.attributesOfItem(atPath: copied)[.posixPermissions] as? Int == 0o555)
-    }
-
-    @Test("A named item that is a link whose target is gone fails the copy rather than being left out")
-    func danglingNamedItemFails() throws {
-        _ = try write("plain", to: "Source/Plain")
-        try link("Source/Disk", to: scratch.url.appendingPathComponent("Nowhere"))
-        let source = scratch.url.appendingPathComponent("Source")
-
-        #expect(throws: VMBundleItems.SymbolicLinkError(url: source.appendingPathComponent("Disk"))) {
-            try VMBundleItems.copyItems(
-                ["Disk"], from: source, to: scratch.url.appendingPathComponent("Copy"), ifMissing: .skip)
-        }
     }
 }

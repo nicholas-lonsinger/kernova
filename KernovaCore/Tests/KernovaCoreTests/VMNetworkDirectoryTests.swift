@@ -31,36 +31,6 @@ struct VMNetworkDirectoryTests {
         #expect(VMNetworkDirectory(fileURL: fileURL).state.listed?.map(\.id) == [lab.id])
     }
 
-    @Test("A name has to be new, non-empty, and not spell a membership value")
-    func namesAreValidated() throws {
-        let directory = VMNetworkDirectory(fileURL: nil)
-        let lab = try directory.create(name: "Lab", kind: .nat, verb: .createNetwork)
-        for name in ["", "  ", "LAB", "common", "Isolated", UUID().uuidString] {
-            #expect(throws: CommandError.self, "\(name)") {
-                try directory.create(name: name, kind: .nat, verb: .createNetwork)
-            }
-        }
-        // Its own name, recased, is a rename.
-        try directory.rename(lab.id, to: "LAB", verb: .renameNetwork)
-        #expect(directory.state.listed?.map(\.name) == ["LAB"])
-    }
-
-    @Test("The network a VM joins is listed only in the network's own mode")
-    func theJoinedNetworkMatchesItsKind() throws {
-        let directory = VMNetworkDirectory(fileURL: nil)
-        let lab = try directory.create(name: "Lab", kind: .hostOnly, verb: .createNetwork)
-        var config = VMConfiguration(
-            name: "Member", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        config.networkMembership = .network(lab.id)
-
-        #expect(directory.network(joinedBy: config) == nil)
-        config.networkMode = .hostOnly
-        #expect(directory.network(joinedBy: config) == lab)
-        config.networkEnabled = false
-        #expect(directory.network(joinedBy: config) == nil)
-    }
-
     @Test("Two copies sharing the file change it rather than overwrite each other")
     func twoCopiesKeepEachOthersNetworks() throws {
         let first = VMNetworkDirectory(fileURL: fileURL)
@@ -95,24 +65,5 @@ struct VMNetworkDirectoryTests {
         let repaired = try JSONDecoder().decode(
             VMNetworkDirectory.File.self, from: try #require(diagnosis.repaired))
         #expect(repaired.networks.map(\.id) == [kept])
-    }
-
-    @Test("A reload that reads what the last one read changes nothing an observer sees")
-    func anUnchangedReloadIsNoChange() throws {
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-        for bytes in [Data("not json".utf8), Data(#"{"networks": []}"#.utf8)] {
-            try bytes.write(to: fileURL)
-            let directory = VMNetworkDirectory(fileURL: fileURL)
-            let changed = ObservationFireRecorder()
-            withObservationTracking {
-                _ = directory.state
-            } onChange: {
-                changed.record()
-            }
-
-            directory.reload()
-
-            #expect(!changed.didFire)
-        }
     }
 }

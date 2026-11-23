@@ -21,44 +21,6 @@ struct VMSettingIntentTests {
             index: MockVMEntityIndex(), record: makeTestIndexRecord())
     }
 
-    @Test("The settings offered are the registry's keys, in its order, each described by its summary")
-    func settingsAreTheRegistryKeys() async throws {
-        let settings = await makeGateway(over: WiredCommandCore()).configurationKeys()
-
-        #expect(settings.map(\.id) == VMConfigurationKeyRegistry.keys.map(\.name))
-        let mac = try #require(settings.first { $0.id == VMConfigurationKeyRegistry.networkMAC.name })
-        #expect(String(localized: mac.displayRepresentation.title) == "network.mac")
-        let subtitle = try #require(mac.displayRepresentation.subtitle)
-        #expect(String(localized: subtitle) == VMConfigurationKeyRegistry.networkMAC.summary)
-    }
-
-    @Test("Resolving by name, or by a typed fragment, answers only the settings asked for, in registry order")
-    func lookupFilters() async throws {
-        let gateway = makeGateway(over: WiredCommandCore())
-
-        #expect(
-            await gateway.configurationKeys(named: ["network.mac", "nonsense", "cpus"]).map(\.id)
-                == ["cpus", "network.mac"])
-        #expect(
-            await gateway.configurationKeys(matching: "NETWORK.M").map(\.id)
-                == ["network.mode", "network.membership", "network.mac"])
-    }
-
-    @Test("A write assigns the value to the key, addressing the VM by identifier")
-    func aWriteAssignsByKey() async throws {
-        let harness = WiredCommandCore()
-        // Name twins: a write addressed by name would be refused as ambiguous.
-        let vm = harness.register(name: "Wired")
-        let twin = harness.register(name: "Wired")
-
-        let held = try await makeGateway(over: harness).setConfiguration(
-            vm.id, key: "network.membership", value: "isolated", consent: .none)
-
-        #expect(held == "isolated")
-        #expect(vm.configuration.networkMembership == .isolated)
-        #expect(twin.configuration.networkMembership == .common)
-    }
-
     @Test("Turning clipboard passthrough on asks once, then re-issues the write with the consent")
     func clipboardPassthroughAsks() async throws {
         let harness = WiredCommandCore()

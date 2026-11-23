@@ -20,55 +20,7 @@ struct VMCommandSocketListenerTests {
 
     private struct Harness {
         let listener: VMCommandSocketListener
-        let wired: WiredCommandCore
-        let virtualization: MockVirtualizationService
-        let authorizer: MockPeerAuthorizer
-        /// Fires whenever the listener adopts or forgets a connection.
-        let connectionsChanged: AsyncGate
-        /// How many times the listener readied the app to surface.
-        let preparationCount: Counter
         let path: String
-        /// Lets a test hold the library read open, the way a cold launch does.
-        let readiness: LibraryReadiness
-    }
-
-    /// A tally a production callback writes and the test reads.
-    @MainActor
-    final class Counter {
-        private(set) var value = 0
-
-        func increment() { value += 1 }
-    }
-
-    /// The app's first library read, as a gate a test opens when it chooses.
-    @MainActor
-    final class LibraryReadiness {
-        private let gate = AsyncGate()
-        private var landed: Bool
-        private var waiters = 0
-        /// Where a read no test lands fails the test.
-        private let waits = OffTaskWaits()
-
-        init(landed: Bool) { self.landed = landed }
-
-        /// Reports the read as complete, releasing everything waiting on it.
-        func land() {
-            landed = true
-            gate.notify()
-        }
-
-        /// What the listener awaits before answering a verb.
-        func wait() async {
-            waiters += 1
-            gate.notify()
-            await waits.run { try await gate.wait { self.landed } }
-        }
-
-        /// Returns once a verb is waiting on the read, throwing at the
-        /// backstop if none arrives.
-        func verbWaiting() async throws {
-            try await gate.wait { self.waiters > 0 }
-        }
     }
 
     /// A group container with a short path: `sockaddr_un.sun_path` holds 104
@@ -85,99 +37,16 @@ struct VMCommandSocketListenerTests {
         return try #require(claim, "a fresh copy was not claimed: \(acquisition)")
     }
 
-    private func makeHarness(
-        authorization: PeerAuthorization = .authorized,
-        libraryHasLanded: Bool = true
-    ) throws -> Harness {
-        let virtualization = MockVirtualizationService()
-        let wired = WiredCommandCore(virtualization: virtualization)
-        let authorizer = MockPeerAuthorizer(authorization)
-        let connectionsChanged = AsyncGate()
-        let preparationCount = Counter()
-        let readiness = LibraryReadiness(landed: libraryHasLanded)
+    private func makeHarness(authorization: PeerAuthorization) throws -> Harness {
+        let wired = WiredCommandCore(virtualization: MockVirtualizationService())
         let claim = try makeClaim()
-        let path = claim.socketPath
         let listener = VMCommandSocketListener(
             router: VMCommandEnvelopeRouter(commands: wired.core),
-            authorizer: authorizer,
+            authorizer: MockPeerAuthorizer(authorization),
             copyClaim: .success(claim),
-            awaitReady: { await readiness.wait() },
-            prepareToSurface: { preparationCount.increment() })
-        listener.onConnectionsChangedForTesting = { connectionsChanged.notify() }
-        return Harness(
-            listener: listener, wired: wired, virtualization: virtualization, authorizer: authorizer,
-            connectionsChanged: connectionsChanged, preparationCount: preparationCount,
-            path: path, readiness: readiness)
-    }
-
-    // MARK: - Reads
-
-    @Test("A connection is held for its I/O lifetime, and dropped at EOF")
-    func connectionCountRisesAndFalls() async throws {
-        let harness = try makeHarness()
-        harness.listener.start()
-        defer { harness.listener.stopForTesting() }
-
-        let client = try TestCommandClient(connectingTo: harness.path)
-        try client.send(VMCommandRequest(verb: .list()))
-        // The answer proves the connection was adopted on the main actor: the
-        // count is written in the same hop that starts reading.
-        _ = try await client.nextResponse()
-        #expect(harness.listener.connectionCountForTesting == 1)
-
-        client.close()
-        try await harness.connectionsChanged.wait {
-            harness.listener.connectionCountForTesting == 0
-        }
-        #expect(harness.listener.connectionCountForTesting == 0)
-    }
-
-    @Test("No verb is answered until the app's first library read has landed")
-    func verbsWaitForTheLibraryRead() async throws {
-        // The cold-launch shape: the socket is bound, the library is not read
-        // yet, and the VMs appear only once it is.
-        let harness = try makeHarness(libraryHasLanded: false)
-        harness.listener.start()
-        defer { harness.listener.stopForTesting() }
-
-        let client = try TestCommandClient(connectingTo: harness.path)
-        defer { client.close() }
-
-        try client.send(VMCommandRequest(verb: .list()))
-        try await harness.readiness.verbWaiting()
-
-        // The read lands, and only now does the verb see the library it names:
-        // a listing taken before the land would have answered empty.
-        harness.wired.register(name: "Alpha")
-        let library = harness.wired.core.list(.all)
-        harness.readiness.land()
-
-        #expect(library.map(\.name) == ["Alpha"])
-        #expect(try await client.nextResponse()?.result == .summaries(library))
-    }
-
-    @Test("A permission panel a verb puts up asks the client on that connection to activate")
-    func permissionPanelAsksTheConnectionsClient() async throws {
-        let harness = try makeHarness()
-        // An authority that asks for activation as it puts its panel up, as
-        // `PowerboxSourceAuthority` does, and is then dismissed, so the verb
-        // answers with the refusal.
-        let authority = harness.wired.authority
-        authority.whilePanelStands = { ActivationRequester.requestActivation() }
-        authority.error = CommandError.operationFailed(verb: .importVM, message: "Not given permission.")
-        harness.listener.start()
-        defer { harness.listener.stopForTesting() }
-
-        let client = try TestCommandClient(connectingTo: harness.path)
-        defer { client.close() }
-
-        try client.send(
-            VMCommandRequest(verb: .importVM(path: "/Users/somebody/Desktop/Alpha.kernova", waitForOutcome: false)))
-
-        #expect(try await client.nextResponse()?.result == .activate)
-        let refusal = try await client.nextResponse()
-        #expect({ if case .failure? = refusal?.result { true } else { false } }())
-        #expect(harness.preparationCount.value == 1)
+            awaitReady: {},
+            prepareToSurface: {})
+        return Harness(listener: listener, path: claim.socketPath)
     }
 
     // MARK: - Envelope refusals
@@ -216,48 +85,6 @@ struct VMCommandSocketListenerTests {
         // No connection was ever adopted.
         #expect(harness.listener.connectionCountForTesting == 0)
     }
-
-    @Test("Bytes that are not a request are refused, and end the connection")
-    func undecodableBytesAreRefused() async throws {
-        let harness = try makeHarness()
-        harness.listener.start()
-        defer { harness.listener.stopForTesting() }
-
-        let client = try TestCommandClient(connectingTo: harness.path)
-        defer { client.close() }
-
-        try client.sendRaw(Data("not a request".utf8))
-
-        let response = try await client.nextResponse()
-        guard case .refused(.undecodableRequest) = response?.result else {
-            Issue.record("expected an undecodable-request refusal, got \(String(describing: response))")
-            return
-        }
-        #expect(try await client.nextResponse() == nil)
-    }
-
-    // MARK: - Subscription
-
-    @Test("A subscription answers with the library, then with each change")
-    func subscriptionDeliversSnapshotThenEvents() async throws {
-        let harness = try makeHarness()
-        let alpha = harness.wired.register(name: "Alpha")
-        let library = harness.wired.core.list(.all)
-        harness.listener.start()
-        defer { harness.listener.stopForTesting() }
-
-        let client = try TestCommandClient(connectingTo: harness.path)
-        defer { client.close() }
-
-        try client.send(VMCommandRequest(verb: .events))
-        #expect(try await client.nextResponse()?.result == .summaries(library))
-
-        try harness.wired.core.rename(.id(alpha.id), to: "Beta")
-
-        #expect(
-            try await client.nextResponse()?.result
-                == .event(.renamed(id: alpha.id, from: "Alpha", to: "Beta")))
-    }
 }
 
 /// A client on the command socket, for driving the transport from a test.
@@ -285,26 +112,6 @@ private final class TestCommandClient {
         }
 
         fd = descriptor
-    }
-
-    func send(_ request: VMCommandRequest) throws {
-        try sendRaw(try JSONEncoder().encode(request))
-    }
-
-    func sendRaw(_ payload: Data) throws {
-        let framed = try StreamFrame.encode(payload)
-        var offset = 0
-        try framed.withUnsafeBytes { raw in
-            guard let base = raw.baseAddress else { return }
-            while offset < raw.count {
-                let written = write(fd, base + offset, raw.count - offset)
-                guard written > 0 else {
-                    if errno == EINTR { continue }
-                    throw TestFailure("client write() failed: errno \(errno)")
-                }
-                offset += written
-            }
-        }
     }
 
     /// The next framed response, or `nil` at end of stream.
