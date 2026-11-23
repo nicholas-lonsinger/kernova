@@ -3,8 +3,10 @@
 # squash-merged two branches, one after a later commit, and then edited the
 # lines they changed: every worktree holding uncommitted or unmerged work, or
 # a lock a live process or a person holds, stays; the merged ones and those
-# whose lock a dead session left go; and -n changes nothing. Local git only;
-# fakes stand in for GitHub and Launch Services.
+# whose lock a dead session left go; a record whose folder is gone is dropped
+# unless a live process holds its lock, and its branch goes only when merged;
+# and -n changes nothing. Local git only; fakes stand in for GitHub and Launch
+# Services.
 
 set -uo pipefail
 
@@ -71,6 +73,9 @@ add by-hand && lock by-hand 'on an external drive'
 add dead && lock dead "claude agent dead (pid $dead start $live_start)"
 add dead-no-start && lock dead-no-start "claude session dead-no-start (pid $dead)"
 add reused-pid && lock reused-pid "claude agent reused-pid (pid $$ start Thu Jan  1 00:00:00 1970)"
+add gone-dead && lock gone-dead "claude agent gone-dead (pid $dead start $live_start)" && rm -rf "$wts/gone-dead"
+add gone-live && lock gone-live "claude agent gone-live (pid $$ start $live_start)" && rm -rf "$wts/gone-live"
+add gone-unmerged && commit "$wts/gone-unmerged" file y && rm -rf "$wts/gone-unmerged"
 
 # The squash merges, then later edits of the lines they changed.
 commit "$main" file b 'Squash merge'
@@ -80,26 +85,38 @@ git -C "$main" push -q origin main
 
 kept='by-hand hidden live live-no-start modified unmerged untracked'
 removed='carried-on dead dead-no-start merged reused-pid unlocked'
+# What still has a record: the kept, and the one whose folder is gone under a live lock.
+records='by-hand gone-live hidden live live-no-start modified unmerged untracked'
 # listed <verb> <output> — the worktrees <output> names after <verb>.
 listed() { sed -n "s/^$1 \([^ :]*\).*/\1/p" <<<"$2" | sort | paste -sd ' ' -; }
+# record <name> / branch <name> — whether git still holds the worktree's record, or the branch.
+record() { git -C "$main" worktree list --porcelain | grep -qx "worktree $wts/$1" && echo yes || echo no; }
+branch() { git -C "$main" rev-parse -q --verify "refs/heads/$1" >/dev/null && echo yes || echo no; }
 
 out=$(bash "$main/Tools/prune-worktrees.sh" -n 2>&1)
 check '-n: removes' "$(listed 'would remove' "$out")" "$removed"
-check '-n: keeps' "$(listed keep "$out")" "$kept"
+check '-n: keeps' "$(listed keep "$out")" "$records"
+check '-n: drops' "$(listed 'would drop record' "$out")" 'gone-dead gone-unmerged'
 for wt in $kept $removed; do
     check "-n leaves $wt" "$(git -C "$main" worktree list | grep -c "/$wt ")" 1
+done
+for wt in gone-dead gone-live gone-unmerged; do
+    check "-n leaves the record and branch of $wt" "$(record "$wt") $(branch "$wt")" 'yes yes'
 done
 
 out=$(bash "$main/Tools/prune-worktrees.sh" 2>&1)
 check 'removes' "$(listed remove "$out")" "$removed"
-check 'keeps' "$(listed keep "$out")" "$kept"
+check 'keeps' "$(listed keep "$out")" "$records"
+check 'gone, dead lock: record and merged branch go' "$(record gone-dead) $(branch gone-dead)" 'no no'
+check 'gone, live lock: record and branch stay' "$(record gone-live) $(branch gone-live)" 'yes yes'
+check 'gone, unmerged: record goes, branch stays' "$(record gone-unmerged) $(branch gone-unmerged)" 'no yes'
 for wt in $kept; do
     check "$wt is kept" "$([ -d "$wts/$wt" ] && git -C "$main" rev-parse -q --verify "refs/heads/$wt" >/dev/null && echo yes)" yes
 done
 for wt in $removed; do
     check "$wt is removed" "$([ -e "$wts/$wt" ] || git -C "$main" rev-parse -q --verify "refs/heads/$wt" >/dev/null || echo yes)" yes
 done
-check 'git lists only the kept' "$(git -C "$main" worktree list --porcelain | sed -n 's|^worktree .*/||p' | sed 1d | sort | paste -sd ' ' -)" "$kept"
+check 'git lists only the kept' "$(git -C "$main" worktree list --porcelain | sed -n 's|^worktree .*/||p' | sed 1d | sort | paste -sd ' ' -)" "$records"
 
 if [ "$FAIL" -eq 0 ]; then
     printf '  %s✓%s prune-worktrees: %d fixture checks\n' "$c_green" "$c_reset" "$PASS"
