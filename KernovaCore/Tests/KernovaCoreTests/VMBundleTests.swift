@@ -177,6 +177,23 @@ struct VMBundleTests {
         }
     }
 
+    @Test("A sidecar absent at load and present before a write keeps what it holds")
+    func aSidecarCopiedInAfterLoadSurvivesAWrite() throws {
+        try withBundle { url in
+            let bundle = makeBundle(try onDisk(url))
+            // The copy that was still arriving when the bundle was read.
+            try Data(#"{"startsAutomaticallyOnLaunch":true}"#.utf8).write(
+                to: url.appendingPathComponent("host-state.json"))
+
+            try bundle.commitHostState { $0.displayPreference = .fullscreen }
+
+            let read = try onDisk(url)
+            #expect(read.hostState.startsAutomaticallyOnLaunch)
+            #expect(read.hostState.displayPreference == .fullscreen)
+            #expect(bundle.hostState == read.hostState)
+        }
+    }
+
     @Test("A configuration that no longer decodes refuses a write")
     func anUndecodableConfigurationRefusesAWrite() throws {
         try withBundle { url in
@@ -229,6 +246,21 @@ struct VMBundleTests {
     }
 
     // MARK: - Coding
+
+    @Test("A pairing field the file does not carry decodes to its default")
+    func pairingAbsentFieldsTakeTheirDefaults() throws {
+        try withBundle { url in
+            try Data(
+                #"{"pairings":[{"key":"k","form":"serialNumber","displayName":"Drive","pairedAt":"2026-09-12T00:00:00Z"}]}"#
+                    .utf8
+            ).write(to: url.appendingPathComponent("usb-accessories.json"))
+
+            let loaded = try onDisk(url).usbPairings
+
+            #expect(loaded.pairings.count == 1)
+            #expect(loaded.pairings.first?.receptacleLabel == nil)
+        }
+    }
 
     @Test("A committed manifest reads back as itself")
     func manifestRoundTrips() throws {

@@ -169,4 +169,51 @@ struct VMOtherCopyHoldTests {
         #expect(copy.activity.decide(.start(recovery: false), posture: .commit) == .admit, "\(label)")
         #expect(!source.activity.heldByAnotherCopy, "\(label)")
     }
+
+    /// Registers "Starting" and `otherName`, both at rest with networking on
+    /// and distinct MAC addresses, then has another copy rewrite `otherName`'s
+    /// configuration on disk to carry Starting's MAC address. The library is
+    /// answered so the test keeps it alive: its VMs reach it weakly.
+    private func registerStartingAndRewrittenOther(
+        named otherName: String
+    ) throws -> (
+        library: VMLibrary, storage: MockVMStorageService, starting: VMInstance, other: VMInstance,
+        otherMAC: String?
+    ) {
+        let storage = MockVMStorageService()
+        let preferences = makeTestPreferences()
+        let library = makeWiredLibrary(storage: storage, preferences: preferences)
+        let starting = library.registerFixture(
+            name: "Starting", preferences: preferences,
+            mutate: Self.twin(.macAddress, index: 1, identity: Data()))
+        let other = library.registerFixture(
+            name: otherName, preferences: preferences,
+            mutate: { config in
+                config.networkEnabled = true
+                config.macAddress = "02:4b:4e:56:02:02"
+            })
+        let otherMAC = other.configuration.macAddress
+        try VMStagedBundle.fixtureForTesting(at: other.bundleURL, access: storage.files)
+            .update(.configuration) { $0.macAddress = starting.configuration.macAddress }
+        return (library, storage, starting, other, otherMAC)
+    }
+
+    @Test("A bring-up's identity check re-reads a bundle another copy holds, and claims what it carries now")
+    func identityCheckReReadsHeldBundles() throws {
+        let (library, storage, starting, held, _) = try registerStartingAndRewrittenOther(named: "Held")
+        storage.files.holdElsewhere(held.bundleURL)
+        let reads = storage.files.readCount(of: VMBundleLayout.configRelativePath)
+
+        let decision = starting.activity.decide(.start(recovery: false), posture: .commit)
+
+        guard case .refuse(.identityConflict(let conflict)) = decision else {
+            Issue.record("decided \(decision)")
+            return
+        }
+        #expect(conflict.other === held)
+        #expect(conflict.reason == .macAddress)
+        #expect(storage.files.readCount(of: VMBundleLayout.configRelativePath) == reads + 1)
+        #expect(held.configuration.macAddress == starting.configuration.macAddress)
+        withExtendedLifetime(library) {}
+    }
 }

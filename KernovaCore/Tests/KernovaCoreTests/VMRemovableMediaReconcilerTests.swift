@@ -119,6 +119,30 @@ struct VMRemovableMediaReconcilerTests {
         #expect(mock.lastAttachedReadOnly == false)
     }
 
+    @Test("A slot whose eject failed is not attached again, its medium still there")
+    func failedEjectLeavesItsSlotAlone() async throws {
+        struct TransientError: Error {}
+        let mock = MockRemovableMediaDeviceService()
+        mock.detachError = TransientError()
+        let harness = makeHarness(removableMediaDeviceService: mock)
+        let id = UUID()
+        let (instance, sessionID) = makeRunningInstance(in: harness) {
+            $0.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: true)]
+        }
+        instance.recordAttachedMedia(
+            RemovableMediaDeviceInfo(id: id, path: "/tmp/install.iso", readOnly: true), for: sessionID)
+
+        harness.library.editConfiguration(of: instance, as: .hotPlugMedia) {
+            $0.removableMedia = [RemovableMediaItem(id: id, path: "/tmp/install.iso", readOnly: false)]
+        }
+        try await waitForChange { !isReconciling(instance) }
+
+        #expect(mock.detachCallCount == 1)
+        #expect(mock.attachCallCount == 0)
+        #expect(instance.configuration.removableMedia?.map(\.readOnly) == [true])
+        #expect(failures.showError)
+    }
+
     @Test("A pass whose session ends drops its failure: no alert, no rollback")
     func liveRemovableEndedPassFailureIsDropped() async throws {
         let mock = SuspendingMockRemovableMediaDeviceService()

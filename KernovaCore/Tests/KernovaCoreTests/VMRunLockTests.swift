@@ -295,6 +295,24 @@ struct VMRunLockTests {
         expectLockFollowsPhase(instance, store)
     }
 
+    @Test("A save file another copy left re-derives the VM as suspended, and refuses a cold boot over it")
+    func admissionSeesASaveFileAnotherCopyLeft() async throws {
+        let (instance, store) = makeInstance(.stopped)
+        try VMInstanceFixture.writeSaveFile(for: instance)
+        let recorder = Recorder()
+
+        await #expect(throws: VMAdmissionRefusal(refusal: .invalidState)) {
+            try await instance.activity.launchStartGuest(.starting(recovery: false)) { _ in
+                recorder.bodyRan = true
+                return .rest(.asStarted, ())
+            }.resolved()
+        }
+
+        #expect(!recorder.bodyRan)
+        #expect(instance.phase == .suspended)
+        expectLockFollowsPhase(instance, store)
+    }
+
     // MARK: - Launch sweep
 
     @Test("The launch sweep of revert staging and spent suspend slots skips a bundle another copy holds")

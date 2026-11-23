@@ -118,6 +118,18 @@ struct VMOrganizationDirectoryTests {
         #expect(try parsed(Data(contentsOf: fileURL)) == full)
     }
 
+    @Test("A name or an identifier selects a group, the name ignoring case")
+    func namesSelectGroups() throws {
+        let directory = VMOrganizationDirectory(fileURL: nil)
+        let lab = try directory.createSmartGroup(named: "Linux Lab", filter: VMLibraryFilter())
+
+        #expect(directory.state.listed?.smartGroup(named: "linux lab") == lab)
+        #expect(directory.state.listed?.smartGroup(named: " LINUX LAB ") == lab)
+        #expect(directory.state.listed?.smartGroup(named: lab.id.uuidString) == lab)
+        #expect(directory.state.listed?.smartGroup(named: "Linux") == nil)
+        #expect(directory.state.listed?.smartGroup(named: UUID().uuidString) == nil)
+    }
+
     @Test("A file that cannot be read is never overwritten")
     func anUnreadableFileRefusesChanges() throws {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)

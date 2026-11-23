@@ -79,7 +79,33 @@ struct VMStorageServiceTests {
         #expect(service.bundleIdentity(at: second) == nil)
     }
 
+    // MARK: - Bundle Extension
+
+    @Test("Bundle URL has .kernova extension")
+    func bundleURLHasKernovaExtension() throws {
+        let config = VMConfiguration(
+            name: "Extension Test",
+            guestOS: .linux,
+            bootMode: .efi,
+            cpuCount: VMGuestOS.linux.hostCPUCount,
+            memorySizeInGB: VMGuestOS.linux.hostMemorySize
+        )
+
+        let url = try service.bundleURL(for: config)
+        #expect(url.pathExtension == "kernova")
+        #expect(url.lastPathComponent == "\(config.id.uuidString).kernova")
+    }
+
     // MARK: - Staging & Publication
+
+    @Test("The production library is Kernova/VMs in the app's Application Support")
+    func productionLibraryLocation() {
+        let expected = URL.applicationSupportDirectory.appendingPathComponent(
+            "Kernova/VMs", isDirectory: true)
+        #expect(
+            VMStorageService.productionLibraryDirectory.path(percentEncoded: false)
+                == expected.path(percentEncoded: false))
+    }
 
     @Test("Listing bundles never admits a config-bearing bundle that is still staged")
     func listIgnoresStagedBundles() throws {

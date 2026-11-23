@@ -89,6 +89,59 @@ struct VMActivityTests {
         }
     }
 
+    // MARK: - perform
+
+    @Test("A body that throws rests the VM where its kind's failure rest says, and rethrows")
+    func throwingBodyRestsWhereTheKindSays() async throws {
+        let session = UUID()
+        let message = Probe().localizedDescription
+        // Written out rather than read from `restAfterFailure`, so the commit
+        // is checked against the rule and not against itself.
+        let cases: [(VMOperationKind, VMLifecyclePhase, VMLifecyclePhase)] = [
+            (.pausing, .running(sessionID: session), .running(sessionID: session)),
+            // A failed hot resume leaves the guest where it was, still in memory.
+            (.resuming, .livePaused(sessionID: session), .livePaused(sessionID: session)),
+            (.saving, .running(sessionID: session), .failed(message: message)),
+            (.deletingSnapshot, .stopped, .stopped),
+            (.capturingSnapshot(.stopped), .stopped, .stopped),
+            (
+                .bringUp(.reverting(snapshotID: UUID(), resumesAfter: false)),
+                .running(sessionID: session), .stopped
+            ),
+        ]
+        for (kind, startedFrom, rest) in cases {
+            let (instance, _) = makeInstance(startedFrom)
+            instance.seedSnapshotManifest(
+                VMSnapshotManifest(snapshots: [VMSnapshot(name: "Baseline", macAddress: nil)]))
+            await #expect(throws: Probe.self, "\(kind)") {
+                if case .bringUp(let bringUp) = kind {
+                    try await instance.activity.launchAnyBringUp(bringUp) {
+                        (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
+                        throw Probe()
+                    }.resolved()
+                } else {
+                    try await instance.activity.perform(try #require(VMNonBringUpKind(kind))) {
+                        (_: borrowing VMOperationContext) -> VMOperationEnding<Void> in
+                        throw Probe()
+                    }
+                }
+            }
+            #expect(instance.phase == rest, "\(kind)")
+        }
+
+        // A bring-up's permanent failure is the failed phase carrying its
+        // message; nothing is live after it.
+        let (booting, _) = makeInstance(.stopped)
+        await #expect(throws: Probe.self) {
+            try await booting.activity.launchAnyBringUp(.guestStart(.starting(recovery: false))) {
+                (_: borrowing VMBringUpContext) -> VMOperationEnding<Void> in
+                throw Probe()
+            }.resolved()
+        }
+        #expect(booting.phase == .failed(message: message))
+        #expect(!booting.hasLiveVirtualMachine)
+    }
+
     // MARK: - launch
 
     @Test("launch returns with the operation committed, and its end hook sees the rest before the outcome resolves")

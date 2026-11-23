@@ -103,6 +103,24 @@ struct VMConfigurationKeyRegistryTests {
             VMSettings(configuration: original, hostState: hostState), manifest: manifest)
     }
 
+    // MARK: - Namespace
+
+    @Test("The keyspace listing answers, per guest the key applies to, whether a running VM takes it")
+    func descriptorsAnswerPerGuest() throws {
+        func listing(_ name: String) throws -> [String: Bool] {
+            let key = try #require(VMConfigurationKeyRegistry.key(named: name))
+            #expect(key.descriptor.name == key.name)
+            #expect(key.descriptor.summary == key.summary)
+            return key.descriptor.editableWhileRunning
+        }
+        #expect(try listing("cpus") == ["macOS": false, "linux": false])
+        #expect(try listing("clipboard.sharing") == ["macOS": true])
+        #expect(try listing("network.mode") == ["macOS": true, "linux": true])
+        #expect(try listing("ephemeral") == ["macOS": true, "linux": true])
+        #expect(try listing("dropFiles") == ["macOS": true])
+        for key in VMConfigurationKeyRegistry.keys { #expect(!key.summary.isEmpty) }
+    }
+
     // MARK: - Values
 
     @Test("Booleans take every spelling and read back as true or false")
@@ -144,5 +162,23 @@ struct VMConfigurationKeyRegistryTests {
         try write(key, "hostOnly", to: &config)
         #expect(config.networkEnabled)
         #expect(config.networkMode == .hostOnly)
+    }
+
+    // MARK: - Keys the settings panes write
+
+    @Test("A snapshot name two snapshots share is refused rather than guessed")
+    func ephemeralBaselineRefusesAnAmbiguousName() throws {
+        let key = VMConfigurationKeyRegistry.ephemeralBaseline
+        let first = VMSnapshot(
+            name: "Twin", createdAt: Date(timeIntervalSince1970: 1), kind: .cold, macAddress: nil)
+        let second = VMSnapshot(
+            name: "Twin", createdAt: Date(timeIntervalSince1970: 2), kind: .cold, macAddress: nil)
+        let manifest = VMSnapshotManifest(snapshots: [first, second], currentID: first.id)
+        var settings = VMSettings(configuration: makeConfiguration(), hostState: VMHostState())
+
+        #expect(throws: CommandError.self) {
+            try write(key, "Twin", to: &settings, manifest: manifest)
+        }
+        #expect(!settings.hostState.ephemeralModeEnabled)
     }
 }

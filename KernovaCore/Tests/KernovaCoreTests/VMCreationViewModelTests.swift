@@ -143,4 +143,20 @@ struct VMCreationViewModelTests {
         vm.selectCatalogEntry(confirmed)
         #expect(vm.shouldShowOverwriteWarning == false)
     }
+
+    // MARK: - buildInstallContext
+
+    @Test("buildInstallContext snapshots localFile with chosen path")
+    func buildInstallContextLocalFile() {
+        let vm = VMCreationViewModel.overFakeEngine(localImageInspector: MockLocalRestoreImageInspector())
+        let bookmark = Data([0x01, 0x02, 0x03])
+        vm.selectLocalFile(path: "/tmp/macOS-26.ipsw", bookmark: bookmark)
+
+        let context = vm.buildInstallContext()
+
+        #expect(context.source == .localFile)
+        #expect(context.localIPSWPath == "/tmp/macOS-26.ipsw")
+        #expect(context.downloadDestinationPath == nil)
+        #expect(context.localIPSWBookmark == bookmark)
+    }
 }

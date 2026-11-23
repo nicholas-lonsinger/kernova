@@ -111,6 +111,15 @@ struct VMInstanceTests {
         #expect(VMInstanceFixture.make().machineIdentity == nil)
     }
 
+    // MARK: - Bundle Paths
+
+    @Test("Bundle path URLs are correctly derived from bundleURL")
+    func bundlePaths() {
+        let instance = VMInstanceFixture.make()
+
+        #expect(instance.bundleLayout.saveFileURL.lastPathComponent == "SaveFile.vzvmsave")
+    }
+
     // MARK: - Session Events
 
     @Test("a session event whose id matches no live session is dropped")

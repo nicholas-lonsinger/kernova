@@ -10,6 +10,43 @@ import Testing
 /// of a VM's state files.
 @Suite("VMStateFieldClasses Tests", .caseScoped)
 struct VMStateFieldClassesTests {
+    /// Fails for a stored property of `value`'s type the classification does
+    /// not name, for a name it holds that is no stored property, and for an
+    /// entry whose key path reaches no stored property or repeats another's.
+    private static func expectExhaustive<Root>(
+        _ classification: VMStateFieldClasses<Root>, over value: Root,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) {
+        let stored = Mirror(reflecting: value).children.compactMap(\.label)
+        let classified = classification.fields.map(\.name)
+        #expect(
+            Set(stored).subtracting(classified).sorted() == [],
+            "stored fields with no classification", sourceLocation: sourceLocation)
+        #expect(
+            Set(classified).subtracting(stored).sorted() == [],
+            "classified names that are no stored field", sourceLocation: sourceLocation)
+        #expect(classified.count == Set(classified).count, sourceLocation: sourceLocation)
+        let keyPaths = classification.fields.map { $0.keyPath as AnyKeyPath }
+        #expect(keyPaths.count == Set(keyPaths).count, sourceLocation: sourceLocation)
+        for field in classification.fields {
+            #expect(
+                MemoryLayout<Root>.offset(of: field.keyPath) != nil,
+                "\(field.name) reaches no stored property", sourceLocation: sourceLocation)
+        }
+    }
+
+    @Test("Every stored field of every state file has a classification")
+    func everyStoredFieldIsClassified() {
+        Self.expectExhaustive(
+            VMConfiguration.fieldClasses,
+            over: VMConfiguration(
+                name: "VM", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+                memorySizeInGB: VMGuestOS.macOS.hostMemorySize))
+        Self.expectExhaustive(VMHostState.fieldClasses, over: VMHostState())
+        Self.expectExhaustive(VMSnapshotManifest.fieldClasses, over: VMSnapshotManifest())
+        Self.expectExhaustive(USBAccessoryPairingSet.fieldClasses, over: USBAccessoryPairingSet())
+    }
+
     /// Values some key takes, or refuses, covering every key's spelling.
     private static let candidateValues = [
         "true", "false", "0", "1", "2", "4", "8", "16", "1280", "800",
