@@ -212,6 +212,7 @@ public final class BlockingInbox<Value: Sendable>: Sendable {
         arrived.notify()
     }
 
+    // periphery:ignore - used by the Linux-only test targets, which the dead-code scan does not build
     /// Whether every value delivered so far has been read.
     public var isEmpty: Bool { values.withLock(\.isEmpty) }
 
@@ -232,6 +233,7 @@ public final class BlockingInbox<Value: Sendable>: Sendable {
         return values
     }
 
+    // periphery:ignore - used by the Linux-only test targets, which the dead-code scan does not build
     /// The oldest value not yet read, once one has arrived, blocking the
     /// calling thread as ``next(fileID:line:)`` suspends.
     @available(*, noasync, message: "Await next(fileID:line:) instead of blocking a cooperative thread")

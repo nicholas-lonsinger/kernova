@@ -13,7 +13,6 @@ SCHEME                 := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_
 DESTINATION            := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_destination"')
 DERIVED_DATA           := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_derived_data"')
 INDEX_DERIVED_DATA     := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_index_derived_data"')
-DEAD_CODE_DERIVED_DATA := $(shell bash -c '$(XCODEBUILD_LIB) && echo "$$kernova_dead_code_derived_data"')
 RESULT_BUNDLE          := artifacts/TestResults.xcresult
 
 ifneq ($(strip $(CI)),)
@@ -27,9 +26,8 @@ CONFIGURATION ?= Debug
 XCODEBUILD               = Tools/xcodebuild.sh '$(CONFIGURATION)'
 XCODEBUILD_PROJECT_FLAGS := $(shell bash -c '$(XCODEBUILD_LIB) && xcodebuild_project_flags')
 
-# Every command that runs xcodebuild against this checkout — Periphery's
-# included, which resolves packages into the checkout's shared files — runs
-# under the checkout's build lock (Tools/checkout-lock.sh), so a second run
+# Every command that runs xcodebuild against this checkout runs under the
+# checkout's build lock (Tools/checkout-lock.sh), so a second run
 # waits for the first rather than sharing its build arena; a Tools script that
 # runs xcodebuild takes the lock itself. `test-unhosted` runs no xcodebuild,
 # so it runs without it. A recipe with several such commands
@@ -45,7 +43,7 @@ SWIFT_FORMAT := xcrun swift-format
 SWIFT_SOURCE_DIRS := $(shell bash -c '. Tools/lib/swift-roots.sh && swift_roots')
 
 .DEFAULT_GOAL := help
-.PHONY: help build locked-build build-for-testing locked-build-for-testing test test-linux attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain ubuntu-sdk linux-build clean locked-clean format lint install-hooks install-lsp index locked-index dead-code locked-dead-code dead-code-targets ghosts clean-ghosts
+.PHONY: help build locked-build build-for-testing locked-build-for-testing test test-linux attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain linux-build clean locked-clean format lint install-hooks install-lsp index locked-index dead-code ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -145,18 +143,14 @@ test-unhosted-tsan: ## Run the unhosted lanes under Thread Sanitizer
 	@TSAN_OPTIONS='strip_env=0 $(TSAN_OPTIONS)' $(MAKE) --no-print-directory test-unhosted SWIFT_TEST_FLAGS=--sanitize=thread
 
 # Every other target builds only the tracked pins and fails once a manifest's
-# requirement no longer admits them; this rewrites the tracked pin files — the
-# Xcode workspace's, which every top-level package takes, and Tools/DeadCode's.
+# requirement no longer admits them; this rewrites the tracked pin file, the
+# Xcode workspace's, which every top-level package takes.
 .PHONY: resolve-packages
-resolve-packages: ## Re-resolve the tracked Package.resolved files after a package requirement changes
+resolve-packages: ## Re-resolve the tracked Package.resolved after a package requirement changes
 	$(LOCKED) xcodebuild -project $(PROJECT) -derivedDataPath $(DERIVED_DATA) -resolvePackageDependencies
-	xcrun swift package resolve --disable-experimental-prebuilts --package-path Tools/DeadCode
 
 swift-toolchain: ## Install swiftly, the swift.org toolchain .swift-version pins, and its Static Linux SDK
 	@Tools/install-swift-toolchain.sh >/dev/null
-
-ubuntu-sdk: ## Generate and install the Ubuntu SDK the Linux half of `make dead-code` cross-builds with (once; minutes)
-	@Tools/install-ubuntu-sdk.sh >/dev/null
 
 # Its own scratch path keeps the swift.org toolchain's build state apart from
 # the Xcode toolchain's, which `test-unhosted` uses.
@@ -179,15 +173,8 @@ format: ## Rewrite Swift sources in place via swift-format
 lint: ## Run Tools/lint.sh: shellcheck, the checks, swift-format --strict and the worktree and ghost suites; a passing run is recorded for `make attest`
 	@Tools/attest.sh record lint
 
-# The scan and its arena are Tools/dead-code.sh's.
-dead-code: ## Scan for unused code with Periphery on macOS and, once `make ubuntu-sdk` has run, Linux: the combined scan CI runs (builds every scheme first; minutes)
-	$(LOCKED_TWIN)
-
-locked-dead-code:
-	@exec Tools/build-arenas.sh build '$(DEAD_CODE_DERIVED_DATA)/Build/Products' Tools/dead-code.sh
-
-dead-code-targets: ## Print the targets only tests reach, which the dead-code scan's production view excludes
-	@dead_code=$$(Tools/install-dead-code-tool.sh dead-code) && "$$dead_code" test-only-targets --project $(PROJECT)
+dead-code: ## List the code nothing uses, then the code only tests use, with the Periphery on PATH (builds the app first; minutes)
+	@$(LOCKED) Tools/dead-code.sh
 
 ghosts: ## Report stale/competing Kernova Launch Services registrations, processes, worktrees, and build arenas
 	@Tools/ghosts.sh

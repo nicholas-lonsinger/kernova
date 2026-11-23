@@ -1,15 +1,10 @@
-# Periphery dead-code scan configuration.
+# Periphery's analysis options for `make dead-code`; Tools/dead-code.sh names
+# what each scan reads.
 # https://github.com/peripheryapp/periphery
-#
-# The analysis every platform's scan shares. What each platform builds and
-# scans is its runner's: the Makefile's `dead-code` for macOS (the project and
-# its schemes), Tools/dead-code-linux.sh for Linux (KernovaKit, scanned from
-# its own directory).
 
 # `KernovaKit` is a closed monorepo package — every consumer lives in this
-# repository, and the combined scan indexes all of them, so an unused public
-# declaration is dead code. A public symbol with a use
-# outside the repo takes a per-symbol `// periphery:ignore`.
+# repository, so an unused public declaration is dead code. A public symbol
+# with a use outside the repo takes a per-symbol `// periphery:ignore`.
 retain_public: false
 
 # Keeps AppKit selectors, NSMenuItemValidation conformance, target/action
@@ -29,6 +24,13 @@ retain_assign_only_properties: true
 # binding is renamed to `_`.)
 retain_unused_protocol_func_params: true
 
+# The system runs each App Intent. Periphery 3.8.0 keeps only a type naming an
+# App Intents protocol itself, not one conforming through `ConsentingIntent`,
+# and `// periphery:ignore` on a type reports each of its members that code
+# references as a superfluous ignore.
+retain_files:
+  - "KernovaCore/Sources/KernovaCore/Intents/*Intents.swift"
+
 report_exclude:
   - "**/.build/**"
   - "DerivedData/**"
@@ -36,3 +38,6 @@ report_exclude:
   # `_GeneratedWithProtocGenSwiftVersion` version-check struct) that are
   # part of the generator's contract — not actionable findings.
   - "**/*.pb.swift"
+  # Only the Linux agent uses these in production, and the scan builds for macOS: not scanned.
+  - "KernovaKit/Sources/KernovaDBus/**"
+  - "KernovaKit/Sources/KernovaLogging/StandardErrorLogDestination.swift"

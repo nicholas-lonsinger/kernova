@@ -5,9 +5,9 @@
 # the checkout, and CI caches an entry under its name. Sourced, never run:
 #
 #     . "$root/Tools/lib/tool-cache.sh"
-#     inputs=(periphery 3.8.0 -- Tools/install-periphery.sh Tools/periphery.patch)
-#     dir=$(tool_dir "${inputs[@]}")                                  # where it is or would be
-#     dir=$(tool_install build_periphery verify_periphery "${inputs[@]}")  # installed
+#     inputs=(swift-protobuf "$revision" -- Tools/install-protoc.sh)
+#     dir=$(tool_dir "${inputs[@]}")                                # where it is or would be
+#     dir=$(tool_install build_protoc verify_protoc "${inputs[@]}")  # installed
 #
 # Every entry under the cache root is this file's. An install builds and
 # verifies an entry in a staging directory beside it, then renames it into
@@ -87,8 +87,7 @@ tool_key() (
 
 # tool_swift_identity <swift command>... — the toolchain `<swift command>
 # -print-target-info` runs: its compiler, the triple it targets less the OS
-# version, and where it is installed, which a macOS build of Periphery links
-# libIndexStore from by absolute path.
+# version, and where it is installed.
 tool_swift_identity() {
     "$@" -print-target-info | grep -E '"(compilerVersion|unversionedTriple|runtimeResourcePath)"'
 }

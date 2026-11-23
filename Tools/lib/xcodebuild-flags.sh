@@ -18,7 +18,7 @@ kernova_derived_data_root=DerivedData
 kernova_derived_data=$kernova_derived_data_root/Make
 # shellcheck disable=SC2034 # read by the Makefile and Tools/lsp-config.sh
 kernova_index_derived_data=$kernova_derived_data_root/Index
-# shellcheck disable=SC2034 # read by the Makefile and Tools/dead-code.sh
+# shellcheck disable=SC2034 # read by Tools/dead-code.sh
 kernova_dead_code_derived_data=$kernova_derived_data_root/Periphery
 # The compilation cache store these flags build with, and its size limit. Past
 # the limit a build starts a new generation and keeps the previous one as a
