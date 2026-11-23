@@ -18,8 +18,7 @@ private func block(until release: DispatchSemaphore) {
 struct BackstopTests {
     @Test("A park nothing answers fails at its deadline, naming the wait and where it was armed")
     func parkFailsByName() async throws {
-        let line = #line + 2
-        // deadline-under-test - the deadline firing is the asserted outcome
+        let line = #line + 1
         let backstop = Backstop("a callback nothing makes", timeout: 0.1)
         let failure = await #expect(throws: TestFailure.self) {
             let _: Int = try await backstop.park { _ in }
@@ -35,7 +34,6 @@ struct BackstopTests {
         let release = AsyncGate()
         let released = Locked(false)
         let returned = Locked(false)
-        // deadline-under-test - the deadline firing is the asserted outcome
         let backstop = Backstop("an operation that outlives it", timeout: 0.1)
         await #expect(throws: TestFailure.self) {
             try await backstop.run {
@@ -56,7 +54,6 @@ struct BackstopTests {
                 resume(1); resume(2)
             } == 1)
         let late = Locked(LateResume())
-        // deadline-under-test - the deadline firing is the asserted outcome
         let backstop = Backstop("a callback made after the deadline", timeout: 0.1)
         await #expect(throws: TestFailure.self) {
             let _: Int = try await backstop.park { resume in late.withLock { $0.resume = resume } }
@@ -79,7 +76,6 @@ struct BackstopTests {
                 returned.withLock { $0 += 1 }
             }
         }
-        // deadline-under-test - the deadline firing is the asserted outcome
         let backstop = Backstop("a callback nothing makes", timeout: 0.5)
         await #expect(throws: TestFailure.self) {
             let _: Int = try await backstop.park { _ in }

@@ -5,11 +5,10 @@
 #     . Tools/lib/package-pins.sh
 #     with_package_pins KernovaKit swift build --
 #
-# A top-level package is a peer in Kernova.xcodeproj
-# (Tools/check-package-reference.sh), so its pins are the workspace's
-# Package.resolved, the file Xcode builds the app against; SwiftPM reads a
-# package's pins from beside its manifest, so that file is copied there. Any
-# other package tracks its own Package.resolved beside its manifest.
+# A top-level package is a peer in Kernova.xcodeproj, so its pins are the
+# workspace's Package.resolved, the file Xcode builds the app against; SwiftPM
+# reads a package's pins from beside its manifest, so that file is copied
+# there. Any other package tracks its own Package.resolved beside its manifest.
 
 # shellcheck shell=bash
 

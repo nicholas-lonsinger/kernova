@@ -1,3 +1,0 @@
-xcrun swift-format lint --strict --recursive Kernova KernovaKit KernovaTests
-  ✓ docs: line cap and links
-  ✓ entitlements: development set is the shipping set minus vm.networking

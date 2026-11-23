@@ -188,7 +188,7 @@ done <<<"$files"); then
         after=''
         # The Swift generated from each schema is checked in beside it, by
         # the protoc-gen-swift of the pinned revision.
-        [ "$identity" != swift-protobuf ] || after=' Then regenerate the checked-in Swift with `Tools/check-generated-protos.sh --write`.'
+        [ "$identity" != swift-protobuf ] || after=' Then regenerate the checked-in Swift with `Tools/regen-protos.sh`.'
         report_pin "$identity" "$pinned" "$file" "$(release_level "$pinned" "$newest")" "$newest" \
             "${location%.git}/releases/tag/$newest" \
             "${manifests:+In $manifests, }make every requirement on it admit \`$newest\` and raise at least one lower bound to \`$newest\`, then run \`make resolve-packages\`.$after"

@@ -10,7 +10,7 @@ protocol joins it to its neighbors.
 their targets, and each Xcode target explains itself in
 `Config/Targets/<Target>.xcconfig`. The `KernovaCore` package is three layers:
 the `KernovaCore` target, the core, which reaches neither AppKit nor
-Virtualization (`Tools/check-core-imports.sh`); `KernovaVirtualization`, the
+Virtualization; `KernovaVirtualization`, the
 engine, over it; and `KernovaUI`, the AppKit layer, over both.
 
 ## Composition

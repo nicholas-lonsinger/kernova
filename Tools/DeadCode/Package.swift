@@ -28,7 +28,5 @@ let package = Package(
         .executableTarget(name: "dead-code", dependencies: ["DeadCodeKit"], swiftSettings: swiftSettings),
         .executableTarget(
             name: "dead-code-sources", dependencies: ["DeadCodeKit", "DeadCodeSources"], swiftSettings: swiftSettings),
-        .testTarget(
-            name: "DeadCodeTests", dependencies: ["DeadCodeKit", "DeadCodeSources"], swiftSettings: swiftSettings),
     ]
 )

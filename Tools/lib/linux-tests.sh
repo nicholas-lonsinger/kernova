@@ -10,7 +10,7 @@
 
 # linux_tests_paths — what the Linux tests read from the checkout, and what
 # runs them. The `paths` filter of .github/workflows/portable.yml names the
-# same paths (Tools/check-linux-tests-paths.sh).
+# same paths.
 linux_tests_paths() {
     printf '%s\n' \
         .swift-version \
