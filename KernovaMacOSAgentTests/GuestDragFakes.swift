@@ -297,14 +297,6 @@ final class FakeGuestDragPeer: GuestDragOutPeer {
         }
     }
 
-    /// The items each listing of take `id` listed, in order.
-    func listed(_ id: DragTakeID) -> [[OfferedItem]] {
-        events.compactMap { event in
-            guard case .answered(id, .report(.listed(let items))) = event else { return nil }
-            return items
-        }
-    }
-
     private static func name(_ item: OfferedItem) -> String {
         String(decoding: item.representations.first?.name ?? Data(), as: UTF8.self)
     }
@@ -408,22 +400,6 @@ func promiseItem(_ type: String?, alongside url: URL? = nil) -> FakePasteboardIt
         representations.append((type: .fileURL, data: Data(url.absoluteString.utf8)))
     }
     return FakePasteboardItem(representations)
-}
-
-/// The guest's type icons: a fresh image for each type asked, every one
-/// recorded. It is handed a type and nothing else, so a box icon drawn from
-/// it read no file.
-@MainActor
-final class FakeGuestDragTypeIcons {
-    private(set) var asked: [UTType] = []
-    private(set) var images: [NSImage] = []
-
-    func icon(for type: UTType) -> NSImage {
-        asked.append(type)
-        let image = NSImage(size: NSSize(width: 128, height: 128))
-        images.append(image)
-        return image
-    }
 }
 
 extension GuestDragCatcher {

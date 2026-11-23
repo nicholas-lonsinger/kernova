@@ -421,32 +421,6 @@ struct GuestDragOutTests {
 
         #expect(failureCode(try await pull.returned()) == .itemRepresentationUnavailable)
     }
-
-    // MARK: - The catcher's window
-
-    /// The live catcher window laid out over `screen` for `urls`, never
-    /// ordered front.
-    private func catcherWindow(
-        for urls: [URL] = [URL(fileURLWithPath: "/one.txt")],
-        over screen: NSRect = NSRect(x: 0, y: 0, width: 1440, height: 900)
-    ) -> (window: NSPanel, icons: FakeGuestDragTypeIcons) {
-        catcherWindow(items: urls.map(GuestDragItem.file), over: screen)
-    }
-
-    /// The live catcher window laid out over `screen` for `items`, never
-    /// ordered front.
-    private func catcherWindow(
-        items: [GuestDragItem], over screen: NSRect = NSRect(x: 0, y: 0, width: 1440, height: 900)
-    ) -> (window: NSPanel, icons: FakeGuestDragTypeIcons) {
-        let peer = FakeGuestDragPeer()
-        let catcher = GuestDragCatcher(peer: peer, makeSurface: { _ in FakeCatcherSurface() })
-        let icons = FakeGuestDragTypeIcons()
-        let panel = GuestDragCatcherPanel(catcher: catcher, typeIcon: icons.icon(for:))
-        panel.layOut(items: items, over: screen)
-        let window = panel.windowForTesting
-        window.contentView?.layoutSubtreeIfNeeded()
-        return (window, icons)
-    }
 }
 
 /// Tells a test that a pull it started off the main actor is under way.

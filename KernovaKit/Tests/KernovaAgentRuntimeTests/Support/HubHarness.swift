@@ -46,17 +46,12 @@ final class RecordingConnector: HostConnectionMaking {
     let runtime: HostConnectionRuntime
     let commands = Recorder<(connection: Int, command: HostCommand)>()
     let events = Recorder<(connection: Int, event: HostEvent)>()
-    /// The policy each connection was built with.
-    let policies = Recorder<(connection: Int, policy: PolicySnapshot)>()
     private let count = Locked(0)
-    /// The `featuresChanged` events held back from the hub, by connection number; a held connection has
-    /// an entry, empty until its first arrives.
-    private let heldFeatures = Locked<[Int: [@Sendable () -> Void]]>([:])
 
-    init(receiverPolicy: ReceiverPolicy, payloadSource: any UpdatePayloadSource, items: ItemAdapters?) {
+    init(payloadSource: any UpdatePayloadSource, items: ItemAdapters?) {
         runtime = HostConnectionRuntime(
             claim: Fixture.hostClaim, scheduler: SystemScheduler(), payloadSource: payloadSource, items: items,
-            logger: Fixture.logger, receiverPolicy: receiverPolicy)
+            logger: Fixture.logger)
     }
 
     func makeConnection(
@@ -67,20 +62,11 @@ final class RecordingConnector: HostConnectionMaking {
             count += 1
             return count
         }
-        let (events, heldFeatures) = (events, heldFeatures)
-        policies.record((number, policy))
+        let events = events
         let connection: HostConnection = runtime.makeConnection(
             stream, policy: policy, bundles: bundles, deliveringOn: queue
         ) { event in
             events.record((number, event))
-            if case .role(.featuresChanged) = event {
-                let held = heldFeatures.withLock { held in
-                    guard held[number] != nil else { return false }
-                    held[number]?.append { queue.async { handler(event) } }
-                    return true
-                }
-                if held { return }
-            }
             handler(event)
         }
         return Recorded(connection: connection, number: number, commands: commands)
@@ -105,18 +91,12 @@ final class RecordingConnector: HostConnectionMaking {
 /// A transport the test opens connections through: it keeps each acceptor the hub starts it with.
 final class TestTransport: GuestStreamTransport {
     private let acceptors = Locked<[GuestStreamAcceptor]>([])
-    /// How many times the hub stopped it.
-    let stops = Locked(0)
-    /// One entry per connection whose stream released, recorded once the acceptor has freed its slot.
-    private let releases = Recorder<Void>()
 
     func start(admitting acceptor: GuestStreamAcceptor) {
         acceptors.withLock { $0.append(acceptor) }
     }
 
-    func stop() {
-        stops.withLock { $0 += 1 }
-    }
+    func stop() {}
 
     /// The acceptor the hub last started it with.
     var acceptor: GuestStreamAcceptor? { acceptors.withLock(\.last) }
@@ -124,23 +104,12 @@ final class TestTransport: GuestStreamTransport {
     /// Opens a connection through the acceptor, answering its peer end, or `nil` when refused.
     func connect() -> MemoryStream? {
         let (host, peer) = MemoryStream.pair()
-        let releases = releases
         let accepted =
             acceptor?.offer { released in
-                host.onRelease {
-                    released()
-                    releases.record(())
-                }
+                host.onRelease(released)
                 return host
             } ?? false
         return accepted ? peer : nil
-    }
-
-    /// Waits until `count` of its connections' streams have released their slots. A stream releases after
-    /// the driver's final turn, so a connection's `.closed` orders nothing about its slot.
-    func released(_ count: Int, fileID: String = #fileID, line: Int = #line) async throws {
-        var waiter = releases.waiter()
-        for _ in 0..<count { _ = try await waiter.next(fileID: fileID, line: line) { _ in true } }
     }
 }
 
@@ -154,28 +123,20 @@ final class HubHarness: Sendable {
     let itemLog = Recorder<ItemLogEntry>()
     /// What the republisher logged: level, and each segment.
     let guestLogs = Recorder<(level: KernovaLogLevel, segments: [LogSegment])>()
-    /// The hub's own notices: its acceptor's.
-    let hostLogs = Recorder<String>()
     /// Where the hub delivers its snapshots.
     let publishQueue = DispatchQueue(label: "app.kernova.tests.hub-publish")
 
-    /// A hub attached to `transport`, its peers judged by `receiverPolicy`, their pulls read from
-    /// `payloadSource`, and its items served by `items`; each item event reaches `itemEvents` once logged.
+    /// A hub attached to `transport`, its peers' pulls read from `payloadSource`, and its items served by
+    /// `items`; each item event reaches `itemEvents` once logged.
     init(
         policy: PolicySnapshot = PolicySnapshot(), bundles: [BundledPayload] = [],
-        receiverPolicy: ReceiverPolicy = .production,
         payloadSource: any UpdatePayloadSource = FixedPayloads(bundles: []), items: ItemAdapters? = nil,
         itemEvents: @escaping @Sendable (HubItemEvent) -> Void = { _ in }
     ) {
-        connector = RecordingConnector(receiverPolicy: receiverPolicy, payloadSource: payloadSource, items: items)
-        let (snapshots, hostLogs, itemLog) = (snapshots, hostLogs, itemLog)
+        connector = RecordingConnector(payloadSource: payloadSource, items: items)
+        let (snapshots, itemLog) = (snapshots, itemLog)
         hub = AgentHub(
-            connector: connector, policy: policy, payloads: FixedPayloads(bundles: bundles),
-            logger: KernovaLogger(
-                subsystem: "app.kernova", category: "AgentHub",
-                sink: .init { _, _, _, segments in
-                    hostLogs.record(segments.map(\.text).joined())
-                }),
+            connector: connector, policy: policy, payloads: FixedPayloads(bundles: bundles), logger: Fixture.logger,
             itemEvents: { event in
                 itemLog.record(.event(event))
                 itemEvents(event)
@@ -260,21 +221,19 @@ final class HubPeer: Sendable {
 
     convenience init(
         _ harness: HubHarness, claim: PeerClaim, state: PeerSessionState = Fixture.peerState,
-        update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: ""), installs: Bool = false,
-        refuses: ErrorCode? = nil, items: MemoryItems? = nil
+        update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: ""), refuses: ErrorCode? = nil,
+        items: MemoryItems? = nil
     ) {
-        self.init(
-            harness.transport, claim: claim, state: state, update: update, installs: installs, refuses: refuses,
-            items: items)
+        self.init(harness.transport, claim: claim, state: state, update: update, refuses: refuses, items: items)
     }
 
-    /// A peer whose installer is `update`: with `installs`, it reports every pull's bytes consumed and the
-    /// payload installed; with `refuses`, every pull's bytes consumed and the payload rejected with that code;
-    /// otherwise it never answers. With `items`, it serves every item feature through them.
+    /// A peer whose installer is `update`: with `refuses`, it reports every pull's bytes consumed and the
+    /// payload rejected with that code; otherwise it never answers. With `items`, it serves every item feature
+    /// through them.
     init(
         _ transport: TestTransport, claim: PeerClaim, state: PeerSessionState = Fixture.peerState,
-        update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: ""), installs: Bool = false,
-        refuses: ErrorCode? = nil, items: MemoryItems? = nil
+        update: Availability<UpdateOffer> = .absent(.notImplemented, debugDetail: ""), refuses: ErrorCode? = nil,
+        items: MemoryItems? = nil
     ) {
         guard let stream = transport.connect() else { preconditionFailure("the transport refused a connection") }
         self.stream = stream
@@ -290,10 +249,8 @@ final class HubPeer: Sendable {
             handlers: ConnectionDriver<PeerEndpoint>.Handlers(
                 effect: { effect, driver in
                     switch effect {
-                    case .role(.update(.payload(let id, let bytes))) where installs || refuses != nil:
+                    case .role(.update(.payload(let id, let bytes))) where refuses != nil:
                         driver.handle(.update(.consumed(id, bytes.count)))
-                    case .role(.update(.complete(let id, _))) where installs:
-                        driver.handle(.update(.installed(id)))
                     case .role(.update(.complete(let id, _))):
                         if let refuses { driver.handle(.update(.rejected(id, WireError(refuses)))) }
                     case .itemSource(let effect):
@@ -311,16 +268,6 @@ final class HubPeer: Sendable {
     /// Feeds the endpoint `command`.
     func send(_ command: ItemCommand) {
         driver.handle(.itemCommand(command))
-    }
-
-    /// How the connection ended, once it has.
-    func closure(fileID: String = #fileID, line: Int = #line) async throws -> ConnectionClosure {
-        var waiter = events.waiter()
-        guard
-            case .closed(let closure) = try await waiter.next(
-                fileID: fileID, line: line, where: { if case .closed = $0 { true } else { false } })
-        else { preconditionFailure() }
-        return closure
     }
 }
 

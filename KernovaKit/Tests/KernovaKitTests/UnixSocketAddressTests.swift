@@ -18,13 +18,4 @@ struct UnixSocketAddressTests {
             try UnixSocketAddress.make(path: path)
         }
     }
-
-    /// Reads `sun_path` back as the NUL-terminated string it holds.
-    private static func path(of address: inout sockaddr_un) -> String {
-        withUnsafePointer(to: &address.sun_path) { rawPointer in
-            rawPointer.withMemoryRebound(
-                to: CChar.self, capacity: UnixSocketAddress.maxPathLength
-            ) { String(cString: $0) }
-        }
-    }
 }

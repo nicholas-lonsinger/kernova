@@ -25,10 +25,6 @@ struct DeliveryTests {
             try requestName(BusConnectionTests.serviceName, on: service)
             client = try bus.connect()
         }
-
-        func tick(_ label: String) throws {
-            try service.sendForTesting(BusConnectionTests.tick(label))
-        }
     }
 
     @Test("Once the bus is gone, a call from any later thread fails as disconnected")

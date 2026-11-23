@@ -23,8 +23,6 @@ import Testing
 /// downloads, described by the status it has once local.
 @Suite("Dataless entries")
 struct DatalessReadTests {
-    private static let file = ContainerAcceptance(
-        storage: .file, byteCeiling: 1 << 30, decmpfsTypes: [], acceptsLZ4: false)
     private static let folder = ContainerAcceptance(
         storage: .folder, byteCeiling: 1 << 30, decmpfsTypes: [], acceptsLZ4: false)
     /// When the entries' contents last changed, once local.

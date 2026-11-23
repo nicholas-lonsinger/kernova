@@ -63,12 +63,6 @@ package struct TestBulkSink: Sendable {
         return stream
     }
 
-    /// Resets `stream` with CANCELLED.
-    package mutating func reset(_ stream: StreamID, connection: inout Connection) {
-        guard connection.canReset(stream) else { return }
-        connection.reset(stream, WireError(.cancelled))
-    }
-
     /// Starts or stops consuming on `stream`; resuming consumes what is held.
     package mutating func setConsumes(_ consumes: Bool, on stream: StreamID, connection: inout Connection) {
         guard let index = flows.firstIndex(where: { $0.stream == stream }) else { return }

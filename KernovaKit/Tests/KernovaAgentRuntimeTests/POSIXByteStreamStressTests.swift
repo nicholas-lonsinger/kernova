@@ -16,14 +16,12 @@ import Foundation
 import Dispatch
 import KernovaAgentRuntime
 import KernovaPlatformPOSIX
-import KernovaSynchronization
 import Testing
 
 /// A started stream that reads to the end, calling `readMore()` after every `.received`.
 private final class DrainedStream: Sendable {
     let queue = DispatchQueue(label: "app.kernova.tests.posix.drained")
     let stream: POSIXByteStream
-    let receivedBytes = Locked(0)
     let receipts = Recorder<Int>()
     let ends = Recorder<ByteStreamEvent>()
     let released = Recorder<Int>()
@@ -31,25 +29,16 @@ private final class DrainedStream: Sendable {
     init(adopting descriptor: Int32) throws {
         let released = released
         stream = try POSIXByteStream(adopting: descriptor) { released.record(1) }
-        let (stream, receivedBytes, receipts, ends) = (stream, receivedBytes, receipts, ends)
+        let (stream, receipts, ends) = (stream, receipts, ends)
         stream.start(on: queue) { event in
             switch event {
             case .received(let data):
-                receivedBytes.withLock { $0 += data.count }
                 receipts.record(data.count)
                 stream.readMore()
             case .ended:
                 ends.record(event)
             }
         }
-    }
-
-    /// Writes `chunks` from the start queue and waits for the completion.
-    func write(_ chunks: [Data]) async throws -> ByteStreamError? {
-        let done = Recorder<ByteStreamError?>()
-        queue.async { [stream] in stream.write(chunks) { done.record($0) } }
-        var waiter = done.waiter()
-        return try await waiter.next { _ in true }
     }
 }
 

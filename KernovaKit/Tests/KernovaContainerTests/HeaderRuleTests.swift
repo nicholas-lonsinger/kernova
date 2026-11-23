@@ -9,13 +9,6 @@ import KernovaWire
 import SwiftProtobuf
 import Testing
 
-private func xattr(_ attributeName: Data, _ value: Data = Data([1])) -> Kernova_V2_Xattr {
-    var xattr = Kernova_V2_Xattr()
-    xattr.name = attributeName
-    xattr.value = value
-    return xattr
-}
-
 @Suite("The byte ceiling bounds landed bytes")
 struct LandedCeilingTests {
     static func decmpfs(logical: UInt64, fork: UInt64, ceiling: UInt64) -> ContainerError? {
@@ -36,7 +29,6 @@ struct LandedCeilingTests {
 
 @Suite("Unknown protobuf fields make a record malformed")
 struct UnknownFieldTests {
-    static let file = serialized(plainFile(depth: 0, size: 0))
     static let end = endRecord(entries: 1, bytes: 0)
 
     @Test("Deeply nested unknown groups in a header are refused without a crash")

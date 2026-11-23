@@ -81,7 +81,7 @@ extension Task {
 
 // MARK: - AsyncGate
 
-/// Event-driven replacement for a `waitUntil` poll loop.
+/// A wait on a predicate that suspends between changes rather than polling.
 ///
 /// A producer calls `notify()` after each observable state change; the consumer
 /// awaits `wait(until:)`, which suspends until the predicate holds — re-checked
@@ -155,29 +155,6 @@ public final class AsyncGate: Sendable {
             if predicate() { return }
             try backstop.wait(for: notified)
         }
-    }
-}
-
-// MARK: - waitUntil
-
-// `isolation` uses the Swift `isolated` keyword to inherit the caller's actor
-// isolation, so it is never referenced by name.
-// periphery:ignore:parameters isolation
-/// Polls `predicate` every 50 ms until it returns `true`, or throws
-/// `TestFailure` once `timeout` seconds pass first.
-///
-/// The deadline here *is* the pass/fail criterion — prefer `AsyncGate` for a new
-/// timing-sensitive wait; polling is for predicates with no signal to await.
-public func waitUntil(
-    timeout: TimeInterval = testWaitBackstop,
-    isolation: isolated (any Actor)? = #isolation,
-    fileID: String = #fileID, line: Int = #line,
-    _ predicate: () -> Bool
-) async throws {
-    let backstop = Backstop("waitUntil", timeout: timeout, fileID: fileID, line: line)
-    while !predicate() {
-        guard !backstop.expired else { throw backstop.failure() }
-        try await Task.sleep(nanoseconds: 50_000_000)
     }
 }
 

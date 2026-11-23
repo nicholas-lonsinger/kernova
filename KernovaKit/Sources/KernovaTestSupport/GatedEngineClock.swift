@@ -46,7 +46,6 @@ public final class GatedEngineClock: EngineClock, Sendable {
 
     private struct State: Sendable {
         var sleepers: [Sleeper] = []
-        var requested: [TimeInterval] = []
         var nanoseconds: UInt64 = 0
 
         /// Outcomes for sleeps settled before their continuation was installed
@@ -69,7 +68,6 @@ public final class GatedEngineClock: EngineClock, Sendable {
             let id = nextID
             nextID += 1
             sleepers.append(Sleeper(id: id, seconds: interval))
-            requested.append(interval)
             return id
         }
 
@@ -115,12 +113,8 @@ public final class GatedEngineClock: EngineClock, Sendable {
     private let state = Locked(State())
 
     /// Fires whenever a `sleep` call parks; await it instead of polling
-    /// ``parked`` or ``requestedSeconds``.
+    /// ``parked``.
     public let sleepRequested = AsyncGate()
-
-    /// Fires whenever ``parked`` changes — a sleep parking, or one released or
-    /// cancelled — so a test can await a superseded timer leaving it.
-    public let parkedChanged = AsyncGate()
 
     /// Creates a clock with no parked sleeps.
     public init() {}
@@ -140,12 +134,6 @@ public final class GatedEngineClock: EngineClock, Sendable {
     /// The sleeps currently parked, in the order they were requested.
     public var parked: [ParkedSleep] {
         state.withLock { $0.sleepers.map { ParkedSleep(id: $0.id, seconds: $0.seconds) } }
-    }
-
-    /// Every interval a caller has asked to sleep for, in request order —
-    /// released and parked alike. The cadence log a test asserts against.
-    public var requestedSeconds: [TimeInterval] {
-        state.withLock { $0.requested }
     }
 
     /// Resumes a parked sleep, letting its caller run on.
@@ -184,8 +172,8 @@ public final class GatedEngineClock: EngineClock, Sendable {
     }
 
     /// Parks `body` until the test releases it, recording the arming before
-    /// this returns — so ``parked`` and ``requestedSeconds`` already show a
-    /// timer the code under test armed synchronously.
+    /// this returns — so ``parked`` already shows a timer the code under test
+    /// armed synchronously.
     public func schedule(
         after interval: TimeInterval, _ body: @escaping @Sendable () async -> Void
     ) -> Task<Void, Never> {
@@ -202,7 +190,6 @@ public final class GatedEngineClock: EngineClock, Sendable {
     private func register(_ interval: TimeInterval) -> Int {
         let id = state.withLock { $0.register(interval) }
         sleepRequested.notify()
-        parkedChanged.notify()
         return id
     }
 
@@ -232,7 +219,6 @@ public final class GatedEngineClock: EngineClock, Sendable {
     /// this fire at most once per call.
     private func settle(id: Int, as outcome: Outcome) {
         guard let removed = state.withLock({ $0.settle(id: id, as: outcome) }) else { return }
-        parkedChanged.notify()
         guard let continuation = removed.continuation else { return }
         switch outcome {
         case .released: continuation.resume()

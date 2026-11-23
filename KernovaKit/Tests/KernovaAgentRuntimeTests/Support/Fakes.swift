@@ -33,29 +33,11 @@ final class ScriptedDialer: TransportDialer {
     }
 }
 
-/// Item adapters that are only registered: a test that offers nothing never reaches them.
-struct RegisteredItemAdapters: ItemSource, ItemSink {
-    /// The adapters, serving `features`.
-    static func adapters(_ features: Set<FeatureID> = []) -> ItemAdapters {
-        ItemAdapters(source: RegisteredItemAdapters(), sink: RegisteredItemAdapters(), features: features)
-    }
-
-    func handle(_ effect: ItemSourceEffect, reporter: ItemSourceReporter) {
-        Issue.record("the source was asked \(effect)")
-    }
-
-    func handle(_ effect: ItemSinkEffect, reporter: ItemSinkReporter) {
-        Issue.record("the sink was asked \(effect)")
-    }
-}
-
 /// Serves `SimItems` containers from memory, and lands a pull by taking its bytes. With `holdsReads`, it never
 /// answers a read, so a pull it serves stays open until cancelled.
 final class MemoryItems: ItemSource, ItemSink {
     private let source = Locked(ContainerItemSource())
     let holdsReads: Bool
-    /// Every effect the sink was asked to carry out.
-    let sinkEffects = Recorder<ItemSinkEffect>()
 
     init(holdsReads: Bool = false) {
         self.holdsReads = holdsReads
@@ -82,7 +64,6 @@ final class MemoryItems: ItemSource, ItemSink {
 
     /// The sink's report on `effect`, if it takes one.
     func land(_ effect: ItemSinkEffect) -> ItemSinkInput? {
-        sinkEffects.record(effect)
         switch effect {
         case .bytes(let id, let bytes): return .consumed(id, bytes.count)
         case .finish(let id): return .verified(id)
@@ -92,23 +73,17 @@ final class MemoryItems: ItemSource, ItemSink {
     }
 }
 
-/// Accepts every action it offers and hands off at once, unless told to hold before or after accepting.
+/// Accepts every action it offers, and hands off at once unless told to hold after accepting.
 /// It can never confirm a cancel, so a cancel ends the request `.unconfirmed`.
 final class FakePowerAdapter: PowerAdapter {
     private let reporter = Locked<PowerReporter?>(nil)
     let performed = Recorder<PowerRequestID>()
     /// The requests performed without waiting for apps.
     let performedIgnoringApps = Recorder<PowerRequestID>()
-    let cancelled = Recorder<PowerRequestID>()
-    let accepts: Bool
     let handsOff: Bool
     let initial: Availability<PowerOffer>
 
-    init(
-        accepts: Bool = true, handsOff: Bool = true,
-        initial: Availability<PowerOffer> = .available(PowerOffer(actions: [.shutdown]))
-    ) {
-        self.accepts = accepts
+    init(handsOff: Bool = true, initial: Availability<PowerOffer> = .available(PowerOffer(actions: [.shutdown]))) {
         self.handsOff = handsOff
         self.initial = initial
     }
@@ -121,14 +96,12 @@ final class FakePowerAdapter: PowerAdapter {
     func perform(_ id: PowerRequestID, _ action: PowerAction, ignoringApps: Bool) {
         performed.record(id)
         if ignoringApps { performedIgnoringApps.record(id) }
-        guard accepts else { return }
         let reporter = reporter.withLock { $0 }
         reporter?.report(.accepted(id))
         if handsOff { reporter?.report(.handedOff(id)) }
     }
 
     func cancel(_ id: PowerRequestID) {
-        cancelled.record(id)
         report(.unconfirmed(id))
     }
 

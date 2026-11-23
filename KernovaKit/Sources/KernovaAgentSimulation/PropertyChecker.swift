@@ -366,7 +366,6 @@ package final class PropertyChecker {
     ) {
         guard !options.hostile else { return }
         let pending = link.pendingEventCount(side)
-        maxPendingEvents = max(maxPendingEvents, pending)
         let bound = before + Self.coalescingSlots + 3 + 2 * (streamFrames + streams)
         if pending > bound {
             fail(
@@ -374,9 +373,6 @@ package final class PropertyChecker {
             )
         }
     }
-
-    /// The most events any receive turn left for its drain.
-    package private(set) var maxPendingEvents = 0
 
     /// The endpoint event kinds that coalesce: peer state and features on the
     /// host, policy and the update offer on the peer.

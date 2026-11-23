@@ -12,14 +12,8 @@ import KernovaWire
 final class RecordingLink: ClipboardItemLink {
     private struct Calls {
         var offers: [ItemOffer] = []
-        var withdrawals: [Data] = []
-        var withdrawalCodes: [Data: ErrorCode] = [:]
-        var releases: [Data] = []
-        var refusals: [(token: Data, code: ErrorCode)] = []
         var ceilings: [UInt64] = []
-        var orders: [ItemPullOrder] = []
-        var opened: [ItemPullID] = []
-        var pulls: [(order: ItemPullOrder, id: ItemPullID)] = []
+        var pullsOpened = 0
     }
 
     private let calls = Locked(Calls())
@@ -33,19 +27,8 @@ final class RecordingLink: ClipboardItemLink {
     }
 
     var offers: [ItemOffer] { calls.withLock(\.offers) }
-    var withdrawals: [Data] { calls.withLock(\.withdrawals) }
-    /// The code each withdrawn offer was withdrawn with, by token.
-    var withdrawalCodes: [Data: ErrorCode] { calls.withLock(\.withdrawalCodes) }
-    var releases: [Data] { calls.withLock(\.releases) }
-    var refusals: [(token: Data, code: ErrorCode)] { calls.withLock(\.refusals) }
     /// The `byte_ceiling` of each pull ordered, in order.
     var ceilings: [UInt64] { calls.withLock(\.ceilings) }
-    /// Each pull ordered, in order.
-    var orders: [ItemPullOrder] { calls.withLock(\.orders) }
-    /// The id of each pull opened, in order.
-    var opened: [ItemPullID] { calls.withLock(\.opened) }
-    /// Each pull opened, with its order.
-    var pulls: [(order: ItemPullOrder, id: ItemPullID)] { calls.withLock(\.pulls) }
 
     func offerItems(_ offer: ItemOffer, _ completion: @escaping @Sendable (WireError?) -> Void) {
         calls.withLock { $0.offers.append(offer) }
@@ -54,20 +37,14 @@ final class RecordingLink: ClipboardItemLink {
     }
 
     func withdrawOffer(_ token: Data, code: ErrorCode) {
-        calls.withLock { calls in
-            calls.withdrawals.append(token)
-            calls.withdrawalCodes[token] = code
-        }
         changed.notify()
     }
 
     func releaseOffer(_ token: Data) {
-        calls.withLock { $0.releases.append(token) }
         changed.notify()
     }
 
     func refuseOffer(_ token: Data, _ error: WireError) {
-        calls.withLock { $0.refusals.append((token, error.code)) }
         changed.notify()
     }
 
@@ -79,12 +56,10 @@ final class RecordingLink: ClipboardItemLink {
         _ order: ItemPullOrder, _ completion: @escaping @Sendable (Result<ItemPullID, WireError>) -> Void
     ) {
         let id = calls.withLock { calls in
-            let id = ItemPullID(
+            defer { calls.pullsOpened += 1 }
+            return ItemPullID(
                 generation: ConnectionGeneration(rawValue: 1),
-                stream: StreamID(rawValue: UInt32(3 + 2 * calls.opened.count)))
-            calls.opened.append(id)
-            calls.pulls.append((order, id))
-            return id
+                stream: StreamID(rawValue: UInt32(3 + 2 * calls.pullsOpened)))
         }
         completion(.success(id))
         changed.notify()
@@ -98,10 +73,8 @@ final class RecordingLink: ClipboardItemLink {
     ) throws(WireError) -> ItemPullOrder {
         calls.withLock { $0.ceilings.append(byteCeiling) }
         guard let sink else { throw WireError(.writeFailed) }
-        let order = try sink.order(
+        return try sink.order(
             token: token, item: item, representation: representation, byteCeiling: byteCeiling, landing: landing,
             budget: budget)
-        calls.withLock { $0.orders.append(order) }
-        return order
     }
 }

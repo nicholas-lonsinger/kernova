@@ -596,8 +596,7 @@ extension VMInstance {
 /// re-reads it — no observed change made it hold, so what it reads is not
 /// observed.
 ///
-/// The predicate carries the production wait's contract. One over plain
-/// non-observed state keeps `waitUntil`.
+/// The predicate carries the production wait's contract.
 @MainActor
 func waitForChange(
     timeout: TimeInterval = testWaitBackstop, fileID: String = #fileID, line: Int = #line,

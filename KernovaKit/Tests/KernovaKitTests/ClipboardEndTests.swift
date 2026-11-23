@@ -4,7 +4,6 @@ import KernovaAgentCore
 import KernovaAgentRuntime
 import KernovaClipboardItems
 import KernovaKit
-import KernovaSynchronization
 import KernovaTestSupport
 import KernovaWire
 import Testing

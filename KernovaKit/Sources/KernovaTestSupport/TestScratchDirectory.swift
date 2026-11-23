@@ -39,13 +39,6 @@ public struct TestScratchDirectory: Sendable {
         return Self(url: TestScratchLedger.running(minting: caller).shared(prefix, for: caller))
     }
 
-    /// Whether the volume every scratch directory sits on folds case; mints
-    /// nothing, so a trait condition may ask it.
-    public static var volumeFoldsCase: Bool {
-        let values = try? parent.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey])
-        return values?.volumeSupportsCaseSensitiveNames == false
-    }
-
     fileprivate static var parent: URL {
         FileManager.default.temporaryDirectory
     }

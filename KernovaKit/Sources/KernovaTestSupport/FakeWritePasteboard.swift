@@ -6,9 +6,8 @@ import KernovaSynchronization
 /// In-memory `ClipboardWritePasteboard` recording every promised write, with a
 /// seam that fires a promise's provider the way the OS does.
 ///
-/// A test fires a promise when it chooses rather than when a paste asks, and
-/// makes a write fail on request; it stands in for the write half on either
-/// end of the wire.
+/// A test fires a promise when it chooses rather than when a paste asks; it
+/// stands in for the write half on either end of the wire.
 ///
 /// Thread-safe: ``invokeProvider(forType:itemIndex:)`` blocks its calling thread
 /// until the lazy pull behind the promise resolves, so it runs off the test's
@@ -29,8 +28,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         var prepareCount = 0
         var lastPrepareOptions: NSPasteboard.ContentsOptions?
         var items: [PromisedItem] = []
-        var writeFailuresRemaining = 0
-        var providerInvocations = 0
         /// Providers another process's write displaced, whose finish waits for this process's next use.
         var owedFinishes: [any NSPasteboardItemDataProvider & Sendable] = []
 
@@ -70,10 +67,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         state.withLock { $0.lastPrepareOptions }
     }
 
-    /// How many promised providers have been fired, for a test proving one was
-    /// *not*.
-    public var providerInvocations: Int { state.withLock { $0.providerInvocations } }
-
     /// Every promised type across all items, concatenated in item order.
     public var promisedTypes: [NSPasteboard.PasteboardType] {
         state.withLock { $0.items.flatMap(\.types) }
@@ -87,12 +80,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
     /// The data each item was written with, in item order.
     public var dataByItem: [[NSPasteboard.PasteboardType: Data]] {
         state.withLock { $0.items.map(\.data) }
-    }
-
-    /// Makes the next `times` `writeItems(_:)` calls fail, modelling an
-    /// OS-level pasteboard write failure.
-    public func failNextWrite(times: Int = 1) {
-        state.withLock { $0.writeFailuresRemaining += times }
     }
 
     // MARK: - ClipboardWritePasteboard
@@ -113,27 +100,22 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         return count
     }
 
-    /// Records one promise per entry, unless a failure was armed.
+    /// Records one promise per entry.
     @discardableResult
     public func writeItems(_ entries: [ClipboardWriteItem]) -> Bool {
         deliverOwedFinishes()
-        let (written, displaced) = state.withLock {
-            state -> (Bool, [any NSPasteboardItemDataProvider & Sendable]) in
-            guard state.writeFailuresRemaining == 0 else {
-                state.writeFailuresRemaining -= 1
-                return (false, [])
-            }
+        let displaced = state.withLock { state in
             let displaced = state.takeItems()
             state.items = entries.map { entry in
                 PromisedItem(
                     data: Dictionary(entry.data.map { ($0.type, $0.bytes) }, uniquingKeysWith: { first, _ in first }),
                     types: entry.promised, provider: entry.provider)
             }
-            return (true, displaced)
+            return displaced
         }
         finish(displaced)
         changed.notify()
-        return written
+        return true
     }
 
     /// Empties the pasteboard, bumping the change count as a real one does.
@@ -184,18 +166,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
         }
     }
 
-    /// Models AppKit once a reader has had every type item `itemIndex`'s provider promised, the write still
-    /// standing: it tells the provider it is finished and lets go of it, the item keeping what was provided
-    /// (docs/research/2026-11-04-pasteboard-finished-with-data-provider.md). The change count does not move.
-    public func finishProvider(itemIndex: Int) {
-        let provider = state.withLock { state -> (any NSPasteboardItemDataProvider & Sendable)? in
-            guard state.items.indices.contains(itemIndex) else { return nil }
-            defer { state.items[itemIndex].provider = nil }
-            return state.items[itemIndex].provider
-        }
-        provider?.pasteboardFinishedWithDataProvider?(NSPasteboard(name: .init("app.kernova.fake-write")))
-    }
-
     // MARK: - Firing a promise
 
     /// Fires a promised item's provider the way the OS does, synchronously.
@@ -218,7 +188,6 @@ public final class FakeWritePasteboard: ClipboardWritePasteboard, Sendable {
                 ?? state.items.firstIndex { $0.types.contains(type) && $0.provider != nil }
             guard let index, state.items[index].types.contains(type), let provider = state.items[index].provider
             else { return nil }
-            state.providerInvocations += 1
             return (index, provider, state.changeCount)
         }
         guard let fired else { return nil }

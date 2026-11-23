@@ -29,20 +29,6 @@ func readyConnection() throws -> DBusConnection {
     return connection
 }
 
-/// The messages in `bytes`, which must be whole messages back to back.
-func messages(in bytes: [UInt8]) throws -> [DBusReceivedMessage] {
-    var result: [DBusReceivedMessage] = []
-    var rest = bytes[...]
-    while !rest.isEmpty {
-        let length = 16 + (Int(rest[rest.startIndex + 12]) | Int(rest[rest.startIndex + 13]) << 8)
-        let bodyLength = Int(rest[rest.startIndex + 4]) | Int(rest[rest.startIndex + 5]) << 8
-        let total = ((length + 7) & ~7) + bodyLength
-        result.append(try #require(try DBusReceivedMessage.decode(Array(rest.prefix(total)))))
-        rest = rest.dropFirst(total)
-    }
-    return result
-}
-
 @Suite("DBusConnection: SASL EXTERNAL, Hello, serials and reply matching")
 struct ConnectionTests {
     @Test("A message split anywhere arrives whole once its last byte does")

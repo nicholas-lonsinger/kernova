@@ -21,14 +21,12 @@ package struct Transcript: Sendable {
     }
 
     package var pinned: SimSide
-    package var pinnedFixture: String
     package var currentFixture: String
     package var end: UInt64
     package var lines: [Line] = []
 
     package init(parsing text: String) throws(TranscriptError) {
         var pinned: SimSide?
-        var pinnedFixture = ""
         var currentFixture = ""
         var end: UInt64 = 0
         var lines: [Line] = []
@@ -46,7 +44,6 @@ package struct Transcript: Sendable {
             switch first {
             case "pinned":
                 pinned = words.count > 1 && words[1] == "host" ? .host : .peer
-                pinnedFixture = field("fixture") ?? ""
             case "current":
                 currentFixture = field("fixture") ?? ""
             case "end":
@@ -78,7 +75,6 @@ package struct Transcript: Sendable {
         }
         guard let pinned else { throw TranscriptError.missingHeader }
         self.pinned = pinned
-        self.pinnedFixture = pinnedFixture
         self.currentFixture = currentFixture
         self.end = end
         self.lines = lines

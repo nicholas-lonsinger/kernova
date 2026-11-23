@@ -52,7 +52,7 @@ public enum HostCommand: Sendable, Equatable {
 
 /// What a host endpoint's driver feeds it: the hub's commands, and the payload source's and item adapters'
 /// answers to the endpoint's effects. The hub can send only the first.
-public enum HostInput: Sendable, Equatable {
+package enum HostInput: Sendable, Equatable {
     /// A hub command.
     case hub(HostCommand)
     /// The payload source's answer.
@@ -62,7 +62,7 @@ public enum HostInput: Sendable, Equatable {
 }
 
 /// The update payload source's answer to the outstanding `.read`; one naming another generation is dropped.
-public enum PayloadInput: Sendable, Equatable {
+package enum PayloadInput: Sendable, Equatable {
     /// The bytes read: 1 … `maxBytes` of them. None, short of the payload's size, fails the pull.
     case bytes(UpdatePullID, Data)
     /// The read failed.
@@ -88,11 +88,8 @@ public enum HostRoleEvent: Sendable, Equatable {
     case update(UpdateServeEvent)
 }
 
-/// What a host endpoint asks of its update payload source and its item adapters.
-public typealias HostEffect = EndpointEffect<HostRoleEffect>
-
 /// What a host endpoint asks of its update payload source.
-public enum HostRoleEffect: Sendable, Equatable {
+package enum HostRoleEffect: Sendable, Equatable {
     /// Read 1 … `maxBytes` bytes of `manifest`'s payload from `offset`, and answer with `.bytes` or `.failed`.
     case read(UpdatePullID, UpdateManifestValue, offset: UInt64, maxBytes: Int)
 }

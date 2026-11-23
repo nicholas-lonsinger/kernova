@@ -28,7 +28,7 @@ public enum EndpointEvent<RoleEvent: Sendable & Equatable>: Sendable, Equatable 
 
 /// What an endpoint asks its adapters to do: its role's own effects, and what every endpoint asks of its item
 /// adapters.
-public enum EndpointEffect<RoleEffect: Sendable & Equatable>: Sendable, Equatable {
+package enum EndpointEffect<RoleEffect: Sendable & Equatable>: Sendable, Equatable {
     /// An effect of the role's own.
     case role(RoleEffect)
     /// For the item source.
@@ -232,11 +232,6 @@ package struct Endpoint<Role: RoleMachines>: Sendable {
     /// Opens a bulk test stream.
     package mutating func openTestBulk(_ kind: StreamKind, consumes: Bool, now: CoreInstant) -> StreamID? {
         step(at: now) { $0.testSink.open(kind, consumes: consumes, connection: &$0.connection) }
-    }
-
-    /// Resets the bulk test stream `stream` with CANCELLED.
-    package mutating func resetTestStream(_ stream: StreamID, now: CoreInstant) {
-        step(at: now) { $0.testSink.reset(stream, connection: &$0.connection) }
     }
 
     /// Starts or stops consuming on the bulk test stream `stream`.

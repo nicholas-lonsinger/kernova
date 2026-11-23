@@ -210,12 +210,6 @@ public final class ClipboardProgressReadoutView: NSView {
     /// Test seam: the Cancel button, so a test can assert its visibility and
     /// drive its action without a live surface.
     public var cancelButtonForTesting: NSButton { cancelButton }
-
-    /// Test seam: the fraction the bar shows.
-    public var barFractionForTesting: Double { bar.doubleValue }
-
-    /// Test seam: the byte line.
-    public var byteProgressForTesting: String { byteProgress.stringValue }
     #endif
 
     /// The Cancel button, taking the click that also activates its app.

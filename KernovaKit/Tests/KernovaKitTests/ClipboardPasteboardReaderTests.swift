@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import KernovaSynchronization
 import KernovaTestSupport
 import KernovaWire
 import Testing
@@ -17,19 +16,6 @@ struct ClipboardPasteboardReaderTests {
 
     init() throws {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-    }
-
-    /// The offer `pasteboard` makes, or `nil` with the outcome recorded as an
-    /// issue when it makes none.
-    private func offer(
-        _ pasteboard: FakeReadPasteboard
-    ) async -> (source: ClipboardOfferSource, lost: Int)? {
-        let outcome = await ClipboardPasteboardReader.readOffer(from: pasteboard, publisher: .elsewhere(), sizeOf: nil)
-        guard case .offer(let source, let lost) = outcome else {
-            Issue.record("expected an offer, got \(outcome)")
-            return nil
-        }
-        return (source, lost)
     }
 
     // MARK: - File classification

@@ -81,24 +81,6 @@ public final class AgentHub: Sendable {
     private let itemEvents: @Sendable (HubItemEvent) -> Void
     private let logger: KernovaLogger
 
-    /// A hub whose connections say Hello as `claim`, offer `payloads`' bundles and serve their bytes, serve
-    /// items through `items`, and start with `policy`; the item events of every connection reach
-    /// `itemEvents`.
-    public convenience init(
-        claim: PeerClaim, policy: PolicySnapshot, payloads: any BundledPayloadProvider, items: ItemAdapters? = nil,
-        scheduler: any RuntimeScheduler = SystemScheduler(),
-        logger: KernovaLogger = KernovaLogger(subsystem: "app.kernova", category: "AgentHub"),
-        itemEvents: @escaping @Sendable (HubItemEvent) -> Void = { _ in },
-        publishingOn publishQueue: DispatchQueue = .main,
-        _ publish: @escaping @Sendable (AgentHubSnapshot) -> Void
-    ) {
-        self.init(
-            connector: HostConnectionRuntime(
-                claim: claim, scheduler: scheduler, payloadSource: payloads, items: items, logger: logger),
-            policy: policy, payloads: payloads, scheduler: scheduler, logger: logger, itemEvents: itemEvents,
-            publishingOn: publishQueue, publish)
-    }
-
     /// A hub whose connections `connector` builds, stamping when each peer goes away on `scheduler`'s clock.
     public init(
         connector: any HostConnectionMaking, policy: PolicySnapshot, payloads: any BundledPayloadProvider,

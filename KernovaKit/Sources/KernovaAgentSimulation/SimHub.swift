@@ -255,7 +255,7 @@ package final class SimHub {
     }
 
     /// The payload source, each read served from the content its manifest names, and the link's item side.
-    func handle(_ effect: HostEffect, link: SimLink, world: SimWorld) {
+    func handle(_ effect: EndpointEffect<HostRoleEffect>, link: SimLink, world: SimWorld) {
         switch effect {
         case .role(.read(let id, let manifest, let offset, let maxBytes)):
             let bytes = FixturePayloadSource.read(world.content(of: manifest), offset: offset, maxBytes: maxBytes)

@@ -18,10 +18,6 @@ struct CoreUnits {}
 enum Unit {
     static let t0 = CoreInstant(nanoseconds: 1_000_000_000)
 
-    static func at(_ milliseconds: Int64) -> CoreInstant {
-        t0.advanced(by: .milliseconds(milliseconds))
-    }
-
     static func encode(_ message: some SwiftProtobuf.Message) -> Data {
         (try? message.serializedBytes()) ?? Data()
     }
@@ -36,10 +32,6 @@ enum Unit {
 
     static func rawMessage(_ stream: UInt32, _ payload: Data) -> Frame {
         Frame(streamID: StreamID(rawValue: stream), type: .data, flags: .message, payload: payload)
-    }
-
-    static func window(_ payload: Data) -> UInt32 {
-        payload.reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
     }
 
     static func error(_ payload: Data) -> Kernova_V2_Error {
@@ -65,26 +57,6 @@ enum Unit {
         if let code { outcome.error.code = code }
         outcome.apps = progress(.waitingOnApps, apps: apps).apps
         return encode(outcome)
-    }
-
-    static func powerRequest(
-        _ action: PowerAction, deadlineMs: UInt32 = 10_000, ignoreApps: Bool = false
-    ) -> Kernova_V2_PowerRequest {
-        var request = Kernova_V2_PowerRequest()
-        request.action = action
-        request.acceptanceDeadlineMs = deadlineMs
-        request.ignoreApps = ignoreApps
-        return request
-    }
-
-    static func policy(logs: Bool) -> Frame {
-        WireFrames.session { message in
-            var entry = Kernova_V2_FeaturePolicy()
-            entry.feature = .logs
-            entry.version = 1
-            entry.enabled = logs
-            message.policy.features = [entry]
-        }
     }
 
     static func updateAvailable(_ manifest: UpdateManifestValue?) -> Frame {

@@ -264,13 +264,7 @@ final class GuestDragCatcherPanel: GuestDragCatcherSurface {
 
     private let content: CatcherView
 
-    private let typeIcon: @MainActor (UTType) -> NSImage
-
-    init(
-        catcher: GuestDragCatcher,
-        typeIcon: @escaping @MainActor (UTType) -> NSImage = { NSWorkspace.shared.icon(for: $0) }
-    ) {
-        self.typeIcon = typeIcon
+    init(catcher: GuestDragCatcher) {
         content = CatcherView(catcher: catcher, fillAlpha: Self.fillAlpha)
         panel = NSPanel(
             contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered,
@@ -286,11 +280,6 @@ final class GuestDragCatcherPanel: GuestDragCatcherSurface {
         panel.contentView = content
     }
 
-    #if DEBUG
-    /// Test seam: the catcher's window, never ordered front by a test.
-    var windowForTesting: NSPanel { panel }
-    #endif
-
     func show(items: [GuestDragItem]) -> Bool {
         let pointer = NSEvent.mouseLocation
         guard
@@ -305,8 +294,8 @@ final class GuestDragCatcherPanel: GuestDragCatcherSurface {
 
     /// Sets the box up for `items` and covers `screenFrame`, leaving the
     /// window where it is in the window order.
-    func layOut(items: [GuestDragItem], over screenFrame: NSRect) {
-        content.hud.present(items, typeIcon: typeIcon)
+    private func layOut(items: [GuestDragItem], over screenFrame: NSRect) {
+        content.hud.present(items)
         panel.setFrame(screenFrame, display: true)
     }
 
@@ -451,14 +440,14 @@ private final class CatcherHUD: NSVisualEffectView {
     /// which has no name until it is called in — as its promised type's icon
     /// and description, and several as the multiple-documents icon and their
     /// count.
-    func present(_ items: [GuestDragItem], typeIcon: @MainActor (UTType) -> NSImage) {
+    func present(_ items: [GuestDragItem]) {
         switch items.first {
         case .file(let url)? where items.count == 1:
-            iconView.image = typeIcon(GuestDraggedItems.type(named: url))
+            iconView.image = NSWorkspace.shared.icon(for: GuestDraggedItems.type(named: url))
             nameLabel.stringValue = url.lastPathComponent
         case .promise(let uti)? where items.count == 1:
             let type = UTType(uti) ?? .data
-            iconView.image = typeIcon(type)
+            iconView.image = NSWorkspace.shared.icon(for: type)
             nameLabel.stringValue = type.localizedDescription ?? uti
         default:
             let multiple = NSImage(named: NSImage.multipleDocumentsName)

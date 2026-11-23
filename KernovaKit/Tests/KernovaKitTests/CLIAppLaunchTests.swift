@@ -11,10 +11,6 @@ import Testing
 /// does.
 @Suite("CLI app launch", .caseScoped)
 struct CLIAppLaunchTests {
-    private func locate(_ path: String) -> String? {
-        EnclosingAppBundle.locate(executable: URL(fileURLWithPath: path))?.path
-    }
-
     // MARK: - Launch configuration
 
     /// An open that may reuse a running instance takes any copy sharing the

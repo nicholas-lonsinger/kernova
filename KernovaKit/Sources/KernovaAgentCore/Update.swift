@@ -35,7 +35,7 @@ public enum UpdateInput: Sendable, Equatable {
 }
 
 /// What a peer's update client asks its installer to do.
-public enum UpdateEffect: Sendable, Equatable {
+package enum UpdateEffect: Sendable, Equatable {
     /// Write these payload bytes, then report `.consumed`.
     case payload(UpdatePullID, Data)
     /// Every byte arrived: verify the hash and install.

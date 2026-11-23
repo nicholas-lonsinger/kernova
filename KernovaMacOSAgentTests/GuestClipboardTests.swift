@@ -77,11 +77,6 @@ struct GuestClipboardTests {
         poll(rig)
     }
 
-    /// The host asks for the guest's clipboard by a request of `token`.
-    private func request(_ token: Data, _ rig: Rig, _ link: RecordingLink) {
-        rig.clipboard.end.handle(.offerRequested(token: token), on: link)
-    }
-
     private static func token(_ byte: UInt8) -> Data { Data(repeating: byte, count: 16) }
     private static let hostToken = token(9)
 
@@ -94,13 +89,11 @@ struct GuestClipboardTests {
         return item
     }
 
-    /// Has the host offer `count` items on `link` as `token` and waits for the guest pasteboard to be written.
-    private func receiveHostOffer(_ rig: Rig, _ link: RecordingLink, token: Data = hostToken, count: Int = 1)
-        async throws
-    {
+    /// Has the host offer one item on `link` as `token` and waits for the guest pasteboard to be written.
+    private func receiveHostOffer(_ rig: Rig, _ link: RecordingLink, token: Data = hostToken) async throws {
         let before = rig.pasteboard.changeCount
         rig.clipboard.end.handle(
-            .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: token, concealed: false, count: count)),
+            .offerReceived(ItemSetHeaderValue(feature: .clipboard, token: token, concealed: false, count: 1)),
             on: link)
         try await rig.pasteboard.changed.wait { rig.pasteboard.changeCount != before }
     }
