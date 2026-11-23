@@ -17,9 +17,6 @@ import Testing
 /// The agent hub against real peer runtimes and endpoints, over in-memory streams, on the platform clock.
 @Suite("Agent hub")
 struct AgentHubTests {
-    static let manifest = UpdateManifestValue(
-        payloadHash: Data(repeating: 0xB2, count: 32), payloadSize: 1, format: .executable, versionLabel: "next")
-
     @Test(
         "A peer stands current on the bundled payload, outdated on another one whether or not it is offered in band, and is not judged without a matching bundle; the hub withholds updates where its matching bundle is not offered",
         arguments: [
@@ -281,21 +278,5 @@ struct GuestStreamAcceptorTests {
         let admitted = (0..<GuestStreamAcceptor.connectionLimit).compactMap { _ in probe.offer() }
         #expect(admitted.count == GuestStreamAcceptor.connectionLimit)
         probe.acceptor.stop()
-    }
-}
-
-extension ConnectionClosure {
-    fileprivate var code: ErrorCode? {
-        switch self {
-        case .closedByPeer(let error), .closedLocally(let error): error.code
-        case .transportLost, .notThisProtocol: nil
-        }
-    }
-
-    fileprivate var retryAfter: CoreDuration? {
-        switch self {
-        case .closedByPeer(let error), .closedLocally(let error): error.retryAfter
-        case .transportLost, .notThisProtocol: nil
-        }
     }
 }

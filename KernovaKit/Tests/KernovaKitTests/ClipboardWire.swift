@@ -97,8 +97,6 @@ final class ClipboardWire: Sendable {
         var opened: [Side: [ItemOffer]] = [.host: [], .guest: []]
         /// Every request the host opened, in order.
         var requests: [Data] = []
-        /// How many pulls each side opened.
-        var pulls: [Side: Int] = [.host: 0, .guest: 0]
         /// Each side's opens still to be answered, oldest first: the offer's token, the answer, and the events
         /// the open caused.
         var unanswered: [Side: [(token: Data, answer: @Sendable () -> Void, events: [ItemTransferEvent])]] = [
@@ -155,9 +153,6 @@ final class ClipboardWire: Sendable {
 
     /// Every request the host opened, in order.
     var requests: [Data] { state.withLock(\.requests) }
-
-    /// How many pulls `side` opened.
-    func pulls(_ side: Side) -> Int { state.withLock { $0.pulls[side] ?? 0 } }
 
     /// The tokens of `side`'s offers whose opens are still to be answered, oldest first.
     func unansweredOpens(_ side: Side) -> [Data] { state.withLock { $0.unanswered[side]?.map(\.token) ?? [] } }
@@ -392,7 +387,6 @@ final class ClipboardWire: Sendable {
     ) {
         let id = state.withLock { state -> ItemPullID? in
             guard !state.cut, state.remote[side]?[order.request.token] != nil else { return nil }
-            state.pulls[side, default: 0] += 1
             defer { state.nextStream += 2 }
             return ItemPullID(
                 generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: state.nextStream))

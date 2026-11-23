@@ -55,33 +55,6 @@ struct DragDeliveryTests {
         return String(repeating: "0", count: length - digits.count) + digits
     }
 
-    /// A FILE item named `name`, promised or not, its MIME type padded so the item encodes to exactly `bytes`
-    /// bytes, or its `.item` report does when `asReport`.
-    static func item(ofBytes bytes: Int, named name: String, promised: Bool = false, asReport: Bool = false) throws
-        -> OfferedItem
-    {
-        var item = OfferedItem()
-        item.representations = [Representation()]
-        item.representations[0].storage = .file
-        item.representations[0].name = Data(name.utf8)
-        item.representations[0].promised = promised
-        func size() throws -> Int {
-            guard asReport else { return (try item.serializedBytes() as [UInt8]).count }
-            var report = Kernova_V2_DragTakeReport()
-            report.item = item
-            return (try report.serializedBytes() as [UInt8]).count
-        }
-        // Each MIME byte adds one encoded byte, and a length that grows a varint byte one more; a few rounds
-        // settle it.
-        var padding = 0
-        for _ in 0..<4 {
-            padding += bytes - (try size())
-            item.representations[0].type.mime = String(repeating: "x", count: max(0, padding))
-        }
-        try #require(try size() == bytes, "no padding encodes \(name) to \(bytes) bytes")
-        return item
-    }
-
     // MARK: - Reports a hostile peer writes
 
     /// A real host judging by `policy`, holding the far peer's DRAG_OFFER on stream 1, and its take of it.
@@ -112,13 +85,6 @@ struct DragDeliveryTests {
     /// The peer's naming of a drag's promises on take `id`.
     static func naming(_ id: DragTakeID, _ names: [String]) -> [Frame] {
         names.map { report(id, .promiseName(Data($0.utf8))) } + [report(id, .step(.named))]
-    }
-
-    /// The peer's CAUGHT END on take `id`.
-    static func caught(_ id: DragTakeID) -> Frame {
-        var outcome = Kernova_V2_DragTakeOutcome()
-        outcome.kind = .caught
-        return Unit.end(id.stream.rawValue, Unit.encode(outcome))
     }
 
     static func reports(_ run: HostileRun) -> [DragTakeReport] {

@@ -7,7 +7,6 @@ import Foundation
 import Dispatch
 import KernovaAgentCore
 import KernovaAgentRuntime
-import KernovaAgentSimulation
 import KernovaLogging
 import KernovaPortableTestSupport
 import KernovaSynchronization
@@ -37,7 +36,6 @@ final class ScriptedStream: ByteStream {
         var handler: (@Sendable (ByteStreamEvent) -> Void)?
         var pending: (@Sendable (ByteStreamError?) -> Void)?
         var writes: [Data] = []
-        var shutdowns = 0
     }
 
     private let state = Locked(State())
@@ -71,7 +69,6 @@ final class ScriptedStream: ByteStream {
 
     func shutdown() {
         let pending = state.withLock { state in
-            state.shutdowns += 1
             defer { state.pending = nil }
             return (state.queue, state.pending)
         }
@@ -108,7 +105,6 @@ final class ScriptedStream: ByteStream {
 
     var hasPendingWrite: Bool { state.withLock { $0.pending != nil } }
     var writeCount: Int { state.withLock { $0.writes.count } }
-    var shutdowns: Int { state.withLock { $0.shutdowns } }
 
     /// The bytes of every write not yet taken.
     func takeWritten() -> Data {
@@ -119,13 +115,11 @@ final class ScriptedStream: ByteStream {
     }
 }
 
-/// A clock the test advances; due fires run on their queues when it does.
+/// A clock that stands still: it records each deadline armed and fires none.
 final class ManualScheduler: RuntimeScheduler {
     private struct Entry: Sendable {
         var id: Int
         var at: CoreInstant
-        var queue: DispatchQueue
-        var fire: @Sendable () -> Void
     }
 
     private struct Fire: ScheduledFire {
@@ -156,7 +150,7 @@ final class ManualScheduler: RuntimeScheduler {
     {
         let id = state.withLock { state in
             state.nextID += 1
-            state.entries.append(Entry(id: state.nextID, at: at, queue: queue, fire: fire))
+            state.entries.append(Entry(id: state.nextID, at: at))
             return state.nextID
         }
         journal?.add("arm")
@@ -166,17 +160,6 @@ final class ManualScheduler: RuntimeScheduler {
 
     /// The deadlines armed and not yet fired or cancelled, earliest first.
     var armed: [CoreInstant] { state.withLock { $0.entries.map(\.at).sorted() } }
-
-    /// Moves the clock to `instant` and queues every fire now due, each on its queue.
-    func advance(to instant: CoreInstant) {
-        let due = state.withLock { state -> [Entry] in
-            state.now = instant
-            let due = state.entries.filter { $0.at <= instant }
-            state.entries.removeAll { $0.at <= instant }
-            return due
-        }
-        for entry in due { entry.queue.async(execute: entry.fire) }
-    }
 }
 
 /// Waits until every block already on `queue` has run.
@@ -187,10 +170,6 @@ func flush(_ queue: DispatchQueue, fileID: String = #fileID, line: Int = #line) 
 /// The configurations both roles run with in these suites.
 enum Fixture {
     static let t0 = CoreInstant(nanoseconds: 1_000_000_000)
-
-    static func at(milliseconds: Int64) -> CoreInstant {
-        t0.advanced(by: .milliseconds(milliseconds))
-    }
 
     static let hostClaim = PeerClaim(role: .host, versionLabel: "host")
 
@@ -203,19 +182,9 @@ enum Fixture {
 
     static let logsEnabled = PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)])
 
-    static func peerConfiguration(power: Availability<PowerOffer> = .available(PowerOffer(actions: [.shutdown])))
-        -> PeerConfiguration
-    {
-        PeerConfiguration(
-            claim: peerClaim, state: peerState, power: power, logs: .available(NoParams()),
-            update: .absent(.notImplemented, debugDetail: ""))
-    }
-
-    static func hostConfiguration(policy: PolicySnapshot = PolicySnapshot(), bundles: [BundledPayload] = [])
-        -> HostConfiguration
-    {
-        HostConfiguration(claim: hostClaim, sessionToken: Data(0..<16), policy: policy, bundles: bundles)
-    }
+    static let peerConfiguration = PeerConfiguration(
+        claim: peerClaim, state: peerState, power: .available(PowerOffer(actions: [.shutdown])),
+        logs: .available(NoParams()), update: .absent(.notImplemented, debugDetail: ""))
 
     static let logger = KernovaLogger(
         subsystem: "app.kernova.tests", category: "AgentRuntime", sink: .init { _, _, _, _ in })
@@ -230,130 +199,28 @@ enum Fixture {
             })
         return (logger, records)
     }
-
-    /// The frames `bytes` holds: whole frames written after the preamble.
-    static func frames(_ bytes: Data) -> [Frame] {
-        var decoder = FrameDecoder()
-        decoder.append(WireConstants.preamble)
-        decoder.append(bytes)
-        var frames: [Frame] = []
-        while let frame = try? decoder.nextFrame() { frames.append(frame) }
-        return frames
-    }
 }
 
-/// A host endpoint the test runs by hand as the far side of a scripted stream; it serves every pull of its
-/// offers with `SimItems` containers.
-final class FarHost: Sendable {
-    private struct Far: Sendable {
-        var endpoint: HostEndpoint
-        var source = ContainerItemSource()
-    }
-
-    private let far: Locked<Far>
-    private let clock: ManualScheduler
-    /// Everything the host endpoint told its hub.
-    let events = Recorder<HostEvent>()
-
-    init(
-        clock: ManualScheduler, configuration: HostConfiguration = Fixture.hostConfiguration(),
-        generation: ConnectionGeneration = ConnectionGeneration(rawValue: 1)
-    ) {
-        self.clock = clock
-        far = Locked(Far(endpoint: HostEndpoint(configuration, generation: generation, now: clock.now)))
-    }
-
-    /// Feeds the host endpoint what the peer wrote.
-    func read(_ bytes: Data) {
-        let now = clock.now
-        let events = far.withLock { far in
-            far.endpoint.receive(bytes, now: now)
-            return Self.drain(&far, now)
-        }
-        events.forEach(self.events.record)
-    }
-
-    /// Runs a hub command on the host endpoint.
-    func command(_ command: HostCommand) {
-        let now = clock.now
-        let events = far.withLock { far in
-            far.endpoint.handle(.hub(command), now: now)
-            return Self.drain(&far, now)
-        }
-        events.forEach(self.events.record)
-    }
-
-    /// Everything the host endpoint has to send.
-    func output() -> Data {
-        let now = clock.now
-        let (bytes, events) = far.withLock { far in
-            var bytes = Data()
-            var events: [HostEvent] = []
-            while let transmit = far.endpoint.pollTransmit(maxBytes: 1 << 20) {
-                for chunk in transmit.chunks { bytes.append(chunk) }
-                events += Self.drain(&far, now)
-            }
-            return (bytes, events + Self.drain(&far, now))
-        }
-        events.forEach(self.events.record)
-        return bytes
-    }
-
-    /// The endpoint's events, its item source's effects answered until it asks nothing more.
-    private static func drain(_ far: inout Far, _ now: CoreInstant) -> [HostEvent] {
-        var answered = true
-        while answered {
-            answered = false
-            while let effect = far.endpoint.pollEffect() {
-                guard case .itemSource(let effect) = effect, let input = far.source.handle(effect) else { continue }
-                far.endpoint.handle(.items(.source(input)), now: now)
-                answered = true
-            }
-        }
-        var events: [HostEvent] = []
-        while let event = far.endpoint.pollEvent() { events.append(event) }
-        return events
-    }
-}
-
-/// A peer `ConnectionDriver` over a `ScriptedStream`, with a host endpoint the test runs by hand as the
-/// far side of the transport.
+/// A peer `ConnectionDriver` over a `ScriptedStream`, its stream, clock and handlers recording into one
+/// journal.
 final class PeerDriverHarness: Sendable {
     let journal = Journal()
     let scheduler: ManualScheduler
     let stream: ScriptedStream
     let driver: ConnectionDriver<PeerEndpoint>
-    let far: FarHost
-    /// Each `Handlers.ended` call's closure.
-    let ended = Recorder<ConnectionClosure>()
-    private let events = Locked<[PeerEvent]>([])
 
-    init(
-        power: Availability<PowerOffer> = .available(PowerOffer(actions: [.shutdown])),
-        policy: PolicySnapshot = PolicySnapshot(), logger: KernovaLogger = Fixture.logger,
-        inTurn: @escaping @Sendable (PeerEffect) -> InTurnEffect<PeerInput> = { _ in .deliver }
-    ) {
+    init() {
         let journal = journal
-        let events = events
-        let ended = ended
         scheduler = ManualScheduler(now: Fixture.t0, journal: journal)
         stream = ScriptedStream(journal: journal)
-        let generation = ConnectionGeneration(rawValue: 1)
         driver = ConnectionDriver(
-            endpoint: PeerEndpoint(Fixture.peerConfiguration(power: power), generation: generation, now: Fixture.t0),
-            stream: stream, scheduler: scheduler, logger: logger,
+            endpoint: PeerEndpoint(
+                Fixture.peerConfiguration, generation: ConnectionGeneration(rawValue: 1), now: Fixture.t0),
+            stream: stream, scheduler: scheduler, logger: Fixture.logger,
             handlers: ConnectionDriver<PeerEndpoint>.Handlers(
-                inTurn: inTurn,
                 effect: { effect, _ in journal.add("effect \(effect)") },
-                event: { event, _ in
-                    events.withLock { $0.append(event) }
-                    journal.add("event \(Self.name(event))")
-                },
-                ended: { closure, _ in
-                    journal.add("ended")
-                    ended.record(closure)
-                }))
-        far = FarHost(clock: scheduler, configuration: Fixture.hostConfiguration(policy: policy))
+                event: { event, _ in journal.add("event \(Self.name(event))") },
+                ended: { _, _ in journal.add("ended") }))
     }
 
     static func name(_ event: PeerEvent) -> String {

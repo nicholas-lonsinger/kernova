@@ -21,21 +21,6 @@ import Testing
 /// What the reader refuses to put in a container, naming the entry.
 @Suite("Tree reader")
 struct TreeReaderTests {
-    private static let folder = ContainerAcceptance(
-        storage: .folder, byteCeiling: 1 << 30, decmpfsTypes: [], acceptsLZ4: false)
-
-    /// The failure reading the item `name` comes to.
-    private static func failure(
-        _ name: String, on bench: FidelityBench, accepting acceptance: ContainerAcceptance = folder
-    ) throws -> TreeReadFailure? {
-        do {
-            _ = try bench.events(bytes(name), accepting: acceptance)
-            return nil
-        } catch let failure as TreeReadFailure {
-            return failure
-        }
-    }
-
     @Test("a file cut short while it is read fails as changed, and the reader then only repeats the failure")
     func truncatedWhileRead() throws {
         let bench = try FidelityBench()

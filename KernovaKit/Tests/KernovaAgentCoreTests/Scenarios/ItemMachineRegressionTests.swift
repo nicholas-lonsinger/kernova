@@ -150,10 +150,6 @@ struct ClipboardOfferRequestTests {
         }
     }
 
-    static func received(_ run: HostileRun) -> Bool {
-        run.itemOutputs.contains { if case .event(.offerReceived) = $0 { true } else { false } }
-    }
-
     @Test("A request released before its answer is whole ends completed after the answer arrives")
     func answerWholeAfterRelease() throws {
         let (run, stream) = try Self.asking()

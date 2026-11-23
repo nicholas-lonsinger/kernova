@@ -20,21 +20,6 @@ struct ContainerLimitTests {
 
     // MARK: Record sizes
 
-    /// A FILE header padded with an extended attribute to serialize to exactly `byteCount` bytes.
-    static func header(serializingTo byteCount: Int) -> EntryHeader {
-        var header = plainFile(depth: 0, size: 0)
-        var xattr = Kernova_V2_Xattr()
-        xattr.name = name("user.pad")
-        header.xattrs = [xattr]
-        var padding = byteCount - serialized(header).count
-        while true {
-            header.xattrs[0].value = Data(count: max(0, padding))
-            let size = serialized(header).count
-            if size == byteCount { return header }
-            padding += byteCount - size
-        }
-    }
-
     @Test("A zero run's payload is exactly 8 bytes")
     func zeroRunLength() {
         let header = headerRecord(plainFile(depth: 0, size: 100))
@@ -94,11 +79,6 @@ struct DecmpfsStorageTests {
         let chunks = fork > 0 ? record(.chunk, Data(repeating: 1, count: fork)) : Data()
         return decodingError(
             headerRecord(header) + chunks + endRecord(entries: 1, bytes: UInt64(fork)), accepting: acceptance)
-    }
-
-    /// An attribute of `type` holding `payload` bytes after its header.
-    static func inline(_ type: UInt32, payload: Int = 1) -> Data {
-        decmpfsAttribute(type: type, size: 1, tail: Data(repeating: 0xCC, count: payload))
     }
 
     @Test("The header parses as magic, type and size, little-endian")

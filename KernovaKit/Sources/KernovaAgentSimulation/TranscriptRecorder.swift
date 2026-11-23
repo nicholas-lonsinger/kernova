@@ -58,16 +58,6 @@ package enum TranscriptInput: Sendable, Equatable {
 
     static let generation = ConnectionGeneration(rawValue: 1)
 
-    var side: SimSide {
-        switch self {
-        case .host, .requestOffer, .takeDrag, .controlTake, .cancelTake: .host
-        case .peer, .pull, .peerLogs, .answerTake, .targetTake: .peer
-        case .offer(let side, _, _, _), .itemPull(let side, _), .withdraw(let side, _), .release(let side, _),
-            .refuse(let side, _, _):
-            side
-        }
-    }
-
     package var text: String {
         switch self {
         case .host(let command):
@@ -496,10 +486,9 @@ package struct Exchange: Sendable {
     ]
 }
 
-/// One recorded item of a duet, from which both pinned views are rendered.
+/// One recorded item of a duet.
 package enum DuetItem: Sendable {
-    case wire(time: UInt64, from: SimSide, line: String, describe: FrozenLine?)
-    case dataTotal(time: UInt64, from: SimSide, stream: UInt32, bytes: Int, checksum: UInt32)
+    case wire(time: UInt64, from: SimSide, line: String)
     case input(time: UInt64, TranscriptInput)
     case event(time: UInt64, side: SimSide, text: String)
 }
@@ -518,7 +507,6 @@ package final class Duet {
     private var decoders: [SimSide: FrameDecoder] = [.host: FrameDecoder(), .peer: FrameDecoder()]
     private var preambleSeen: Set<SimSide> = []
     private var kinds: [UInt32: StreamKind] = [:]
-    private var rawTotals: [UInt32: (bytes: Int, crc: CRC32C)] = [:]
     private var rawOffsets: [UInt32: Int] = [:]
     private var ring = LogRing()
     private var extrasPending = false
@@ -757,8 +745,7 @@ package final class Duet {
         var out = Data()
         if !preambleSeen.contains(side) {
             preambleSeen.insert(side)
-            items.append(
-                .wire(time: now, from: side, line: FrozenFields.hex(bytes.prefix(4)), describe: FrozenLine("preamble")))
+            items.append(.wire(time: now, from: side, line: FrozenFields.hex(bytes.prefix(4))))
             out.append(WireConstants.preamble)
         }
         var frames: [Frame] = []
@@ -783,18 +770,7 @@ package final class Duet {
         if frame.type == .open, let open = try? Kernova_V2_Open(serializedBytes: frame.payload) {
             kinds[id] = open.kind
         }
-        if frame.type == .data, !frame.flags.contains(.message) {
-            var total = rawTotals[id] ?? (0, CRC32C())
-            total.bytes += frame.payload.count
-            total.crc.update(frame.payload)
-            rawTotals[id] = total
-        }
-        if frame.type == .end, let total = rawTotals[id] {
-            items.append(.dataTotal(time: now, from: side, stream: id, bytes: total.bytes, checksum: total.crc.value))
-            rawTotals[id] = nil
-        }
-        items.append(
-            .wire(time: now, from: side, line: line(frame), describe: FrozenFields.describe(frame, kinds: kinds)))
+        items.append(.wire(time: now, from: side, line: line(frame)))
     }
 
     /// A frame's line: header fields spaced, then the payload in hex, or a
@@ -858,42 +834,6 @@ package final class Duet {
 
     // MARK: Rendering
 
-    /// The frozen transcript with `pinned`'s bytes.
-    package func render(pinned: SimSide, fileID: String) -> String {
-        let current: SimSide = pinned == .host ? .peer : .host
-        let pinnedArrow = pinned == .host ? "h>p" : "p>h"
-        let currentArrow = pinned == .host ? "p>h" : "h>p"
-        var lines = [
-            "# \(fileID) \(exchange.title) — \(pinned == .host ? "host" : "peer") pinned",
-            "pinned \(pinned == .host ? "host" : "peer")  fixture=\(pinned == .host ? exchange.hostFixture : exchange.peerFixture)",
-            "current \(current == .host ? "host" : "peer") fixture=\(current == .host ? exchange.hostFixture : exchange.peerFixture)\(current == .host ? " token=\(FrozenFields.hex(TranscriptFixture.token))" : "")",
-            "end \(exchange.end)",
-        ]
-        for item in items {
-            switch item {
-            case .wire(let time, let from, let line, let describe):
-                if from == pinned {
-                    lines.append(Self.row(time, pinnedArrow, line))
-                } else if let describe {
-                    lines.append(Self.row(time, "expect", "\(currentArrow) \(describe.text)"))
-                }
-            case .dataTotal(let time, let from, let stream, let bytes, let checksum):
-                if from == current {
-                    lines.append(
-                        Self.row(
-                            time, "expect",
-                            "\(currentArrow) s=\(stream) DATA-TOTAL bytes=\(bytes) crc32c=\(FrozenFields.hex(Self.bigEndian(checksum)))"
-                        ))
-                }
-            case .input(let time, let input):
-                if input.side == current { lines.append(Self.row(time, "in", input.text)) }
-            case .event(let time, let side, let text):
-                if side == current { lines.append(Self.row(time, "ev", text)) }
-            }
-        }
-        return lines.joined(separator: "\n") + "\n"
-    }
-
     /// The duet transcript: both sides' bytes and every input.
     package func renderDuet() -> String {
         var lines = [
@@ -904,12 +844,11 @@ package final class Duet {
         ]
         for item in items {
             switch item {
-            case .wire(let time, let from, let line, _):
+            case .wire(let time, let from, let line):
                 lines.append(Self.row(time, from == .host ? "h>p" : "p>h", line))
             case .input(let time, let input): lines.append(Self.row(time, "in", input.text))
             case .event(let time, let side, let text):
                 lines.append(Self.row(time, "ev", "\(side == .host ? "" : "")\(text)"))
-            case .dataTotal: break
             }
         }
         return lines.joined(separator: "\n") + "\n"
@@ -937,7 +876,7 @@ package enum TranscriptEvents {
         }
     }
 
-    package static func describe(_ effect: PeerEffect) -> String? {
+    package static func describe(_ effect: EndpointEffect<PeerRoleEffect>) -> String? {
         switch effect {
         case .role(.power(.perform(let id, let action, let ignoringApps))):
             "peer power perform id=\(id.rawValue) action=\(action.rawValue)\(ignoringApps ? " ignoreApps=1" : "")"

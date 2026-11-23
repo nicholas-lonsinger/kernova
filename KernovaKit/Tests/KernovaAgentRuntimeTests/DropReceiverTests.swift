@@ -12,7 +12,6 @@ import Glibc
 import Musl
 #endif
 
-import Dispatch
 import KernovaAgentCore
 import KernovaAgentHost
 import KernovaAgentRuntime
@@ -20,47 +19,34 @@ import KernovaAgentSimulation
 import KernovaFileTree
 import KernovaItemTransfer
 import KernovaPortableTestSupport
-import KernovaSynchronization
 import KernovaWire
 import Testing
 
 /// A peer's DROP receiver against a real hub: the host offers files from a source folder, and the peer lands
 /// them in its Downloads folder.
-@Suite("Drop receiver", .offTaskWaitsReported)
+@Suite("Drop receiver")
 struct DropReceiverTests {
-    /// A hub serving DROP from `source`, and a peer runtime whose receiver lands in `downloads`.
+    /// A hub serving DROP from `source`, and a peer runtime whose receiver lands in the scratch Downloads folder.
     private final class Bench: Sendable {
         let scratch: PortableScratchDirectory
         let harness: HubHarness
         let runtime: PeerAgentRuntime
         let hostEvents = Recorder<ItemTransferEvent>()
         let landed = Recorder<[String]>()
-        /// The name of each entry the host was asked to serve, as it was asked.
-        let served = Recorder<String>()
-        /// While held, each serve waits for `releaseServes()`.
-        private let held: Locked<Bool>
-        private let released = DispatchSemaphore(value: 0)
 
         var source: String { scratch.path + "/source" }
-        var downloads: String { scratch.path + "/Downloads" }
 
-        init(downloads landing: String? = nil, holdingServes: Bool = false) async throws {
-            held = Locked(holdingServes)
+        init() async throws {
             scratch = try PortableScratchDirectory(prefix: "drop-receiver")
             try FileManager.default.createDirectory(atPath: scratch.path + "/source", withIntermediateDirectories: true)
             try FileManager.default.createDirectory(
                 atPath: scratch.path + "/Downloads", withIntermediateDirectories: true)
-            let (source, hostEvents, landed, served) = (scratch.path + "/source", hostEvents, landed, served)
-            let (held, released, waits) = (held, released, OffTaskWaits())
+            let (source, hostEvents, landed) = (scratch.path + "/source", hostEvents, landed)
             let hostRouter = ItemFeatureRouter<PeerHandle>(
                 drop: ItemFeatureOwner(
                     usable: { _ in }, events: { _, event in hostEvents.record(event) },
                     content: { _, _, representation in
-                        served.record(String(decoding: representation.name, as: UTF8.self))
-                        if held.withLock({ $0 }) {
-                            waits.run { try Backstop("the held serve's release").wait(for: released) }
-                        }
-                        return .success(
+                        .success(
                             .tree(path: source + "/" + String(decoding: representation.name, as: UTF8.self)))
                     }), logger: Fixture.logger)
             harness = HubHarness(
@@ -74,7 +60,7 @@ struct DropReceiverTests {
             try await harness.attached()
             let sink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem())
             let receiver = DropReceiver(
-                directory: landing ?? scratch.path + "/Downloads", sink: sink, logger: Fixture.logger
+                directory: scratch.path + "/Downloads", sink: sink, logger: Fixture.logger
             ) { names in landed.record(names.map { String(decoding: $0, as: UTF8.self) }) }
             let peerRouter = ItemFeatureRouter<Void>(drop: receiver.owner, logger: Fixture.logger)
             runtime = PeerAgentRuntime(
@@ -94,10 +80,6 @@ struct DropReceiverTests {
 
         func write(_ contents: String, to relative: String) throws {
             try Data(contents.utf8).write(to: URL(fileURLWithPath: source + "/" + relative))
-        }
-
-        func read(_ relative: String) -> String? {
-            FileManager.default.contents(atPath: downloads + "/" + relative).map { String(decoding: $0, as: UTF8.self) }
         }
 
         /// Offers the source entries `names` as one drop, each a FILE or, ending in `/`, a FOLDER.

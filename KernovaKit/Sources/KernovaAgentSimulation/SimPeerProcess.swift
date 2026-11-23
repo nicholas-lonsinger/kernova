@@ -38,9 +38,8 @@ package final class SimPeerProcess {
     var consumerStall: Int?
     private var heldConsumption: [(UpdatePullID, Int)] = []
     private var received: [UpdatePullID: (bytes: Data, count: Int)] = [:]
-    /// Log records appended, and those still to deliver.
+    /// Log records appended.
     package private(set) var logsAppended = 0
-    package private(set) var logsEvictedByMode = 0
 
     init(index: Int, spec: PeerSpec) {
         self.index = index
@@ -100,7 +99,7 @@ package final class SimPeerProcess {
 
     // MARK: Effects and events
 
-    func handle(_ effect: PeerEffect, link: SimLink, world: SimWorld) {
+    func handle(_ effect: EndpointEffect<PeerRoleEffect>, link: SimLink, world: SimWorld) {
         switch effect {
         case .role(.power(let power)):
             handlePower(power, world: world)
@@ -149,7 +148,6 @@ package final class SimPeerProcess {
             let record = LogRecordValue(
                 timestampMilliseconds: Int64(world.now / 1_000_000), level: .notice, subsystem: "app.kernova.agent",
                 category: "sim", segments: [LogSegmentValue(text: "record \(logsAppended + number)")])
-            if ring.mode == .discarding { logsEvictedByMode += 1 }
             if ring.append(record) { post = true }
         }
         logsAppended += count

@@ -97,11 +97,6 @@ final class GuestDragPromises {
     /// Every call-in whose folder is still held.
     private var callIns: [ObjectIdentifier: CallIn] = [:]
 
-    #if DEBUG
-    /// Every folder removal started so far, for a test to await.
-    private var removals: [Task<Void, Never>] = []
-    #endif
-
     init(stagingRoot: ProcessStagingRoot) {
         self.stagingRoot = stagingRoot
     }
@@ -300,7 +295,7 @@ final class GuestDragPromises {
     }
 
     private func remove(_ folder: URL, after pending: [Task<URL, any Error>]) {
-        let removal = Task.detached {
+        Task.detached {
             for file in pending { _ = try? await file.value }
             do {
                 try FileManager.default.removeItem(at: folder)
@@ -309,17 +304,5 @@ final class GuestDragPromises {
                     .warning, "Could not remove the promises' folder: \(error.localizedDescription, privacy: .public)")
             }
         }
-        #if DEBUG
-        removals.append(removal)
-        #else
-        _ = removal
-        #endif
     }
-
-    #if DEBUG
-    /// Test seam: returns once every folder removal started so far is done.
-    func waitForFolderRemovalsForTesting() async {
-        for removal in removals { await removal.value }
-    }
-    #endif
 }

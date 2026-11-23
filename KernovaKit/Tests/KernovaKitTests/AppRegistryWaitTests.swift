@@ -69,15 +69,6 @@ struct AppRegistryWaitTests {
             ofBundleAt: bundle, scope: scope, by: clock.date(after: deadline),
             registry: registry, now: clock.now, sleep: clock.sleep)
     }
-
-    private func awaitDeregistration(
-        ofProcess identifier: pid_t, from registry: FakeAppRegistry,
-        within deadline: TimeInterval, clock: FakeClock
-    ) -> Bool {
-        AppRegistryWait.awaitDeregistration(
-            ofProcess: identifier, by: clock.date(after: deadline), registry: registry,
-            now: clock.now, sleep: clock.sleep)
-    }
 }
 
 // MARK: - Doubles

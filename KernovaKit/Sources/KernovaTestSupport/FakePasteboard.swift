@@ -5,9 +5,9 @@ import KernovaSynchronization
 
 /// In-memory ``ClipboardPasteboard`` over ``FakeWritePasteboard``.
 ///
-/// The write half — promise registration, the OS-fires-a-provider seam, the
-/// write-failure seam — is the shared double both ends of the wire use. Added
-/// here: the read half, and the resident setup
+/// The write half — promise registration and the OS-fires-a-provider seam — is
+/// the shared double both ends of the wire use. Added here: the read half, and
+/// the resident setup
 /// (`setItem`/`setItems`/`setString`) that models a *user* copying, another
 /// process's write, which an outbound poll reads. A promise
 /// write leaves no resident bytes; a fired provider's bytes are what its item
@@ -24,8 +24,6 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         var resolved: [NSPasteboard.PasteboardType: Data] = [:]
         /// Every type a resident item was read for, in order.
         var reads: [NSPasteboard.PasteboardType] = []
-        /// Every promised type read before a provider resolved it, in order.
-        var promiseReads: [NSPasteboard.PasteboardType] = []
     }
 
     private let writer = FakeWritePasteboard()
@@ -55,14 +53,9 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         guard promised.isEmpty else {
             let bytes = state.withLock { $0.resolved }
             return zip(promised, writer.dataByItem).map { types, data in
-                let unresolved = Set(types).subtracting(data.keys).subtracting(bytes.keys)
-                return FakePasteboardItem(
+                FakePasteboardItem(
                     types: Array(data.keys) + types,
-                    bytes: bytes.merging(data, uniquingKeysWith: { _, written in written })
-                ) { type in
-                    guard unresolved.contains(type) else { return }
-                    state.withLock { $0.promiseReads.append(type) }
-                }
+                    bytes: bytes.merging(data, uniquingKeysWith: { _, written in written }))
             }
         }
         let writer = writer
@@ -91,10 +84,6 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     /// in the order read, for a test proving what was read when.
     public var residentReads: [NSPasteboard.PasteboardType] { state.withLock { $0.reads } }
 
-    /// Every promised type an item was read for before a provider resolved it, in the order read: on a real
-    /// pasteboard each such read fires the promise's provider in the reading process.
-    public var promiseReads: [NSPasteboard.PasteboardType] { state.withLock { $0.promiseReads } }
-
     // MARK: - Promised writes
 
     /// Every promised type across all items, concatenated in item order (a
@@ -104,20 +93,9 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     /// The types each promised item offers, in item order.
     public var promisedTypesByItem: [[NSPasteboard.PasteboardType]] { writer.promisedTypesByItem }
 
-    /// How many times `prepareForNewContents(with:)` has run.
-    public var prepareCount: Int { writer.prepareCount }
-
     /// The data each written item holds now, in item order — what a write
     /// placed as real data rather than promised.
     public var dataByItem: [[NSPasteboard.PasteboardType: Data]] { writer.dataByItem }
-
-    /// How many promised providers have been fired, for a test proving a
-    /// poll fired none.
-    public var providerInvocations: Int { writer.providerInvocations }
-
-    /// Makes the next `times` `writeItems(_:)` calls fail, modelling an
-    /// OS-level pasteboard write failure.
-    public func failNextWrite(times: Int = 1) { writer.failNextWrite(times: times) }
 
     /// Fires a promised item's provider the way the OS does, synchronously.
     ///
@@ -135,10 +113,6 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
         return bytes
     }
 
-    /// AppKit finishing with item `itemIndex`'s provider once a reader had every type it promised, the write
-    /// still standing (``FakeWritePasteboard/finishProvider(itemIndex:)``).
-    public func finishProvider(itemIndex: Int) { writer.finishProvider(itemIndex: itemIndex) }
-
     /// Drops the resident copy and clears the write half.
     @discardableResult
     public func prepareForNewContents(with options: NSPasteboard.ContentsOptions) -> Int {
@@ -149,9 +123,9 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     /// Registers one lazy promise per item, recording no bytes.
     @discardableResult
     public func writeItems(_ items: [ClipboardWriteItem]) -> Bool {
-        let written = writer.writeItems(items)
-        if written { clearResidents() }
-        return written
+        writer.writeItems(items)
+        clearResidents()
+        return true
     }
 
     /// The bytes item `index` of a write holds as `type` (``FakeWritePasteboard/data(forType:itemAt:)``).
@@ -207,32 +181,6 @@ public final class FakePasteboard: ClipboardPasteboard, Sendable {
     @discardableResult
     public func setFilePromise(_ receiver: any FilePromiseReceiving) -> Bool {
         setFilePromise()
-        promiseReceivers = [receiver]
-        return true
-    }
-
-    /// Places one item per receiver of `receivers`, each carrying its file promise and nothing else, `receivers`
-    /// those every later read of the pasteboard's promises yields.
-    @MainActor
-    @discardableResult
-    public func setFilePromises(_ receivers: [any FilePromiseReceiving]) -> Bool {
-        let promise = NSFilePromiseReceiver.readableDraggedTypes.map {
-            (type: NSPasteboard.PasteboardType($0), data: Data())
-        }
-        setItems(receivers.map { _ in promise })
-        promiseReceivers = receivers
-        return true
-    }
-
-    /// Places one item of `representations` beside `receiver`'s file promise, `receiver` the receiver every
-    /// later read of the pasteboard's promises yields.
-    @MainActor
-    @discardableResult
-    public func setItem(
-        _ representations: [(type: NSPasteboard.PasteboardType, data: Data)],
-        promising receiver: any FilePromiseReceiving
-    ) -> Bool {
-        setItem(representations + NSFilePromiseReceiver.readableDraggedTypes.map { (type: .init($0), data: Data()) })
         promiseReceivers = [receiver]
         return true
     }

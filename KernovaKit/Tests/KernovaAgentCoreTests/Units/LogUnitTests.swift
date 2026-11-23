@@ -5,18 +5,8 @@ import Foundation
 #endif
 
 @testable import KernovaAgentCore
-import KernovaAgentSimulation
-import KernovaWire
 import SwiftProtobuf
 import Testing
-
-extension Unit {
-    static func record(_ text: String = "hello", stamp: Int64 = 1) -> LogRecordValue {
-        LogRecordValue(
-            timestampMilliseconds: stamp, level: .notice, subsystem: "app.kernova.agent", category: "test",
-            segments: [LogSegmentValue(text: text)])
-    }
-}
 
 extension CoreUnits {
     @Suite("LogRing and the log record bounds")

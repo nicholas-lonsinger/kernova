@@ -64,15 +64,6 @@ struct MacPowerTests {
 
     static let absentDetail = MacPowerMechanism.loginWindow().graceful?.absentDetail ?? ""
 
-    /// The answer `call` gives, whichever kind of call it is.
-    static func answer(of call: MacPowerMechanism.Call?) -> String {
-        switch call {
-        case .answering(let call): String(describing: call())
-        case .committing(let call): call().map { "failed \($0)" } ?? "going down"
-        case nil: "no call"
-        }
-    }
-
     // MARK: - Adverts
 
     @Test(

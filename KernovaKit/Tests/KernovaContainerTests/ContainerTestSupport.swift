@@ -203,19 +203,6 @@ func decodingError(_ container: Data, accepting acceptance: ContainerAcceptance?
     decode(container, accepting: acceptance).error
 }
 
-/// A file's content as the events carry it, zero runs expanded.
-func content(of events: [TreeEvent]) -> Data {
-    var data = Data()
-    for event in events {
-        switch event {
-        case .bytes(let bytes): data.append(bytes)
-        case .zeros(let count): data.append(Data(count: Int(count)))
-        default: break
-        }
-    }
-    return data
-}
-
 /// A tree to encode: each entry with the bytes its file carries, its data's then its resource fork's.
 struct TreeFixture {
     var entries: [(header: EntryHeader, bytes: Data)]

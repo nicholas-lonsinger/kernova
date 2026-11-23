@@ -47,64 +47,21 @@ func exchange(
 final class PeerRuntimeHarness: Sendable {
     let scheduler = ManualScheduler(now: Fixture.t0)
     let dialer = ScriptedDialer()
-    let power: FakePowerAdapter
-    let events = Recorder<PeerEvent>()
-    let hostConnections = Recorder<HostConnectionState>()
     let stops = Recorder<StopReason>()
     let runtime: PeerAgentRuntime
-    /// The host on the far side of each dialed stream.
-    private let far: @Sendable (ManualScheduler) -> FarHost
 
-    init(
-        power: FakePowerAdapter = FakePowerAdapter(handsOff: false), items: ItemAdapters? = nil,
-        state: PeerSessionState? = Fixture.peerState, dialer override: (any TransportDialer)? = nil,
-        far: @escaping @Sendable (ManualScheduler) -> FarHost = { FarHost(clock: $0) }
-    ) {
-        self.power = power
-        self.far = far
-        let events = events
-        let hostConnections = hostConnections
+    init() {
         let stops = stops
         runtime = PeerAgentRuntime(
-            claim: Fixture.peerClaim, state: state, registry: PeerFeatureRegistry(power: power, items: items),
-            dialer: override ?? dialer, scheduler: scheduler, logger: Fixture.logger,
-            handlers: PeerAgentRuntime.Handlers(
-                event: { events.record($0) }, hostConnectionChanged: { hostConnections.record($0) },
-                stop: { stops.record($0) }))
+            claim: Fixture.peerClaim, state: Fixture.peerState,
+            registry: PeerFeatureRegistry(power: FakePowerAdapter(handsOff: false)), dialer: dialer,
+            scheduler: scheduler, logger: Fixture.logger,
+            handlers: PeerAgentRuntime.Handlers(stop: { stops.record($0) }))
     }
 
     /// Runs every block already on the runtime's queue.
     func settle(fileID: String = #fileID, line: Int = #line) async throws {
         try await flush(runtime.queue, fileID: fileID, line: line)
-    }
-
-    /// Answers dial `number` with a new link and pumps it through the Hello.
-    func connect(_ number: Int, fileID: String = #fileID, line: Int = #line) async throws -> RuntimeLink {
-        var dials = dialer.dials.waiter()
-        _ = try await dials.next(fileID: fileID, line: line) { $0 == number }
-        let link = RuntimeLink(far: far(scheduler))
-        dialer.answer(number, .success(link.stream))
-        var calls = link.stream.calls.waiter()
-        _ = try await calls.next(fileID: fileID, line: line) { $0 == "start" }
-        try await pump(link, fileID: fileID, line: line)
-        return link
-    }
-
-    /// Pumps `link` until it is quiet.
-    func pump(_ link: RuntimeLink, fileID: String = #fileID, line: Int = #line) async throws {
-        try await exchange(
-            link.stream, queues: [runtime.queue], fileID: fileID, line: line, read: link.far.read,
-            output: link.far.output)
-    }
-}
-
-/// One dialed stream and the host endpoint on its far side.
-final class RuntimeLink: Sendable {
-    let stream = ScriptedStream()
-    let far: FarHost
-
-    init(far: FarHost) {
-        self.far = far
     }
 }
 

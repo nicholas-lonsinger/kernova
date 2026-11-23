@@ -63,11 +63,8 @@ public enum PeerInput: Sendable, Equatable {
     case itemCommand(ItemCommand)
 }
 
-/// What a peer endpoint asks its adapters and runtime to do.
-public typealias PeerEffect = EndpointEffect<PeerRoleEffect>
-
 /// What a peer endpoint asks of its power adapter, log ring and installer.
-public enum PeerRoleEffect: Sendable, Equatable {
+package enum PeerRoleEffect: Sendable, Equatable {
     /// For the power adapter.
     case power(PowerEffect)
     /// For the log ring and its runtime.

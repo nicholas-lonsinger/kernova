@@ -126,10 +126,8 @@ package final class HostileRun {
     private var outbound = FrameDecoder()
     package private(set) var written: [Frame] = []
     package private(set) var hostEvents: [HostEvent] = []
-    /// The host endpoint's effects, in order.
-    package private(set) var hostEffects: [HostEffect] = []
     package private(set) var peerEvents: [PeerEvent] = []
-    package private(set) var peerEffects: [PeerEffect] = []
+    package private(set) var peerEffects: [EndpointEffect<PeerRoleEffect>] = []
     package private(set) var trace: [ConnectionTrace] = []
     /// While set, nothing is taken from `pollTransmit`: the far side reads nothing.
     package var writerStalled = false
@@ -241,12 +239,6 @@ package final class HostileRun {
         drain()
     }
 
-    /// Answers the host's payload read.
-    package func payload(_ input: PayloadInput) {
-        host?.handle(.payload(input), now: now)
-        drain()
-    }
-
     package func input(_ input: PeerInput) {
         peer?.handle(input, now: now)
         drain()
@@ -326,7 +318,6 @@ package final class HostileRun {
             progressed = false
             // Effects before events: a pull's `.commit` or `.abort` before its `.pullEnded`, as the machine emits them.
             while let effect = host?.pollEffect() {
-                hostEffects.append(effect)
                 progressed = true
                 switch effect {
                 case .itemSource(let effect): item(.source(effect))

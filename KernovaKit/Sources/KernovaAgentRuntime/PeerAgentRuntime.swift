@@ -47,7 +47,6 @@ public final class PeerAgentRuntime: Sendable {
     private let scheduler: any RuntimeScheduler
     private let logger: KernovaLogger
     private let handlers: Handlers
-    private let receiverPolicy: ReceiverPolicy
     /// The process's power ledger: written on the driver queue for each effect carried out, and on the
     /// adapter's thread for each report, before the report hops to this queue — so a configuration built
     /// here after a report always carries it.
@@ -71,8 +70,7 @@ public final class PeerAgentRuntime: Sendable {
     /// With no `state` it dials nothing until `setPeerState(_:)` gives it one.
     public init(
         claim: PeerClaim, state: PeerSessionState?, registry: PeerFeatureRegistry, dialer: any TransportDialer,
-        scheduler: any RuntimeScheduler, logger: KernovaLogger, receiverPolicy: ReceiverPolicy = .production,
-        handlers: Handlers
+        scheduler: any RuntimeScheduler, logger: KernovaLogger, handlers: Handlers
     ) {
         var claim = claim
         var generator = SystemRandomNumberGenerator()
@@ -82,7 +80,6 @@ public final class PeerAgentRuntime: Sendable {
         self.dialer = dialer
         self.scheduler = scheduler
         self.logger = logger
-        self.receiverPolicy = receiverPolicy
         self.handlers = handlers
         let unregistered = "no adapter registered"
         self.state = Locked(
@@ -279,7 +276,6 @@ public final class PeerAgentRuntime: Sendable {
                     update: state.update)
             }
             configuration.powerLedger = ledger
-            configuration.receiverPolicy = receiverPolicy
             configuration.items = ItemAdapters.availability(registry.items)
             let driver = ConnectionDriver(
                 endpoint: PeerEndpoint(configuration, generation: generation, now: scheduler.now), stream: stream,

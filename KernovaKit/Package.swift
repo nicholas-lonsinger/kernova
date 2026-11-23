@@ -276,19 +276,13 @@ var targets: [Target] = [
     // target it tests, only for Linux.
     .testTarget(
         name: "KernovaPlatformLinuxTests",
-        dependencies: [
-            "KernovaPlatformLinux", "KernovaDBus", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaSynchronization",
-            "KernovaPortableTestSupport",
-        ],
+        dependencies: ["KernovaPlatformLinux", "KernovaDBus", "KernovaAgentCore", "KernovaPortableTestSupport"],
         swiftSettings: sharedSwiftSettings
     ),
     // The stand-ins beside it are read from the source tree.
     .testTarget(
         name: "KernovaLinuxAgentTests",
-        dependencies: [
-            "KernovaLinuxAgent", "KernovaAgentInstall", "KernovaAgentCore", "KernovaSynchronization", "KernovaWire",
-            "KernovaPortableTestSupport",
-        ],
+        dependencies: ["KernovaLinuxAgent", "KernovaAgentInstall", "KernovaAgentCore", "KernovaPortableTestSupport"],
         exclude: ["StandIns"],
         swiftSettings: sharedSwiftSettings
     ),
@@ -299,8 +293,7 @@ var targets: [Target] = [
         name: "KernovaAgentInstallTests",
         dependencies: [
             "KernovaAgentInstall", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaAgentSimulation",
-            "KernovaDigest", "KernovaLogging", "KernovaWire", "KernovaPortableTestSupport", "KernovaContainer",
-            "KernovaFileTree", "KernovaSynchronization",
+            "KernovaDigest", "KernovaLogging", "KernovaWire", "KernovaPortableTestSupport",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
         exclude: ["Golden", "StandIns"],
@@ -311,7 +304,7 @@ var targets: [Target] = [
     .testTarget(
         name: "KernovaAgentCoreTests",
         dependencies: [
-            "KernovaAgentCore", "KernovaAgentSimulation", "KernovaContainer", "KernovaWire", "KernovaDigest",
+            "KernovaAgentCore", "KernovaAgentSimulation", "KernovaContainer", "KernovaWire",
             "KernovaPortableTestSupport",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
@@ -326,7 +319,7 @@ var targets: [Target] = [
         dependencies: [
             "KernovaAgentRuntime", "KernovaAgentCore", "KernovaAgentSimulation", "KernovaWire", "KernovaLogging",
             "KernovaSynchronization", "KernovaPlatformPOSIX", "KernovaAgentHost", "KernovaItemTransfer",
-            "KernovaFileTree", "KernovaPortableTestSupport", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+            "KernovaFileTree", "KernovaPortableTestSupport",
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -345,9 +338,8 @@ var targets: [Target] = [
     .testTarget(
         name: "KernovaItemTransferTests",
         dependencies: [
-            "KernovaItemTransfer", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaAgentSimulation",
-            "KernovaTreeTransfer", "KernovaContainer", "KernovaFileTree", "KernovaWire", "KernovaSynchronization",
-            "KernovaLogging", "KernovaPortableTestSupport", .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+            "KernovaItemTransfer", "KernovaAgentRuntime", "KernovaAgentCore", "KernovaTreeTransfer", "KernovaFileTree",
+            "KernovaWire", "KernovaSynchronization", "KernovaLogging", "KernovaPortableTestSupport",
         ],
         swiftSettings: sharedSwiftSettings
     ),
@@ -496,9 +488,8 @@ if declaresAppleTargets {
             name: "KernovaKitTests",
             dependencies: [
                 "KernovaKit", "KernovaCommandModel", "KernovaAppKitShared", "KernovaAppRegistry",
-                "KernovaCLICore", "KernovaTestSupport", "KernovaLogging", "KernovaSynchronization",
-                "KernovaFileTree", "KernovaWire", "KernovaClipboardItems", "KernovaAgentCore", "KernovaAgentRuntime",
-                "KernovaConsole",
+                "KernovaCLICore", "KernovaTestSupport", "KernovaLogging", "KernovaSynchronization", "KernovaWire",
+                "KernovaClipboardItems", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaConsole",
             ],
             swiftSettings: sharedSwiftSettings
         ),

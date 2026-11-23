@@ -21,16 +21,11 @@ final class MemoryStream: ByteStream {
         var endDelivered = false
         var isShutDown = false
         var isReleased = false
-        /// While true, what this end writes is kept back from the far end.
-        var holdsOutbound = false
-        var heldOutbound: [Data] = []
         var released: (@Sendable () -> Void)?
     }
 
     private let state = Locked(State())
     private let far = Locked<MemoryStream?>(nil)
-    /// How many times `shutdown()` was called.
-    let shutdowns = Locked(0)
 
     private init() {}
 
@@ -69,19 +64,13 @@ final class MemoryStream: ByteStream {
         let (queue, error, deliver) = state.withLock { state -> (DispatchQueue, ByteStreamError?, Data?) in
             guard let queue = state.queue else { preconditionFailure("a write before start") }
             guard !state.isShutDown else { return (queue, .shutDown, nil) }
-            let bytes = chunks.reduce(into: Data()) { $0.append($1) }
-            if state.holdsOutbound {
-                state.heldOutbound.append(bytes)
-                return (queue, nil, nil)
-            }
-            return (queue, nil, bytes)
+            return (queue, nil, chunks.reduce(into: Data()) { $0.append($1) })
         }
         if let deliver, !deliver.isEmpty { far.withLock { $0 }?.receive(deliver) }
         queue.async { completion(error) }
     }
 
     func shutdown() {
-        shutdowns.withLock { $0 += 1 }
         let first = state.withLock { state -> Bool in
             guard !state.isShutDown else { return false }
             state.isShutDown = true

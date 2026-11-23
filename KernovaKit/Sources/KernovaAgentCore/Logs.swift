@@ -15,7 +15,7 @@ public enum LogInput: Sendable, Equatable {
 }
 
 /// What the peer's log forwarder asks the runtime to do.
-public enum LogEffect: Sendable, Equatable {
+package enum LogEffect: Sendable, Equatable {
     /// Put the process-wide ring in this mode.
     case mode(LogRingMode)
     /// Take one batch from the ring and feed it back as `.logs(.batch)` in the same turn.

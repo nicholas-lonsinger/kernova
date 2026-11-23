@@ -109,11 +109,6 @@ public final class ClipboardPasteboardWatch {
     }
 
     #if DEBUG
-    /// Whether `pasteboard` is polled now.
-    static func isPollingForTesting(_ pasteboard: AnyObject) -> Bool {
-        watches[ObjectIdentifier(pasteboard)]?.timer != nil
-    }
-
     /// Polls `pasteboard` once, now, when anything observes it.
     static func pollForTesting(_ pasteboard: AnyObject) {
         watches[ObjectIdentifier(pasteboard)]?.poll()

@@ -18,18 +18,6 @@ private let runningTypes = DecmpfsMatrix.types(for: DecmpfsMatrix.runningKernel)
 struct DecmpfsPassThroughTests {
     let fileSystem = POSIXTreeFileSystem()
 
-    /// Writes `events`, returning the first failure.
-    private static func failure(writing events: [TreeEvent], to writer: TreeWriter<POSIXTreeFileSystem>)
-        -> TreeWriteFailure?
-    {
-        do {
-            for event in events { try writer.write(event) }
-            return nil
-        } catch {
-            return error
-        }
-    }
-
     /// The types whose compressed bytes the attribute holds, which takes at most 3,802 bytes.
     static let attributeTypes: Set<UInt32> = [3, 7, 9, 11, 13, 15]
 
