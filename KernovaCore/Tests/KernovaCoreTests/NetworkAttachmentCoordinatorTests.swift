@@ -40,6 +40,14 @@ struct NetworkAttachmentCoordinatorTests {
         let eligibility: EligibilityBox
         let choiceBox: ChoiceBox
         let reports: ReportRecorder
+        /// How many networks the harness stood up before the coordinator ran.
+        let preMaterialized: Int
+
+        /// The kind of every network created since the harness stood its own
+        /// up, failed creates included, in call order.
+        var materializeRequests: [VmnetNetworkKind] {
+            Array(vmnet.operations.createdKinds.dropFirst(preMaterialized))
+        }
 
         /// The subnet the `kind` network in `scope` hands out, `nil` while it
         /// is not materialized.
@@ -92,7 +100,47 @@ struct NetworkAttachmentCoordinatorTests {
         return Harness(
             coordinator: coordinator, device: device, provider: provider,
             vmnet: vmnet, owner: owner, observer: observer, clock: clock, eligibility: eligibility,
-            choiceBox: choiceBox, reports: reports)
+            choiceBox: choiceBox, reports: reports,
+            preMaterialized: vmnet.operations.createdKinds.count)
+    }
+
+    // MARK: - Session start
+
+    @Test("A materialization a later switch overtook leaves the VM on the network its device is on")
+    func overtakenMaterializationLeavesTheDevicesNetwork() async throws {
+        let lab = UUID()
+        let h = makeHarness(
+            choice: NetworkChoice(mode: .hostOnly, bridgedInterfaceIdentifier: nil, membership: .isolated),
+            devicePlan: .vmnet(.own(.hostOnly)),
+            entitled: true,
+            materialized: [.own(.hostOnly)])
+        h.coordinator.activate()
+        #expect(h.device.appliedPlans.isEmpty)
+
+        let createHold = DispatchSemaphore(value: 0)
+        h.vmnet.operations.setCreateHold(createHold)
+        h.choiceBox.choice = NetworkChoice(
+            mode: .hostOnly, bridgedInterfaceIdentifier: nil, membership: .network(lab))
+        h.coordinator.configurationChanged()
+        #expect(h.coordinator.isPending)
+        try await h.vmnet.operations.createEntered.wait { h.materializeRequests == [.hostOnly] }
+
+        // The user switches back before the named network's create returns.
+        h.choiceBox.choice = NetworkChoice(
+            mode: .hostOnly, bridgedInterfaceIdentifier: nil, membership: .isolated)
+        h.coordinator.configurationChanged()
+        #expect(h.device.currentPlan == .vmnet(.own(.hostOnly)))
+        #expect(!h.coordinator.isPending)
+
+        createHold.signal()
+        try await h.coordinator.vmnetMaterializationTaskForTesting?.joined()
+
+        #expect(h.subnet(.hostOnly, .vm(h.owner)) != nil)
+        #expect(h.subnet(.hostOnly, .named(lab)) == nil)
+        #expect(h.vmnet.operations.releasedNetworks.count == 1)
+        #expect(h.device.currentPlan == .vmnet(.own(.hostOnly)))
+        #expect(!h.coordinator.isPending)
+        h.coordinator.stop()
     }
 
     // MARK: - Disconnect

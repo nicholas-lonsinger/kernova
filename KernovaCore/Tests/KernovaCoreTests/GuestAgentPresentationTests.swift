@@ -52,6 +52,19 @@ struct GuestAgentPresentationTests {
                 .init(title: "System service", state: "Can\u{2019}t update in place"),
             ])
     }
+
+    @Test("Any unresponsive agent makes the presentation unresponsive, and its line says so")
+    func hubResponsiveness() {
+        let unresponsive = GuestAgentPresentation(
+            hub: Self.snapshot([
+                Self.peer(2, version: "1.1", isResponsive: false), Self.peer(1, role: .systemPeer, isResponsive: false),
+            ]))
+        #expect(unresponsive.status == .unresponsive(version: "1.1"))
+        let mixed = GuestAgentPresentation(
+            hub: Self.snapshot([Self.peer(2, role: .systemPeer), Self.peer(1, version: "0.9", isResponsive: false)]))
+        #expect(mixed.status == .unresponsive(version: "0.9"))
+        #expect(mixed.agents.map(\.state) == ["Up to date", "Not responding"])
+    }
 }
 
 /// What the Guest Agent Status window shows of one agent line.

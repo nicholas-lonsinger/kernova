@@ -1,0 +1,84 @@
+import Foundation
+import KernovaKit
+import KernovaSynchronization
+import KernovaTestSupport
+import Testing
+
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
+
+/// Unit tests for `AppClipboardReadout` — the one readout the app-level surfaces
+/// render across every VM, and the Cancel routing behind it.
+///
+/// A Cancel stops what its own readout showed: the click carries the id the bar
+/// was rendered for, and it has to reach that operation through whichever VM
+/// owns it rather than whatever is newest by the time it lands.
+@Suite("AppClipboardReadout", .caseScoped)
+@MainActor
+struct AppClipboardReadoutTests {
+    private func makeInstance(name: String) -> VMInstance {
+        VMInstanceFixture.make(name: name, phase: .running(sessionID: UUID()))
+    }
+
+    /// Stands a running, cancellable readout on `instance`, returning the
+    /// operation behind it and the cell its cancel sets.
+    ///
+    /// The operation is returned so the caller can keep it alive: the reporter
+    /// holds it weakly, and an operation nobody references has nothing left to
+    /// cancel.
+    private func runTransfer(
+        on instance: VMInstance, gesture: ClipboardTransferGesture, since: Date
+    ) -> (operation: ClipboardTransferOperation, cancelled: Locked<Bool>) {
+        let cancelled = Locked(false)
+        let operation = ClipboardTransferOperation(
+            gesture: gesture, direction: .inbound, peerName: instance.name, revealDelay: 0,
+            clock: GatedEngineClock(), onCancelRequested: { cancelled.withLock { $0 = true } },
+            reporter: instance.clipboardTransfers)
+        instance.clipboardTransfers.publish(
+            from: operation,
+            .running(
+                ClipboardProgressSnapshot(
+                    direction: .inbound, peerName: instance.name, currentItemName: nil,
+                    filesCompleted: 0, fileCount: 1, bytesTransferred: 1, totalBytes: 2,
+                    bytesPerSecond: nil, secondsRemaining: nil, gesture: gesture,
+                    elapsedSeconds: 1, isCancellable: true, operationID: operation.id),
+                since: since))
+        return (operation, cancelled)
+    }
+
+    // MARK: - Cancel routing
+
+    @Test("Cancel reaches the VM the readout's id belongs to, not the newest one")
+    func cancelRoutesToTheOwningVM() {
+        let older = makeInstance(name: "Build VM")
+        let newer = makeInstance(name: "CI VM")
+        let shown = runTransfer(on: older, gesture: .paste, since: Date(timeIntervalSince1970: 100))
+        let latest = runTransfer(
+            on: newer, gesture: .paste, since: Date(timeIntervalSince1970: 200))
+
+        #expect(AppClipboardReadout.cancel(shown.operation.id, in: [older, newer]))
+
+        // Through the owning VM's reporter, which is what turns the id back into
+        // the operation and asks it to stop.
+        #expect(shown.cancelled.withLock { $0 })
+        #expect(!latest.cancelled.withLock { $0 })
+        withExtendedLifetime((shown.operation, latest.operation)) {}
+    }
+
+    // MARK: - Readout ranking
+
+    /// Stands a completed transfer — one that still has a bar to dwell on — on
+    /// `instance`.
+    private func finish(on instance: VMInstance, at date: Date) {
+        instance.clipboardTransfers.finish(
+            ClipboardTransferFinish(
+                gesture: .paste,
+                outcome: .completed(
+                    final: ClipboardProgressSnapshot(
+                        direction: .inbound, peerName: instance.name, currentItemName: nil,
+                        filesCompleted: 1, fileCount: 1, bytesTransferred: 2, totalBytes: 2,
+                        bytesPerSecond: nil, secondsRemaining: nil, gesture: .paste,
+                        elapsedSeconds: 1)),
+                peerName: instance.name, date: date))
+    }
+}

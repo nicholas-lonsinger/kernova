@@ -320,6 +320,12 @@ struct VirtualizationServiceTests {
 
     // MARK: - Warm capture over a session that goes away
 
+    /// How an operation's session had ended at some moment mid-operation.
+    @MainActor
+    private final class SessionEndRecord {
+        var end: VMSessionEnd?
+    }
+
     /// Captures `snapshot` from `instance`'s live session inside the capture
     /// operation the VM admits.
     @discardableResult
@@ -330,6 +336,45 @@ struct VirtualizationServiceTests {
             try await VirtualizationService.captureWarmSnapshot(
                 instance, context, snapshot: snapshot, session: session)
         }
+    }
+
+    @Test("A guest that dies mid-capture leaves the VM where the session's end put it, not running")
+    func warmCaptureDoesNotHandTheVMBackToADeadSession() async throws {
+        let sessionID = UUID()
+        let store = MockVMBundleMachineFiles()
+        let instance = VMInstanceFixture.make(
+            phase: .running(sessionID: sessionID), bundleFactory: VMBundle.Factory(machineFiles: store))
+        let session = MockSnapshotSession(guestState: .running)
+        let snapshot = VMSnapshotCaptureRequest(name: "Before the update")
+        let whileCapturing = SessionEndRecord()
+        // `didStopWithError` lands while the disks copy, exactly as a guest
+        // shutdown or a VZ error does — and `resumeIfPaused` returns rather than
+        // throwing once the guest is no longer paused, so the capture itself
+        // still succeeds.
+        await session.setAfterSave {
+            await MainActor.run {
+                instance.activity.handleSessionEvent(
+                    .didStopWithError(
+                        NSError(
+                            domain: "test", code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: "The guest stopped."])))
+                whileCapturing.end = instance.phase.operation?.sessionEnd
+            }
+        }
+
+        try await captureWarm(instance, snapshot: snapshot, session: session)
+
+        // The capture kept holding the VM: the session's end only marked it.
+        #expect(whileCapturing.end == .stoppedWithError(message: "The guest stopped."))
+        // The snapshot is complete — its state and disks were both written
+        // before the guest went away — so the caller records it.
+        #expect(store.capturedPaths[snapshot.id] != nil)
+        // And the VM rests where the session's end put it rather than claiming
+        // a session nothing holds.
+        #expect(instance.status == .error)
+        #expect(!instance.hasLiveVirtualMachine)
+        #expect(instance.activity.decide(.start(recovery: false), posture: .commit) == .admit)
+        #expect(instance.activity.decide(.sessionAction(.requestStop), posture: .commit) != .admit)
     }
 
     @Test("A warm snapshot carries the VM's copy of the installer disk with its other files")
@@ -452,6 +497,25 @@ struct VirtualizationServiceTests {
     // MARK: - Device shape
 
     private nonisolated static let noSocketDevice = VMDeviceShape(virtioSocketDevice: false)
+
+    @Test("An incomplete snapshot is refused before the live VM is torn down")
+    func revertRefusesBeforeTearingTheVMDown() async throws {
+        let fixture = try makeRevertFixture(phase: .running(sessionID: UUID()))
+        // The snapshot loses the file its own configuration names, so the
+        // pre-flight refuses.
+        let snapshotLayout = fixture.instance.bundleLayout.snapshotLayout(id: fixture.snapshot.id)
+        try FileManager.default.removeItem(at: snapshotLayout.diskImageURL)
+
+        await #expect(throws: VMSnapshotError.self) {
+            try await revert(fixture)
+        }
+
+        // Untouched: no `.restoring`, no resting status applied, and the VM's
+        // own disk still holds what the live guest wrote.
+        #expect(fixture.instance.status == .running)
+        let liveDisk = try Data(contentsOf: fixture.instance.bundleLayout.diskImageURL)
+        #expect(String(decoding: liveDisk, as: UTF8.self) == "live-disk")
+    }
 
     /// The text of the file at `url`, `nil` when there is none.
     private func contents(of url: URL) -> String? {

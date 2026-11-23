@@ -1,0 +1,73 @@
+import Foundation
+import KernovaCommandModel
+import KernovaTestSupport
+import Testing
+
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
+
+@Suite("GuestInputDevices Tests", .caseScoped)
+struct GuestInputDevicesTests {
+    // MARK: - Helpers
+
+    /// One row of the decision table.
+    struct Case: Sendable, CustomStringConvertible {
+        let lastSeen: String?
+        let installedVersion: String?
+        let expected: GuestInputDevices
+
+        init(_ lastSeen: String?, _ installedVersion: String?, _ expected: GuestInputDevices) {
+            self.lastSeen = lastSeen
+            self.installedVersion = installedVersion
+            self.expected = expected
+        }
+
+        var description: String {
+            "reported \(lastSeen ?? "nil"), installed \(installedVersion ?? "nil") → \(expected)"
+        }
+    }
+
+    private static func makeConfig(
+        lastSeen: String? = nil,
+        installedVersion: String? = nil,
+        mode: VMInputDeviceMode = .automatic
+    ) -> VMConfiguration {
+        var config = VMConfiguration(
+            name: "Test", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
+        config.lastSeenGuestOSVersion = lastSeen
+        config.inputDeviceMode = mode
+        if let installedVersion {
+            config.installedImage = .macOSRestoreImage(version: installedVersion, build: "21A559")
+        }
+        return config
+    }
+
+    // MARK: - Automatic decision table
+
+    @Test(
+        "Automatic resolves the pair from the guest's version",
+        arguments: [
+            // No signal at all resolves to the Mac pair — still exactly one.
+            Case(nil, nil, .mac),
+            // Install record alone, on both sides of the floor.
+            Case(nil, "12.7.6", .usb),
+            Case(nil, "12.9.9", .usb),
+            Case(nil, "13.0", .mac),
+            Case(nil, "13.0.1", .mac),
+            Case(nil, "26.0", .mac),
+            // The agent's report outranks the install record, both directions.
+            Case("13.5", "12.0.1", .mac),
+            Case("12.0.1", "13.5", .usb),
+            // A report that parses to nothing falls through rather than
+            // erasing the install record's vote.
+            Case("macOS", "13.0", .mac),
+            Case("", "12.0.1", .usb),
+            Case("macOS", nil, .mac),
+        ])
+    func automaticFollowsGuestVersion(testCase: Case) {
+        let config = Self.makeConfig(
+            lastSeen: testCase.lastSeen, installedVersion: testCase.installedVersion)
+        #expect(GuestInputDevices.resolve(for: config) == testCase.expected)
+    }
+}

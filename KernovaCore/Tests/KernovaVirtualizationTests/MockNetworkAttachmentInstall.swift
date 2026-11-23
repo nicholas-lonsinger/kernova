@@ -49,4 +49,10 @@ final class MockNetworkAttachmentInstall: NetworkAttachmentInstalling {
         if attachment == nil { onBuildFailure() }
         return attachment
     }
+
+    /// Reports the install of the apply at `index` as having found nothing to
+    /// build, the outcome VZ leaves detached.
+    func reportBuildFoundNothing(ofApplyAt index: Int) {
+        state.withLock { $0.applies[index].onBuildFailure }()
+    }
 }

@@ -227,6 +227,30 @@ struct DownloadServiceTests {
         #expect(written.count == newPayload.count)
     }
 
+    @Test("4xx server error throws DownloadError.downloadFailed")
+    func httpErrorThrows() async throws {
+        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
+
+        StubURLProtocol.setHandler { request in
+            .response(url: (request.url ?? Self.remoteURL), statusCode: 404, body: Data(), headers: [:])
+        }
+        defer { StubURLProtocol.setHandler(nil) }
+
+        let service = Self.makeServiceWithStub()
+        do {
+            try await service.download(
+                from: Self.remoteURL,
+                to: destination,
+                progressHandler: { _ in }
+            )
+            Issue.record("Expected download to throw on 404")
+        } catch DownloadError.downloadFailed {
+            // Expected
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
     @Test("Bundle with different originalURL is discarded; fresh download issued")
     func urlMismatchDiscardsBundle() async throws {
         let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")

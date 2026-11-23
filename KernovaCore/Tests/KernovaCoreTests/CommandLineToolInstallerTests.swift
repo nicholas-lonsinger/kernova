@@ -45,4 +45,17 @@ struct CommandLineToolInstallerTests {
             try installer.installSymlink(at: destination)
         }
     }
+
+    @Test("A dangling link pointing anywhere else is left alone")
+    func installRefusesADanglingForeignLink() throws {
+        let destination = scratch.url.appendingPathComponent("kernova")
+        try FileManager.default.createSymbolicLink(
+            at: destination,
+            withDestinationURL: scratch.url.appendingPathComponent("some-other-tool"))
+
+        #expect(installer.occupant(at: destination) == .somethingElse)
+        #expect(throws: InstallFailure.exists) {
+            try installer.installSymlink(at: destination)
+        }
+    }
 }

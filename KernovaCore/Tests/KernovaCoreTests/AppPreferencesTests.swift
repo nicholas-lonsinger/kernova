@@ -27,6 +27,18 @@ struct AppPreferencesTests {
         #expect(prefs.alwaysShowAdvancedOptions == false)
     }
 
+    @Test("vmOrder round-trips through UserDefaults")
+    func vmOrderRoundTrips() {
+        let (prefs, defaults) = makePreferences()
+        let order = [UUID(), UUID(), UUID()]
+        prefs.vmOrder = order
+        #expect(prefs.vmOrder == order)
+        #expect(defaults.stringArray(forKey: "vmOrder") == order.map(\.uuidString))
+
+        prefs.vmOrder = nil
+        #expect(prefs.vmOrder == nil)
+    }
+
     @Test("keepInMenuBarOnQuit round-trips through UserDefaults with inverted storage")
     func keepInMenuBarOnQuitRoundTrips() {
         let (prefs, defaults) = makePreferences()

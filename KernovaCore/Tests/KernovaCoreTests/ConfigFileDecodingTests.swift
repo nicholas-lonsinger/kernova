@@ -162,6 +162,38 @@ struct ConfigFileDecodingTests {
 
     // MARK: - Required, repairable
 
+    private func networkListJSON(kind: String?) -> Data {
+        let kindField = kind.map { ", \"kind\": \"\($0)\"" } ?? ""
+        return Data(
+            """
+            {"networks": [{"id": "\(UUID().uuidString)", "name": "Lab"\(kindField)}]}
+            """.utf8)
+    }
+
+    private func diagnoseNetworks(_ data: Data) -> ConfigFileDiagnosis {
+        ConfigFileDiagnosis(
+            decoding: [String: [VMNamedNetwork]].self, from: data, decoder: JSONDecoder(),
+            encoder: JSONEncoder())
+    }
+
+    @Test("A network's missing kind is refused strictly, and repaired to the default kind when collecting")
+    func aMissingRequiredKindIsRepairable() throws {
+        let data = networkListJSON(kind: nil)
+        #expect(throws: DecodingError.self) {
+            try JSONDecoder().decode([String: [VMNamedNetwork]].self, from: data)
+        }
+        let diagnosis = diagnoseNetworks(data)
+        #expect(
+            diagnosis.problems == [
+                ConfigProblem(
+                    path: ConfigValuePath([.key("networks"), .index(0), .key("kind")]), issue: .missing,
+                    repair: .useDefault(VMNamedNetwork.defaultKind.rawValue))
+            ])
+        let repaired = try JSONDecoder().decode(
+            [String: [VMNamedNetwork]].self, from: try #require(diagnosis.repaired))
+        #expect(repaired["networks"]?.map(\.kind) == [VMNamedNetwork.defaultKind])
+    }
+
     @Test("An unrecognized device shape is refused strictly, and recorded with no repair")
     func anUnrecognizedDeviceShapeHasNoRepair() throws {
         let data = try configJSON { $0["deviceShape"] = Self.unrecognized }
@@ -198,6 +230,56 @@ struct ConfigFileDecodingTests {
         let network = try VMConfiguration.makeJSONDecoder().decodeRepairing(VMCapturedNetwork.self, from: data)
         #expect(network.networkEnabled == false)
         #expect(network.networkMode == .nat)
+    }
+
+    // MARK: - Trashed originals
+
+    @Test("The copy a repair trashes is named for whose file it is, then the file")
+    func trashedOriginalNames() {
+        let bundle = URL(fileURLWithPath: "/tmp/VMs/Dev.kernova", isDirectory: true)
+        let problem = [ConfigProblem(path: nil, issue: .notJSON(detail: "x"))]
+        func name(_ location: UnreadableConfigFile.Location, _ owner: UnreadableConfigFile.Owner) -> String {
+            UnreadableConfigFile(location: location, owner: owner, problems: problem).trashedOriginalName
+        }
+        #expect(name(.bundle(bundle, .configuration), .virtualMachine("Dev")) == "Dev \u{2014} config.json")
+        #expect(
+            name(.bundle(bundle, .snapshotConfiguration(UUID())), .snapshot(vm: "Dev", snapshot: "Before"))
+                == "Dev \u{2014} snapshot \u{201C}Before\u{201D} \u{2014} config.json")
+        #expect(
+            name(.networkList(URL(fileURLWithPath: "/tmp/Networks.json")), .networkList)
+                == "Network list \u{2014} Networks.json")
+        #expect(
+            name(.bundle(bundle, .configuration), .virtualMachine("A/B")) == "A:B \u{2014} config.json")
+    }
+
+    @Test("A trashed original's name fits NAME_MAX, its long names shortened on a character boundary")
+    func trashedOriginalNamesFitNameMax() throws {
+        let bundle = URL(fileURLWithPath: "/tmp/VMs/Dev.kernova", isDirectory: true)
+        let problem = [ConfigProblem(path: nil, issue: .notJSON(detail: "x"))]
+        let vm = String(repeating: "\u{E9}", count: 60)  // 120 bytes
+        let snapshot = String(repeating: "\u{65E5}", count: 43) + "a"  // 130 bytes
+        #expect(vm.utf8.count == 120)
+        #expect(snapshot.utf8.count == 130)
+
+        let snapshotName = UnreadableConfigFile(
+            location: .bundle(bundle, .snapshotConfiguration(UUID())),
+            owner: .snapshot(vm: vm, snapshot: snapshot), problems: problem
+        ).trashedOriginalName
+        #expect(snapshotName.utf8.count <= 255)
+        #expect(snapshotName.hasSuffix("\u{2026}\u{201D} \u{2014} config.json"))
+        // Every kept character is whole: the result is valid UTF-8 built only
+        // from the names' own characters, the ellipsis, and the fixed words.
+        let vmPart = try #require(snapshotName.components(separatedBy: " \u{2014} snapshot \u{201C}").first)
+        #expect(vmPart.hasSuffix("\u{2026}") || vmPart == vm)
+        #expect(vm.hasPrefix(vmPart.replacingOccurrences(of: "\u{2026}", with: "")))
+        #expect(snapshotName.contains("\u{65E5}"))
+
+        let vmName = UnreadableConfigFile(
+            location: .bundle(bundle, .configuration),
+            owner: .virtualMachine(String(repeating: "\u{E9}", count: 200)), problems: problem
+        ).trashedOriginalName
+        #expect(vmName.utf8.count <= 255)
+        #expect(vmName.hasSuffix("\u{E9}\u{2026} \u{2014} config.json"))
     }
 
     // MARK: - Organization fields

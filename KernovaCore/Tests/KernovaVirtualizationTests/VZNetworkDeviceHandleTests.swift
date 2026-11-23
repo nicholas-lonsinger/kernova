@@ -36,6 +36,18 @@ struct VZNetworkDeviceHandleTests {
             attachments: attachments)
     }
 
+    @Test("A build finding nothing at install time clears the applied mirror")
+    func buildFoundNothingClearsMirror() async throws {
+        let harness = makeHarness()
+        #expect(harness.handle.apply(.nat))
+        #expect(harness.handle.currentPlan == .nat)
+
+        harness.install.reportBuildFoundNothing(ofApplyAt: 0)
+        try await drainMainQueue()
+
+        #expect(harness.handle.currentPlan == nil)
+    }
+
     @Test("A queued vmnet build holds its network until it has built, and its attachment holds it after")
     func aQueuedBuildHoldsItsNetwork() throws {
         let harness = makeHarness()
