@@ -5,6 +5,8 @@ title: ""
 labels: ["Review Debt"]
 ---
 
+<!-- Set the issue's type, which this template cannot: Bug for a defect, Refactor for restructuring with no behavior change, Task for anything else (`gh issue create --type`). -->
+
 ## Found during
 
 <!-- PR #N, or the file under review — and, for a PR, why its fix would make that PR about two things. -->
