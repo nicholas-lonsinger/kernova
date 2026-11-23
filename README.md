@@ -191,13 +191,12 @@ Kernova builds from source with **Xcode 27** and **Swift 6**. After cloning:
 
 ```bash
 make swift-toolchain         # the swift.org toolchain the app build cross-builds the Linux guest agent with
-make install-hooks           # once per clone: each new worktree sets itself up on checkout
 brew install shellcheck gh   # `make lint` runs shellcheck; `make attest` posts its status through gh
 ```
 
 Then open `Kernova.xcodeproj`, pick the `Kernova` scheme, and run (⌘R). `make` alone lists every build, test, format, and lint target; `make test-linux` and `make dead-code` name what else they need when it is missing.
 
-Every `xcodebuild` build and test goes through the `Makefile` (`make help`). Build settings live in `Config/` — `Base.xcconfig` project-wide, `Config/Targets/<Target>.xcconfig` per target. Lint is `Tools/lint.sh`, which `make lint` runs, and the hook `make install-hooks` activates is in `.githooks/`. Each of those files explains itself in its own header.
+Every `xcodebuild` build and test goes through the `Makefile` (`make help`). Build settings live in `Config/` — `Base.xcconfig` project-wide, `Config/Targets/<Target>.xcconfig` per target. Lint is `Tools/lint.sh`, which `make lint` runs. Each of those files explains itself in its own header.
 
 > [!IMPORTANT]
 > **Debug needs no Apple account** — it signs ad-hoc, so a fresh clone builds and runs as-is, minus the features a provisioning profile authorizes and the `kernova` CLI, which reaches the app through an app group an ad-hoc signature doesn't get. With a development certificate, point Debug at it via a gitignored `Config/Local.xcconfig` (from `Config/Local.xcconfig.example`) so privacy grants survive rebuilds and the CLI works. **Distributing** a build needs a paid membership and a distribution identity.

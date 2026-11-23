@@ -27,7 +27,7 @@ A guest's login screen can be passed without its password, in a guest the run ma
 
 Spotlight, Siri and Shortcuts see Kernova's intents from a build installed in `/Applications` and launched once. With only a DerivedData build running, Shortcuts has listed no Kernova actions, which reads like broken intent metadata.
 
-`/Applications/Kernova.app`, where it exists, is the maintainer's installed copy, and installing a build there replaces it: theirs to allow. `make ghosts` reports an on-disk copy that outranks the installed one.
+`/Applications/Kernova.app`, where it exists, is the maintainer's installed copy, and installing a build there replaces it: theirs to allow.
 
 Afterwards, unregister the copy you installed with `lsregister -u` and delete it outright: a bundle in the Trash stays registered and can win the election until the Trash is emptied.
 

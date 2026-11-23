@@ -52,8 +52,6 @@ Thumbs.db
 *~
 .idea/
 .vscode/
-# sourcekit-lsp build context, written per checkout by `make install-lsp`; the
-# config pins an absolute build root, so it never travels between checkouts.
 buildServer.json
 .compile
 

@@ -3,21 +3,15 @@
 
 # shellcheck shell=bash
 
-# shellcheck disable=SC2034 # read by the Makefile
 kernova_project=Kernova.xcodeproj
-# shellcheck disable=SC2034
 kernova_scheme=Kernova
-# shellcheck disable=SC2034
 kernova_destination=platform=macOS
 kernova_checkout=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
-# The checkout's build arenas, relative to its root: these flags', the
-# language server's index build's, and the dead-code scan's. Xcode's Relative
-# derived-data location builds the GUI's into `DerivedData/Kernova` by
-# default, which none is.
+# The checkout's build arenas, relative to its root: these flags', and the
+# dead-code scan's. Xcode's Relative derived-data location builds the GUI's
+# into `DerivedData/Kernova` by default, which neither is.
 kernova_derived_data_root=DerivedData
 kernova_derived_data=$kernova_derived_data_root/Make
-# shellcheck disable=SC2034 # read by the Makefile and Tools/lsp-config.sh
-kernova_index_derived_data=$kernova_derived_data_root/Index
 # shellcheck disable=SC2034 # read by Tools/dead-code.sh
 kernova_dead_code_derived_data=$kernova_derived_data_root/Periphery
 # The compilation cache store these flags build with, and its size limit. Past
@@ -65,9 +59,8 @@ xcodebuild_project_flags() {
 # its package, not the checkout.
 #
 # A compile the cache serves writes no index unit, and the others' units name
-# the placeholder, so no build here writes an index store; `make index` builds
-# the language server's. A test gathers no code coverage: its report names the
-# placeholder, and lists no source file.
+# the placeholder, so no build here writes an index store. A test gathers no
+# code coverage: its report names the placeholder, and lists no source file.
 xcodebuild_flags() {
     local mappings
     mappings="\"\$(WORKSPACE_DIR:dir:standardizepath)=$kernova_source_placeholder\" \"$kernova_checkout=$kernova_source_placeholder\""

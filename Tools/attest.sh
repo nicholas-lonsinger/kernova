@@ -4,8 +4,8 @@
 #
 #     Tools/attest.sh record <lint|test|test-linux>
 #         What `make <kind>` runs. Runs the kind's script — Tools/lint.sh,
-#         Tools/test.sh under the checkout's build lock, or Tools/test-linux.sh
-#         over the content tree — and exits with its status. On exit 0 with
+#         Tools/test.sh, or Tools/test-linux.sh over the content tree — and
+#         exits with its status. On exit 0 with
 #         the kind's fingerprint unchanged across the run, records the
 #         fingerprint under that kind. A lint run with untracked files present
 #         is not recorded: the fingerprint covers them, but shellcheck checks
@@ -102,7 +102,7 @@ record() {
     root=$(top) || die 'not in a git checkout'
     case "$kind" in
         lint) run=("$root/Tools/lint.sh") ;;
-        test) run=("$root/Tools/checkout-lock.sh" "$root/Tools/test.sh") ;;
+        test) run=("$root/Tools/test.sh") ;;
         test-linux) run=("$root/Tools/test-linux.sh") ;;
         *) usage ;;
     esac

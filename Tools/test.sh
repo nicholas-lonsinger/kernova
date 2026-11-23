@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Tests the checkout: what `Tools/attest.sh record test` runs, under the
-# checkout's build lock, for `make test`. Runs the full test plan in Debug
-# through Tools/xcodebuild.sh, with the flags every make target passes, then
-# Tools/check-weak-links.sh on the Kernova.app that same run built. Takes no
-# arguments, so nothing a caller passes changes what a test record covers.
+# Tests the checkout: what `Tools/attest.sh record test` runs for `make test`.
+# Runs the full test plan in Debug through Tools/xcodebuild.sh, with the flags
+# every make target passes, then Tools/check-weak-links.sh on the Kernova.app
+# that run built. Takes no arguments, so nothing a caller passes changes what a
+# test record covers.
 
 set -uo pipefail
 
