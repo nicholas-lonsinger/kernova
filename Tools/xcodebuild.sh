@@ -19,5 +19,6 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 . Tools/lib/xcodebuild-flags.sh
 flags=()
 while IFS= read -r flag; do flags+=("$flag"); done < <(xcodebuild_flags "$1" "$2")
+flags=("${flags[@]/#COMPILATION_CACHE_ENABLE_CACHING=YES/COMPILATION_CACHE_ENABLE_CACHING=NO}") # measurement arm B
 shift 2
 exec xcodebuild "${flags[@]}" "$@"

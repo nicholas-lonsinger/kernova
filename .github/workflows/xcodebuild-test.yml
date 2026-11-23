@@ -65,6 +65,7 @@ jobs:
       # Xcode build in the key.
       - name: Restore the compilation cache
         id: restore-cas
+        if: false # measurement arm B
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.paths.outputs.compilation-cache }}
@@ -94,6 +95,7 @@ jobs:
       # read-through fallback) and deletes the rest. The listing shows which
       # generations survive and the size that will be saved.
       - name: Prune the compilation cache
+        if: false # measurement arm B
         env:
           STORE: ${{ steps.paths.outputs.compilation-cache }}
         run: |
@@ -109,7 +111,7 @@ jobs:
       # since, and prune-compilation-cache would delete those instead.
       - name: Save the compilation cache
         id: save-cas
-        if: github.ref == 'refs/heads/main' && github.run_attempt == 1 && steps.restore-cas.outputs.cache-hit != 'true'
+        if: false # measurement arm B
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.paths.outputs.compilation-cache }}
