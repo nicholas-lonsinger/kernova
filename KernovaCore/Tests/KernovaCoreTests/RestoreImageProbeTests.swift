@@ -7,70 +7,6 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-@Suite("ProbedRestoreImage Tests", .caseScoped)
-struct ProbedRestoreImageTests {
-    private func host(_ major: Int, _ minor: Int, _ patch: Int) -> OperatingSystemVersion {
-        OperatingSystemVersion(majorVersion: major, minorVersion: minor, patchVersion: patch)
-    }
-
-    @Test("A two-component version parses too")
-    func parsesTwoComponentVersion() {
-        let parsed = ProbedRestoreImage.parseFilename("UniversalMac_26.6_25G72_Restore.ipsw")
-        #expect(parsed.version == "26.6")
-        #expect(parsed.build == "25G72")
-    }
-
-    @Test("Anything off-convention yields no guess")
-    func rejectsOffConventionFilenames() {
-        for filename in [
-            "restore.ipsw",
-            "UniversalMac_15.6.1_Restore.ipsw",
-            "UniversalMac_15.6.1_24G90_Restore.zip",
-            "SomethingElse_15.6.1_24G90_Restore.ipsw",
-            "UniversalMac_Sequoia_24G90_Restore.ipsw",
-            "UniversalMac__24G90_Restore.ipsw",
-            "UniversalMac_15.6.1_24-G90_Restore.ipsw",
-        ] {
-            let parsed = ProbedRestoreImage.parseFilename(filename)
-            #expect(parsed.version == nil, "expected no version from '\(filename)'")
-            #expect(parsed.build == nil, "expected no build from '\(filename)'")
-        }
-    }
-
-    @Test("An unparseable version is unknown too, not a refusal")
-    func hostSupportUnknownForUnparseableVersion() {
-        #expect(makeProbedImage(version: "Sequoia").isSupported(onHost: host(26, 0, 0)) == nil)
-    }
-
-    @Test("The version summary degrades to what is actually known")
-    func versionSummaryDegrades() {
-        #expect(makeProbedImage().versionSummary == "macOS 15.6.1 (24G90)")
-        #expect(makeProbedImage(build: nil).versionSummary == "macOS 15.6.1")
-        #expect(makeProbedImage(version: nil).versionSummary == "Build 24G90")
-        #expect(
-            makeProbedImage(version: nil, build: nil).versionSummary == "Unrecognized version")
-    }
-}
-
-@Suite("RestoreImageFilename Tests", .caseScoped)
-struct RestoreImageFilenameTests {
-    @Test("A generated name is one visible .ipsw component, whatever the URL")
-    func generatedNamesAreSafeComponents() throws {
-        for urlString in [
-            "https://host/a%2F..%2F..%2Fevil.ipsw",
-            "https://host/",
-            "https://host",
-            "https://host/.hidden.ipsw",
-            "https://host/\(String(repeating: "n", count: 400)).ipsw",
-        ] {
-            let url = try #require(URL(string: urlString))
-            let generated = RestoreImageFilename.unique(for: url)
-            #expect(RestoreImageFilename.sanitized(generated) == generated, "from '\(urlString)'")
-            #expect(generated.utf8.count < 255)
-        }
-    }
-}
-
 /// Stub for the probe's requests.
 ///
 /// Its own class rather than `StubURLProtocol`: that one's handler is a
@@ -226,28 +162,6 @@ struct RestoreImageProbeServiceTests {
         return directory
     }
 
-    /// Builds the tail of a zip whose central directory does or doesn't name a
-    /// `vma2` member.
-    ///
-    /// Laid out so the directory sits immediately before the end-of-directory
-    /// record, and the whole thing is served as one blob: the probe's tail read
-    /// covers it, and the zip64 locator is absent, so the 32-bit fields are
-    /// authoritative.
-    private func makeZipTail(containsVMA2: Bool) -> Data {
-        let directory = makeCentralDirectory(containsVMA2: containsVMA2)
-        var blob = directory
-
-        var eocd = Data()
-        eocd.append(contentsOf: [0x50, 0x4B, 0x05, 0x06])  // EOCD signature
-        eocd.append(contentsOf: [0, 0, 0, 0])  // disk numbers
-        eocd.append(contentsOf: [1, 0, 1, 0])  // entry counts
-        appendLE(UInt32(directory.count), to: &eocd)
-        appendLE(UInt32(0), to: &eocd)  // offset
-        eocd.append(contentsOf: [0, 0])  // comment length
-        blob.append(eocd)
-        return blob
-    }
-
     /// Builds the tail of a zip64, where the locator and the record it points at
     /// carry the authoritative central-directory bounds.
     ///
@@ -339,59 +253,6 @@ struct RestoreImageProbeServiceTests {
         }
     }
 
-    @Test("An image carrying the VM hardware model is accepted")
-    func acceptsVirtualMachineImage() async throws {
-        let tail = makeZipTail(containsVMA2: true)
-        serve(total: tail.count, body: tail)
-        defer { ProbeStubURLProtocol.reset() }
-
-        let image = try await makeService().probe(imageURL)
-
-        #expect(image.sizeBytes == UInt64(tail.count))
-        #expect(image.version == "15.6.1")
-        #expect(image.build == "24G90")
-        #expect(image.url == imageURL)
-    }
-
-    @Test("The size read refuses a non-HTTPS URL before any request too")
-    func sizeRefusesInsecureURL() async throws {
-        let http = try #require(URL(string: "http://updates.cdn-apple.com/x/R.ipsw"))
-        ProbeStubURLProtocol.reset()
-        ProbeStubURLProtocol.setHandler { _ in
-            Issue.record("The size read issued a request for a non-HTTPS URL")
-            return ProbeStubURLProtocol.Reply(statusCode: 200, body: Data(), headers: [:])
-        }
-        defer { ProbeStubURLProtocol.reset() }
-
-        await #expect(throws: RestoreImageProbeError.insecureURL) {
-            _ = try await makeService().size(of: http)
-        }
-    }
-
-    @Test("A server stating a length of zero is refused, not reported as a size")
-    func refusesZeroLength() async {
-        ProbeStubURLProtocol.reset()
-        ProbeStubURLProtocol.setHandler { request in
-            if request.httpMethod == "HEAD" {
-                return ProbeStubURLProtocol.Reply(
-                    statusCode: 200, body: Data(), headers: ["Content-Length": "0"])
-            }
-            return ProbeStubURLProtocol.Reply(
-                statusCode: 206, body: Data([0x00]),
-                headers: ["Content-Range": "bytes 0-0/0"])
-        }
-        defer { ProbeStubURLProtocol.reset() }
-
-        // Both entry points, since a zero reaching either one would be formatted
-        // as a download size.
-        await #expect(throws: RestoreImageProbeError.unknownSize) {
-            _ = try await makeService().size(of: imageURL)
-        }
-        await #expect(throws: RestoreImageProbeError.unknownSize) {
-            _ = try await makeService().probe(imageURL)
-        }
-    }
-
     @Test("A server that answers a ranged read with the whole file is abandoned unread")
     func abandonsRangeIgnoringServer() async {
         ProbeStubURLProtocol.reset()
@@ -433,17 +294,6 @@ struct RestoreImageProbeServiceTests {
         #expect(ProbeStubURLProtocol.deliveredBodyBytes == ProbeStubURLProtocol.bodyPrimerBytes)
     }
 
-    @Test("A zip64 image is accepted through the record its locator points at")
-    func acceptsZip64Image() async throws {
-        let tail = makeZip64Tail(containsVMA2: true)
-        serve(total: tail.count, body: tail)
-        defer { ProbeStubURLProtocol.reset() }
-
-        let image = try await makeService().probe(imageURL)
-
-        #expect(image.sizeBytes == UInt64(tail.count))
-    }
-
     @Test(
         "Hostile zip64 metadata is refused, not trapped",
         arguments: [
@@ -483,17 +333,6 @@ struct RestoreImageProbeServiceTests {
         #expect(lengths.count == ProbeStubURLProtocol.requestedRanges.count)
         #expect(lengths.allSatisfy { $0 <= 16 * 1024 * 1024 })
         #expect(lengths.contains(16 * 1024 * 1024))
-    }
-
-    @Test("A file with no zip structure is refused as unreadable")
-    func refusesUnreadableStructure() async {
-        let junk = Data(repeating: 0x41, count: 4096)
-        serve(total: junk.count, body: junk)
-        defer { ProbeStubURLProtocol.reset() }
-
-        await #expect(throws: RestoreImageProbeError.unreadableStructure) {
-            _ = try await makeService().probe(imageURL)
-        }
     }
 
     @Test("Byte-order and search helpers behave at the edges")

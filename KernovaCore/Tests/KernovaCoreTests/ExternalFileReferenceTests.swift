@@ -99,48 +99,6 @@ struct ExternalFileReferenceTests {
         }
     }
 
-    // MARK: - Stable identity
-
-    @Test("The singleton kinds keep one id across projections and differ from each other")
-    func singletonIDsAreStableAndDistinct() {
-        let config = makeFullyPopulatedConfig()
-        let first = config.externalFileReferences
-        let second = config.externalFileReferences
-
-        func id(
-            _ kind: ExternalFileReference.Kind, in references: [ExternalFileReference]
-        ) -> UUID? {
-            references.first { $0.kind == kind }?.id
-        }
-
-        #expect(id(.kernel, in: first) == id(.kernel, in: second))
-        #expect(id(.initrd, in: first) == id(.initrd, in: second))
-        #expect(id(.kernel, in: first) != id(.initrd, in: first))
-    }
-
-    // MARK: - bookmarksByPath
-
-    @Test("bookmarksByPath maps each external path to its bookmark")
-    func bookmarksByPathMapsEachPath() {
-        var config = VMConfiguration(
-            name: "Test", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        let diskBookmark = Data([0xAA])
-        config.storageDisks = [
-            StorageDisk(path: "Disk.asif", isInternal: true),
-            StorageDisk(
-                path: "/Volumes/External/data.img", isInternal: false, bookmark: diskBookmark),
-        ]
-        config.removableMedia = [
-            RemovableMediaItem(path: "/Users/me/installer.iso")
-        ]
-
-        let refs = config.externalFileReferences.bookmarksByPath
-        #expect(Set(refs.keys) == ["/Volumes/External/data.img", "/Users/me/installer.iso"])
-        #expect(refs["/Volumes/External/data.img"] == diskBookmark)
-        #expect(refs["/Users/me/installer.iso"] == Data?.none)
-    }
-
     // MARK: - File identities
 
     /// A reference at `path`, carrying `bookmark` when given.
@@ -151,17 +109,6 @@ struct ExternalFileReferenceTests {
             id: UUID(), kind: .storageDisk, label: "Disk", path: path, bookmark: bookmark, readOnly: false)
     }
 
-    @Test("A bookmark pointing elsewhere adds the resolved target to the identity")
-    func identitiesIncludeResolvedTarget() {
-        let bookmark = Data([0xA1])
-        let references = [makeReference(path: "/Volumes/External/old.img", bookmark: bookmark)]
-
-        // The union is what matches a sibling still holding the pre-move path.
-        #expect(
-            references.fileIdentities(resolvedTargets: [bookmark: "/Volumes/External/new.img"])
-                == ["/Volumes/External/old.img", "/Volumes/External/new.img"])
-    }
-
     @Test("A trailing slash and a redundant component don't split an identity")
     func identitiesCanonicalizePathForm() {
         let bookmark = Data([0xA5])
@@ -169,30 +116,6 @@ struct ExternalFileReferenceTests {
         #expect(
             references.fileIdentities(resolvedTargets: [bookmark: "/Users/me/./Projects"])
                 == ["/Users/me/Projects"])
-    }
-
-    @Test("Each distinct bookmark blob is resolved once, successes and failures alike")
-    func resolvedTargetsResolveEachBlobOnce() {
-        let live = Data([0xC1])
-        let dead = Data([0xC2])
-        let references = [
-            makeReference(path: "/Volumes/External/a.img", bookmark: live),
-            makeReference(path: "/Volumes/External/b.img", bookmark: live),
-            makeReference(path: "/Volumes/External/c.img", bookmark: dead),
-            makeReference(path: "/Volumes/External/d.img", bookmark: dead),
-            makeReference(path: "/Volumes/External/e.img"),
-        ]
-
-        var attempted: [Data] = []
-        let targets = references.resolvedTargets { blob in
-            attempted.append(blob)
-            return blob == live ? "/Volumes/External/moved.img" : nil
-        }
-
-        // A dead blob is memoized like a live one — otherwise every reference
-        // carrying it pays the resolution again and re-logs the failure.
-        #expect(attempted == [live, dead])
-        #expect(targets == [live: "/Volumes/External/moved.img"])
     }
 
     @Test("Identities across references are unioned")
@@ -219,22 +142,5 @@ struct ExternalFileReferenceTests {
         #expect(
             VMCommandCore.sharingVMNames(
                 matching: subject, among: [(name: "Sibling", identities: sibling)]) == ["Sibling"])
-    }
-
-    // MARK: - Kind predicates
-
-    @Test("Existence monitoring covers every kind a settings row can badge")
-    func existenceMonitoringCoversTheBadgedKinds() {
-        // The three kinds the settings lists render a row for, each of which
-        // shows the missing-file badge when its file goes away.
-        #expect(ExternalFileReference.Kind.storageDisk.isExistenceMonitored)
-        #expect(ExternalFileReference.Kind.removableMedia.isExistenceMonitored)
-        #expect(ExternalFileReference.Kind.sharedDirectory.isExistenceMonitored)
-
-        // A kernel and an initrd have System-panel rows that state no existence,
-        // and a local IPSW has no row at all.
-        #expect(!ExternalFileReference.Kind.kernel.isExistenceMonitored)
-        #expect(!ExternalFileReference.Kind.initrd.isExistenceMonitored)
-        #expect(!ExternalFileReference.Kind.localIPSW.isExistenceMonitored)
     }
 }

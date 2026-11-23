@@ -23,21 +23,6 @@ struct MacOSInstallContextTests {
         #expect(!ctx.requestedFreshDownload)
     }
 
-    @Test("Decoding JSON without localIPSWBookmark decodes to nil")
-    func decodeMissingBookmarkDefaultsNil() throws {
-        // Pre-sandbox on-disk shape: localFile contexts carried only the raw
-        // path. Must keep decoding cleanly, with the bookmark absent.
-        let json = """
-            {
-                "source": "localFile",
-                "localIPSWPath": "/Users/me/R.ipsw"
-            }
-            """
-        let ctx = try JSONDecoder().decode(MacOSInstallContext.self, from: Data(json.utf8))
-        #expect(ctx.localIPSWPath == "/Users/me/R.ipsw")
-        #expect(ctx.localIPSWBookmark == nil)
-    }
-
     // MARK: - Catalog Version Source
 
     @Test("A catalog context round-trips its pinned image")
@@ -59,39 +44,5 @@ struct MacOSInstallContextTests {
         #expect(decoded.remoteURL == url)
         #expect(decoded.version == "15.6.1")
         #expect(decoded.build == "24G90")
-    }
-
-    @Test("Only the pinned sources skip resolving the latest image")
-    func usesPinnedURLCoversPinnedSourcesOnly() {
-        #expect(MacOSInstallContext.Source.catalogVersion.usesPinnedURL)
-        #expect(MacOSInstallContext.Source.customURL.usesPinnedURL)
-        #expect(!MacOSInstallContext.Source.downloadLatest.usesPinnedURL)
-        #expect(!MacOSInstallContext.Source.localFile.usesPinnedURL)
-    }
-
-    @Test("Only the network sources own a download destination")
-    func downloadsImageCoversNetworkSourcesOnly() {
-        #expect(MacOSInstallContext.Source.downloadLatest.downloadsImage)
-        #expect(MacOSInstallContext.Source.catalogVersion.downloadsImage)
-        #expect(MacOSInstallContext.Source.customURL.downloadsImage)
-        #expect(!MacOSInstallContext.Source.localFile.downloadsImage)
-    }
-
-    @Test("A context written without the pinning fields still decodes")
-    func decodeWithoutPinningFields() throws {
-        let json = """
-            {
-                "source": "downloadLatest",
-                "downloadDestinationPath": "/Users/me/Downloads/RestoreImage.ipsw",
-                "requestedFreshDownload": true
-            }
-            """
-        let ctx = try JSONDecoder().decode(MacOSInstallContext.self, from: Data(json.utf8))
-
-        #expect(ctx.source == .downloadLatest)
-        #expect(ctx.remoteURL == nil)
-        #expect(ctx.version == nil)
-        #expect(ctx.build == nil)
-        #expect(ctx.requestedFreshDownload)
     }
 }

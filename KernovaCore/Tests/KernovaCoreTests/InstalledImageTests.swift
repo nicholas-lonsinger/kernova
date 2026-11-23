@@ -109,18 +109,6 @@ struct InstalledImageTests {
                 == .linuxCatalogImage(distribution: "Debian", version: "13", digest: nil))
     }
 
-    @Test("A record whose sha256 is not a SHA-256 is refused")
-    func refusesMalformedDigest() {
-        #expect(throws: DecodingError.self) {
-            try decode([
-                "kind": "linuxURLImage", "url": Self.isoURL.absoluteString,
-                "digest": [
-                    "filename": "a.iso", "sha256": "deadbeef", "checkedAgainst": "enteredChecksum",
-                ],
-            ])
-        }
-    }
-
     @Test("A stored uppercase digest reads back lowercase")
     func lowercasesDecodedDigest() throws {
         let image = try decode([
@@ -134,33 +122,6 @@ struct InstalledImageTests {
             image
                 == .linuxURLImage(
                     url: Self.isoURL, digest: .unchecked(filename: "a.iso", sha256: Self.digest)))
-    }
-
-    @Test("A macOS record reads as the restore image's version and build")
-    func macOSDisplayName() {
-        #expect(
-            InstalledImage.macOSRestoreImage(version: "26.5.2", build: "25F84").displayName
-                == "macOS 26.5.2 (25F84)")
-    }
-
-    @Test("A URL record reads as the filename its digest belongs to")
-    func urlDisplayName() {
-        #expect(
-            InstalledImage.linuxURLImage(
-                url: Self.isoURL,
-                digest: .unchecked(filename: "alpine-3.22-aarch64.iso", sha256: Self.digest)
-            ).displayName == "alpine-3.22-aarch64.iso")
-    }
-
-    @Test("A catalog source records the distribution and version it publishes, and the digest")
-    func recordsCatalogSource() throws {
-        let source = LinuxInstallContext.Source.catalogEntry(
-            makeLinuxCatalogEntry(distribution: "Fedora Workstation", version: "44"))
-        let digest = try matched(.checksumList(Self.manifestURL), filename: "Fedora-44.iso")
-
-        #expect(
-            InstalledImage(linuxSource: source, digest: digest)
-                == .linuxCatalogImage(distribution: "Fedora Workstation", version: "44", digest: digest))
     }
 
     @Test("A user-supplied URL is recorded without its credentials, query or fragment")

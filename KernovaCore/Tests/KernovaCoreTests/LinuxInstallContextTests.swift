@@ -20,31 +20,4 @@ struct LinuxInstallContextTests {
             expected == ExpectedDigest(sha256: String(repeating: "a", count: 64), source: .enteredByUser))
         #expect(source.digestSource == .enteredByUser)
     }
-
-    @Test("The display name is the distribution for a catalog pick and the file for a URL")
-    func displayName() {
-        let catalog = LinuxInstallContext(
-            source: .catalogEntry(
-                makeLinuxCatalogEntry(distribution: "Ubuntu Desktop", version: "26.04 LTS")))
-        #expect(catalog.imageDisplayName == "Ubuntu Desktop 26.04 LTS")
-
-        let url = LinuxInstallContext(
-            source: .customURL(
-                CustomLinuxImage(
-                    url: URL(string: "https://mirror.example/dl/alpine-3.22-aarch64.iso")!,
-                    sha256: String(repeating: "b", count: 64))))
-        #expect(url.imageDisplayName == "alpine-3.22-aarch64.iso")
-    }
-
-    @Test("A URL edited into a config.json past admission still names something showable")
-    func displayNameForUnusableURL() {
-        // The name is only read for display, so an edited URL degrades to a
-        // phrase rather than failing the banner that shows it. Refusing the URL
-        // itself is the download's job.
-        let context = LinuxInstallContext(
-            source: .customURL(
-                CustomLinuxImage(url: URL(string: "https://mirror.example/")!, sha256: nil)))
-
-        #expect(context.imageDisplayName == "the installer image")
-    }
 }

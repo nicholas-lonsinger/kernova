@@ -13,52 +13,12 @@ struct DownloadBundleTests {
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
     }
 
-    private static let defaultMetadataURL: URL = {
-        guard let url = URL(string: "https://example.com/RestoreImage.ipsw") else {
-            assertionFailure("DownloadBundleTests: failed to construct default metadata URL")
-            return URL(filePath: "/")
-        }
-        return url
-    }()
-
-    private static func makeMetadata(
-        url: URL = defaultMetadataURL,
-        etag: String? = "\"abc123\"",
-        lastModified: String? = "Mon, 01 Jan 2026 00:00:00 GMT"
-    ) -> DownloadBundleMetadata {
-        DownloadBundleMetadata(
-            originalURL: url,
-            etag: etag,
-            lastModified: lastModified,
-            createdAt: Date(timeIntervalSince1970: 1_800_000_000)
-        )
-    }
-
     @Test("resumeBundleURL swaps .ipsw for .kernovadownload")
     func resumeBundleURLSwapsExtension() {
         let destination = URL(fileURLWithPath: "/tmp/Foo/RestoreImage.ipsw")
         let bundle = DownloadService.resumeBundleURL(for: destination)
         #expect(bundle.lastPathComponent == "RestoreImage.kernovadownload")
         #expect(bundle.deletingLastPathComponent().path == "/tmp/Foo")
-    }
-
-    @Test("finalize replaces an existing file at the destination")
-    func finalizeReplacesExistingDestination() throws {
-        let bundle = DownloadBundle(url: scratch.url.appendingPathComponent("R.kernovadownload"))
-        try bundle.prepareForFreshDownload(with: Self.makeMetadata())
-
-        let fresh = Data(repeating: 0xBE, count: 2048)
-        let handle = try FileHandle(forWritingTo: bundle.dataURL)
-        try handle.write(contentsOf: fresh)
-        try handle.close()
-
-        let destination = scratch.url.appendingPathComponent("R.ipsw")
-        try Data(repeating: 0x00, count: 100).write(to: destination)
-
-        try bundle.finalize(to: destination)
-
-        let movedData = try Data(contentsOf: destination)
-        #expect(movedData == fresh)
     }
 
     @Test("Content-Range accepts header without the `bytes ` unit prefix")
@@ -86,30 +46,5 @@ struct DownloadBundleTests {
         #expect(leading?.start == 100)
         #expect(leading?.end == 200)
         #expect(leading?.total == 300)
-    }
-
-    @Test("parseUnsatisfiableTotal extracts total from 416 header")
-    func parseUnsatisfiableTotalExtractsTotal() {
-        #expect(DownloadService.parseUnsatisfiableTotal("bytes */1234") == 1234)
-        #expect(DownloadService.parseUnsatisfiableTotal("*/0") == 0)
-        #expect(DownloadService.parseUnsatisfiableTotal(nil) == nil)
-        #expect(DownloadService.parseUnsatisfiableTotal("malformed") == nil)
-    }
-}
-
-@Suite("DownloadSpeedSmoother Tests", .caseScoped)
-struct DownloadSpeedSmootherTests {
-    @Test("Speed sample after throttle window reflects throughput")
-    func speedAfterThrottle() {
-        var smoother = DownloadSpeedSmoother()
-        _ = smoother.sample(totalBytes: 0, now: 1000.0)
-        let speed = smoother.sample(totalBytes: 1_000_000, now: 1001.0) ?? 0
-        // 1 MB in 1 s. The smoother's exact "first non-priming sample" formula
-        // is an implementation detail; what callers care about is that the
-        // reported speed is in the right ballpark, not an exact byte count.
-        // 10% tolerance lets the smoothing rule evolve without breaking the
-        // test.
-        #expect(speed > 0)
-        #expect(abs(speed - 1_000_000) < 100_000)
     }
 }

@@ -20,8 +20,6 @@ final class MockNetworkAttachmentInstall: NetworkAttachmentInstalling {
         var detachCount = 0
     }
 
-    /// One entry per `applyNetworkAttachment` call, in order.
-    var applyCount: Int { state.withLock { $0.applies.count } }
     var detachCount: Int { state.withLock { $0.detachCount } }
 
     func applyNetworkAttachment(
@@ -50,11 +48,5 @@ final class MockNetworkAttachmentInstall: NetworkAttachmentInstalling {
         let attachment = make()
         if attachment == nil { onBuildFailure() }
         return attachment
-    }
-
-    /// Reports the install of the apply at `index` as having found nothing to
-    /// build, the outcome VZ leaves detached.
-    func reportBuildFoundNothing(ofApplyAt index: Int) {
-        state.withLock { $0.applies[index].onBuildFailure }()
     }
 }

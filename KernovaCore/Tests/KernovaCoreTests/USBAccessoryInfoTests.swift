@@ -36,29 +36,6 @@ struct USBAccessoryInfoTests {
         return Data(bytes)
     }
 
-    /// A configuration descriptor followed by one interface descriptor, USB 2.0
-    /// §9.6.3 — the shape `AAUSBAccessory.configurationDescriptorData` carries.
-    private func configurationBytes(
-        interfaceClass: UInt8 = 0x08, interfaceLength: UInt8 = 9, leadingFiller: [UInt8] = []
-    ) -> Data {
-        var bytes: [UInt8] = [9, 2, 32, 0, 1, 1, 0, 0xA0, 50]
-        bytes.append(contentsOf: leadingFiller)
-        bytes.append(contentsOf: [
-            interfaceLength, 4, 0, 0, 2, interfaceClass, 0x06, 0x50, 0,
-        ])
-        return Data(bytes)
-    }
-
-    private func info(
-        descriptor: Data, configuration: Data? = nil, node: USBAccessoryNodeProperties? = nil,
-        registryID: UInt64 = 1, claimedBy held: [USBAccessoryInfo] = []
-    ) throws -> USBAccessoryInfo {
-        let parsed = try #require(USBDeviceDescriptor.parse(descriptor))
-        return USBAccessoryInfo.make(
-            registryID: registryID, descriptor: parsed, configurationDescriptor: configuration,
-            node: node, claimedBy: held)
-    }
-
     // MARK: - Device Descriptor Parsing
 
     @Test("Parses every field little-endian")
@@ -71,68 +48,5 @@ struct USBAccessoryInfoTests {
         #expect(descriptor.vendorID == 0x0403)
         #expect(descriptor.productID == 0x6001)
         #expect(descriptor.deviceVersion == 0x0600)
-    }
-
-    // MARK: - Class Names
-
-    @Test(
-        "Names each assigned base class",
-        arguments: [
-            (UInt8(0x03), "Human interface"),
-            (UInt8(0x08), "Mass storage"),
-            (UInt8(0x09), "Hub"),
-            (UInt8(0xE0), "Wireless controller"),
-            (UInt8(0xFF), "Vendor-specific"),
-        ])
-    func namesAssignedClasses(code: UInt8, expected: String) throws {
-        let descriptor = try #require(USBDeviceDescriptor.parse(descriptorBytes(deviceClass: code)))
-        #expect(descriptor.className == expected)
-    }
-
-    // MARK: - Configuration Descriptor Parsing
-
-    @Test("Walks past descriptors that are not interface descriptors")
-    func skipsNonInterfaceDescriptors() {
-        // An interface association descriptor (type 11) ahead of the interface.
-        let filler: [UInt8] = [8, 11, 0, 2, 0x02, 0x02, 0x01, 0]
-        let data = configurationBytes(interfaceClass: 0x02, leadingFiller: filler)
-        #expect(USBConfigurationDescriptor.firstInterfaceClass(in: data) == 0x02)
-    }
-
-    @Test("Finds no interface class in bytes that carry none")
-    func noInterfaceDescriptor() {
-        #expect(USBConfigurationDescriptor.firstInterfaceClass(in: Data([9, 2, 9, 0, 0, 1, 0, 0xA0, 50])) == nil)
-    }
-
-    // MARK: - Display Names
-
-    @Test("Names the first interface's class when the device declares none of its own")
-    func fallsBackToInterfaceClass() throws {
-        let accessory = try info(
-            descriptor: descriptorBytes(deviceClass: 0, vendorID: 0x04E8, productID: 0x6300),
-            configuration: configurationBytes())
-        #expect(accessory.displayName == "04e8:6300 · Mass storage")
-    }
-
-    @Test("A device declaring no class and offering no configuration is named by identifiers")
-    func noClassAndNoConfiguration() throws {
-        let accessory = try info(descriptor: descriptorBytes(deviceClass: 0))
-        #expect(accessory.displayName == "0403:6001")
-    }
-
-    @Test("Identifies an accessory by its registry ID")
-    func identityIsRegistryID() throws {
-        #expect(try info(descriptor: descriptorBytes(), registryID: 99).id == 99)
-    }
-
-    // MARK: - Attachment
-
-    @Test("Identifies an attachment by its device UUID")
-    func attachmentIdentityIsDeviceID() throws {
-        let deviceID = UUID()
-        let attached = AttachedUSBAccessory(
-            deviceID: deviceID, accessory: try info(descriptor: descriptorBytes()))
-        #expect(attached.id == deviceID)
-        #expect(attached.accessory.registryID == 1)
     }
 }

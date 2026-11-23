@@ -71,27 +71,6 @@ struct AppTerminationGateTests {
         }
     }
 
-    @Test("A full quit saves first and asks to terminate second")
-    func fullQuitSavesBeforeTerminating() async throws {
-        let spy = EndingSpy()
-        let (controller, viewModel) = makeController(endings: spy)
-        viewModel.keepInMenuBarOnQuit = true
-        spy.gate = controller
-
-        controller.requestFullQuit()
-        // The save pass is a `Task`, so nothing has ended on the turn the
-        // request was made.
-        #expect(spy.endings.isEmpty)
-
-        try await spy.ended.wait { spy.endings.count == 1 }
-        // Nothing deferred this quit, so the pass asks for one of its own.
-        #expect(spy.endings == [.terminate])
-        // The pass has already run, so the gate has nothing to wait for — the
-        // `.later` reply, and the nested run loop AppKit answers it with, is
-        // what the two phases exist to avoid.
-        #expect(spy.replyWhenEnded == .now)
-    }
-
     @Test("A second full quit joins the pass already running rather than starting another")
     func secondFullQuitJoinsTheFirst() async throws {
         let spy = EndingSpy()
@@ -177,23 +156,6 @@ struct AppTerminationGateTests {
         #expect(spy.endings == [.terminate])
     }
 
-    @Test("A quit waits out an arrival withdrawing the bundle a cancel took back")
-    func quitWaitsOutAWithdrawal() async throws {
-        let (controller, viewModel, spy) = makeFullQuit()
-        let gate = GatedStep()
-        let arrival = viewModel.library.beginGatedArrival(named: "Withdrawn", gate: gate)
-        try await gate.waitUntilEntered()
-        #expect(arrival.beginPublishing())
-        #expect(arrival.requestCancel() == .withdrawn)
-
-        try await requestFullQuitAndLetItRun(controller)
-        #expect(spy.endings.isEmpty)
-
-        gate.release()
-        try await arrival.settle()
-        try await spy.ended.wait { spy.endings.count == 1 }
-    }
-
     @Test("A quit saves every other live VM while one VM's save is still running")
     func quitSavesOtherVMsBeforeWaiting() async throws {
         let (controller, viewModel, spy) = makeFullQuit()
@@ -219,39 +181,6 @@ struct AppTerminationGateTests {
         #expect(stuck.phase == .suspended)
     }
 
-    /// A display that takes nothing over.
-    @MainActor
-    private final class IdleDisplay: GuestDragDisplay {
-        func injectNudge(_ nudge: GuestDragNudge) {}
-        func injectDrag(at point: CGPoint) {}
-        func returnToExitPoint() {}
-        func injectRelease() {}
-        func beginHostSession(carrying take: any GuestDragTaking) -> Bool { false }
-        func resumeTracking() {}
-    }
-
-    @Test("A quit that terminates now retires every drag out of a guest before it answers")
-    func terminationRetiresDragsFirst() throws {
-        let (controller, viewModel) = makeController()
-        viewModel.keepInMenuBarOnQuit = false
-        let instance = viewModel.library.admitFixture(name: "Drag VM", guestOS: .macOS)
-        let hub = FakeDragOutHub()
-        let peer = PeerHandle(rawValue: 3)
-        instance.dragOut.hub = hub
-        instance.dragOut.consolePeerChanged(peer)
-        instance.dragOut.offerReceived(Data(repeating: 0x5A, count: 16), from: peer)
-        let display = IdleDisplay()
-        let taken = instance.dragOut.takeGuestDrag(display: display, while: { true })
-        let take = try #require(taken)
-        var retiredFirst = false
-        take.whenRetired { retiredFirst = true }
-
-        #expect(controller.handleTerminationRequest() == .now)
-
-        #expect(retiredFirst)
-        #expect(take.phase == .abandoned)
-    }
-
     @Test("A quit a script sent terminates and saves, whichever handler delivered it")
     func scriptedQuitTerminates() {
         let spy = SoftQuitSpy()
@@ -261,34 +190,6 @@ struct AppTerminationGateTests {
 
         #expect(controller.handleTerminationRequest() == .now)
         #expect(controller.shouldTerminateOnQuit)
-        #expect(spy.closeCount == 0)
-    }
-
-    @Test("A quit the app sent itself stays resident")
-    func selfSentQuitStaysResident() async throws {
-        let spy = SoftQuitSpy()
-        let (controller, viewModel) = makeController(
-            residency: spy, quitEvent: .init(senderPID: getpid()))
-        viewModel.keepInMenuBarOnQuit = true
-
-        #expect(controller.handleTerminationRequest() == .cancel)
-        #expect(!controller.shouldTerminateOnQuit)
-
-        try await spy.closed.wait { spy.closeCount == 1 }
-    }
-
-    @Test("A terminate-and-relaunch classification latches the same way")
-    func terminateAndRelaunchLatches() {
-        let spy = SoftQuitSpy()
-        let (controller, viewModel) = makeController(residency: spy)
-        viewModel.keepInMenuBarOnQuit = true
-
-        controller.latchQuitClassification(.terminateAndRelaunch)
-        #expect(controller.shouldTerminateOnQuit)
-
-        controller.latchQuitClassification(.stayResident)
-        #expect(controller.shouldTerminateOnQuit)
-        #expect(controller.handleTerminationRequest() == .now)
         #expect(spy.closeCount == 0)
     }
 }

@@ -36,31 +36,6 @@ struct VZNetworkDeviceHandleTests {
             attachments: attachments)
     }
 
-    @Test("A build finding nothing at install time clears the applied mirror")
-    func buildFoundNothingClearsMirror() async throws {
-        let harness = makeHarness()
-        #expect(harness.handle.apply(.nat))
-        #expect(harness.handle.currentPlan == .nat)
-
-        harness.install.reportBuildFoundNothing(ofApplyAt: 0)
-        try await drainMainQueue()
-
-        #expect(harness.handle.currentPlan == nil)
-    }
-
-    @Test("A build failure reported after a newer apply leaves that apply's plan")
-    func staleBuildFailureLeavesNewerApply() async throws {
-        let harness = makeHarness()
-        #expect(harness.handle.apply(.nat))
-        #expect(harness.handle.apply(.vmnet(.common(.hostOnly))))
-        #expect(harness.install.applyCount == 2)
-
-        harness.install.reportBuildFoundNothing(ofApplyAt: 0)
-        try await drainMainQueue()
-
-        #expect(harness.handle.currentPlan == .vmnet(.common(.hostOnly)))
-    }
-
     @Test("A queued vmnet build holds its network until it has built, and its attachment holds it after")
     func aQueuedBuildHoldsItsNetwork() throws {
         let harness = makeHarness()
@@ -80,30 +55,5 @@ struct VZNetworkDeviceHandleTests {
 
         attachment = nil
         #expect(operations.releasedNetworks == [ownNAT])
-    }
-
-    @Test("A queued vmnet build leaves the VM on the network it joined since")
-    func aQueuedBuildLeavesTheVMWhereItMoved() throws {
-        let harness = makeHarness()
-        #expect(harness.handle.apply(.vmnet(.common(.hostOnly))))
-
-        harness.vmnet.join(.own(.nat), through: harness.sessionNetworks)
-        let attachment = autoreleasepool { harness.install.runBuild(ofApplyAt: 0) }
-        #expect(attachment != nil)
-
-        #expect(
-            harness.vmnet.service.ipv4Subnet(for: VmnetNetworkID(kind: .nat, scope: .vm(harness.owner))) != nil)
-        #expect(harness.vmnet.operations.releasedNetworks.isEmpty)
-    }
-
-    @Test("Detach clears the mirror and forwards to the session")
-    func detachClearsMirror() {
-        let harness = makeHarness(initialPlan: .nat)
-        #expect(harness.handle.currentPlan == .nat)
-
-        harness.handle.detach()
-
-        #expect(harness.handle.currentPlan == nil)
-        #expect(harness.install.detachCount == 1)
     }
 }

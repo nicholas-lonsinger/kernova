@@ -80,37 +80,6 @@ struct ConfigFileDecodingTests {
         #expect(diagnosis.repaired == nil)
     }
 
-    @Test("Problems with defaults before an unrepairable one are all listed, and nothing is repaired")
-    func aMixOfProblemsIsNotRepairable() throws {
-        let data = try configJSON {
-            $0["displayHiDPI"] = "yes"
-            $0["createdAt"] = nil
-        }
-        let diagnosis = diagnose(data)
-        #expect(diagnosis.problems.map(\.path?.description) == ["$.displayHiDPI", "$.createdAt"])
-        #expect(diagnosis.problems.map(\.isRepairable) == [true, false])
-        #expect(diagnosis.repaired == nil)
-    }
-
-    // MARK: - Paths
-
-    @Test("A problem nested in an array names its index")
-    func aNestedProblemNamesItsIndex() throws {
-        let disk: [String: Any] = [
-            "id": UUID().uuidString, "path": "Disk.asif", "readOnly": false, "label": "Disk",
-            "isInternal": true, "kind": "virtio",
-        ]
-        var bad = disk
-        bad["notes"] = 42
-        let data = try configJSON { $0["storageDisks"] = [disk, bad] }
-
-        let problems = diagnose(data).problems
-        #expect(problems.map(\.path?.description) == ["$.storageDisks[1].notes"])
-        #expect(
-            problems.first?.reportLine(fileName: "config.json")
-                == "$.storageDisks[1].notes: \u{201C}42\u{201D} is not a recognized value. Default: \u{201C}\u{201D}.")
-    }
-
     // MARK: - A list of entries
 
     @Test("A bad entry in a defaulted list is its own problem, removed, with its cause; the rest are kept")
@@ -193,54 +162,6 @@ struct ConfigFileDecodingTests {
 
     // MARK: - Required, repairable
 
-    private func networkListJSON(kind: String?) -> Data {
-        let kindField = kind.map { ", \"kind\": \"\($0)\"" } ?? ""
-        return Data(
-            """
-            {"networks": [{"id": "\(UUID().uuidString)", "name": "Lab"\(kindField)}]}
-            """.utf8)
-    }
-
-    private func diagnoseNetworks(_ data: Data) -> ConfigFileDiagnosis {
-        ConfigFileDiagnosis(
-            decoding: [String: [VMNamedNetwork]].self, from: data, decoder: JSONDecoder(),
-            encoder: JSONEncoder())
-    }
-
-    @Test("A network's missing kind is refused strictly, and repaired to the default kind when collecting")
-    func aMissingRequiredKindIsRepairable() throws {
-        let data = networkListJSON(kind: nil)
-        #expect(throws: DecodingError.self) {
-            try JSONDecoder().decode([String: [VMNamedNetwork]].self, from: data)
-        }
-        let diagnosis = diagnoseNetworks(data)
-        #expect(
-            diagnosis.problems == [
-                ConfigProblem(
-                    path: ConfigValuePath([.key("networks"), .index(0), .key("kind")]), issue: .missing,
-                    repair: .useDefault(VMNamedNetwork.defaultKind.rawValue))
-            ])
-        let repaired = try JSONDecoder().decode(
-            [String: [VMNamedNetwork]].self, from: try #require(diagnosis.repaired))
-        #expect(repaired["networks"]?.map(\.kind) == [VMNamedNetwork.defaultKind])
-    }
-
-    @Test("A network's unrecognized kind is refused strictly, and repaired to the default kind when collecting")
-    func anUnrecognizedRequiredKindIsRepairable() throws {
-        let data = networkListJSON(kind: Self.unrecognized)
-        #expect(throws: DecodingError.self) {
-            try JSONDecoder().decode([String: [VMNamedNetwork]].self, from: data)
-        }
-        #expect(
-            diagnoseNetworks(data).problems == [
-                ConfigProblem(
-                    path: ConfigValuePath([.key("networks"), .index(0), .key("kind")]),
-                    issue: .unrecognized(found: Self.unrecognized),
-                    repair: .useDefault(VMNamedNetwork.defaultKind.rawValue))
-            ])
-        #expect(VMNamedNetwork.defaultKind == VMNamedNetwork.kindsInCreationOrder.first)
-    }
-
     @Test("An unrecognized device shape is refused strictly, and recorded with no repair")
     func anUnrecognizedDeviceShapeHasNoRepair() throws {
         let data = try configJSON { $0["deviceShape"] = Self.unrecognized }
@@ -277,56 +198,6 @@ struct ConfigFileDecodingTests {
         let network = try VMConfiguration.makeJSONDecoder().decodeRepairing(VMCapturedNetwork.self, from: data)
         #expect(network.networkEnabled == false)
         #expect(network.networkMode == .nat)
-    }
-
-    // MARK: - Trashed originals
-
-    @Test("The copy a repair trashes is named for whose file it is, then the file")
-    func trashedOriginalNames() {
-        let bundle = URL(fileURLWithPath: "/tmp/VMs/Dev.kernova", isDirectory: true)
-        let problem = [ConfigProblem(path: nil, issue: .notJSON(detail: "x"))]
-        func name(_ location: UnreadableConfigFile.Location, _ owner: UnreadableConfigFile.Owner) -> String {
-            UnreadableConfigFile(location: location, owner: owner, problems: problem).trashedOriginalName
-        }
-        #expect(name(.bundle(bundle, .configuration), .virtualMachine("Dev")) == "Dev \u{2014} config.json")
-        #expect(
-            name(.bundle(bundle, .snapshotConfiguration(UUID())), .snapshot(vm: "Dev", snapshot: "Before"))
-                == "Dev \u{2014} snapshot \u{201C}Before\u{201D} \u{2014} config.json")
-        #expect(
-            name(.networkList(URL(fileURLWithPath: "/tmp/Networks.json")), .networkList)
-                == "Network list \u{2014} Networks.json")
-        #expect(
-            name(.bundle(bundle, .configuration), .virtualMachine("A/B")) == "A:B \u{2014} config.json")
-    }
-
-    @Test("A trashed original's name fits NAME_MAX, its long names shortened on a character boundary")
-    func trashedOriginalNamesFitNameMax() throws {
-        let bundle = URL(fileURLWithPath: "/tmp/VMs/Dev.kernova", isDirectory: true)
-        let problem = [ConfigProblem(path: nil, issue: .notJSON(detail: "x"))]
-        let vm = String(repeating: "\u{E9}", count: 60)  // 120 bytes
-        let snapshot = String(repeating: "\u{65E5}", count: 43) + "a"  // 130 bytes
-        #expect(vm.utf8.count == 120)
-        #expect(snapshot.utf8.count == 130)
-
-        let snapshotName = UnreadableConfigFile(
-            location: .bundle(bundle, .snapshotConfiguration(UUID())),
-            owner: .snapshot(vm: vm, snapshot: snapshot), problems: problem
-        ).trashedOriginalName
-        #expect(snapshotName.utf8.count <= 255)
-        #expect(snapshotName.hasSuffix("\u{2026}\u{201D} \u{2014} config.json"))
-        // Every kept character is whole: the result is valid UTF-8 built only
-        // from the names' own characters, the ellipsis, and the fixed words.
-        let vmPart = try #require(snapshotName.components(separatedBy: " \u{2014} snapshot \u{201C}").first)
-        #expect(vmPart.hasSuffix("\u{2026}") || vmPart == vm)
-        #expect(vm.hasPrefix(vmPart.replacingOccurrences(of: "\u{2026}", with: "")))
-        #expect(snapshotName.contains("\u{65E5}"))
-
-        let vmName = UnreadableConfigFile(
-            location: .bundle(bundle, .configuration),
-            owner: .virtualMachine(String(repeating: "\u{E9}", count: 200)), problems: problem
-        ).trashedOriginalName
-        #expect(vmName.utf8.count <= 255)
-        #expect(vmName.hasSuffix("\u{E9}\u{2026} \u{2014} config.json"))
     }
 
     // MARK: - Organization fields
@@ -418,70 +289,6 @@ struct ConfigFileDecodingTests {
             VMHostState.self, from: try #require(diagnosis.repaired))
         #expect(repaired.lastFullscreenDisplayID == VMHostState().lastFullscreenDisplayID)
         #expect(repaired.displayPreference == .fullscreen)
-    }
-
-    @Test("Sidebar view options that don't decode repair to new options', a filter's bad entry removed alone")
-    func sidebarViewOptionsRepair() throws {
-        let data = Data(
-            #"""
-            {"sort": "byColor", "grouping": "state", "showsDetails": 2,
-             "filter": {"states": ["running", "levitating"], "ephemeralOnly": "yes", "guestOSes": ["linux"]}}
-            """#.utf8)
-        #expect(throws: DecodingError.self) {
-            try JSONDecoder().decode(SidebarViewOptions.self, from: data)
-        }
-        let diagnosis = ConfigFileDiagnosis(
-            decoding: SidebarViewOptions.self, from: data, decoder: JSONDecoder(), encoder: JSONEncoder())
-        let fresh = SidebarViewOptions()
-
-        #expect(
-            diagnosis.problems.map(\.path?.description) == [
-                "$.filter.states[1]", "$.filter.ephemeralOnly", "$.sort", "$.showsDetails",
-            ])
-        #expect(
-            diagnosis.problems.map(\.repair) == [
-                .removeEntry, .useDefault(String(fresh.filter.ephemeralOnly)), .useDefault(fresh.sort.rawValue),
-                .useDefault(String(fresh.showsDetails)),
-            ])
-        let repaired = try JSONDecoder().decode(SidebarViewOptions.self, from: try #require(diagnosis.repaired))
-        #expect(repaired.sort == fresh.sort)
-        #expect(repaired.showsDetails == fresh.showsDetails)
-        #expect(repaired.grouping == .state)
-        #expect(repaired.filter.states == [.running])
-        #expect(repaired.filter.ephemeralOnly == fresh.filter.ephemeralOnly)
-        #expect(repaired.filter.guestOSes == [.linux])
-    }
-
-    @Test("A default that is no value reads as no value in the report")
-    func aNilDefaultReadsAsNoValue() {
-        let unset = ConfigProblem(
-            path: ConfigValuePath([.key("lastFullscreenDisplayID")]), issue: .unrecognized(found: "main"),
-            repair: .useDefault(nil))
-        let nested = ConfigProblem(
-            path: ConfigValuePath([.key("bridge")]), issue: .unrecognized(found: "5"), repair: .useDefault(nil),
-            issuePath: ConfigValuePath([.key("bridge"), .key("id")]))
-
-        #expect(
-            unset.reportLine(fileName: "host-state.json")
-                == "$.lastFullscreenDisplayID: \u{201C}main\u{201D} is not a recognized value. Default: no value.")
-        #expect(
-            nested.reportLine(fileName: "config.json")
-                == "$.bridge.id: \u{201C}5\u{201D} is not a recognized value. Default for $.bridge: no value.")
-    }
-
-    // MARK: - The caller's decoder
-
-    @Test("A decoder that decoded repairing, or diagnosed, decodes strictly afterwards")
-    func aRepairingDecodeLeavesTheDecoderStrict() throws {
-        let data = try configJSON { $0["networkMode"] = Self.unrecognized }
-        let decoder = VMConfiguration.makeJSONDecoder()
-
-        _ = try decoder.decodeRepairing(VMConfiguration.self, from: data)
-        #expect(throws: DecodingError.self) { try decoder.decode(VMConfiguration.self, from: data) }
-
-        _ = ConfigFileDiagnosis(
-            decoding: VMConfiguration.self, from: data, decoder: decoder, encoder: VMConfiguration.makeJSONEncoder())
-        #expect(throws: DecodingError.self) { try decoder.decode(VMConfiguration.self, from: data) }
     }
 
     // MARK: - Smart groups

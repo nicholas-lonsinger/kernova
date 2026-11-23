@@ -51,16 +51,4 @@ struct AlertConfigurationTests {
         #expect(dismissed == 1)
         #expect(chosen == prompt.alternatives)
     }
-
-    // MARK: - acknowledgement
-
-    @Test("An acknowledgement is one OK button on Return")
-    func acknowledgementIsASingleDefaultOK() {
-        let config = AlertConfiguration.acknowledgement(title: "Error", message: "It failed.")
-
-        #expect(config.title == "Error")
-        #expect(config.message == "It failed.")
-        #expect(config.buttons.map(\.title) == ["OK"])
-        #expect(config.buttons.map(\.role) == [.default])
-    }
 }

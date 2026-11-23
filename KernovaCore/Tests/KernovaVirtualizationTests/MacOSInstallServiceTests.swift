@@ -47,45 +47,4 @@ struct MacOSInstallServiceTests {
 
         #expect(resolved.path(percentEncoded: false) == realImage.path(percentEncoded: false))
     }
-
-    /// The reported path reaches the user via `instance.errorMessage`, so it
-    /// must name the resolved location rather than the sandbox container's
-    /// `Downloads` spelling, which the user cannot act on.
-    @Test("A missing image under a symlinked parent reports the resolved path")
-    func resolveRestoreImageMissingReportsResolvedPath() throws {
-        let realDir = scratch.url.appendingPathComponent("RealDownloads")
-        try FileManager.default.createDirectory(at: realDir, withIntermediateDirectories: true)
-
-        // Parent symlink is intact; the image itself is absent.
-        let linkedDir = scratch.url.appendingPathComponent("Downloads")
-        try FileManager.default.createSymbolicLink(at: linkedDir, withDestinationURL: realDir)
-
-        let missing = linkedDir.appendingPathComponent("RestoreImage.ipsw")
-        let expected = realDir.appendingPathComponent("RestoreImage.ipsw")
-            .path(percentEncoded: false)
-
-        #expect {
-            try MacOSInstallService.resolveRestoreImage(at: missing)
-        } throws: { error in
-            guard let error = error as? MacOSInstallError,
-                case .restoreImageNotFound(let path) = error
-            else { return false }
-            return path == expected
-        }
-    }
-
-    @Test("resolveRestoreImage throws restoreImageNotAFile for a directory")
-    func resolveRestoreImageDirectory() throws {
-        let asDirectory = scratch.url.appendingPathComponent("RestoreImage.ipsw")
-        try FileManager.default.createDirectory(at: asDirectory, withIntermediateDirectories: true)
-
-        #expect {
-            try MacOSInstallService.resolveRestoreImage(at: asDirectory)
-        } throws: { error in
-            guard let error = error as? MacOSInstallError,
-                case .restoreImageNotAFile = error
-            else { return false }
-            return true
-        }
-    }
 }

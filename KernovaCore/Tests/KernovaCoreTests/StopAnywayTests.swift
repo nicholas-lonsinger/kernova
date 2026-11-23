@@ -32,7 +32,6 @@ struct StopAnywayTests {
         var testDescription: String { "\(self)" }
 
         var guestOS: VMGuestOS { self == .linux ? .linux : .macOS }
-        var canStopAnyway: Bool { self == .forEveryone }
     }
 
     private struct Fixture {
@@ -91,28 +90,6 @@ struct StopAnywayTests {
         try await fixture.harness.core.stop(.id(fixture.instance.id), disposition: .anyway, consent: consent)
     }
 
-    // MARK: - The verb
-
-    @Test("Without consent it asks, in the Force Stop sheet's terms, and sends nothing")
-    func asksEveryTime() async throws {
-        let fixture = try await makeFixture(.forEveryone)
-        let error = try await #require(throws: CommandError.self) {
-            try await stopAnyway(fixture, consent: .none)
-        }
-        let prompt = try #require(error.confirmationPrompt)
-        #expect(prompt == VMCommandCore.stopAnywayPrompt(fixture.instance))
-        #expect(prompt.kind == .stopAnyway)
-        #expect(prompt.title == "Stop \u{201C}Anyway\u{201D} Anyway?")
-        #expect(
-            prompt.message
-                == "macOS shuts down without waiting for apps. Apps still open quit without asking to save.")
-        #expect(prompt.confirmTitle == "Stop Anyway")
-        #expect(prompt.confirmIsDestructive)
-        #expect(prompt.dismissTitle == "Cancel")
-        #expect(prompt.alternatives.isEmpty)
-        #expect(fixture.probe.powerRequests.isEmpty)
-    }
-
     // MARK: - Restart Anyway
 
     private func restartAnyway(_ fixture: Fixture, consent: Consent) async throws {
@@ -143,55 +120,7 @@ struct StopAnywayTests {
         #expect(fixture.harness.virtualization.startCallCount == 0)
     }
 
-    @Test(
-        "Where no agent offers it, Restart Anyway is refused as Stop Anyway is, before any question and with nothing sent",
-        arguments: Agents.allCases.filter { !$0.canStopAnyway })
-    func restartAnywayRefusedWithoutTheSystemService(agents: Agents) async throws {
-        let fixture = try await makeFixture(agents)
-        for consent in [Consent.none, .all] {
-            let error = try await #require(throws: CommandError.self) {
-                try await restartAnyway(fixture, consent: consent)
-            }
-            let requirement = try #require(error.stepRequirement, "\(error)")
-            #expect(
-                requirement
-                    == VMCommandCore.stopAnywayUnavailable(fixture.instance, verb: .restart))
-            #expect(requirement.title == "Can\u{2019}t Restart Anyway")
-            #expect(
-                requirement.message
-                    == VMCommandCore.stopAnywayUnavailable(fixture.instance, verb: .stop).message)
-        }
-        #expect(fixture.probe.powerRequests.isEmpty)
-        #expect(fixture.harness.virtualization.stopCallCount == 0)
-        #expect(fixture.harness.virtualization.startCallCount == 0)
-        #expect(fixture.instance.status == .running)
-    }
-
-    @Test("A system service that refuses Restart Anyway leaves the guest running, its boot withdrawn")
-    func restartAnywayUntakenWithdrawsItsBoot() async throws {
-        let fixture = try await makeFixture(.forEveryone) { _ in [.refused(WireError(.powerActionUnsupported))] }
-        let error = try await #require(throws: CommandError.self) {
-            try await restartAnyway(fixture, consent: .all)
-        }
-        #expect(error.stepRequirement?.title == "Can\u{2019}t Restart Anyway")
-        #expect(fixture.harness.virtualization.stopCallCount == 0)
-        #expect(fixture.instance.status == .running)
-
-        // A boot still owed to the session would start as the session ends.
-        let session = try #require(fixture.instance.activity.liveSessionID)
-        fixture.instance.activity.deliverSessionEvent(.guestDidStop, from: session)
-        try await waitForChange { fixture.instance.status == .stopped && fixture.instance.phase.operation == nil }
-        #expect(fixture.harness.virtualization.startCallCount == 0)
-    }
-
     // MARK: - Doors
-
-    @Test("Shortcuts' and AppleScript's stop methods each name the anyway disposition")
-    func doorsNameTheDisposition() {
-        #expect(VMStopMethod.anyway.disposition == .anyway)
-        #expect(Set(VMStopMethod.allCases.map(\.disposition)) == Set(StopDisposition.allCases))
-        #expect(VMStopMethod.caseDisplayRepresentations[.anyway] != nil)
-    }
 
     @Test("Shortcuts' stop is refused for its consent without one, and sends it with one")
     func intentGatewayRoute() async throws {

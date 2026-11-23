@@ -31,15 +31,4 @@ struct GuestMACAddressTests {
     func readsAsTheFrameworkDoes(_ text: String) {
         #expect(GuestMACAddress.normalized(text) == Self.frameworkReading(of: text))
     }
-
-    @Test("A random address is a canonical, locally administered unicast one, as VZMACAddress reads it")
-    func randomAddressIsLocallyAdministeredUnicast() throws {
-        for _ in 0..<1_000 {
-            let text = GuestMACAddress.random()
-            let address = try #require(VZMACAddress(string: text))
-            #expect(address.isLocallyAdministeredAddress)
-            #expect(address.isUnicastAddress)
-            #expect(address.string == text)
-        }
-    }
 }

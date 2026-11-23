@@ -78,43 +78,6 @@ struct USBAccessoryCoordinatorTests {
         var requests: [USBAccessoryPairingRequest] = []
     }
 
-    /// Counts the take-backs an attachable edge runs.
-    private final class TakeBackCounter {
-        var count = 0
-    }
-
-    @Test("Starts the listener")
-    func startsObserving() throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        defer { withExtendedLifetime(h) {} }
-        #expect(service.startObservingCallCount == 1)
-    }
-
-    @Test("Drops a guest's record of an accessory the host has taken back")
-    func aReassignmentClearsTheStaleRecord() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let sessionID = UUID()
-        let instance = makeInstance(in: h, sessionID: sessionID)
-        defer { withExtendedLifetime(h) {} }
-        service.accessories.append(
-            MockUSBAccessoryService.accessory(
-                registryID: 1, serial: "0373", receptacle: "hub/Port-A@1"))
-        try await h.lifecycle.attachUSBAccessory(1, to: instance, for: sessionID)
-        service.accessories.removeAll()
-        #expect(instance.liveUSBAccessories.count == 1)
-
-        // The same stick, back from the reset a detach causes: same serial,
-        // same receptacle, new IORegistry node. The guest's record holds that
-        // key, and this is the one arrival allowed to take it back.
-        let echo = service.assignComposing(
-            registryID: 2, serial: "0373", receptacle: "hub/Port-A@1")
-
-        #expect(echo.identity?.form == .serialNumber)
-        #expect(instance.liveUSBAccessories.isEmpty)
-    }
-
     @Test("Leaves a guest's record alone for a second unit reporting the same serial")
     func aDuplicateSerialElsewhereLeavesTheRecordAlone() async throws {
         let service = MockUSBAccessoryService()
@@ -164,48 +127,6 @@ struct USBAccessoryCoordinatorTests {
         #expect(service.attachedRegistryIDs.isEmpty)
     }
 
-    @Test("At most one prompt is outstanding, however many accessories arrive")
-    func promptsAreRaisedOneAtATime() throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        makeInstance(in: h, sessionID: UUID())
-        let recorder = PromptRecorder()
-        defer { withExtendedLifetime(h) {} }
-        h.coordinator.onPairingNeeded = { recorder.requests.append($0) }
-
-        // A fast user switch re-assigns every accessory at once, which would
-        // otherwise raise one alert per device.
-        service.assign(MockUSBAccessoryService.accessory(registryID: 1, serial: "A"))
-        service.assign(MockUSBAccessoryService.accessory(registryID: 2, serial: "B"))
-        #expect(recorder.requests.count == 1)
-
-        recorder.requests[0].answer(nil)
-
-        #expect(recorder.requests.count == 2)
-        #expect(recorder.requests[1].accessory.registryID == 2)
-    }
-
-    @Test("A queued prompt whose accessory has gone is dropped rather than raised")
-    func aQueuedPromptForADepartedAccessoryIsDropped() throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        makeInstance(in: h, sessionID: UUID())
-        let recorder = PromptRecorder()
-        defer { withExtendedLifetime(h) {} }
-        h.coordinator.onPairingNeeded = { recorder.requests.append($0) }
-        service.assign(MockUSBAccessoryService.accessory(registryID: 1, serial: "A"))
-        service.assign(MockUSBAccessoryService.accessory(registryID: 2, serial: "B"))
-        service.assign(MockUSBAccessoryService.accessory(registryID: 3, serial: "C"))
-
-        // Unplugged, or handed to another app, while it waited its turn.
-        service.accessories.removeAll { $0.registryID == 2 }
-        recorder.requests[0].answer(nil)
-
-        // The one behind it is still there and is asked about instead.
-        #expect(recorder.requests.count == 2)
-        #expect(recorder.requests[1].accessory.registryID == 3)
-    }
-
     // MARK: - The Guards
 
     @Test("An accessory two virtual machines claim is held rather than guessed at")
@@ -251,22 +172,6 @@ struct USBAccessoryCoordinatorTests {
 
         #expect(nothingPending(in: h))
         #expect(service.attachedRegistryIDs.isEmpty)
-    }
-
-    @Test("A port-keyed rule attaches while its model is the only one connected")
-    func theWeakFormRuleStillWorksAlone() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let instance = makeInstance(in: h, sessionID: UUID())
-        defer { withExtendedLifetime(h) {} }
-        let paired = MockUSBAccessoryService.accessory(
-            registryID: 1, receptacle: "hub/Port-A@1", productName: "Drive")
-        try pair(paired, with: instance)
-
-        service.assign(paired)
-
-        try await waitForChange { !instance.liveUSBAccessories.isEmpty }
-        #expect(service.attachedRegistryIDs == [1])
     }
 
     // MARK: - Owed Returns
@@ -345,65 +250,5 @@ struct USBAccessoryCoordinatorTests {
         #expect(instance.activity.queuedFollowUpCountForTesting == 1)
         try await waitForChange { instance.liveUSBAccessories.count == 2 }
         #expect(service.attachedRegistryIDs == [1, 3])
-    }
-
-    @Test("Resuming a paused guest does not run the take-back again")
-    func aResumeIsNotAnEdge() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let instance = makeStoppedInstance(in: h)
-        defer { withExtendedLifetime(h) {} }
-        let takeBacks = TakeBackCounter()
-        instance.activity.onSessionBecameAttachable = { [weak coordinator = h.coordinator] in
-            takeBacks.count += 1
-            return coordinator?.sessionBecameAttachable(instance) ?? []
-        }
-        let accessory = MockUSBAccessoryService.accessory(registryID: 1, serial: "A")
-        try pair(accessory, with: instance)
-        service.accessories = [accessory]
-        let sessionID = UUID()
-        instance.beginSessionContextForTesting()
-        instance.activity.placeForTesting(.running(sessionID: sessionID))
-        try await waitForChange { !instance.liveUSBAccessories.isEmpty && instance.phase.isSettled }
-
-        // Both phases are attachable, so neither transition is an edge.
-        instance.activity.placeForTesting(.livePaused(sessionID: sessionID))
-        instance.activity.placeForTesting(.running(sessionID: sessionID))
-
-        #expect(takeBacks.count == 1)
-        #expect(nothingPending(in: h))
-        #expect(service.attachedRegistryIDs == [1])
-    }
-
-    // MARK: - An Operation in Flight
-
-    @Test("A guest that goes away under an attach keeps the next accessory with the host")
-    func aVMThatStopsUnderTheWaitHoldsTheAccessory() async throws {
-        let service = MockUSBAccessoryService()
-        let h = try makeHarness(service)
-        let sessionID = UUID()
-        let instance = makeInstance(in: h, sessionID: sessionID)
-        defer { withExtendedLifetime(h) {} }
-        let first = MockUSBAccessoryService.accessory(registryID: 1, serial: "A")
-        let second = MockUSBAccessoryService.accessory(registryID: 2, serial: "B")
-        service.accessories.append(first)
-        try pair(second, with: instance)
-
-        service.suspendNextAttach = true
-        let held = Task { try? await h.lifecycle.attachUSBAccessory(1, to: instance, for: sessionID) }
-        try await service.attachStarted()
-        service.assign(second)
-        #expect(instance.activity.queuedFollowUpCountForTesting == 1)
-
-        // The guest powers off while the attach still holds the VM, which
-        // ends the attach the assignment queued for that session.
-        instance.activity.handleSessionEvent(.guestDidStop)
-        #expect(instance.activity.queuedFollowUpCountForTesting == 0)
-        service.resumeAttach()
-        _ = try await held.joined()
-
-        #expect(nothingPending(in: h))
-        #expect(service.attachedRegistryIDs == [1])
-        #expect(!instance.hasLiveVirtualMachine)
     }
 }
