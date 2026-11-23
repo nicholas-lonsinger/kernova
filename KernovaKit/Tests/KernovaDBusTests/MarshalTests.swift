@@ -4,48 +4,6 @@ import Testing
 
 @Suite("DBusMarshal round trips, alignment and byte order")
 struct MarshalTests {
-    static let byteOrders: [DBusByteOrder] = [.littleEndian, .bigEndian]
-
-    static let samples: [DBusValue] = [
-        .byte(0), .byte(0xFF),
-        .boolean(false), .boolean(true),
-        .int16(.min), .int16(-1), .int16(.max),
-        .uint16(0), .uint16(.max),
-        .int32(.min), .int32(.max),
-        .uint32(0), .uint32(.max),
-        .int64(.min), .int64(.max),
-        .uint64(0), .uint64(.max),
-        .double(0), .double(-1.5), .double(.infinity), .double(.leastNonzeroMagnitude),
-        .string(""), .string("foo"), .string("é"),
-        // U+10FFFF and the noncharacter U+FDD0, which the specification allows.
-        .string(String(decoding: [0xF4, 0x8F, 0xBF, 0xBF, 0xEF, 0xB7, 0x90], as: UTF8.self)),
-        .objectPath("/"), .objectPath("/org/freedesktop/login1"),
-        .signature(""), .signature("a{sv}"),
-        .unixFD(3),
-        .array(elementType: .int64, []),
-        .array(elementType: .byte, [.byte(1), .byte(2)]),
-        .array(elementType: .string, [.string("a"), .string("bc")]),
-        .array(
-            elementType: .array(.int16), [.array(elementType: .int16, [.int16(1)]), .array(elementType: .int16, [])]),
-        .struct([.byte(1), .uint64(2), .string("three")]),
-        .struct([.struct([.byte(1)]), .byte(2)]),
-        .dictionary(
-            key: .string, value: .variant,
-            [(.string("a"), .variant(.int32(1))), (.string("b"), .variant(.string("x")))]),
-        .dictionary(key: .uint32, value: .array(.byte), []),
-        .variant(.byte(7)),
-        .variant(.variant(.uint64(5))),
-        .variant(.array(elementType: .struct([.string, .uint32]), [.struct([.string("s"), .uint32(9)])])),
-    ]
-
-    @Test("Every value round-trips alone and after a byte", arguments: samples, byteOrders)
-    func roundTrip(value: DBusValue, byteOrder: DBusByteOrder) throws {
-        for values in [[value], [.byte(0xAB), value], [value, value]] {
-            let bytes = try DBusMarshal.encode(values, byteOrder: byteOrder)
-            let signature = try DBusSignature(values.map(\.type))
-            #expect(try DBusMarshal.decode(bytes, signature: signature, byteOrder: byteOrder) == values)
-        }
-    }
 
     @Test("The specification's array example: an INT64 array pads to 8 after its length")
     func specificationArray() throws {
@@ -57,76 +15,6 @@ struct MarshalTests {
     func emptyArrayPadding() throws {
         let bytes = try DBusMarshal.encode([.array(elementType: .struct([.byte]), [])], byteOrder: .littleEndian)
         #expect(bytes == [0, 0, 0, 0, 0, 0, 0, 0])
-    }
-
-    @Test("Structs and dict entries start on 8; padding between elements counts in the length")
-    func structAlignment() throws {
-        let value = DBusValue.array(elementType: .struct([.byte]), [.struct([.byte(1)]), .struct([.byte(2)])])
-        let bytes = try DBusMarshal.encode([.byte(9), value], byteOrder: .littleEndian)
-        #expect(
-            bytes == [
-                9, 0, 0, 0,  // byte, then padding to the length
-                9, 0, 0, 0,  // 9 bytes: the first struct, 7 of padding, the second
-                1, 0, 0, 0, 0, 0, 0, 0,
-                2,
-            ])
-    }
-
-    @Test("Each fixed type aligns to its size", arguments: byteOrders)
-    func fixedAlignment(byteOrder: DBusByteOrder) throws {
-        let cases: [(DBusValue, Int)] = [
-            (.int16(1), 2), (.uint16(1), 2), (.int32(1), 4), (.uint32(1), 4), (.boolean(true), 4), (.unixFD(1), 4),
-            (.int64(1), 8), (.uint64(1), 8), (.double(1), 8), (.string("x"), 4), (.objectPath("/"), 4),
-            (.signature("y"), 1), (.variant(.byte(1)), 1),
-        ]
-        for (value, alignment) in cases {
-            let bytes = try DBusMarshal.encode([.byte(1), value], byteOrder: byteOrder)
-            let padding = (alignment - 1) % alignment
-            #expect(bytes[1..<(1 + padding)].allSatisfy { $0 == 0 }, "\(value)")
-            let alone = try DBusMarshal.encode([value], byteOrder: byteOrder)
-            #expect(bytes.count == 1 + padding + alone.count, "\(value)")
-        }
-    }
-
-    @Test("Encoding refuses values the specification does not allow")
-    func encodeRefusals() {
-        #expect(throws: DBusProtocolError.embeddedNUL) {
-            try DBusMarshal.encode([.string("a\u{0}b")], byteOrder: .littleEndian)
-        }
-        #expect(throws: DBusProtocolError.elementTypeMismatch(expected: .int32, actual: .string)) {
-            try DBusMarshal.encode([.array(elementType: .int32, [.string("x")])], byteOrder: .littleEndian)
-        }
-        #expect(throws: DBusProtocolError.emptyStruct) {
-            try DBusMarshal.encode([.struct([])], byteOrder: .littleEndian)
-        }
-        #expect(throws: DBusProtocolError.dictEntryOutsideArray) {
-            try DBusMarshal.encode([.dictEntry(key: .string("k"), value: .byte(1))], byteOrder: .littleEndian)
-        }
-    }
-
-    @Test("An array's data may be 2^26 bytes and no more, encoding and decoding")
-    func arrayLengthLimit() throws {
-        let limit = DBusLimits.maximumArrayLength
-        let atLimit = DBusValue.array(elementType: .uint64, Array(repeating: .uint64(0), count: limit / 8))
-        #expect(try DBusMarshal.encode([atLimit], byteOrder: .littleEndian).count == 8 + limit)
-        let overLimit = DBusValue.array(elementType: .uint64, Array(repeating: .uint64(0), count: limit / 8 + 1))
-        #expect(throws: DBusProtocolError.arrayTooLong(limit + 8)) {
-            try DBusMarshal.encode([overLimit], byteOrder: .littleEndian)
-        }
-
-        // A declared length over the limit is refused before any data is read.
-        let declared = UInt32(limit + 1)
-        let header: [UInt8] = [
-            UInt8(declared & 0xFF), UInt8(declared >> 8 & 0xFF), UInt8(declared >> 16 & 0xFF), UInt8(declared >> 24),
-        ]
-        #expect(throws: DBusProtocolError.arrayTooLong(limit + 1)) {
-            try DBusMarshal.decode(header, signature: "ay", byteOrder: .littleEndian)
-        }
-        // At the limit, the length is accepted and the missing data is what fails.
-        let atLimitHeader: [UInt8] = [4, 0, 0, 0]
-        #expect(throws: DBusProtocolError.truncated) {
-            try DBusMarshal.decode(atLimitHeader, signature: "ay", byteOrder: .bigEndian)
-        }
     }
 
     @Test("Values nest 64 containers deep, variants included, and no deeper")

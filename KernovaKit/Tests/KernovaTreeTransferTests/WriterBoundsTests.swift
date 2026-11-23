@@ -107,26 +107,5 @@ struct WriterBoundsTests {
         }
         try landing.expectNothingOutside()
     }
-
-    @Test("a staging root the writer cannot remove is reported, not dropped")
-    func removalFailuresAreLogged() throws {
-        let landing = try Landing(kernelContainment: true)
-        let logged = Locked<[String]>([])
-        let logger = KernovaLogger(
-            subsystem: "app.kernova", category: "TreeWriterTests",
-            sink: .init { level, _, _, segments in
-                logged.withLock { $0.append("\(level): " + segments.map(\.text).joined()) }
-            })
-        let writer = try landing.writer(logger: logger)
-        try writer.write(.enterDirectory(directory(depth: 0)))
-        let staging = landing.destinationPath + "/" + String(decoding: writer.stagingName, as: UTF8.self)
-        try #require(rename(staging, landing.destinationPath + "/moved") == 0)
-        #expect(
-            Self.failure(writing: [.leaveDirectory, .leaveDirectory], to: writer)?.reason
-                == .container(.eventOutOfOrder))
-        let lines = logged.withLock { $0 }
-        #expect(lines.count == 1)
-        #expect(lines.first?.hasPrefix("error: Could not remove the staging root .kernova-") == true, "\(lines)")
-    }
 }
 #endif

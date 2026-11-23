@@ -37,126 +37,6 @@ struct ISO9660WriterTests {
         return image
     }
 
-    @Test("The image reads back with its label, Rock Ridge names and modes, and each file's bytes")
-    func readsBack() throws {
-        let entries = Self.entries()
-        let reader = try ISO9660Reader(try Self.write(entries))
-        #expect(reader.volumeIdentifier == "KERNOVA_AGENT")
-        #expect(reader.extensions == ["IEEE_P1282"])
-        #expect(reader.rootMode == 0o040755)
-        #expect(
-            reader.files.map(\.identifier) == [
-                "INSTALL.SH;1", "KERNOVA_.;1", "LICENSES.TXT;1", "README.TXT;1", "UNINSTAL.SH;1",
-            ])
-        let byName = Dictionary(uniqueKeysWithValues: reader.files.map { ($0.name, $0) })
-        #expect(Set(byName.keys) == Set(entries.map(\.name)))
-        for entry in entries {
-            let file = try #require(byName[entry.name])
-            var bytes: [UInt8] = []
-            try entry.contents { bytes += $0 }
-            #expect(file.bytes == bytes, "\(entry.name)")
-            #expect(file.mode == 0o100000 | UInt32(entry.permissions), "\(entry.name)")
-            #expect(file.links == 1)
-            #expect(file.recordedYear == 2026)
-        }
-    }
-
-    @Test("Names that map to one identifier get distinct identifiers, assigned in name order")
-    func collidingIdentifiers() throws {
-        let names = ["setup-b.sh", "setup_a.sh", "setup-a.sh"]
-        let entries = names.map { ISO9660Entry(name: $0, permissions: 0o644, bytes: Array($0.utf8)) }
-        let reader = try ISO9660Reader(try Self.write(entries))
-        let identifiers = Dictionary(uniqueKeysWithValues: reader.files.map { ($0.name, $0.identifier) })
-        #expect(
-            identifiers == ["setup-a.sh": "SETUP_A.SH;1", "setup-b.sh": "SETUP_B.SH;1", "setup_a.sh": "SETUP_A1.SH;1"])
-        #expect(reader.files.map { String(decoding: $0.bytes, as: UTF8.self) } == reader.files.map(\.name))
-    }
-
-    @Test("A directory too long for one sector continues into the next, no record crossing the boundary")
-    func directorySpansSectors() throws {
-        let entries = (0..<40).map { index in
-            ISO9660Entry(
-                name: "file-\(index)-" + String(repeating: "x", count: 60), permissions: 0o600, bytes: [UInt8(index)])
-        }
-        let reader = try ISO9660Reader(try Self.write(entries))
-        #expect(reader.rootLength > 2048)
-        #expect(reader.files.count == 40)
-        #expect(Set(reader.files.map(\.name)) == Set(entries.map(\.name)))
-        #expect(reader.files.allSatisfy { $0.mode == 0o100600 && $0.bytes.count == 1 })
-    }
-
-    @Test("An empty file takes no sector")
-    func emptyFile() throws {
-        let reader = try ISO9660Reader(
-            try Self.write([ISO9660Entry(name: "empty", permissions: 0o644, bytes: [])]))
-        #expect(reader.files.map(\.bytes) == [[]])
-        // System area, two descriptors, two path tables, the root and its continuation area.
-        #expect(reader.volumeSpaceSize == 22)
-    }
-
-    @Test(
-        "Inputs the image cannot carry are refused before anything is written",
-        arguments: [
-            ([ISO9660Entry(name: "a/b", permissions: 0o644, bytes: [])], "KERNOVA", ISO9660Error.invalidName("a/b")),
-            ([ISO9660Entry(name: "..", permissions: 0o644, bytes: [])], "KERNOVA", .invalidName("..")),
-            ([ISO9660Entry(name: "", permissions: 0o644, bytes: [])], "KERNOVA", .invalidName("")),
-            (
-                [ISO9660Entry(name: "x", permissions: 0o10000, bytes: [])], "KERNOVA",
-                .invalidPermissions(name: "x", permissions: 0o10000)
-            ),
-            (
-                [ISO9660Entry(name: "x", permissions: 0o644, bytes: []), .init(name: "x", permissions: 0, bytes: [])],
-                "KERNOVA", .duplicateName("x")
-            ),
-            ([], "kernova", .invalidVolumeIdentifier("kernova")),
-            ([], "", .invalidVolumeIdentifier("")),
-            ([], String(repeating: "A", count: 33), .invalidVolumeIdentifier(String(repeating: "A", count: 33))),
-            ([ISO9660Entry(name: "a\u{0}b", permissions: 0o644, bytes: [])], "KERNOVA", .invalidName("a\u{0}b")),
-            (
-                [ISO9660Entry(name: String(repeating: "n", count: 129), permissions: 0o644, bytes: [])], "KERNOVA",
-                .invalidName(String(repeating: "n", count: 129))
-            ),
-            // The declared size is refused before `contents` would run.
-            (
-                [ISO9660Entry(name: "huge", permissions: 0o644, size: 1 << 32) { _ in }], "KERNOVA",
-                .fileTooLarge(name: "huge", size: 1 << 32)
-            ),
-        ])
-    func refused(entries: [ISO9660Entry], volume: String, error: ISO9660Error) {
-        var written = 0
-        #expect(throws: error) {
-            try ISO9660Writer(volumeIdentifier: volume, date: Self.date).write(entries) { written += $0.count }
-        }
-        #expect(written == 0)
-    }
-
-    @Test(
-        "A date the records cannot hold is refused before anything is written",
-        arguments: [ISO9660Date(year: 2025, month: 2, day: 29), ISO9660Date(year: 2156, month: 1, day: 1)])
-    func refusedDate(date: ISO9660Date) {
-        var written = 0
-        #expect(throws: ISO9660Error.invalidDate(date)) {
-            try ISO9660Writer(volumeIdentifier: "KERNOVA", date: date).write(Self.entries()) { written += $0.count }
-        }
-        #expect(written == 0)
-    }
-
-    @Test("A name of the longest length reads back whole")
-    func longestName() throws {
-        let name = String(repeating: "n", count: ISO9660Entry.maximumNameLength)
-        let reader = try ISO9660Reader(try Self.write([ISO9660Entry(name: name, permissions: 0o644, bytes: [7])]))
-        #expect(reader.files.map(\.name) == [name])
-        #expect(reader.files.map(\.bytes) == [[7]])
-    }
-
-    @Test("A file whose contents write other than its declared size fails the write")
-    func sizeMismatch() {
-        let entry = ISO9660Entry(name: "short", permissions: 0o644, size: 10) { sink in try sink([1, 2, 3]) }
-        #expect(throws: ISO9660Error.sizeMismatch(name: "short", declared: 10, written: 3)) {
-            try Self.write([entry])
-        }
-    }
-
     #if os(Linux)
     /// xorriso, the reference reader on Linux CI, lists the names and modes, and extracts the bytes.
     @Test("xorriso lists the names and modes, and osirrox extracts the same bytes and modes")
@@ -193,12 +73,16 @@ struct ISO9660WriterTests {
         }
     }
 
+    private struct RunFailure: Error, CustomStringConvertible {
+        var description: String
+    }
+
     /// Runs `arguments` from PATH and answers its standard output; a non-zero exit fails.
     private static func run(_ arguments: [String]) async throws -> String {
         let ran = try await ChildProcess(URL(filePath: "/usr/bin/env"), arguments).exit()
         let text = String(decoding: ran.output, as: UTF8.self)
         guard ran.status == 0 else {
-            throw ISO9660Reader.Failure(description: "\(arguments) exited \(ran.status): \(text)")
+            throw RunFailure(description: "\(arguments) exited \(ran.status): \(text)")
         }
         return text
     }

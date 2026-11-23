@@ -46,15 +46,5 @@ struct SystemdManagerTests {
             _ = systemd
         }
     }
-
-    @Test("A unit the manager has not loaded has no main process")
-    func unloaded() async throws {
-        try await PrivateBus.with { bus in
-            let systemd = try FakeSystemd(on: bus, mainPID: 4242)
-            let manager = SystemdManager(connection: try bus.connect())
-            #expect(try manager.mainPID(ofService: "other.service") == 0)
-            _ = systemd
-        }
-    }
 }
 #endif

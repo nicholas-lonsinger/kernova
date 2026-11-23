@@ -142,11 +142,6 @@ final class FarPeer: Sendable {
         }
     }
 
-    /// What the host's Hello advertised for `feature`; nil before the Hello.
-    func hostAdvert(_ feature: FeatureID) -> Availability<Data>? {
-        endpoint.withLock { $0.connection.remoteHello?.adverts.first { $0.feature == feature }?.advert.availability }
-    }
-
     private static func answer(_ endpoint: inout PeerEndpoint, _ now: CoreInstant) {
         while let effect = endpoint.pollEffect() {
             switch effect {

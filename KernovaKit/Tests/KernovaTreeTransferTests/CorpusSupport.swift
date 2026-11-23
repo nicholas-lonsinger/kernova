@@ -79,17 +79,6 @@ func decmpfsAttribute(type: UInt32, logicalSize: UInt64, payload: Data = Data())
     return attribute + payload
 }
 
-/// A file landing compressed: decmpfs storage of `type` and `logicalSize`, with a resource fork.
-func compressedFile(
-    _ name: String, depth: UInt32, type: UInt32, logicalSize: UInt64, resourceForkSize: UInt64,
-    payload: Data = Data()
-) -> EntryHeader {
-    var header = file(name, depth: depth, size: 0)
-    header.decmpfs.attribute = decmpfsAttribute(type: type, logicalSize: logicalSize, payload: payload)
-    header.resourceForkSize = resourceForkSize
-    return header
-}
-
 /// A file larger than a folder batch takes, so it is written as it arrives.
 let largeFileSize = FolderBatch.largestFile + 1
 

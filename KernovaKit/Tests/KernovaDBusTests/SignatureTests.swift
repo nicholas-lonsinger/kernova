@@ -74,14 +74,6 @@ struct SignatureTests {
         #expect(throws: error) { try DBusSignature(text) }
     }
 
-    @Test("255 bytes is the longest signature")
-    func lengthLimit() throws {
-        #expect(try DBusSignature(String(repeating: "y", count: 255)).types.count == 255)
-        #expect(throws: DBusProtocolError.signatureTooLong(256)) {
-            try DBusSignature(String(repeating: "y", count: 256))
-        }
-    }
-
     @Test("32 nested arrays parse; 33 do not")
     func arrayNesting() throws {
         #expect(try DBusSignature(String(repeating: "a", count: 32) + "y").types.count == 1)

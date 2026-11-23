@@ -26,9 +26,6 @@ final class Recorder<Element: Sendable>: Sendable {
     /// A cursor from the first value.
     func waiter() -> Waiter { Waiter(recorder: self, index: 0) }
 
-    /// A cursor from the next value recorded.
-    func waiterFromNow() -> Waiter { Waiter(recorder: self, index: elements.count) }
-
     /// The value at `index`, once it is recorded before `backstop`'s deadline.
     fileprivate func element(at index: Int, within backstop: Backstop) async throws -> Element {
         while true {

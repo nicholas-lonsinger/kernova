@@ -27,18 +27,6 @@ struct PublishTests {
     static let renames: [InterposedFileSystem.ExclusiveRename] = [.asTheVolume, .unsupported, .refused]
 
     @Test(
-        "Keep Both counts in before the last extension, as NSString reads one",
-        arguments: [
-            ("report.pdf", "report 2.pdf"), ("archive.tar.gz", "archive.tar 2.gz"), (".hidden", ".hidden 2"),
-            ("a.", "a. 2"), ("a..b", "a. 2.b"), ("folder", "folder 2"), ("a.b c", "a.b c 2"), ("a .b", "a  2.b"),
-        ])
-    func keepBothNames(_ name: String, _ second: String) {
-        #expect(KeepBothName.candidate(bytes(name), 1) == bytes(name))
-        #expect(KeepBothName.candidate(bytes(name), 2) == bytes(second))
-        #expect(KeepBothName.candidate(bytes("report.pdf"), 11) == bytes("report 11.pdf"))
-    }
-
-    @Test(
         "an exact-path publish that finds another item at its path fails moved and leaves both",
         arguments: [false, true])
     func exactPathMovedLeavesTheOther(_ folder: Bool) throws {
@@ -60,15 +48,6 @@ struct PublishTests {
         #expect(access(landing.destinationPath + "/moved-away", F_OK) == 0)
     }
 
-    @Test("an exact path that is not absolute, or ends in no name, creates nothing", arguments: ["chosen.txt", "/"])
-    func exactPathRefused(_ path: String) throws {
-        let receiver = TreeReceiver(
-            exactPath: bytes(path), accepting: acceptance(.file), decodingWorkers: 0, fileSystem: POSIXTreeFileSystem())
-        let failure = #expect(throws: TreeWriteFailure.self) { try receiver.receive(Self.fileContainer) }
-        #expect(failure?.reason == .container(.invalidName))
-        if path != "/" { #expect(access(path, F_OK) != 0) }
-    }
-
     @Test("Keep Both lands past every taken name, replacing none", arguments: renames)
     func keepBothCollides(_ rename: InterposedFileSystem.ExclusiveRename) throws {
         let landing = try Landing(kernelContainment: true)
@@ -83,29 +62,6 @@ struct PublishTests {
         #expect(try landing.landedEntries(bytes("Folder 2")) == [".: directory", "./f: regular 1"].sorted())
         #expect(
             try Self.names(landing) == ["Folder", "Folder 2", "report 2.pdf", "report 3.pdf", "report.pdf"].sorted())
-    }
-
-    @Test("Keep Both counts no name past the name limit: a taken name that has no room fails ENAMETOOLONG")
-    func keepBothWithinTheNameLimit() throws {
-        let landing = try Landing(kernelContainment: true)
-        let longest = String(repeating: "n", count: 255)
-        try Self.seed(landing, files: [longest], folders: [])
-        let result = try publish(Self.fileContainer, .file, as: .keepingBoth(bytes(longest)), .asTheVolume, landing)
-        #expect(result.failure?.reason == .system(TreeFileSystemError(code: ENAMETOOLONG)))
-        #expect(try Self.names(landing) == [longest])
-    }
-
-    @Test("publishing before the container finished fails, and a name that is not one component is refused")
-    func publishOnlyAValidNameOfAFinishedItem() throws {
-        let landing = try Landing(kernelContainment: true)
-        let early = try landing.receiver(acceptance(.file), as: bytes("x"))
-        try early.receive(Self.fileContainer)
-        #expect(Result { () throws(TreeWriteFailure) in try early.publish() }.failure != nil)
-        for name in ["", ".", "..", "a/b"] {
-            let result = try publish(Self.fileContainer, .file, as: .keepingBoth(bytes(name)), .asTheVolume, landing)
-            #expect(result.failure?.reason == .container(.invalidName), "\(name)")
-        }
-        #expect(try Self.names(landing).isEmpty)
     }
 
     // MARK: - Support

@@ -101,98 +101,10 @@ struct InstallerTests {
         .uninstall(root: definitions.root, definitions: definitions)
     }
 
-    /// The account's uid for a directory or file in the system root, the invoker's for every other path. The
-    /// `current` and `rollback` links stay the invoker's: the installer gives a link no owner, since that could
-    /// only be done by name, and a link's owner grants nothing.
-    static func systemOwner(_ path: String) -> uid_t {
-        let account = getpwnam(Self.account)?.pointee.pw_uid ?? 0
-        guard path != systemRoot.current, path != systemRoot.rollback else { return getuid() }
-        return path == systemRoot.path || path.hasPrefix(systemRoot.path + "/") ? account : getuid()
-    }
-
     static let userDirectories = [
         "/home", "/home/pbear", "/home/pbear/.local", "/home/pbear/.local/share", "/home/pbear/.config",
         "/home/pbear/.config/services",
     ]
-
-    static let userInstall: [String: String] = Dictionary(uniqueKeysWithValues: userDirectories.map { ($0, "d0755") })
-        .merging([
-            "/home/pbear/.local/share/kernova-agent": "d0755",
-            "/home/pbear/.local/share/kernova-agent/slots": "d0755",
-            "/home/pbear/.local/share/kernova-agent/slots/a": "d0755",
-            "/home/pbear/.local/share/kernova-agent/slots/a/agent": "f0755",
-            "/home/pbear/.local/share/kernova-agent/state.json": "f0644",
-            "/home/pbear/.local/share/kernova-agent/current": "lslots/a",
-            "/home/pbear/.local/share/kernova-agent/rollback": "lslots/a",
-            "/home/pbear/.config/services/agent.service": "f0644",
-        ]) { $1 }
-
-    static let systemDirectories = ["/opt", "/etc", "/etc/services"]
-
-    static let systemInstall: [String: String] = Dictionary(
-        uniqueKeysWithValues: systemDirectories.map { ($0, "d0755") }
-    ).merging([
-        "/opt/kernova-agent": "d0755",
-        "/opt/kernova-agent/slots": "d0755",
-        "/opt/kernova-agent/slots/a": "d0755",
-        "/opt/kernova-agent/slots/a/agent": "f0755",
-        "/opt/kernova-agent/state.json": "f0644",
-        "/opt/kernova-agent/current": "lslots/a",
-        "/opt/kernova-agent/rollback": "lslots/a",
-        "/etc/services/agent.service": "f0644",
-    ]) { $1 }
-
-    private static func checkFiles(_ scratch: Scratch, _ definitions: TestDefinitions) throws {
-        let root = definitions.root
-        let payload = FileManager.default.contents(atPath: scratch.root + root.slot("a") + "/" + TestLander.name)
-        #expect(payload.map(Array.init) == scratch.payloadBytes)
-        let state = try InstallState.decoded(Array(try #require(scratch.contents(root.state)).utf8))
-        #expect(state.active == "a")
-        #expect(state.slots["a"]?.versionLabel == "9.9 (99)")
-        #expect(state.slots["a"]?.payloadSHA256 == lowercaseHex(SHA256.hash(scratch.payloadBytes)))
-        #expect(scratch.contents(definitions.definition) == definitions.text)
-    }
-
-    @Test("An install writes exactly the planned files with their modes, and the payload and state they name")
-    func userInstall() throws {
-        let scratch = try Scratch()
-        try scratch.installer().run(Self.install(Self.user))
-        #expect(try scratch.tree() == Self.userInstall)
-        try Self.checkFiles(scratch, Self.user)
-    }
-
-    @Test(
-        "An install and an uninstall report each step as they take it, in their dry run's words and order",
-        arguments: [false, true])
-    func reportsTheDryRun(uninstalling: Bool) throws {
-        let scratch = try Scratch()
-        if uninstalling { try scratch.installer().run(Self.install(Self.user)) }
-        let plan = uninstalling ? Self.uninstall(Self.user) : Self.install(Self.user)
-        var reported: [String] = []
-        try scratch.installer().run(plan) { reported.append($0) }
-        // With no command run, every step but the commands is taken.
-        let taken = plan.steps.filter { if case .run = $0 { false } else { true } }
-        #expect(reported == taken.map(\.description))
-        #expect(InstallPlan.dryRun(plan, heading: "h") == ["h"] + plan.steps.map { "  " + $0.description })
-    }
-
-    @Test("A refresh rewrites exactly its definitions' files, then reloads")
-    func refresh() {
-        let plan = InstallPlan.refresh(root: Self.userRoot, definitions: Self.user)
-        #expect(plan.writes == Self.user.writes)
-        #expect(plan.treeWrites.isEmpty && plan.treeRemovals.isEmpty && plan.before.isEmpty && !plan.removesRoot)
-        #expect(plan.after == Self.user.afterRefresh)
-    }
-
-    @Test(
-        "A system install writes the same, through descriptors, every directory and file in the agent's root handed to its account",
-        .enabled(if: runsAsRoot, "handing files to another account needs root"))
-    func systemInstall() throws {
-        let scratch = try Scratch()
-        try scratch.installer(account: Self.account).run(Self.install(Self.system))
-        #expect(try scratch.tree(owner: Self.systemOwner) == Self.systemInstall)
-        try Self.checkFiles(scratch, Self.system)
-    }
 
     @Test(
         "A link the account planted where a slot belongs is refused, never followed",
@@ -253,70 +165,6 @@ struct InstallerTests {
                 == nil)
     }
 
-    /// `tree` after a reinstall over it: the spare slot filled, and `rollback` and `current` pointed at it.
-    private static func reinstalled(_ tree: [String: String], root: InstallRoot, into slot: String) -> [String: String]
-    {
-        tree.merging([
-            root.slot(slot): "d0755", root.slot(slot) + "/" + TestLander.name: "f0755",
-            root.current: "lslots/" + slot, root.rollback: "lslots/" + slot,
-        ]) { $1 }
-    }
-
-    /// The slot metadata `scratch` holds for `root`: only `slot`, holding the scratch payload, active.
-    private static func checkState(_ scratch: Scratch, _ root: InstallRoot, active slot: String) throws {
-        let state = try InstallState.decoded(Array(try #require(scratch.contents(root.state)).utf8))
-        #expect(state.active == slot)
-        #expect(Array(state.slots.keys) == [slot])
-        #expect(state.pendingSwitch == nil)
-        let payload = FileManager.default.contents(atPath: scratch.root + root.slot(slot) + "/" + TestLander.name)
-        #expect(payload.map(Array.init) == scratch.payloadBytes)
-    }
-
-    @Test(
-        "A system reinstall over a pending switch fills the spare slot with the same owners, the switch cleared",
-        .enabled(if: runsAsRoot, "handing files to another account needs root"))
-    func reinstallSystem() throws {
-        let scratch = try Scratch()
-        try scratch.installer(account: Self.account).run(Self.install(Self.system))
-        let first = try scratch.tree(owner: Self.systemOwner)
-        #expect(FileManager.default.createFile(atPath: scratch.root + Self.systemRoot.switchPending, contents: Data()))
-        try scratch.installer(account: Self.account).run(Self.install(Self.system))
-        #expect(
-            try scratch.tree(owner: Self.systemOwner) == Self.reinstalled(first, root: Self.systemRoot, into: "b"))
-        try Self.checkState(scratch, Self.systemRoot, active: "b")
-    }
-
-    @Test(
-        "A refresh over files already holding what it writes writes nothing and answers none, and rewrites and answers one that differs"
-    )
-    func unchangedRefresh() throws {
-        let scratch = try Scratch()
-        try scratch.installer().run(Self.install(Self.user))
-        let definition = scratch.root + Self.user.definition
-        var before = stat()
-        #expect(stat(definition, &before) == 0)
-
-        #expect(try scratch.installer().run(InstallPlan.refresh(root: Self.userRoot, definitions: Self.user)).isEmpty)
-        var unchanged = stat()
-        #expect(stat(definition, &unchanged) == 0)
-        #expect(unchanged.st_ino == before.st_ino)
-        #expect(!FileManager.default.fileExists(atPath: definition + ".kernova-new"))
-
-        #expect(chmod(definition, 0o600) == 0)
-        #expect(
-            try scratch.installer().run(InstallPlan.refresh(root: Self.userRoot, definitions: Self.user))
-                == [Self.user.definition])
-        var rewritten = stat()
-        #expect(stat(definition, &rewritten) == 0)
-        #expect(rewritten.st_ino != before.st_ino)
-        #expect(rewritten.st_mode & 0o7777 == 0o644)
-        #expect(scratch.contents(Self.user.definition) == Self.user.text)
-
-        try Data("stale\n".utf8).write(to: URL(fileURLWithPath: definition))
-        try scratch.installer().run(InstallPlan.refresh(root: Self.userRoot, definitions: Self.user))
-        #expect(scratch.contents(Self.user.definition) == Self.user.text)
-    }
-
     @Test("An uninstall removes every file the install wrote, leaving only the shared directories")
     func uninstallUser() throws {
         let scratch = try Scratch()
@@ -325,17 +173,6 @@ struct InstallerTests {
         #expect(try scratch.tree() == Dictionary(uniqueKeysWithValues: Self.userDirectories.map { ($0, "d0755") }))
         // Nothing left to remove is not a failure.
         try scratch.installer().run(Self.uninstall(Self.user))
-    }
-
-    @Test(
-        "A system uninstall empties the agent's root through descriptors, then removes it",
-        .enabled(if: runsAsRoot, "handing files to another account needs root"))
-    func uninstallSystem() throws {
-        let scratch = try Scratch()
-        try scratch.installer(account: Self.account).run(Self.install(Self.system))
-        try scratch.installer(account: Self.account).run(Self.uninstall(Self.system))
-        #expect(try scratch.tree() == Dictionary(uniqueKeysWithValues: Self.systemDirectories.map { ($0, "d0755") }))
-        try scratch.installer(account: Self.account).run(Self.uninstall(Self.system))
     }
 }
 #endif

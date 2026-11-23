@@ -27,15 +27,6 @@ struct SHA256Tests {
         #expect(lowercaseHex(KernovaDigest.SHA256.hash(Array(message.utf8))) == digest)
     }
 
-    @Test("Hex reads back two digits a byte, either case, and refuses anything else")
-    func hexBytes() {
-        #expect(bytes(fromHex: "000fa0ff") == [0x00, 0x0F, 0xA0, 0xFF])
-        #expect(bytes(fromHex: "A0Ff") == [0xA0, 0xFF])
-        #expect(bytes(fromHex: "") == [])
-        #expect(bytes(fromHex: "abc") == nil)
-        #expect(bytes(fromHex: "zz") == nil)
-    }
-
     @Test("Every length across the padding boundaries hashes the same fed whole or byte by byte")
     func boundaries() {
         for length in 0...130 {

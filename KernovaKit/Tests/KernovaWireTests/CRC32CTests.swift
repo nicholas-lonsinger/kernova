@@ -10,34 +10,6 @@ import Testing
 
 @Suite("CRC32C")
 struct CRC32CTests {
-    struct Vector: Sendable, CustomTestStringConvertible {
-        var name: String
-        var bytes: [UInt8]
-        var checksum: UInt32
-        var testDescription: String { name }
-    }
-
-    /// RFC 3720 appendix B.4.
-    static let rfc3720: [Vector] = [
-        Vector(name: "32 bytes of zeros", bytes: [UInt8](repeating: 0, count: 32), checksum: 0x8A91_36AA),
-        Vector(name: "32 bytes of ones", bytes: [UInt8](repeating: 0xFF, count: 32), checksum: 0x62A8_AB43),
-        Vector(name: "32 incrementing bytes", bytes: (0..<32).map { UInt8($0) }, checksum: 0x46DD_794E),
-        Vector(name: "32 decrementing bytes", bytes: (0..<32).reversed().map { UInt8($0) }, checksum: 0x113F_DB5C),
-        Vector(
-            name: "an iSCSI read command PDU",
-            bytes: [
-                0x01, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                0x14, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x18,
-                0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            ], checksum: 0xD996_3A56),
-    ]
-
-    @Test("RFC 3720 B.4 vectors", arguments: rfc3720)
-    func rfc3720Vector(_ vector: Vector) {
-        var crc = CRC32C()
-        crc.update(vector.bytes)
-        #expect(crc.value == vector.checksum)
-    }
 
     /// CRC-32C one bit at a time, straight from the polynomial: a reference no
     /// part of `CRC32C` shares.

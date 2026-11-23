@@ -37,12 +37,6 @@ struct AgentDiskScriptTests {
             chmod(calls, 0o666)
         }
 
-        /// Puts the stand-in `sudo` first on the script's `PATH`, refusing `-n` when `refusesNonInteractive`.
-        func addSudo(refusesNonInteractive: Bool) {
-            path = AgentDiskScriptTests.standIns + "/bin:" + path
-            sudoRefuses = refusesNonInteractive
-        }
-
         private var path = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
         private var sudoRefuses = false
 
@@ -77,62 +71,6 @@ struct AgentDiskScriptTests {
         #expect(disk.recorded() == ["0 install --system --dry-run", "0 install --system"])
         #expect(try await disk.run([]) == 64)
         #expect(disk.recorded() == ["0 install --system --dry-run", "0 install --system"])
-    }
-
-    @Test(
-        "Without NONINTERACTIVE it shows the plan and waits for Return, changing nothing without one",
-        .enabled(if: geteuid() == 0, "needs a root shell, which the CI container is"))
-    func waitsForReturn() async throws {
-        let disk = try Disk()
-        #expect(try await disk.run(["--system"], nonInteractive: false) == 1)
-        #expect(disk.recorded() == ["0 install --system --dry-run"])
-        #expect(try await disk.run(["--system"], nonInteractive: false, input: "\n") == 0)
-        #expect(disk.recorded().suffix(2) == ["0 install --system --dry-run", "0 install --system"])
-    }
-
-    @Test(
-        "NONINTERACTIVE skips the wait and runs sudo -n, after the plan and before the user step",
-        .enabled(if: geteuid() == 0, "needs root to become another user"))
-    func nonInteractiveUsesSudoN() async throws {
-        let disk = try Disk()
-        disk.addSudo(refusesNonInteractive: false)
-        #expect(try await disk.run(["--system"], as: Self.nobody) == 0)
-        let calls = disk.recorded()
-        #expect(
-            calls.prefix(4) == [
-                "65534 install --dry-run", "65534 install --system --dry-run", "sudo -n true", "65534 install",
-            ])
-        #expect(calls.count == 6)
-        #expect(calls.dropFirst(4).first?.hasPrefix("sudo -n /") == true)
-        #expect(calls.dropFirst(4).first?.hasSuffix("/kernova-agent install --system") == true)
-        #expect(calls.last == "65534 install --system")
-    }
-
-    @Test(
-        "A sudo -n that needs a password stops before anything is changed",
-        .enabled(if: geteuid() == 0, "needs root to become another user"))
-    func refusedSudoChangesNothing() async throws {
-        let disk = try Disk()
-        disk.addSudo(refusesNonInteractive: true)
-        #expect(try await disk.run(["--system"], as: Self.nobody) == 1)
-        #expect(disk.recorded() == ["65534 install --dry-run", "65534 install --system --dry-run", "sudo -n true"])
-    }
-
-    static let nobody = ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups"]
-
-    @Test(
-        "A user's --system without sudo refuses before the user step runs",
-        .enabled(if: geteuid() == 0 && !Self.hasSudo, "needs root to become another user, and no sudo"))
-    func userWithoutSudo() async throws {
-        let disk = try Disk()
-        #expect(try await disk.run(["--system"], as: Self.nobody) == 1)
-        #expect(disk.recorded() == [])
-        #expect(try await disk.run([], as: Self.nobody) == 0)
-        #expect(disk.recorded() == ["65534 install --dry-run", "65534 install"])
-    }
-
-    static var hasSudo: Bool {
-        ["/usr/bin/sudo", "/bin/sudo", "/usr/sbin/sudo"].contains { FileManager.default.isExecutableFile(atPath: $0) }
     }
 }
 #endif

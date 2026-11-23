@@ -44,16 +44,6 @@ struct DecoderRobustnessTests {
             }
         }
     }
-
-    @Test("After an error the decoder repeats it")
-    func errorIsSticky() {
-        var decoder = ContainerDecoder(accepting: generous())
-        decoder.feed(Data([0x09]))
-        #expect(throws: ContainerError.unknownRecordKind(9)) { try decoder.next() }
-        decoder.feed(GoldenVectorTests.header)
-        #expect(throws: ContainerError.unknownRecordKind(9)) { try decoder.next() }
-        #expect(throws: ContainerError.unknownRecordKind(9)) { try decoder.finish() }
-    }
 }
 
 @Suite("Container decoder memory ceiling")

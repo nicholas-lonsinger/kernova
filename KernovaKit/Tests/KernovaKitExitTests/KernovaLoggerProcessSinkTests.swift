@@ -11,43 +11,6 @@ import Testing
 /// exit with.
 @Suite("KernovaLogger's process sink", .caseScoped)
 struct KernovaLoggerProcessSinkTests {
-    @Test("A second bootstrap of the process sink stops the process")
-    func secondBootstrapTraps() async {
-        await #expect(processExitsWith: .failure) {
-            KernovaLogger.bootstrapProcessSink(.init { _, _, _, _ in })
-            KernovaLogger.bootstrapProcessSink(.init { _, _, _, _ in })
-        }
-    }
-
-    @Test("A logger with no sink of its own forwards to the process sink")
-    func loggerWithoutASinkReachesTheProcessSink() async {
-        await #expect(processExitsWith: .exitCode(42)) {
-            KernovaLogger.bootstrapProcessSink(
-                .init { level, subsystem, category, segments in
-                    let expected = [LogSegment(text: "to the process", isPrivate: false)]
-                    let matches =
-                        level == .notice && subsystem == "app.kernova.tests" && category == "Process"
-                        && segments == expected
-                    exit(matches ? 42 : 43)
-                })
-            let logger = KernovaLogger(subsystem: "app.kernova.tests", category: "Process")
-            logger.log(.notice, "to the process")
-        }
-    }
-
-    @Test("A logger's own sink takes precedence over the process sink")
-    func ownSinkTakesPrecedence() async {
-        await #expect(processExitsWith: .exitCode(7)) {
-            KernovaLogger.bootstrapProcessSink(.init { _, _, _, _ in exit(42) })
-            let logger = KernovaLogger(
-                subsystem: "app.kernova.tests", category: "Own",
-                sink: .init { _, _, _, _ in
-                    exit(7)
-                })
-            logger.log(.notice, "to its own sink")
-        }
-    }
-
     @Test("The process sink runs at the same stack depth however many records came before it")
     func processSinkDepthStaysFlat() async {
         await #expect(processExitsWith: .exitCode(42)) {

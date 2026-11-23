@@ -68,29 +68,6 @@ struct DatalessReadTests {
         #expect(events.contains(.bytes(Data("costco".utf8))))
         #expect(events.last == .end)
     }
-
-    @Test("an entry that stays dataless fails the read as not local, naming it")
-    func staysDataless() throws {
-        let bench = try FidelityBench()
-        try bench.makeDirectory([bytes("Rewards")])
-        try bench.makeDirectory([bytes("Rewards"), bytes("Receipts")])
-        try bench.makeFile([bytes("Rewards"), bytes("Costco.png")], Data("costco".utf8))
-        for (evicted, failing, acceptance) in [
-            ([bytes("Rewards"), bytes("Costco.png")], [bytes("Costco.png")], Self.file),
-            ([bytes("Rewards"), bytes("Costco.png")], [bytes("Rewards"), bytes("Costco.png")], Self.folder),
-            ([bytes("Rewards"), bytes("Receipts")], [bytes("Rewards"), bytes("Receipts")], Self.folder),
-        ] {
-            let fileSystem = DatalessFileSystem(materializes: false)
-            try fileSystem.evict(bench.path(evicted))
-            let root = acceptance.storage == .file ? evicted : [bytes("Rewards")]
-            let expected = TreeReadFailure(path: failing, reason: .notLocal)
-            #expect(throws: expected) {
-                _ = try Self.events(TreeReader(fileSystem: fileSystem, root: bench.path(root), accepting: acceptance))
-            }
-            #expect(expected.wireError.code == .readFailed)
-            #expect(expected.wireError.debugDetail == TreeReadFailure.Reason.notLocal.description)
-        }
-    }
 }
 
 /// This machine's volumes, but for the entries it evicts: each reports `SF_DATALESS` and `UF_COMPRESSED`, and

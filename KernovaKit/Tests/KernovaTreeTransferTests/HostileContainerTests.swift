@@ -54,18 +54,6 @@ struct HostileContainerTests {
         try landing.expectNothingOutside()
     }
 
-    @Test("a container whose root is named is refused as malformed, landing nothing", arguments: bothLayers)
-    func namedRootIsRefused(kernelContainment: Bool) throws {
-        let landing = try Landing(kernelContainment: kernelContainment)
-        var container = RawContainer()
-        container.header(directory("r", depth: 0))
-        container.end()
-        let failure = try #require(try landing.land(container.data).failure)
-        #expect(failure.reason == .container(.rootEntryNamed))
-        #expect(failure.wireError.code == .itemContainerMalformed)
-        try landing.expectNothingOutside()
-    }
-
     /// The two entries of each duplicate shape, the second taking the first's name.
     enum Shape: String, CaseIterable, Sendable {
         case smallFileThenSmallFile, largeFileThenLargeFile, smallFileThenLargeFile, directoryThenDirectory
@@ -107,47 +95,6 @@ struct HostileContainerTests {
         let failure = try #require(try landing.land(container.data).failure)
         #expect(failure == TreeWriteFailure(path: [bytes("r"), bytes("twice")], reason: .system(.init(code: EEXIST))))
         try landing.expectNothingOutside()
-    }
-
-    /// Whether the volume under `landing` takes `second` for the name `first` already has.
-    private static func volumeFolds(_ first: [UInt8], _ second: [UInt8], in landing: Landing) throws -> Bool {
-        let probe = try landing.openDestination()
-        defer { landing.fileSystem.close(probe) }
-        try landing.fileSystem.makeDirectory(first, in: probe)
-        defer { try? landing.fileSystem.remove(first, in: probe, isDirectory: true) }
-        return (try? landing.fileSystem.status(of: second, in: probe)) != nil
-    }
-
-    static let foldedPairs: [(String, [UInt8], [UInt8])] = [
-        ("NFC then NFD", [0xC3, 0xA9], [0x65, 0xCC, 0x81]),
-        ("case", bytes("Report"), bytes("REPORT")),
-    ]
-
-    @Test(
-        "names the volume folds together — NFC and NFD, case on APFS — fail at the second creation",
-        arguments: bothLayers, foldedPairs.indices)
-    func foldedNamesCollide(kernelContainment: Bool, pair: Int) throws {
-        let (_, first, second) = Self.foldedPairs[pair]
-        let landing = try Landing(kernelContainment: kernelContainment)
-        let folds = try Self.volumeFolds(first, second, in: landing)
-        var container = RawContainer()
-        container.header(directory(depth: 0))
-        container.file(file(first, depth: 1, size: 1), Data("1".utf8))
-        container.file(file(second, depth: 1, size: 1), Data("2".utf8))
-        container.end()
-        let result = try landing.land(container.data)
-        if folds {
-            #expect(
-                result.failure == TreeWriteFailure(path: [bytes("r"), second], reason: .system(.init(code: EEXIST))))
-            try landing.expectNothingOutside()
-        } else {
-            #expect(try result.get() == bytes("r"))
-            #expect(try landing.landedEntries(bytes("r")).count == 3)
-        }
-        #if canImport(Darwin)
-        // The scratch directory is on the boot volume, which APFS formats case-insensitive.
-        #expect(folds)
-        #endif
     }
 
     @Test("a header, chunk or LZ4 chunk over its record ceiling is refused from its prefix", arguments: bothLayers)

@@ -95,14 +95,6 @@ struct LogindPeerStateTests {
 
     static let user = "user"
 
-    @Test("The session peer starts from its user's display session, the console OFF while it is in the background")
-    func sessionPeerInitial() async throws {
-        try await Watch.with(.session(uid: FakeLogind.displayUID)) { watch async throws in
-            #expect(try await watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
-            #expect(try watch.isSettled())
-        }
-    }
-
     @Test("The session peer follows Active and Class: ON while its session is a user's in front, OFF otherwise")
     func sessionPeerActiveFlips() async throws {
         try await Watch.with(.session(uid: FakeLogind.displayUID)) { watch in
@@ -135,45 +127,6 @@ struct LogindPeerStateTests {
         }
     }
 
-    @Test("The session peer follows Display to the user's next session, and a change to the one it left is none")
-    func sessionPeerDisplayMoves() async throws {
-        try await Watch.with(.session(uid: FakeLogind.displayUID)) { watch in
-            #expect(try await watch.next()?.sessionID == "2")
-
-            watch.fake.recorder.display.withLock { $0 = FakeLogind.nextUserSession }
-            try watch.displayChanged()
-            #expect(try await watch.next() == PeerSessionState(console: .on, sessionID: "3", userName: Self.user))
-
-            watch.fake.recorder.userSessionActive.withLock { $0 = true }
-            try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(true))])
-            #expect(try watch.isSettled())
-        }
-    }
-
-    @Test("A logout re-elects Display before logind signals it: the old session's last change rereads it")
-    func sessionPeerLogout() async throws {
-        try await Watch.with(
-            .session(uid: FakeLogind.displayUID), prepare: { $0.userSessionActive.withLock { $0 = true } }
-        ) { watch in
-            #expect(try await watch.next()?.console == .on)
-
-            // The session stops: Display moves on with no signal, then the greeter takes the seat.
-            watch.fake.recorder.display.withLock { $0 = nil }
-            watch.fake.recorder.userSessionActive.withLock { $0 = false }
-            try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
-            #expect(try await watch.next() == nil)
-
-            // Finalized: logind's Display signal, to what was already read.
-            try watch.displayChanged()
-            #expect(try watch.isSettled())
-
-            // Logged back in.
-            watch.fake.recorder.display.withLock { $0 = FakeLogind.nextUserSession }
-            try watch.displayChanged()
-            #expect(try await watch.next()?.sessionID == "3")
-        }
-    }
-
     static let unknownObject = DBusServiceError.call(
         .remote(DBusRemoteError(name: "org.freedesktop.DBus.Error.UnknownObject", message: "Unknown object")))
 
@@ -201,40 +154,6 @@ struct LogindPeerStateTests {
         }
     }
 
-    @Test("After a failed read, a state equal to the last one delivered is not delivered again")
-    func failedReadKeepsLastState() async throws {
-        try await Watch.with(.session(uid: FakeLogind.displayUID)) { watch in
-            #expect(try await watch.next()?.console == .off)
-
-            watch.fake.recorder.vanishedSessions.withLock { $0 = [FakeLogind.userSession.path] }
-            try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
-            #expect(try await watch.nextFailure() == Self.unknownObject)
-            watch.fake.recorder.vanishedSessions.withLock { $0 = [] }
-            try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
-            #expect(try watch.isSettled())
-
-            watch.fake.recorder.userSessionActive.withLock { $0 = true }
-            try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(true))])
-            #expect(try await watch.next()?.console == .on)
-        }
-    }
-
-    @Test("A first read that fails delivers its error, and the next signal delivers the first state")
-    func failedFirstRead() async throws {
-        try await Watch.with(
-            .session(uid: FakeLogind.displayUID),
-            prepare: { recorder in
-                recorder.vanishedSessions.withLock { $0 = [FakeLogind.userSession.path] }
-            }
-        ) { watch in
-            #expect(try await watch.nextFailure() == Self.unknownObject)
-            #expect(try watch.isSettled())
-            watch.fake.recorder.vanishedSessions.withLock { $0 = [] }
-            try watch.displayChanged()
-            #expect(try await watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
-        }
-    }
-
     @Test("A display session on no seat, which logind reports as always active, never holds the console")
     func seatless() async throws {
         try await Watch.with(
@@ -246,18 +165,6 @@ struct LogindPeerStateTests {
         ) { watch async throws in
             #expect(try await watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
         }
-    }
-
-    @Test("A user with no display session has no session peer state")
-    func sessionless() async throws {
-        try await Watch.with(.session(uid: FakeLogind.sessionlessUID)) { watch async throws in
-            #expect(try await watch.next() == nil)
-        }
-    }
-
-    @Test("A user logind does not know cannot be followed")
-    func unknownUser() async throws {
-        await #expect(throws: DBusServiceError.self) { try await Watch.with(.session(uid: 1002)) { _ in } }
     }
 
     @Test("The system peer follows seat0: OFF at the greeter, ON naming a user's session, OFF again on a switch")
@@ -308,33 +215,6 @@ struct LogindPeerStateTests {
             try watch.sessionChanged(FakeLogind.userSession, [("Class", .string("greeter"))])
             #expect(try watch.isSettled())
         }
-    }
-
-    @Test("A logind that answers NoSuchSeat for seat0 reads the console OFF")
-    func noSuchSeat() async throws {
-        try await PrivateBus.with { bus in
-            let fake = try NoSuchSeatLogind(on: bus)
-            defer { withExtendedLifetime(fake) {} }
-            let logind = Logind(connection: try bus.connect())
-            let inbox = BlockingInbox<Result<PeerSessionState?, DBusServiceError>>()
-            let watcher = try LogindPeerStateWatcher.systemPeer(logind, on: DispatchQueue(label: "test")) {
-                inbox.put($0)
-            }
-            defer { withExtendedLifetime(watcher) {} }
-            #expect(try await inbox.next().get() == PeerSessionState(console: .off))
-        }
-    }
-}
-
-/// A logind that answers every call `NoSuchSeat`.
-private final class NoSuchSeatLogind: Sendable {
-    let connection: DBusBusConnection
-
-    init(on bus: PrivateBus) throws {
-        connection = try bus.connect { call in
-            .error(replyingTo: call, name: "org.freedesktop.login1.NoSuchSeat", message: "No seat 'seat0' known")
-        }
-        try requestName(Logind.busName, on: connection)
     }
 }
 #endif

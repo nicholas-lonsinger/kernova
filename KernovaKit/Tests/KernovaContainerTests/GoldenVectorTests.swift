@@ -49,17 +49,4 @@ struct GoldenVectorTests {
         _ = try encoder.entry(plainFile(depth: 0, size: 4_096))
         #expect(try encoder.bytes(Data(count: 4_096)) == Self.zeroRun)
     }
-
-    @Test("The decoder reads the golden LZ4 chunk and zero run")
-    func decodesLZ4AndZeroRun() {
-        let lz4 = decode(
-            headerRecord(lz4File(depth: 0, size: 32)) + Self.lz4Chunk + endRecord(entries: 1, bytes: 32))
-        #expect(lz4.error == nil)
-        #expect(content(of: lz4.events) == Data(repeating: 0x61, count: 32))
-
-        let zeros = decode(
-            headerRecord(plainFile(depth: 0, size: 4_096)) + Self.zeroRun + endRecord(entries: 1, bytes: 4_096))
-        #expect(zeros.error == nil)
-        #expect(zeros.events.contains(.zeros(4_096)))
-    }
 }

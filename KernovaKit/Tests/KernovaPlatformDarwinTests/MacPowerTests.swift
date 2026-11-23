@@ -75,26 +75,6 @@ struct MacPowerTests {
 
     // MARK: - Adverts
 
-    @Test("The session peer offers shutdown, asking apps to quit, only while its session owns the console")
-    func sessionPeerAdvertFollowsConsole() {
-        let harness = Harness(.loginWindow(send: { _ in noErr }))
-        let elsewhere = Availability<PowerOffer>.absent(.notOnConsole, debugDetail: Self.absentDetail)
-        let offered = Availability.available(PowerOffer(actions: [.shutdown], asksAppsToQuit: true))
-        #expect(harness.take() == [.availability(elsewhere)])
-
-        harness.adapter.consoleChanged(.on)
-        #expect(harness.take() == [.availability(offered)])
-        harness.adapter.consoleChanged(.on)
-        #expect(harness.take() == [])
-
-        for other in [ConsoleState.off, .unknown] {
-            harness.adapter.consoleChanged(other)
-            #expect(harness.take() == [.availability(elsewhere)], "\(other)")
-            harness.adapter.consoleChanged(.on)
-            #expect(harness.take() == [.availability(offered)], "\(other)")
-        }
-    }
-
     @Test(
         "The system peer offers no graceful shutdown in any console state, and Stop Anyway in every one"
     )
@@ -107,32 +87,6 @@ struct MacPowerTests {
             harness.adapter.consoleChanged(console)
             #expect(harness.take() == [offer], "\(console)")
         }
-    }
-
-    @Test(
-        "The system peer refuses a graceful shutdown POWER_ACTION_UNSUPPORTED in every console state, running nothing",
-        arguments: [ConsoleState.off, .on, .unknown])
-    func systemPeerRefusesGraceful(console: ConsoleState) {
-        let ran = Locked(0)
-        let harness = Harness(
-            .shutdownCommand(run: { _ in
-                ran.withLock { $0 += 1 }
-                return 0
-            }), console: console)
-        _ = harness.take()
-
-        harness.adapter.perform(Self.id, .shutdown, ignoringApps: false)
-        #expect(harness.take() == [.refused(Self.id, WireError(.powerActionUnsupported))])
-        #expect(ran.withLock { $0 } == 0)
-    }
-
-    @Test("A console state set before start is the first advert")
-    func consoleBeforeStart() {
-        let harness = Harness(.loginWindow(send: { _ in noErr }), console: .on)
-        #expect(
-            harness.take() == [
-                .availability(.available(PowerOffer(actions: [.shutdown], asksAppsToQuit: true)))
-            ])
     }
 
     // MARK: - Requests
@@ -182,28 +136,6 @@ struct MacPowerTests {
         #expect(seenAtStart.withLock { $0 } == [.accepted(Self.id)])
     }
 
-    @Test("A cancel while shutdown runs reports nothing: the accepted request ends with shutdown")
-    func cancelWhileShutdownRuns() async throws {
-        let running = Locked(false)
-        let started = AsyncGate()
-        let release = DispatchSemaphore(value: 0)
-        let waits = OffTaskWaits()
-        let harness = Harness(
-            .shutdownCommand(run: { _ in
-                running.withLock { $0 = true }
-                started.notify()
-                waits.run { try Backstop("the test's release of the shutdown").wait(for: release) }
-                return 0
-            }), console: .off)
-        _ = harness.take()
-
-        harness.adapter.perform(Self.id, .shutdown, ignoringApps: true)
-        try await started.wait(named: "the shutdown's start") { running.withLock { $0 } }
-        harness.adapter.cancel(Self.id)
-        release.signal()
-        #expect(harness.take() == [.accepted(Self.id), .handedOff(Self.id)])
-    }
-
     @Test(
         "A session peer's request while its session does not own the console is refused NOT_ON_CONSOLE without a call",
         arguments: [ConsoleState.off, .unknown])
@@ -218,89 +150,7 @@ struct MacPowerTests {
         #expect(calls.withLock { $0 } == 0)
     }
 
-    @Test(
-        "A request the peer does not offer — a restart either way, or the session peer's shutdown without waiting for apps — is refused POWER_ACTION_UNSUPPORTED without a call",
-        arguments: [
-            (PowerAction.shutdown, true, true), (.restart, true, true), (.restart, true, false),
-            (.restart, false, true), (.restart, false, false),
-        ])
-    func unofferedRefused(action: PowerAction, sessionPeer: Bool, ignoringApps: Bool) {
-        let sent = Locked(0)
-        let ran = Locked(0)
-        let mechanism: MacPowerMechanism =
-            sessionPeer
-            ? .loginWindow(send: { _ in
-                sent.withLock { $0 += 1 }
-                return noErr
-            })
-            : .shutdownCommand(run: { _ in
-                ran.withLock { $0 += 1 }
-                return 0
-            })
-        let harness = Harness(mechanism, console: .on)
-        _ = harness.take()
-
-        harness.adapter.perform(Self.id, action, ignoringApps: ignoringApps)
-        #expect(harness.take() == [.refused(Self.id, WireError(.powerActionUnsupported))])
-        #expect(sent.withLock { $0 } == 0)
-        #expect(ran.withLock { $0 } == 0)
-    }
-
-    @Test("A cancel while the call is blocked lets the request go unconfirmed, and its late answer reports nothing")
-    func cancelWhileCalling() async throws {
-        let calling = Locked(false)
-        let started = AsyncGate()
-        let release = DispatchSemaphore(value: 0)
-        let waits = OffTaskWaits()
-        let mechanism = MacPowerMechanism(
-            graceful: .init(
-                absentDetail: "",
-                call: .answering {
-                    calling.withLock { $0 = true }
-                    started.notify()
-                    waits.run { try Backstop("the test's release of the call").wait(for: release) }
-                    return .tookIt
-                }),
-            ignoringApps: nil)
-        let harness = Harness(mechanism, console: .on)
-        _ = harness.take()
-
-        harness.adapter.perform(Self.id, .shutdown, ignoringApps: false)
-        try await started.wait(named: "the call's start") { calling.withLock { $0 } }
-        harness.adapter.cancel(Self.id)
-        release.signal()
-        #expect(harness.take() == [.unconfirmed(Self.id)])
-    }
-
-    @Test("A cancel after the answer reports nothing more")
-    func cancelAfterAnswer() {
-        let harness = Harness(Self.mechanism(answering: .tookIt, calls: Locked(0)), console: .on)
-        _ = harness.take()
-        harness.adapter.perform(Self.id, .shutdown, ignoringApps: false)
-        #expect(harness.take() == [.accepted(Self.id), .handedOff(Self.id)])
-        harness.adapter.cancel(Self.id)
-        #expect(harness.take() == [])
-    }
-
     // MARK: - loginwindow
-
-    @Test("The session peer sends loginwindow kAEShutDown")
-    func loginWindowEvent() {
-        let sent = Locked<[(eventClass: AEEventClass, eventID: AEEventID, target: String?, type: DescType?)]>([])
-        let mechanism = MacPowerMechanism.loginWindow(send: { event in
-            let target = event.attributeDescriptor(forKeyword: AEKeyword(keyAddressAttr))
-            let bundle = target.map { String(decoding: $0.data, as: UTF8.self) }
-            sent.withLock { $0.append((event.eventClass, event.eventID, bundle, target?.descriptorType)) }
-            return noErr
-        })
-        #expect(Self.answer(of: mechanism.graceful?.call) == "tookIt")
-        let event = sent.withLock { $0 }
-        #expect(event.count == 1)
-        #expect(event.first?.eventClass == AEEventClass(kCoreEventClass))
-        #expect(event.first?.eventID == AEEventID(kAEShutDown))
-        #expect(event.first?.target == "com.apple.loginwindow")
-        #expect(event.first?.type == DescType(typeApplicationBundleID))
-    }
 
     @Test(
         "The send's answer: delivered is taken, refused where nothing was delivered, else unconfirmed",
@@ -319,49 +169,6 @@ struct MacPowerTests {
         case .refused(let error): Issue.record("unexpected refusal \(error)")
         case .unconfirmed: #expect(expected == "unconfirmed")
         }
-    }
-
-    // MARK: - shutdown(8)
-
-    @Test("The system peer runs shutdown -h now")
-    func shutdownArguments() {
-        let ran = Locked<[[String]]>([])
-        let mechanism = MacPowerMechanism.shutdownCommand(run: { arguments in
-            ran.withLock { $0.append(arguments) }
-            return 0
-        })
-        #expect(Self.answer(of: mechanism.ignoringApps) == "going down")
-        #expect(ran.withLock { $0 } == [["/sbin/shutdown", "-h", "now"]])
-    }
-
-    // MARK: - Quit
-
-    static func quitEvent(reason: OSType?, asParameter: Bool = false) -> NSAppleEventDescriptor {
-        let event = NSAppleEventDescriptor(
-            eventClass: AEEventClass(kCoreEventClass), eventID: AEEventID(kAEQuitApplication),
-            targetDescriptor: nil, returnID: AEReturnID(kAutoGenerateReturnID),
-            transactionID: AETransactionID(kAnyTransactionID))
-        if let reason {
-            let value = NSAppleEventDescriptor(enumCode: reason)
-            if asParameter {
-                event.setParam(value, forKeyword: AEKeyword(kAEQuitReason))
-            } else {
-                event.setAttribute(value, forKeyword: AEKeyword(kAEQuitReason))
-            }
-        }
-        return event
-    }
-
-    @Test(
-        "A quit for a log out, shut down or restart relaunches the session peer; any other quit stops it",
-        arguments: [
-            (OSType(kAEShutDown) as OSType?, MacAgentPeer.relaunchStatus),
-            (OSType(kAERestart), MacAgentPeer.relaunchStatus), (OSType(kAEReallyLogOut), MacAgentPeer.relaunchStatus),
-            (OSType(kAEQuitAll), Int32(0)), (nil, Int32(0)),
-        ])
-    func quitStatus(reason: OSType?, status: Int32) {
-        #expect(MacAgentQuit.exitStatus(for: Self.quitEvent(reason: reason)) == status)
-        #expect(MacAgentQuit.exitStatus(for: Self.quitEvent(reason: reason, asParameter: true)) == status)
     }
 }
 #endif

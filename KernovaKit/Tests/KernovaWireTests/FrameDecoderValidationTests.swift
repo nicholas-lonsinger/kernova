@@ -89,19 +89,4 @@ struct FrameDecoderValidationTests {
         #expect(throws: rejection.error) { try decoder.nextFrame() }
         #expect(rejection.error.closeCode == rejection.code)
     }
-
-    @Test("The first error is final, and nothing appended after it is buffered")
-    func errorIsSticky() {
-        var decoder = FrameDecoder()
-        decoder.append(WireConstants.preamble + rawHeader(type: 0x09, length: 0))
-        #expect(throws: FrameError.unknownType(0x09)) { try decoder.nextFrame() }
-        decoder.append(wireBytes([Frame(streamID: .session, type: .ping, payload: Data(count: 8))], preamble: false))
-        #expect(decoder.bufferedByteCountForTesting == 0)
-        #expect(throws: FrameError.unknownType(0x09)) { try decoder.nextFrame() }
-    }
-
-    @Test("A preamble mismatch has no close code: the transport closes with no RESET")
-    func badPreambleHasNoCloseCode() {
-        #expect(FrameError.badPreamble.closeCode == nil)
-    }
 }

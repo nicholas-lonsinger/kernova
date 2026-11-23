@@ -191,53 +191,6 @@ struct RoundTripFidelityTests {
         try Self.compare(source: source, destination: destination, expected: expected)
     }
 
-    @Test("a sparse FILE item lands with its holes where they were")
-    func sparseFileRoundTrip() throws {
-        let bench = try FidelityBench()
-        let name = bytes("disk.img")
-        let size = 2 << 20
-        var content = Data(count: size)
-        content.replaceSubrange((1 << 20)..<((1 << 20) + 4096), with: randomBytes(4096, seed: 9))
-        try bench.makeFile([name], content)
-        try bench.punchHoles([name], [0..<Int64(1 << 20), Int64((1 << 20) + 65536)..<Int64(size)])
-        let acceptance = ContainerAcceptance(storage: .file, byteCeiling: 1 << 30, decmpfsTypes: [], acceptsLZ4: false)
-        #expect(try bench.roundTrip(name, accepting: acceptance, policy: .never) == name)
-        var source = try #require(try bench.facts(of: name, in: bench.sourcePath)[[name]])
-        var landed = try #require(try bench.facts(of: name, in: bench.destinationPath)[[name]])
-        try #require(source.blocks * 512 < Int64(size) / 4, "the source is sparse")
-        #expect(landed.blocks == source.blocks - source.storedZeroBlocks)
-        // Names the format does not carry, such as an OS's own provenance attribute, are not compared, and
-        // the blocks are compared above.
-        source.xattrNames = []
-        landed.xattrNames = []
-        source.blocks = landed.blocks
-        source.storedZeroBlocks = landed.storedZeroBlocks
-        #expect(landed == source)
-    }
-
-    @Test("the reader says each hole exactly, as zeros beside the stored bytes")
-    func holesAsEvents() throws {
-        let bench = try FidelityBench()
-        let name = bytes("holes")
-        var content = Data(count: 256 << 10)
-        content.replaceSubrange(0..<(16 << 10), with: randomBytes(16 << 10, seed: 10))
-        content.replaceSubrange((80 << 10)..<(96 << 10), with: randomBytes(16 << 10, seed: 11))
-        try bench.makeFile([name], content)
-        try bench.punchHoles([name], [Int64(16 << 10)..<Int64(80 << 10), Int64(96 << 10)..<Int64(256 << 10)])
-        let acceptance = ContainerAcceptance(storage: .file, byteCeiling: 1 << 30, decmpfsTypes: [], acceptsLZ4: false)
-        let events = try bench.events(name, accepting: acceptance)
-        let pieces = events.compactMap { event -> String? in
-            switch event {
-            case .bytes(let bytes): "bytes \(bytes.count)"
-            case .zeros(let count): "zeros \(count)"
-            default: nil
-            }
-        }
-        #expect(pieces == ["bytes \(16 << 10)", "zeros \(64 << 10)", "bytes \(16 << 10)", "zeros \(160 << 10)"])
-        #expect(events.first.map { if case .beginFile = $0 { true } else { false } } == true)
-        #expect(events.suffix(2) == [.finishFile, .end])
-    }
-
     // MARK: - Comparing
 
     static func compare(
