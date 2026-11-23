@@ -12,8 +12,36 @@ permissions:
   contents: read
 
 jobs:
-  build-and-test:
+  # A commit with its parent's build inputs (Tools/attest.sh) is not built or
+  # tested again once the parent is attested: that attestation stands for both.
+  inputs:
     if: &requested github.event_name != 'pull_request' || (github.event.action == 'labeled' && github.event.label.name == 'ci') || (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'ci'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      statuses: read
+    outputs:
+      attested: ${{ steps.parent.outputs.attested }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          sparse-checkout: Tools
+
+      - name: Find an attested parent with the same build inputs
+        id: parent
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          attested="$(Tools/attest.sh attested-parent)"
+          echo "attested=$attested" | tee -a "$GITHUB_OUTPUT"
+
+  build-and-test:
+    needs: inputs
+    if: needs.inputs.outputs.attested == ''
     # Job-level, so a run whose job is skipped never cancels the real run:
     # adding a second label mid-run left the labeled-`ci` run in progress while
     # the new run's job was skipped (observed 2026-10-18).
@@ -44,20 +72,7 @@ jobs:
         id: paths
         run: |
           . Tools/lib/xcodebuild-flags.sh
-          echo "derived-data=$kernova_derived_data" >> "$GITHUB_OUTPUT"
           echo "compilation-cache=$kernova_compilation_cache" >> "$GITHUB_OUTPUT"
-
-      # Package.resolved pins each dependency to a commit, so the hash misses
-      # exactly when a dependency is bumped and hits otherwise. No
-      # restore-keys: a prefix fallback would restore an older checkout and
-      # then save the reconciled result under the new hash, so a saved entry
-      # would no longer match its key by construction. Checkouts are plain
-      # git clones, so the Xcode build is not part of the key.
-      - name: Cache SwiftPM checkouts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.paths.outputs.derived-data }}/SourcePackages
-          key: ${{ runner.os }}-spm-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       # The store is content-addressed, so any earlier snapshot is a valid
       # seed: the prefix restores the newest one main saved, which a pull
@@ -71,15 +86,13 @@ jobs:
           key: ${{ runner.os }}-cas-${{ env.XCODE_BUILD }}-${{ github.sha }}
           restore-keys: ${{ runner.os }}-cas-${{ env.XCODE_BUILD }}-
 
-      - name: Install the swift.org toolchain
-        uses: ./.github/actions/swift-toolchain
-
       # The Linux guest agent the "Build Linux Guest Agent" phase labels and
       # bundles, built once per set of inputs; a cold build takes minutes.
       - name: Build the Linux guest agent
         uses: ./.github/actions/tool-cache
         with:
           installer: Tools/install-linux-guest-agent.sh
+          swift-toolchain: 'true'
 
       # Debug signs ad-hoc (Config/Base.xcconfig's CODE_SIGN_IDENTITY = "-"),
       # which needs no identity or team.
@@ -115,16 +128,11 @@ jobs:
           path: ${{ steps.paths.outputs.compilation-cache }}
           key: ${{ steps.restore-cas.outputs.cache-primary-key }}
 
-      # The admission width caps concurrent test cases per host process (three
-      # hosts run at once, so the machine-wide bound is 3×). It is a herd cap
-      # sized for headroom as the suite grows, not a tuning knob: the suite
-      # must stay green at any width, and a flake a width change surfaces gets
-      # fixed or deleted (AGENTS.md, "Fix root causes"), never quieted by
-      # re-tuning this number. Only the prefixed spelling reaches the test
-      # hosts: `xcodebuild` forwards `TEST_RUNNER_`-prefixed variables to the
-      # test runner with the prefix stripped and passes nothing else through,
-      # so the plain name set here silently no-ops and the run measures
-      # pass-through (observed 2026-08-20).
+      # The admission width caps concurrent test cases per host process. Only
+      # the prefixed spelling reaches the test hosts: `xcodebuild` forwards
+      # `TEST_RUNNER_`-prefixed variables to the test runner with the prefix
+      # stripped and passes nothing else through, so the plain name set here
+      # silently no-ops (observed 2026-08-20).
       #
       # `timeout-minutes` bounds this step rather than the job, so a stall fails
       # the step and the reporting steps below still run — the job cap instead
@@ -174,20 +182,6 @@ jobs:
                   | unique | join("\n") )
           ' /tmp/tests.json || echo "Could not parse test results — skipping failure report."
 
-      # `TestAdmission` resolves its width once per test-host process and logs
-      # the outcome through `Logger`, which writes to the unified log rather
-      # than the runner's stdout — so this is the only place the resolved arm is
-      # visible. Each test-host process emits exactly one line, so this also
-      # counts the hosts the width had to reach. Without it a width that never
-      # arrived is indistinguishable from one that did, and the run silently
-      # measures pass-through.
-      - name: Report admission arm
-        if: always()
-        run: |
-          log show \
-            --predicate 'subsystem == "app.kernova" AND category == "TestAdmission"' \
-            --last 30m --style compact || echo "log show unavailable"
-
       - name: Upload test results
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -230,23 +224,38 @@ jobs:
         timeout-minutes: 10
         run: make lint
 
-  # The Linux tests `make attest` runs beside lint and the tests: the same
-  # Containerfile, script and tree, with Docker and the runner's resources in
-  # place of container and the Mac's limits.
+  # KernovaKit's Linux tests as `make attest` runs them (Tools/lib/linux-tests.sh):
+  # the same Containerfile, script and tree, with Docker and the runner's
+  # resources in place of container and the Mac's limits.
   linux:
-    if: *requested
+    name: Linux (aarch64)
+    needs: inputs
+    if: needs.inputs.outputs.attested == ''
     concurrency:
       group: ${{ github.workflow }}-linux-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/linux-tests.yml
-    with:
-      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-  # Posts once every job it needs has an outcome; a skipped or cancelled one
-  # posts nothing.
+      - name: Build the image
+        shell: bash
+        run: . Tools/lib/linux-tests.sh && linux_tests_build_image docker HEAD
+
+      - name: Test
+        shell: bash
+        run: . Tools/lib/linux-tests.sh && linux_tests_run docker HEAD "$(linux_tests_image HEAD)"
+
+  # Posts once lint and either the build and tests or an attested parent have
+  # an outcome; a cancelled job, or a run that lints nothing, posts nothing.
   attest:
-    needs: [build-and-test, lint, linux]
-    if: ${{ !cancelled() && !contains(needs.*.result, 'skipped') && !contains(needs.*.result, 'cancelled') }}
+    needs: [inputs, build-and-test, lint, linux]
+    if: ${{ !cancelled() && needs.lint.result != 'skipped' && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -263,14 +272,17 @@ jobs:
       - name: Post the Commit Attestation status
         env:
           GH_TOKEN: ${{ github.token }}
-          STATE: ${{ needs.build-and-test.result == 'success' && needs.lint.result == 'success' && needs.linux.result == 'success' && 'success' || 'failure' }}
+          STATE: ${{ needs.lint.result == 'success' && needs.inputs.result == 'success' && (needs.inputs.outputs.attested != '' || (needs.build-and-test.result == 'success' && needs.linux.result == 'success')) && 'success' || 'failure' }}
+          ATTESTED: ${{ needs.inputs.outputs.attested }}
           LINT_XCODE: ${{ needs.lint.outputs.xcode-build }}
           TEST_XCODE: ${{ needs.build-and-test.outputs.xcode-build }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         # The two macOS jobs run on separate runners, which an image rollout
         # can give different Xcode builds.
         run: |
-          if [ "$LINT_XCODE" = "$TEST_XCODE" ]; then
+          if [ -n "$ATTESTED" ]; then
+            description="Lint on Xcode $LINT_XCODE; Build & Test and Linux as attested on ${ATTESTED:0:9}, whose build inputs these are"
+          elif [ "$LINT_XCODE" = "$TEST_XCODE" ]; then
             description="Lint, Build & Test on Xcode $TEST_XCODE and Linux"
           else
             description="Lint on Xcode $LINT_XCODE, Build & Test on Xcode $TEST_XCODE, and Linux"

@@ -144,7 +144,7 @@ test: check-hooks ## Run the full test suite (every test target in Kernova.xctes
 test-linux: ## Run KernovaKit's Linux tests in Apple's container, as CI's Linux job does; a passing run is recorded for `make attest`
 	@Tools/attest.sh record test-linux
 
-attest: check-hooks ## Post the `Commit Attestation` status on the pushed HEAD, reusing a passing `make lint`, `make test-linux` and `make test` of the same content or running them
+attest: check-hooks ## Post the `Commit Attestation` status on the pushed HEAD, reusing a passing `make lint`, `make test-linux` and `make test` of the same inputs or running them
 	@Tools/attest.sh
 
 # The `rm -rf` fires only when RESULT_BUNDLE_FLAG is set (CI): xcodebuild

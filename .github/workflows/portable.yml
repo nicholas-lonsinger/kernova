@@ -1,20 +1,17 @@
 name: Portable Targets
 
-# Builds and tests the KernovaKit targets its manifest declares off macOS, on
-# Linux and on Windows, with the swift.org release `.swift-version` pins.
+# Tests on Windows the KernovaKit targets its manifest declares off macOS,
+# with the swift.org release `.swift-version` pins. Linux tests them in
+# xcodebuild-test.yml, whose attestation covers them.
 on:
   push:
     branches: [main]
     paths: &inputs
-      - '.github/workflows/**'
+      - '.github/workflows/portable.yml'
       - '.swift-version'
       - 'Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
-      - 'KernovaCore/Sources/KernovaCore/Resources/LinuxAgentDisk/agent-disk.sh'
       - 'KernovaKit/**'
-      - 'Tools/lib/linux-tests.sh'
       - 'Tools/lib/package-pins.sh'
-      - 'Tools/linux-tests.Containerfile'
-      - 'Tools/test-linux.sh'
   pull_request:
     paths: *inputs
   workflow_dispatch:
@@ -30,29 +27,8 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  swift-version:
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 5
-    outputs:
-      version: ${{ steps.read.outputs.version }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 1
-          sparse-checkout: .swift-version
-          sparse-checkout-cone-mode: false
-
-      - name: Read .swift-version
-        id: read
-        run: echo "version=$(tr -d '[:space:]' < .swift-version)" >> "$GITHUB_OUTPUT"
-
-  linux:
-    uses: ./.github/workflows/linux-tests.yml
-
   windows:
     name: Windows (arm64)
-    needs: swift-version
     runs-on: windows-11-arm
     timeout-minutes: 30
     steps:
@@ -67,7 +43,7 @@ jobs:
       - name: Install Swift
         shell: pwsh
         run: |
-          $version = '${{ needs.swift-version.outputs.version }}'
+          $version = (Get-Content -Raw .swift-version).Trim()
           $release = "swift-$version-RELEASE"
           $url = "https://download.swift.org/swift-$version-release/windows10-arm64/$release/$release-windows10-arm64.exe"
           $installer = Join-Path $env:RUNNER_TEMP 'swift-installer.exe'
@@ -87,15 +63,8 @@ jobs:
             if ($sdkRoot) { Add-Content -Path $env:GITHUB_ENV -Value "SDKROOT=$sdkRoot" }
           }
 
-      - name: Show the toolchain
-        run: swift --version
-
-      # Git for Windows' bash, so the build takes its pins the way every
+      # Git for Windows' bash, so the tests take their pins the way every
       # other platform does.
-      - name: Build
-        shell: bash
-        run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift build --
-
       - name: Test
         shell: bash
         run: . Tools/lib/package-pins.sh && with_package_pins KernovaKit swift test --

@@ -21,15 +21,20 @@
 #         Interrupted, it posts nothing and stops.
 #     Tools/attest.sh post <success|failure> <description> [<target-url>]
 #         Posts the status on HEAD.
+#     Tools/attest.sh attested-parent
+#         Prints HEAD's parent when the parent carries a passing status and
+#         HEAD has its build inputs, so the build and tests that status
+#         attests stand for HEAD's; prints nothing otherwise. CI runs it to
+#         decide whether to build and test.
 #
-# A fingerprint covers what a run's outcome depends on. For lint and test:
-# the content tree (what `git add -A` would stage), the Xcode and macOS
-# builds, and the gitignored Config/Local.xcconfig, which sets signing and
-# entitlements. For test-linux: the tree of the content tree's paths
-# Tools/lib/linux-tests.sh names, the only files the run reads, and the
-# container release that runs it. Records are kept in the store
-# Tools/lib/attest-records.sh describes. Statuses on this public repo are
-# world-readable, so a description names no host or user.
+# A fingerprint covers what a run's outcome depends on. For lint: the content
+# tree (what `git add -A` would stage); for test: that tree's build inputs.
+# Both add the Xcode and macOS builds and the gitignored
+# Config/Local.xcconfig, which sets signing and entitlements. For test-linux:
+# the tree of the content tree's paths Tools/lib/linux-tests.sh names, the
+# only files the run reads, and the container release that runs it. Records
+# are kept in the store Tools/lib/attest-records.sh describes. Statuses on
+# this public repo are world-readable, so a description names no host or user.
 
 set -uo pipefail
 
@@ -38,7 +43,7 @@ set -uo pipefail
 CONTEXT='Commit Attestation'
 
 usage() {
-    echo 'usage: Tools/attest.sh [record <lint|test|test-linux> | post <success|failure> <description> [<target-url>]]' >&2
+    echo 'usage: Tools/attest.sh [record <lint|test|test-linux> | post <success|failure> <description> [<target-url>] | attested-parent]' >&2
     exit 2
 }
 
@@ -51,16 +56,30 @@ die() { echo "attest: $1" >&2; exit 1; }
 
 top() { git rev-parse --show-toplevel; }
 
+# build_inputs <tree-ish> — a hash of <tree-ish>'s build inputs: every path
+# but those no build or test reads — Markdown, docs/, the agents' own
+# configuration and the issue templates. A path stays an input unless it
+# plainly cannot change a built product or a test's outcome.
+build_inputs() {
+    git ls-tree -r --full-tree "$1" |
+        awk -F '\t' '$2 !~ /\.md$|^(docs|\.agents|\.claude|\.github\/ISSUE_TEMPLATE)\//' |
+        git hash-object --stdin
+}
+
 # fingerprint_inputs <kind> <tree> — the lines the kind's fingerprint of
 # <tree> hashes.
 fingerprint_inputs() {
-    local machine local_config linux container
-    if [ "$1" = test-linux ]; then
-        linux=$(linux_tests_tree "$2") || return 1
-        container=$(container --version 2>/dev/null) || container=none
-        printf 'linux-tests %s\ncontainer %s\n' "$linux" "$container"
-        return
-    fi
+    local content machine local_config linux container
+    case "$1" in
+        test-linux)
+            linux=$(linux_tests_tree "$2") || return 1
+            container=$(container --version 2>/dev/null) || container=none
+            printf 'linux-tests %s\ncontainer %s\n' "$linux" "$container"
+            return
+            ;;
+        test) content="build-inputs $(build_inputs "$2")" || return 1 ;;
+        *) content="tree $2" ;;
+    esac
     machine=$(machine_lines) || return 1
     local_config="$(top)/Config/Local.xcconfig"
     if [ -e "$local_config" ]; then
@@ -68,7 +87,7 @@ fingerprint_inputs() {
     else
         local_config=none
     fi
-    printf 'tree %s\n%s\nlocal-xcconfig %s\n' "$2" "$machine" "$local_config"
+    printf '%s\n%s\nlocal-xcconfig %s\n' "$content" "$machine" "$local_config"
 }
 
 # fingerprint <kind> <tree> — the name of the kind's record of <tree>.
@@ -124,8 +143,8 @@ post() {
 }
 
 attest() {
-    local sha tree records description fp linux_fp base missing kind key status
-    local ci_route="Where they cannot run, label the PR \`ci\`: CI then lints and runs both test suites on each push, and posts $CONTEXT."
+    local sha tree records description linux_fp base missing kind key status
+    local ci_route="Where they cannot run, label the PR \`ci\`: CI then posts $CONTEXT on each push."
     # A run that was interrupted posts nothing: xcodebuild exits 75 on SIGINT
     # rather than dying of it, and container's first process ignores it, so
     # neither run's status says it was interrupted. bash runs this once the
@@ -135,7 +154,6 @@ attest() {
     sha=$(git rev-parse HEAD) || die 'no HEAD to attest'
     gh api "repos/{owner}/{repo}/commits/$sha" >/dev/null 2>&1 || die "GitHub does not have $sha; push first"
     tree=$(git rev-parse 'HEAD^{tree}') || die 'no HEAD tree to attest'
-    fp=$(fingerprint lint "$tree") || die 'cannot read the Xcode or macOS build'
     base=$(linux_tests_base "$tree") || die 'HEAD has no .swift-version naming the Linux tests base image'
     records=$(records_dir)
     # Whether the Linux tests can run is settled before anything runs, so a
@@ -148,8 +166,7 @@ attest() {
     description="make attest: Xcode $(xcode_build), macOS $(macos_build), Linux on ${base##*/}"
     # Cheapest to fail first.
     for kind in lint test-linux test; do
-        key=$fp
-        [ "$kind" = test-linux ] && key=$linux_fp
+        key=$(fingerprint "$kind" "$tree") || die "cannot fingerprint the $kind run"
         if [ -f "$records/$kind/$key" ]; then
             echo "attest: reusing the passing make $kind of $(awk '/^date / { print $2 }' "$records/$kind/$key")"
             continue
@@ -168,9 +185,23 @@ attest() {
     post success "$description"
 }
 
+attested_parent() {
+    [ $# -eq 0 ] || usage
+    local parent head inputs state
+    parent=$(git rev-parse -q --verify 'HEAD^1^{commit}') || return 0
+    if ! head=$(build_inputs HEAD) || ! inputs=$(build_inputs "$parent"); then
+        die 'cannot read the build inputs of HEAD and its parent'
+    fi
+    [ "$head" = "$inputs" ] || return 0
+    state=$(gh api "repos/{owner}/{repo}/commits/$parent/status" --jq ".statuses[] | select(.context == \"$CONTEXT\") | .state") ||
+        die "reading the statuses of $parent failed"
+    [ "$state" != success ] || printf '%s\n' "$parent"
+}
+
 case "${1:-}" in
     '') attest ;;
     record) shift; record "$@" ;;
     post) shift; post "$@" ;;
+    attested-parent) shift; attested_parent "$@" ;;
     *) usage ;;
 esac
