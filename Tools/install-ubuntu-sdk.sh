@@ -36,7 +36,7 @@ fi
 
 # Ubuntu's packages carry zstd-compressed payloads, and the generator unpacks
 # them with tar, which runs the zstd program to decompress them.
-"$lib_dir/brew-install.sh" zstd >&2
+command -v zstd >/dev/null || brew install zstd >&2
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT

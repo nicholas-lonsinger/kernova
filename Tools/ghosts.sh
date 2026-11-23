@@ -111,7 +111,7 @@ dispose_worktree() {
     trash "$1" >/dev/null 2>&1
 }
 
-# ---- output helpers (matches Tools/doctor.sh) --------------------------------
+# ---- output helpers ----------------------------------------------------------
 
 found_count=0
 fixed_count=0

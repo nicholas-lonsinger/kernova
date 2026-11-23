@@ -16,7 +16,7 @@ die() { echo "lint: $1" >&2; exit 1; }
 shell_sources=()
 while IFS= read -r f; do shell_sources+=("$f"); done < <(git ls-files '*.sh' '*.command' '.githooks/*')
 [ "${#shell_sources[@]}" -gt 0 ] || die 'git tracks no shell scripts — not a git checkout?'
-command -v shellcheck >/dev/null 2>&1 || die 'shellcheck is not installed — `make setup` installs it'
+command -v shellcheck >/dev/null 2>&1 || die 'shellcheck is not installed: brew install shellcheck'
 shellcheck "${shell_sources[@]}" || exit 1
 pass "shellcheck: ${#shell_sources[@]} scripts"
 
