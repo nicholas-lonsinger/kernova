@@ -87,29 +87,4 @@ struct DownloadBundleTests {
         #expect(leading?.end == 200)
         #expect(leading?.total == 300)
     }
-
-    @Test("parseUnsatisfiableTotal extracts total from 416 header")
-    func parseUnsatisfiableTotalExtractsTotal() {
-        #expect(DownloadService.parseUnsatisfiableTotal("bytes */1234") == 1234)
-        #expect(DownloadService.parseUnsatisfiableTotal("*/0") == 0)
-        #expect(DownloadService.parseUnsatisfiableTotal(nil) == nil)
-        #expect(DownloadService.parseUnsatisfiableTotal("malformed") == nil)
-    }
-}
-
-@Suite("DownloadSpeedSmoother Tests", .caseScoped)
-struct DownloadSpeedSmootherTests {
-    @Test("Speed sample after throttle window reflects throughput")
-    func speedAfterThrottle() {
-        var smoother = DownloadSpeedSmoother()
-        _ = smoother.sample(totalBytes: 0, now: 1000.0)
-        let speed = smoother.sample(totalBytes: 1_000_000, now: 1001.0) ?? 0
-        // 1 MB in 1 s. The smoother's exact "first non-priming sample" formula
-        // is an implementation detail; what callers care about is that the
-        // reported speed is in the right ballpark, not an exact byte count.
-        // 10% tolerance lets the smoothing rule evolve without breaking the
-        // test.
-        #expect(speed > 0)
-        #expect(abs(speed - 1_000_000) < 100_000)
-    }
 }

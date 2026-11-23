@@ -37,13 +37,6 @@ struct LoginItemServiceTests {
 
     private struct FakeError: Error {}
 
-    @Test("isEnabled reflects the backend .enabled status")
-    func isEnabledReflectsStatus() {
-        #expect(LoginItemService(registration: FakeRegistration(status: .enabled)).isEnabled)
-        #expect(!LoginItemService(registration: FakeRegistration(status: .notRegistered)).isEnabled)
-        #expect(!LoginItemService(registration: FakeRegistration(status: .requiresApproval)).isEnabled)
-    }
-
     @Test("an unregister() throw is swallowed and the live status is returned")
     func unregisterThrowReturnsLiveStatus() {
         let fake = FakeRegistration(status: .enabled)

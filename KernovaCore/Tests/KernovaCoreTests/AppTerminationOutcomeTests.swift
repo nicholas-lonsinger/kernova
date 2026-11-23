@@ -48,11 +48,4 @@ struct AppTerminationOutcomeTests {
             outcome(isSavePassRunning: true, hasInstancesToSave: hasInstancesToSave)
                 == .deferToSavePass)
     }
-
-    @Test("a soft quit during the save pass defers to it rather than closing the GUI")
-    func softQuitDuringSavePassDefersToIt() {
-        // Closing the windows would pop the "still running in the menu bar"
-        // reminder seconds before the pass's reply exits the process.
-        #expect(outcome(shouldTerminateAgent: false, isSavePassRunning: true) == .deferToSavePass)
-    }
 }

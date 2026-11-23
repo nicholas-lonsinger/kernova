@@ -20,8 +20,6 @@ final class MockNetworkAttachmentInstall: NetworkAttachmentInstalling {
         var detachCount = 0
     }
 
-    /// One entry per `applyNetworkAttachment` call, in order.
-    var applyCount: Int { state.withLock { $0.applies.count } }
     var detachCount: Int { state.withLock { $0.detachCount } }
 
     func applyNetworkAttachment(

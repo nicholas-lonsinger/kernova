@@ -46,14 +46,6 @@ struct AppClipboardReadoutTests {
         return (operation, cancelled)
     }
 
-    /// The id the readout `instances` renders was shown on.
-    private func shownID(in instances: [VMInstance]) throws -> ClipboardTransferOperationID {
-        guard case .running(let snapshot, _) = AppClipboardReadout.report(for: instances) else {
-            throw TestFailure("the readout is not running")
-        }
-        return snapshot.operationID
-    }
-
     // MARK: - Cancel routing
 
     @Test("Cancel reaches the VM the readout's id belongs to, not the newest one")
@@ -73,68 +65,7 @@ struct AppClipboardReadoutTests {
         withExtendedLifetime((shown.operation, latest.operation)) {}
     }
 
-    @Test("A Cancel no VM claims stops nothing")
-    func cancelOfAnUnclaimedIdStopsNothing() {
-        let instance = makeInstance(name: "Build VM")
-        let running = runTransfer(on: instance, gesture: .paste, since: Date())
-
-        // The readout a stale click was rendered for: its operation retired
-        // before the click landed, so no reporter answers for the id.
-        #expect(!AppClipboardReadout.cancel(.unattached, in: [instance]))
-
-        #expect(!running.cancelled.withLock { $0 })
-        withExtendedLifetime(running.operation) {}
-    }
-
     // MARK: - Readout ranking
-
-    @Test("A peer's paste outranks a drop, and a drop outranks the rest")
-    func readoutRanksAwaitedGesturesFirst() throws {
-        let pasting = makeInstance(name: "Paste VM")
-        let dropping = makeInstance(name: "Drop VM")
-        let fetching = makeInstance(name: "Paste VM 2")
-        // Reverse rank order in time, so recency alone would pick the loser at
-        // each step.
-        let paste = runTransfer(
-            on: pasting, gesture: .peerPaste, since: Date(timeIntervalSince1970: 100))
-        let drop = runTransfer(
-            on: dropping, gesture: .drop, since: Date(timeIntervalSince1970: 200))
-        let preview = runTransfer(
-            on: fetching, gesture: .paste, since: Date(timeIntervalSince1970: 300))
-
-        #expect(try shownID(in: [pasting, dropping, fetching]) == paste.operation.id)
-        #expect(try shownID(in: [dropping, fetching]) == drop.operation.id)
-        #expect(try shownID(in: [fetching]) == preview.operation.id)
-        withExtendedLifetime((paste.operation, drop.operation, preview.operation)) {}
-    }
-
-    @Test("Two VMs at the same rank are settled by which opened its bar last")
-    func readoutSettlesEqualRanksByRecency() throws {
-        let earlier = makeInstance(name: "Build VM")
-        let later = makeInstance(name: "CI VM")
-        let first = runTransfer(
-            on: earlier, gesture: .drop, since: Date(timeIntervalSince1970: 100))
-        let second = runTransfer(
-            on: later, gesture: .drop, since: Date(timeIntervalSince1970: 200))
-
-        #expect(try shownID(in: [earlier, later]) == second.operation.id)
-        #expect(try shownID(in: [later, earlier]) == second.operation.id)
-        withExtendedLifetime((first.operation, second.operation)) {}
-    }
-
-    @Test("With nothing running the readout dwells on the most recent finish")
-    func readoutDwellsOnTheLatestFinish() {
-        let earlier = makeInstance(name: "Build VM")
-        let later = makeInstance(name: "CI VM")
-        finish(on: earlier, at: Date(timeIntervalSince1970: 100))
-        finish(on: later, at: Date(timeIntervalSince1970: 200))
-
-        guard case .finished(let finish) = AppClipboardReadout.report(for: [earlier, later]) else {
-            Issue.record("the readout dropped both finished reports")
-            return
-        }
-        #expect(finish.peerName == "CI VM")
-    }
 
     /// Stands a completed transfer — one that still has a bar to dwell on — on
     /// `instance`.

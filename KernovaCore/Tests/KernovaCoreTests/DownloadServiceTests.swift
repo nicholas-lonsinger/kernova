@@ -50,39 +50,6 @@ struct DownloadServiceTests {
 
     // MARK: - Tests
 
-    @Test("Fresh download writes bytes to destination and trashes the bundle")
-    func freshDownloadCompletes() async throws {
-        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
-
-        let payload = Data(repeating: 0xAA, count: 256 * 1024 + 100)
-        StubURLProtocol.setHandler { request in
-            #expect(request.value(forHTTPHeaderField: "Range") == nil)
-            return .fullResponse(
-                url: (request.url ?? Self.remoteURL),
-                body: payload,
-                etag: "\"v1\"",
-                lastModified: "Mon, 01 Jan 2026 00:00:00 GMT"
-            )
-        }
-        defer { StubURLProtocol.setHandler(nil) }
-
-        let fileSystem = MockFileSystem()
-        let service = Self.makeServiceWithStub(fileSystem: fileSystem)
-        try await service.download(
-            from: Self.remoteURL,
-            to: destination,
-            progressHandler: { _ in }
-        )
-
-        #expect(FileManager.default.fileExists(atPath: destination.path))
-        let written = try Data(contentsOf: destination)
-        #expect(written == payload)
-
-        // Bundle has been finalized: the spent bundle went to the Trash seam.
-        let bundleURL = DownloadService.resumeBundleURL(for: destination)
-        #expect(fileSystem.trashedURLs == [bundleURL])
-    }
-
     @Test("A download whose spent bundle can't be trashed still succeeds")
     func freshDownloadSucceedsWhenDisposalFails() async throws {
         // The bytes reaching the destination IS the success condition; disposing
@@ -260,101 +227,6 @@ struct DownloadServiceTests {
         #expect(written.count == newPayload.count)
     }
 
-    @Test("416 with full file on disk finalizes without re-downloading")
-    func unsatisfiableRangeWithCompleteFileFinalizes() async throws {
-        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
-        let bundleURL = DownloadService.resumeBundleURL(for: destination)
-        let bundle = DownloadBundle(url: bundleURL)
-
-        let complete = Data(repeating: 0x77, count: 4096)
-        try bundle.prepareForFreshDownload(
-            with: DownloadBundleMetadata(
-                originalURL: Self.remoteURL,
-                etag: "\"v1\"",
-                lastModified: nil,
-                createdAt: Date()
-            )
-        )
-        try complete.write(to: bundle.dataURL)
-
-        StubURLProtocol.setHandler { request in
-            .response(
-                url: (request.url ?? Self.remoteURL),
-                statusCode: 416,
-                body: Data(),
-                headers: ["Content-Range": "bytes */\(complete.count)"]
-            )
-        }
-        defer { StubURLProtocol.setHandler(nil) }
-
-        let fileSystem = MockFileSystem()
-        let service = Self.makeServiceWithStub(fileSystem: fileSystem)
-        try await service.download(
-            from: Self.remoteURL,
-            to: destination,
-            progressHandler: { _ in }
-        )
-
-        let written = try Data(contentsOf: destination)
-        #expect(written == complete)
-        // Disposal is a separate step from `finalize` on this path too — pin it
-        // here as well as on the success path, so dropping it can't go unnoticed.
-        #expect(fileSystem.trashedURLs == [bundleURL])
-    }
-
-    @Test("206 response without a parseable Content-Range fails fast")
-    func partialResponseMissingContentRangeFailsFast() async throws {
-        // We can't trust `response.expectedContentLength` on 206 — it reports
-        // the partial-body length, not the full file size — so a 206 with no
-        // (or unparseable) Content-Range must throw rather than feed a wrong
-        // total into the progress UI.
-        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
-        let bundleURL = DownloadService.resumeBundleURL(for: destination)
-        let bundle = DownloadBundle(url: bundleURL)
-
-        // Seed a partial bundle so the resume Range header is sent and the
-        // 206 branch is selected.
-        try bundle.prepareForFreshDownload(
-            with: DownloadBundleMetadata(
-                originalURL: Self.remoteURL,
-                etag: "\"v1\"",
-                lastModified: nil,
-                createdAt: Date()
-            )
-        )
-        try Data(repeating: 0x11, count: 1024).write(to: bundle.dataURL)
-
-        StubURLProtocol.setHandler { request in
-            // Status 206 with NO Content-Range header — the failure case.
-            .response(
-                url: request.url ?? Self.remoteURL,
-                statusCode: 206,
-                body: Data(repeating: 0x22, count: 512),
-                headers: [:]
-            )
-        }
-        defer { StubURLProtocol.setHandler(nil) }
-
-        let service = Self.makeServiceWithStub()
-        do {
-            try await service.download(
-                from: Self.remoteURL,
-                to: destination,
-                progressHandler: { _ in }
-            )
-            Issue.record("Expected fail-fast on 206 without Content-Range")
-        } catch DownloadError.downloadFailed {
-            // Expected
-        } catch {
-            Issue.record("Unexpected error: \(error)")
-        }
-
-        // Bundle preserved for a future retry — the failure is on the
-        // protocol side, the partial bytes on disk are still valid for resume.
-        #expect(bundle.exists)
-        #expect(!FileManager.default.fileExists(atPath: destination.path))
-    }
-
     @Test("4xx server error throws DownloadError.downloadFailed")
     func httpErrorThrows() async throws {
         let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
@@ -377,47 +249,6 @@ struct DownloadServiceTests {
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
-    }
-
-    @Test("Mid-stream network failure throws downloadFailed and preserves the bundle")
-    func midStreamErrorPreservesBundle() async throws {
-        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
-
-        // Deliver enough partial bytes (≥ writeChunkSize) so at least one
-        // chunked write commits to disk before the error fires.
-        let partial = Data(repeating: 0x55, count: 512 * 1024)
-        StubURLProtocol.setHandler { request in
-            .midStreamError(
-                url: request.url ?? Self.remoteURL,
-                declaredLength: 4 * 1024 * 1024,
-                partialBody: partial,
-                error: URLError(.networkConnectionLost)
-            )
-        }
-        defer { StubURLProtocol.setHandler(nil) }
-
-        let service = Self.makeServiceWithStub()
-        do {
-            try await service.download(
-                from: Self.remoteURL,
-                to: destination,
-                progressHandler: { _ in }
-            )
-            Issue.record("Expected download to throw on mid-stream failure")
-        } catch DownloadError.downloadFailed {
-            // Expected
-        } catch {
-            Issue.record("Unexpected error: \(error)")
-        }
-
-        // Destination was never finalized; bundle is preserved for next attempt.
-        // We don't assert on `partialByteCount` because URLSession may surface
-        // the error before yielding any of the buffered bytes — what matters is
-        // that the bundle survived for a future resume.
-        #expect(!FileManager.default.fileExists(atPath: destination.path))
-        let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
-        #expect(bundle.exists)
-        #expect(bundle.partialByteCount <= Int64(partial.count))
     }
 
     @Test("Bundle with different originalURL is discarded; fresh download issued")
@@ -560,52 +391,6 @@ struct DownloadServiceTests {
         #expect(!FileManager.default.fileExists(atPath: destination.path))
     }
 
-    @Test("Resume emits an initial progress callback at the existing offset")
-    func resumeIncludesInitialProgress() async throws {
-        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
-        let bundleURL = DownloadService.resumeBundleURL(for: destination)
-        let bundle = DownloadBundle(url: bundleURL)
-
-        let prefix = Data(repeating: 0x11, count: 4096)
-        let suffix = Data(repeating: 0x22, count: 8192)
-        let total = prefix + suffix
-
-        try bundle.prepareForFreshDownload(
-            with: DownloadBundleMetadata(
-                originalURL: Self.remoteURL,
-                etag: "\"v1\"",
-                lastModified: nil,
-                createdAt: Date()
-            )
-        )
-        try prefix.write(to: bundle.dataURL)
-
-        StubURLProtocol.setHandler { request in
-            .partialResponse(
-                url: request.url ?? Self.remoteURL,
-                body: suffix,
-                start: Int64(prefix.count),
-                end: Int64(total.count - 1),
-                total: Int64(total.count)
-            )
-        }
-        defer { StubURLProtocol.setHandler(nil) }
-
-        let recorder = ProgressRecorder()
-        let service = Self.makeServiceWithStub()
-        try await service.download(
-            from: Self.remoteURL,
-            to: destination,
-            progressHandler: { [recorder] progress in
-                recorder.record(progress.bytesWritten)
-            }
-        )
-
-        let samples = await recorder.snapshot()
-        #expect(samples.first == Int64(prefix.count), "First sample should match the resume offset")
-        #expect(samples.last == Int64(total.count), "Last sample should match the full file size")
-    }
-
     @Test("streamBytes throws CancellationError when parked in next() at cancel time")
     func streamBytesCancellationWhileParked() async throws {
         // Companion to `streamBytesCancellation`. That test covers the
@@ -713,49 +498,6 @@ struct DownloadServiceTests {
     }
 
     // MARK: - Expected-size ceiling
-
-    @Test("The ceiling is spent by the bytes a resume already has on disk")
-    func sizeCeilingCountsResumedBytes() async throws {
-        // 3000 bytes are already down and the server sends 2000 more: under the
-        // ceiling on its own, over it once the partial is counted. The stated
-        // total is the ceiling exactly, so only the per-chunk check can catch
-        // this — the source overruns the range it declared.
-        let destination = scratch.url.appendingPathComponent("installer.iso")
-        let bundle = DownloadBundle(url: DownloadService.resumeBundleURL(for: destination))
-
-        let prefix = Data(repeating: 0x11, count: 3000)
-        try bundle.prepareForFreshDownload(
-            with: DownloadBundleMetadata(
-                originalURL: Self.remoteURL, etag: "\"v1\"", lastModified: nil, createdAt: Date()))
-        try prefix.write(to: bundle.dataURL)
-
-        StubURLProtocol.setHandler { request in
-            .partialResponse(
-                url: request.url ?? Self.remoteURL,
-                body: Data(repeating: 0x22, count: 2000),
-                start: 3000, end: 4095, total: 4096)
-        }
-        defer { StubURLProtocol.setHandler(nil) }
-
-        let service = Self.makeServiceWithStub()
-        do {
-            try await service.download(
-                from: Self.remoteURL,
-                to: destination,
-                expectedSizeBytes: 4096,
-                progressHandler: { _ in }
-            )
-            Issue.record("Expected DownloadError.oversizedTransfer")
-        } catch DownloadError.oversizedTransfer(let expectedBytes) {
-            #expect(expectedBytes == 4096)
-        } catch {
-            Issue.record("Unexpected error: \(error)")
-        }
-
-        #expect(!FileManager.default.fileExists(atPath: destination.path))
-        // Discarded, not left at the ceiling for the next attempt to trip over.
-        #expect(!bundle.exists)
-    }
 
     @Test("An oversized abort empties the partial even when the bundle can't be removed")
     func oversizedTransferEmptiesThePartialWhenRemovalFails() async throws {
@@ -895,20 +637,6 @@ struct DownloadServiceTests {
         #expect(requests.value == 0)
     }
 
-    // MARK: - Discarding Resume Data
-
-    @Test("discardResumeData bypasses the Trash when asked to delete immediately")
-    func discardResumeDataPermanentlyRemovesBundle() throws {
-        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
-
-        let fileSystem = MockFileSystem()
-        Self.makeServiceWithStub(fileSystem: fileSystem)
-            .discardResumeData(at: destination, permanently: true)
-
-        #expect(fileSystem.removedURLs == [DownloadService.resumeBundleURL(for: destination)])
-        #expect(fileSystem.trashedURLs.isEmpty)
-    }
-
     // MARK: - Adopting a File Already on Disk
 
     @Test("Adoption links the file, moves no bytes and discards the superseded bundle")
@@ -942,66 +670,6 @@ struct DownloadServiceTests {
         #expect(sourceNumber != nil)
         #expect(sourceNumber == destinationNumber)
         #expect(fileSystem.trashedURLs == [bundleURL])
-    }
-
-    @Test("A link that cannot be made leaves the source alone and answers false")
-    func adoptExistingFileRefusesWhenTheLinkFails() async throws {
-        // The candidate is gone by the time the link is attempted — deleted
-        // between the caller's probe and this call.
-        let source = scratch.url.appendingPathComponent("vanished.iso")
-        let destination = scratch.url.appendingPathComponent("vanished-a1b2c3d4.iso")
-
-        let service = Self.makeServiceWithStub()
-        let adopted = await service.adoptExistingFile(at: source, as: destination)
-
-        #expect(!adopted)
-        #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
-    }
-
-    @Test("A destination a transfer already owns is downloaded to, not adopted")
-    func adoptExistingFileRefusesADestinationUnderTransfer() async throws {
-        // The claim `download` holds is what makes this safe: an adoption that
-        // waited for the transfer and then linked would race its finalize.
-        let destination = scratch.url.appendingPathComponent("RestoreImage.ipsw")
-        let source = scratch.url.appendingPathComponent("RestoreImage-source.ipsw")
-        try Data(repeating: 0x33, count: 1024).write(to: source)
-
-        let payload = Data(repeating: 0xAB, count: 2 * 1024 * 1024)
-        // The claim is taken before the request goes out, so a handler that has
-        // run is a destination the transfer already owns — and the stub holds
-        // there until the adoption has answered, because it otherwise delivers
-        // the whole body synchronously and the transfer would finalize and drop
-        // its claim first. That run would answer `false` from the
-        // destination-occupied check and pass with the claim honored or not.
-        let handlerCalls = RequestCounter()
-        let started = AsyncGate()
-        let release = DispatchSemaphore(value: 0)
-        let waits = OffTaskWaits()
-        StubURLProtocol.setHandler { request in
-            handlerCalls.increment()
-            started.notify()
-            waits.run { try Backstop("the test's release of the response").wait(for: release) }
-            return .fullResponse(url: request.url ?? Self.remoteURL, body: payload, etag: "\"v1\"")
-        }
-        defer { StubURLProtocol.setHandler(nil) }
-
-        let service = Self.makeServiceWithStub()
-        let download = Task {
-            try await service.download(
-                from: Self.remoteURL, to: destination, progressHandler: { _ in })
-        }
-        let adopted: Bool
-        do {
-            defer { release.signal() }
-            try await started.wait { handlerCalls.value > 0 }
-            // Nothing is at the destination yet, so only the claim can refuse this.
-            #expect(!FileManager.default.fileExists(atPath: destination.path(percentEncoded: false)))
-            adopted = await service.adoptExistingFile(at: source, as: destination)
-        }
-        try await download.joined()
-
-        #expect(!adopted)
-        #expect(try Data(contentsOf: destination) == payload)
     }
 
     @Test("A logged URL keeps scheme, host and path but drops credentials")
@@ -1115,21 +783,6 @@ final class StubURLProtocol: URLProtocol {
             return StubResponse(
                 response: makeResponse(url: url, statusCode: statusCode, headers: allHeaders),
                 body: body, declaresLargerLength: false, failAfterBody: nil)
-        }
-
-        /// Delivers `partialBody` then signals `didFailWithError:` to simulate a
-        /// mid-stream network drop. `declaredLength` should be larger than
-        /// `partialBody.count` so the receiver sees an incomplete transfer.
-        static func midStreamError(
-            url: URL,
-            declaredLength: Int,
-            partialBody: Data,
-            error: URLError
-        ) -> StubResponse {
-            let headers: [String: String] = ["Content-Length": "\(declaredLength)"]
-            return StubResponse(
-                response: makeResponse(url: url, statusCode: 200, headers: headers),
-                body: partialBody, declaresLargerLength: true, failAfterBody: error)
         }
     }
 

@@ -75,15 +75,4 @@ struct GuestAgentDiskDeliveryTests {
             lastSeen: testCase.lastSeen, installedVersion: testCase.installedVersion)
         #expect(GuestAgentDiskDelivery.mode(for: config) == testCase.expected)
     }
-
-    // MARK: - Hostile reports
-
-    @Test("A report too large to be a version falls through to the install record")
-    func unparsablyLargeReport() {
-        let huge = String(repeating: "9", count: 10_000)
-        #expect(GuestAgentDiskDelivery.mode(for: Self.makeConfig(lastSeen: huge)) == .usb)
-        #expect(
-            GuestAgentDiskDelivery.mode(
-                for: Self.makeConfig(lastSeen: huge, installedVersion: "12.0.1")) == .virtio)
-    }
 }

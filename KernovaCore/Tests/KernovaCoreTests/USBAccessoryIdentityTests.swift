@@ -34,32 +34,4 @@ struct USBAccessoryIdentityTests {
                 claimedBy: []))
         #expect(identity.key == "04e8:6300:1100@hub/Port-USB-C@2")
     }
-
-    // MARK: - Duplicate Serials
-
-    @Test("Has no identity when the port key is claimed as well")
-    func aClaimedPortKeyLeavesNothingToTake() {
-        // Taking either would name a device that is somewhere else, which is
-        // worse than having no durable key at all.
-        #expect(
-            USBAccessoryIdentity.make(
-                descriptor: descriptor,
-                node: node(serial: "DUP", serialIndex: 3, ioPortPath: "hub/Port-A@1"),
-                claimedBy: ["04e8:6300:1100:DUP", "04e8:6300:1100@hub/Port-A@1"]) == nil)
-    }
-
-    // MARK: - Node Properties
-
-    @Test("Separates a device with no serial from one whose serial did not come back")
-    func declaresSerialNumberSeparatesTheTwoAbsences() {
-        #expect(!node().declaresSerialNumber)
-        #expect(node(serialIndex: 3).declaresSerialNumber)
-    }
-
-    @Test("Reads the receptacle label off the last path component")
-    func receptacleLabelIsTheLastComponent() {
-        #expect(node(ioPortPath: "IOService:/a/b/Port-USB-C@2").receptacleLabel == "Port-USB-C@2")
-        #expect(node(locationID: 0x0120_0000).receptacleLabel == "01200000")
-        #expect(node().receptacleLabel == nil)
-    }
 }

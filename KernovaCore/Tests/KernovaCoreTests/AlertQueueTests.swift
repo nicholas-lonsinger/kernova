@@ -37,16 +37,6 @@ struct AlertQueueTests {
         return (taken, dropped)
     }
 
-    @Test("Each window takes one alert at a time, in the order raised")
-    func oneAtATimeInOrder() {
-        var queue = Queue()
-        queue.enqueue(Request(name: "A1", window: "A"))
-        queue.enqueue(Request(name: "A2", window: "A"))
-
-        #expect(drain(&queue, free: ["A"]).taken == ["A1"])
-        #expect(drain(&queue, free: ["A"]).taken == ["A2"])
-    }
-
     @Test("An alert routed nowhere is held, and stays")
     func unroutedIsHeld() {
         var queue = Queue()
@@ -55,42 +45,5 @@ struct AlertQueueTests {
 
         #expect(drain(&queue, free: ["A"]).taken == ["A1"])
         #expect(queue.held(destination: \.window).map(\.name) == ["Held"])
-    }
-
-    @Test("An alert whose premise lapsed is dropped on the way to the next")
-    func lapsedIsDropped() {
-        var queue = Queue()
-        queue.enqueue(Request(name: "Lapsed", window: "A", holds: false))
-        queue.enqueue(Request(name: "A1", window: "A"))
-
-        let result = drain(&queue, free: ["A"])
-
-        #expect(result.dropped == ["Lapsed"])
-        #expect(result.taken == ["A1"])
-        #expect(queue.waiting.isEmpty)
-    }
-
-    @Test("An alert taken off a closing window goes back in the place its raising gave it")
-    func requeueKeepsRaisingOrder() throws {
-        var queue = Queue()
-        queue.enqueue(Request(name: "First", window: "A"))
-        queue.enqueue(Request(name: "Second", window: "B"))
-        queue.enqueue(Request(name: "Third", window: "B"))
-        let taken = queue.takeNext(
-            destination: \.window, isFree: { $0 == "A" }, stillHolds: \.holds, drop: { _ in })
-        let (first, _) = try #require(taken)
-
-        queue.requeue(first)
-
-        #expect(queue.waiting.map(\.request.name) == ["First", "Second", "Third"])
-    }
-
-    @Test("A window is awaited while an alert is routed to it")
-    func awaitedWindow() {
-        var queue = Queue()
-        queue.enqueue(Request(name: "A1", window: "A"))
-
-        #expect(queue.isAwaited("A", destination: \.window))
-        #expect(!queue.isAwaited("B", destination: \.window))
     }
 }

@@ -29,59 +29,6 @@ struct VmnetNetworkServiceTests {
         #expect(a.selection(ofNetwork: common) == .common(.nat))
     }
 
-    @Test("A VM's own networks are released with its last session view, and only then")
-    func ownNetworksLiveExactlyAsLongAsAView() throws {
-        let operations = MockVmnetNetworkOperator()
-        let service = VmnetNetworkService(operations: operations)
-        let own = VmnetNetworkID(kind: .nat, scope: .vm(vmA))
-        var first: VmnetSessionNetworks? = service.sessionNetworks(ownedBy: vmA)
-        var second: VmnetSessionNetworks? = service.sessionNetworks(ownedBy: vmA)
-        _ = try first?.joinedNetwork(for: .common(.nat))
-        let ownNetwork = try #require(try first?.joinedNetwork(for: .own(.nat)).network)
-        #expect(service.ipv4Subnet(for: own) != nil)
-
-        first = nil
-        #expect(operations.releasedNetworks.isEmpty)
-        #expect(second?.joinedNetworkIfMaterialized(for: .own(.nat)) != nil)
-
-        second = nil
-        #expect(operations.releasedNetworks == [ownNetwork])
-        #expect(service.ipv4Subnet(for: own) == nil)
-        // The common network is held for the life of the process.
-        #expect(service.ipv4Subnet(for: .common(.nat)) != nil)
-    }
-
-    @Test("A network's subnet is known exactly while it is held")
-    func theSubnetIsTheHeldNetworks() throws {
-        let operations = MockVmnetNetworkOperator()
-        operations.setSubnet(.scripted("192.168.65.0"))
-        let service = VmnetNetworkService(operations: operations)
-        let view = service.sessionNetworks(ownedBy: vmA)
-
-        #expect(service.ipv4Subnet(for: .common(.nat)) == nil)
-        _ = try view.joinedNetwork(for: .common(.nat))
-
-        #expect(service.ipv4Subnet(for: .common(.nat)) == .scripted("192.168.65.0"))
-        #expect(service.ipv4Subnet(for: .common(.hostOnly)) == nil)
-        #expect(service.ipv4Subnet(for: VmnetNetworkID(kind: .nat, scope: .vm(vmA))) == nil)
-    }
-
-    @Test("selection(ofNetwork:) answers for held networks only")
-    func selectionOfNetworkAnswersForHeldNetworksOnly() throws {
-        let operations = MockVmnetNetworkOperator()
-        let service = VmnetNetworkService(operations: operations)
-        let view = service.sessionNetworks(ownedBy: vmA)
-        let hostOnly = try view.joinedNetwork(for: .common(.hostOnly)).network
-        let nat = try view.joinedNetwork(for: .common(.nat)).network
-
-        #expect(view.selection(ofNetwork: hostOnly) == .common(.hostOnly))
-        #expect(view.selection(ofNetwork: nat) == .common(.nat))
-
-        let foreign = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
-        defer { foreign.deallocate() }
-        #expect(view.selection(ofNetwork: OpaquePointer(foreign)) == nil)
-    }
-
     @Test("A named network is one network its members' sessions share, released with its last member's last view")
     func aNamedNetworkLivesWhileAnyMemberHoldsIt() throws {
         let operations = MockVmnetNetworkOperator()

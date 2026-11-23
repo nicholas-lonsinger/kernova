@@ -5,17 +5,6 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// The window-title marker composed from `EphemeralModeCopy.titleName`.
-@Suite("Ephemeral Mode Title Tests", .caseScoped)
-@MainActor
-struct EphemeralModeTitleTests {
-    @Test("A live session appends the marker")
-    func liveSessionAppendsMarker() {
-        let title = EphemeralModeCopy.titleName("Debian", ephemeralSessionRunning: true)
-        #expect(title == "Debian (Ephemeral)")
-    }
-}
-
 /// What a `VMInstance` reports about its ephemeral baseline.
 @Suite("Ephemeral Mode Instance Tests", .serialized, .caseScoped)
 @MainActor

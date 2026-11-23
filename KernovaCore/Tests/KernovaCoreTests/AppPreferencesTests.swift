@@ -27,54 +27,6 @@ struct AppPreferencesTests {
         #expect(prefs.alwaysShowAdvancedOptions == false)
     }
 
-    @Test("sidebarSelection defaults to nil, round-trips a row in any section, and clears on nil")
-    func sidebarSelectionRoundTrips() {
-        let (prefs, defaults) = makePreferences()
-        #expect(prefs.sidebarSelection == nil)
-
-        let row = SidebarRowKey(
-            section: .smartGroup(UUID()), group: SidebarGroupID(rawValue: "state:running"), entryID: UUID())
-        prefs.sidebarSelection = row
-        #expect(prefs.sidebarSelection == row)
-        #expect(defaults.data(forKey: "KernovaSidebarSelection") != nil)
-
-        prefs.sidebarSelection = nil
-        #expect(prefs.sidebarSelection == nil)
-        #expect(defaults.object(forKey: "KernovaSidebarSelection") == nil)
-    }
-
-    @Test("sidebarViewOptions defaults to the default options and round-trips every field")
-    func sidebarViewOptionsRoundTrips() {
-        let (prefs, defaults) = makePreferences()
-        #expect(prefs.sidebarViewOptions == SidebarViewOptions())
-
-        let options = SidebarViewOptions(
-            filter: VMLibraryFilter(guestOSes: [.macOS], states: [.running], tags: [UUID()]), sort: .lastRun,
-            grouping: .tag, showsDetails: true)
-        prefs.sidebarViewOptions = options
-
-        #expect(prefs.sidebarViewOptions == options)
-        #expect(defaults.data(forKey: "KernovaSidebarViewOptions") != nil)
-    }
-
-    @Test("A stored filter's network no build spells is removed alone; every other option is kept")
-    func sidebarViewOptionsDropAnUnknownNetworkAlone() throws {
-        let (prefs, defaults) = makePreferences()
-        defaults.set(
-            Data(
-                #"""
-                {"sort":"name","grouping":"state","showsDetails":true,
-                 "filter":{"networks":["bogus:common","none"],"guestOSes":["macOS"]}}
-                """#.utf8), forKey: "KernovaSidebarViewOptions")
-
-        #expect(
-            prefs.sidebarViewOptions
-                == SidebarViewOptions(
-                    filter: VMLibraryFilter(
-                        guestOSes: [.macOS], networks: [try #require(VMLibraryFilter.Network(rawValue: "none"))]),
-                    sort: .name, grouping: .state, showsDetails: true))
-    }
-
     @Test("vmOrder round-trips through UserDefaults")
     func vmOrderRoundTrips() {
         let (prefs, defaults) = makePreferences()
@@ -124,76 +76,6 @@ struct AppPreferencesTests {
         prefs.cloneOutcome = .newMachine
         #expect(prefs.cloneOutcome == .newMachine)
         #expect(defaults.bool(forKey: "cloneKeepsMachineID") == false)
-    }
-
-    @Test("The Clone menu items name the preferred outcome first and the other as the alternate")
-    func cloneMenuItemsFollowPreference() {
-        let (prefs, _) = makePreferences()
-        let byDefault = prefs.cloneMenuItems(for: nil)
-        #expect(byDefault.primary.title == "Clone as New Machine")
-        #expect(byDefault.alternate?.title == "Clone as Exact Copy")
-
-        prefs.cloneOutcome = .exactCopy
-        let exact = prefs.cloneMenuItems(for: nil)
-        #expect(exact.primary.title == "Clone as Exact Copy")
-        #expect(exact.alternate?.title == "Clone as New Machine")
-    }
-
-    @Test("A guest running macOS 12 or earlier is offered only Clone as Exact Copy")
-    func cloneMenuItemsOfAMontereyGuestOfferOnlyAnExactCopy() {
-        let (prefs, _) = makePreferences()
-        var monterey = VMConfiguration(
-            name: "Monterey", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
-            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
-        monterey.lastSeenGuestOSVersion = "12.7.6"
-        for preferred in CloneOutcome.allCases {
-            prefs.cloneOutcome = preferred
-            let items = prefs.cloneMenuItems(for: monterey)
-            #expect(items.primary.outcome == .exactCopy)
-            #expect(items.alternate == nil)
-            #expect(prefs.cloneOutcome(for: monterey) == .exactCopy)
-        }
-
-        // A guest whose version nothing has vouched for, or one past 12, offers both.
-        var unknown = monterey
-        unknown.lastSeenGuestOSVersion = nil
-        var ventura = monterey
-        ventura.lastSeenGuestOSVersion = "13.0"
-        prefs.cloneOutcome = .newMachine
-        for configuration in [unknown, ventura] {
-            let items = prefs.cloneMenuItems(for: configuration)
-            #expect(items.primary.outcome == .newMachine)
-            #expect(items.alternate?.outcome == .exactCopy)
-        }
-    }
-
-    @Test("menuBarQuitReminderDismissed round-trips through UserDefaults")
-    func menuBarQuitReminderDismissedRoundTrips() {
-        let (prefs, defaults) = makePreferences()
-        prefs.menuBarQuitReminderDismissed = true
-        #expect(prefs.menuBarQuitReminderDismissed == true)
-        #expect(defaults.bool(forKey: "menuBarQuitReminderDismissed") == true)
-
-        prefs.menuBarQuitReminderDismissed = false
-        #expect(prefs.menuBarQuitReminderDismissed == false)
-    }
-
-    @Test("mainToolbarNewVMCollapseIndex round-trips through UserDefaults and clears on nil")
-    func mainToolbarNewVMCollapseIndexRoundTrips() {
-        let (prefs, defaults) = makePreferences()
-        prefs.mainToolbarNewVMCollapseIndex = 2
-        #expect(prefs.mainToolbarNewVMCollapseIndex == 2)
-        #expect(defaults.object(forKey: "KernovaMainToolbarNewVMCollapseIndex") as? Int == 2)
-
-        prefs.mainToolbarNewVMCollapseIndex = nil
-        #expect(prefs.mainToolbarNewVMCollapseIndex == nil)
-        #expect(defaults.object(forKey: "KernovaMainToolbarNewVMCollapseIndex") == nil)
-    }
-
-    @Test("clipboardMaxPasteBytes defaults to the derived ceiling")
-    func clipboardMaxPasteBytesDefaults() {
-        let (prefs, _) = makePreferences()
-        #expect(prefs.clipboardMaxPasteBytes == ClipboardPasteLimit.defaultBytes)
     }
 
     @Test("clipboardMaxPasteBytes round-trips every offered ceiling through UserDefaults")

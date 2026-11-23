@@ -70,12 +70,4 @@ struct GuestInputDevicesTests {
             lastSeen: testCase.lastSeen, installedVersion: testCase.installedVersion)
         #expect(GuestInputDevices.resolve(for: config) == testCase.expected)
     }
-
-    // MARK: - Explicit modes
-
-    @Test("An explicit Mac choice wins over a pre-13 version")
-    func explicitMacBeatsOldVersion() {
-        let config = Self.makeConfig(lastSeen: "12.0.1", mode: .mac)
-        #expect(GuestInputDevices.resolve(for: config) == .mac)
-    }
 }

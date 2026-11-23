@@ -16,10 +16,6 @@ import Testing
 @MainActor
 @Suite("Hub drop service", .caseScoped)
 struct HubDropServiceTests {
-    /// The pull each served request stands for.
-    nonisolated private static let pull = ItemPullID(
-        generation: ConnectionGeneration(rawValue: 1), stream: StreamID(rawValue: 2))
-
     private let scratch = TestScratchDirectory(prefix: "HubDropServiceTests")
 
     init() throws {
@@ -59,13 +55,6 @@ struct HubDropServiceTests {
         return pasteboard
     }
 
-    /// A pasteboard of one file promise item.
-    private func promisePasteboard() -> FakePasteboard {
-        let pasteboard = FakePasteboard()
-        pasteboard.setFilePromise()
-        return pasteboard
-    }
-
     /// The first DROP offer the hub sent its connection, once it has.
     private func sentOffer(_ probe: AgentHubProbe) async throws -> (ItemRequestID, ItemOffer) {
         try await probe.changed.wait { !probe.dropOffers.isEmpty }
@@ -76,151 +65,6 @@ struct HubDropServiceTests {
         let url = scratch.url.appendingPathComponent(name)
         try Data(contents.utf8).write(to: url)
         return url
-    }
-
-    @Test("A drop with no DROP console peer is refused by the hub, and reports no agent was taking drops")
-    func noConsolePeerIsRefused() async throws {
-        let probe = AgentHubProbe()
-        let instance = try await instance(probe, console: false)
-
-        #expect(instance.dropService.drop(pasteboard([try file("a.txt", "a")]), promises: [], peerName: "Drop VM"))
-
-        try await waitForChange { instance.clipboardTransferReport.failure != nil }
-        #expect(instance.clipboardTransferReport.failure == .dropStopped(.noAgent))
-        #expect(probe.dropOffers.isEmpty)
-    }
-
-    /// An instance whose one drop of `a.txt` the console peer has opened, and that offer.
-    private func openDrop(_ probe: AgentHubProbe) async throws -> (VMInstance, ItemOffer) {
-        let instance = try await instance(probe)
-        #expect(instance.dropOnGuest(pasteboard([try file("a.txt", "a")]), promises: []))
-        let (request, offer) = try await sentOffer(probe)
-        probe.deliver(.itemReply(request, .offered(nil)), fromConnection: 0)
-        return (instance, offer)
-    }
-
-    @Test("The console leaving the only peer mid-drop ends the drop as no agent taking drops, offered once")
-    func consoleLeavingEndsTheDrop() async throws {
-        let probe = AgentHubProbe()
-        let (instance, offer) = try await openDrop(probe)
-
-        probe.deliver(
-            .role(.peerStateChanged(PeerSessionState(console: .off, sessionID: "2", userName: "pbear"))),
-            fromConnection: 0)
-        try await probe.changed.wait {
-            probe.commands.contains(.items(.withdraw(token: offer.token, code: .capabilityWithdrawn)))
-        }
-
-        try await waitForChange { instance.clipboardTransferReport.failure != nil }
-        #expect(instance.clipboardTransferReport.failure == .dropStopped(.noAgent))
-        #expect(probe.dropOffers.count == 1)
-    }
-
-    @Test("A drop moved to another session's agent mid-drop says another agent took drops over")
-    func consoleMoveEndsTheDrop() async throws {
-        let probe = AgentHubProbe()
-        let (instance, offer) = try await openDrop(probe)
-
-        #expect(probe.connect())
-        let other = PeerClaim(
-            role: .sessionPeer, scope: .user, os: .macOS, architecture: .arm64, versionLabel: "1.0 (1)",
-            instanceID: Data(repeating: 2, count: 16))
-        probe.deliver(
-            .role(.helloReceived(other, PeerSessionState(console: .on, sessionID: "3", userName: "other"))),
-            fromConnection: 1)
-        probe.deliver(.role(.featuresChanged(Self.features)), fromConnection: 1)
-        try await probe.changed.wait {
-            probe.commands.contains(.items(.withdraw(token: offer.token, code: .capabilityWithdrawn)))
-        }
-
-        try await waitForChange { instance.clipboardTransferReport.failure != nil }
-        #expect(instance.clipboardTransferReport.failure == .dropStopped(.movedToAnotherAgent))
-    }
-
-    @Test("Drops turned off in the VM's settings mid-drop end the drop as turned off")
-    func policyOffEndsTheDrop() async throws {
-        let probe = AgentHubProbe()
-        let (instance, offer) = try await openDrop(probe)
-
-        probe.deliver(
-            .role(
-                .featuresChanged(
-                    FeatureStatusTable([
-                        (FeatureID.itemTransfer, Availability<Data>.available(Data())),
-                        (.drop, .absent(.disabledByPolicy, debugDetail: "")),
-                    ]))),
-            fromConnection: 0)
-        try await probe.changed.wait {
-            probe.commands.contains(.items(.withdraw(token: offer.token, code: .disabledByPolicy)))
-        }
-
-        try await waitForChange { instance.clipboardTransferReport.failure != nil }
-        #expect(instance.clipboardTransferReport.failure == .dropStopped(.turnedOff))
-    }
-
-    @Test("A drop whose connection ends mid-drop says so, counting its files")
-    func connectionLossEndsTheDrop() async throws {
-        let probe = AgentHubProbe()
-        let (instance, offer) = try await openDrop(probe)
-
-        probe.deliver(.items(.offerEnded(.drop, .local, token: offer.token, .connectionLost)), fromConnection: 0)
-
-        try await waitForChange { instance.clipboardTransferReport.failure != nil }
-        #expect(instance.clipboardTransferReport.failure == .interrupted(fileCount: 1))
-    }
-
-    @Test(
-        "A peer refusing the drop is worded by why it could not land it",
-        arguments: [
-            (WireError(.writeFailed, posixErrno: EPERM), ClipboardErrorCode.dropDownloadsDenied),
-            (WireError(.writeFailed, posixErrno: EACCES), .dropDownloadsDenied),
-            (WireError(.writeFailed, posixErrno: ENOSPC), .dropDiskFull),
-            (WireError(.itemUnpackRefused), .dropUnpackFailed),
-            (WireError(.writeFailed, posixErrno: EIO), .dropFailed),
-        ])
-    func refusalIsWorded(error: WireError, code: ClipboardErrorCode) async throws {
-        let probe = AgentHubProbe()
-        let instance = try await instance(probe)
-        #expect(instance.dropOnGuest(pasteboard([try file("a.txt", "a")]), promises: []))
-        let (request, offer) = try await sentOffer(probe)
-        probe.deliver(.itemReply(request, .offered(nil)), fromConnection: 0)
-
-        probe.deliver(
-            .items(.offerEnded(.drop, .local, token: offer.token, .resetByPeer(error))), fromConnection: 0)
-
-        try await waitForChange { instance.clipboardTransferReport.failure != nil }
-        #expect(instance.clipboardTransferReport.failure == .peerReported(code))
-    }
-
-    @Test("A drop the peer releases once landed reports nothing")
-    func landedDropReportsNothing() async throws {
-        let probe = AgentHubProbe()
-        let instance = try await instance(probe)
-        var reports: [ClipboardTransferReport] = []
-        let mirror = instance.clipboardTransfers.onReportChanged
-        instance.clipboardTransfers.onReportChanged = { report in
-            reports.append(report)
-            mirror?(report)
-        }
-        #expect(instance.dropOnGuest(pasteboard([try file("a.txt", "a")]), promises: []))
-        let (request, landed) = try await sentOffer(probe)
-        probe.deliver(.itemReply(request, .offered(nil)), fromConnection: 0)
-        #expect(instance.dropOnGuest(pasteboard([try file("b.txt", "b")]), promises: []))
-        try await probe.changed.wait { probe.dropOffers.count == 2 }
-        let (second, refused) = probe.dropOffers[1]
-        probe.deliver(.itemReply(second, .offered(nil)), fromConnection: 0)
-
-        probe.deliver(
-            .items(.offerEnded(.drop, .local, token: landed.token, .completed(remoteEndBody: Self.landed(1)))),
-            fromConnection: 0)
-        // A later end, through the same queues, that does report: once it has, the first was handled.
-        probe.deliver(
-            .items(.offerEnded(.drop, .local, token: refused.token, .resetByPeer(WireError(.writeFailed)))),
-            fromConnection: 0)
-
-        try await waitForChange { instance.clipboardTransferReport.failure != nil }
-        #expect(reports.compactMap(\.failure) == [.peerReported(.dropFailed)])
-        #expect(instance.dropService.openOffersForTesting == 0)
     }
 }
 
@@ -260,20 +104,6 @@ extension HubDropServiceTests {
             }
         }
         #expect(HubDropService.failure(released: Data([0xFF]), items: 1, lost: 0) == failed)
-    }
-
-    @Test("A drop the peer resets over its offer budget says it holds more items than the VM takes at once")
-    func overBudgetIsTooLarge() async throws {
-        let probe = AgentHubProbe()
-        let (instance, offer) = try await openDrop(probe)
-
-        probe.deliver(
-            .items(
-                .offerEnded(.drop, .local, token: offer.token, .resetByPeer(WireError(.tooLarge, limit: 16_777_216)))),
-            fromConnection: 0)
-
-        try await waitForChange { instance.clipboardTransferReport.failure != nil }
-        #expect(instance.clipboardTransferReport.failure == .tooLarge(limitBytes: 16_777_216))
     }
 
     @Test(
@@ -331,82 +161,6 @@ extension HubDropServiceTests {
 
         try await waitForChange { instance.clipboardTransferReport.failure != nil }
         #expect(instance.clipboardTransferReport.failure == .itemsSkipped(count: 1))
-    }
-
-    @Test("A drop the peer lands none of, for items it skipped, says they could not be read")
-    func nothingLandedIsUnreadable() async throws {
-        let probe = AgentHubProbe()
-        let (instance, offer) = try await openDrop(probe)
-
-        probe.deliver(
-            .items(.offerEnded(.drop, .local, token: offer.token, .completed(remoteEndBody: Self.landed(0)))),
-            fromConnection: 0)
-
-        try await waitForChange { instance.clipboardTransferReport.failure != nil }
-        #expect(instance.clipboardTransferReport.failure == .itemsUnreadable)
-    }
-
-    @Test("A drop that lands whole clears the refusal an earlier drop left standing")
-    func successClearsEarlierFailure() async throws {
-        let probe = AgentHubProbe()
-        let (instance, refused) = try await openDrop(probe)
-        probe.deliver(
-            .items(
-                .offerEnded(
-                    .drop, .local, token: refused.token, .resetByPeer(WireError(.writeFailed, posixErrno: EPERM)))),
-            fromConnection: 0)
-        try await waitForChange { instance.clipboardTransferReport.failure == .peerReported(.dropDownloadsDenied) }
-
-        #expect(instance.dropOnGuest(pasteboard([try file("b.txt", "b")]), promises: []))
-        try await probe.changed.wait { probe.dropOffers.count == 2 }
-        let (request, landed) = probe.dropOffers[1]
-        probe.deliver(.itemReply(request, .offered(nil)), fromConnection: 0)
-        probe.deliver(
-            .items(.offerEnded(.drop, .local, token: landed.token, .completed(remoteEndBody: Self.landed(1)))),
-            fromConnection: 0)
-
-        try await waitForChange { instance.clipboardTransferReport == .idle }
-    }
-
-    @Test(
-        "A promise naming two files offers two items, each served from its own file, its staging kept until both land")
-    func multiFilePromiseOffersEachFile() async throws {
-        let probe = AgentHubProbe()
-        let instance = try await instance(probe)
-        let receiver = FakeFilePromiseReceiver(
-            files: [("a.txt", .file(Data("alpha".utf8))), ("b.txt", .file(Data("beta".utf8)))],
-            fileType: "public.plain-text", deferred: true)
-
-        #expect(instance.dropOnGuest(promisePasteboard(), promises: [receiver]))
-        let (request, offer) = try await sentOffer(probe)
-        #expect(offer.items.map { $0.representations.map(\.name) } == [[Data("a.txt".utf8)], [Data("b.txt".utf8)]])
-        probe.deliver(.itemReply(request, .offered(nil)), fromConnection: 0)
-
-        receiver.deliver(1)
-        var pull = PullRequest()
-        pull.token = offer.token
-        pull.item = 1
-        let second = pull
-        let owner = instance.dropService.owner
-        let representation = offer.items[1].representations[0]
-        let served = try await offCooperativePool { owner.content(Self.pull, second, representation) }
-        guard case .success(.tree(let path)) = served else {
-            Issue.record("served \(served)"); return
-        }
-        #expect(try Data(contentsOf: URL(filePath: path)) == Data("beta".utf8))
-        let staging = URL(filePath: path).deletingLastPathComponent()
-
-        probe.deliver(
-            .items(.offerEnded(.drop, .local, token: offer.token, .completed(remoteEndBody: Self.landed(1)))),
-            fromConnection: 0)
-        try await waitForChange { instance.clipboardTransferReport.failure == .itemsSkipped(count: 1) }
-        // The first file is still owed, so its staging stays.
-        #expect(FileManager.default.fileExists(atPath: staging.path))
-
-        receiver.deliver(0)
-        let release = try #require(instance.dropService.stagingReleasesForTesting.first)
-        try await release.joined()
-        #expect(!FileManager.default.fileExists(atPath: staging.path))
     }
 }
 

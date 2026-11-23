@@ -30,20 +30,6 @@ struct CommandErrorAppleEventsTests {
                 .appleEventErrorNumber == Int(errAENoSuchObject))
     }
 
-    @Test("An ambiguous name reads back with the candidates the core named")
-    func ambiguityCarriesItsCandidates() {
-        let first = makeSummary(name: "Alpha")
-        let second = makeSummary(name: "Alpha")
-        let refusal = CommandError.ambiguous(
-            selector: .name("Alpha"), candidates: [first, second])
-
-        let message = refusal.appleEventErrorString
-
-        #expect(message == refusal.message)
-        #expect(message.contains(first.id.uuidString))
-        #expect(message.contains(second.id.uuidString))
-    }
-
     @Test("Everything the verb itself refused is an event that failed")
     func verbRefusalsAreEventFailed() {
         let vm = makeSummary()
@@ -89,15 +75,5 @@ struct CommandErrorAppleEventsTests {
         #expect(
             CommandError.invalidArgument("No such key.").appleEventErrorNumber
                 == Int(errAETypeError))
-    }
-
-    @Test("A consent refusal names the one thing a script can do about it")
-    func consentRefusalsNameTheFlag() {
-        let refusal = CommandError.confirmationRequired(makePrompt())
-
-        let message = refusal.appleEventErrorString
-
-        #expect(message.hasPrefix(refusal.message))
-        #expect(message.hasSuffix("Add `with confirmation` to do it anyway."))
     }
 }

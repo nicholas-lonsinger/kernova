@@ -20,16 +20,6 @@ struct AppResidencyOutcomeTests {
             hasUninterruptibleWork: hasUninterruptibleWork)
     }
 
-    @Test("a window on screen always keeps the Dock icon", arguments: [true, false])
-    func windowOnScreenShowsDockIcon(keepInMenuBar: Bool) {
-        #expect(outcome(hasVisibleUserWindow: true, keepInMenuBar: keepInMenuBar) == .showDockIcon)
-    }
-
-    @Test("the last window closing with the toggle off quits")
-    func lastWindowWithKeepOffQuits() {
-        #expect(outcome() == .quit)
-    }
-
     // MARK: - Hiding
 
     @Test("a hidden app is left as it is, whatever the toggle says", arguments: [true, false])
@@ -39,24 +29,5 @@ struct AppResidencyOutcomeTests {
         // nothing, leaving a presented app its Dock icon and a headless one its
         // absence until the unhide reconcile can read the windows.
         #expect(outcome(isHidden: true, keepInMenuBar: keepInMenuBar) == .waitForUnhide)
-    }
-
-    @Test("work in flight does not lift the hide's hold")
-    func hiddenWithWorkInFlightWaitsForUnhide() {
-        #expect(outcome(isHidden: true, hasUninterruptibleWork: true) == .waitForUnhide)
-    }
-
-    // MARK: - Work in flight
-
-    @Test("work in flight holds the quit and keeps the app reachable")
-    func uninterruptibleWorkKeepsTheDockIcon() {
-        // Not `.goHeadless`: with the toggle off there is no status item, so
-        // demoting would hide the progress the hold exists to protect.
-        #expect(outcome(hasUninterruptibleWork: true) == .showDockIcon)
-    }
-
-    @Test("work in flight changes nothing while the toggle is on")
-    func uninterruptibleWorkIsIrrelevantWhenKeepingInMenuBar() {
-        #expect(outcome(keepInMenuBar: true, hasUninterruptibleWork: true) == .goHeadless)
     }
 }

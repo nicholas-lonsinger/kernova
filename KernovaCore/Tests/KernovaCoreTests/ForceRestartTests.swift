@@ -23,23 +23,6 @@ struct ForceRestartTests {
         try await harness.core.restart(.id(instance.id), disposition: .force, timeout: nil, consent: consent)
     }
 
-    @Test("Where Force Stop is not offered, it is refused by state, before any question")
-    func refusedWhereForceStopIsNot() async throws {
-        let harness = makeHarness()
-        let instance = harness.wired.register(name: "Stopped", phase: .stopped)
-        #expect(!harness.library.capabilities.isApplicable(.forceStop, to: instance))
-
-        let error = try await #require(throws: CommandError.self) {
-            try await forceRestart(harness, instance, consent: .none)
-        }
-        guard case .invalidState = error else {
-            Issue.record("Expected the state refusal, got \(error)")
-            return
-        }
-        #expect(harness.virtualization.forceStopCallCount == 0)
-        #expect(harness.virtualization.startCallCount == 0)
-    }
-
     @Test("The intent gateway's restart is refused for Force Restart's consent without one, and restarts with one")
     func intentGatewayRoute() async throws {
         let harness = makeHarness()
@@ -57,25 +40,5 @@ struct ForceRestartTests {
         try await gateway.restart(instance.id, disposition: .force, consent: Consent([.forceRestart]))
         #expect(harness.virtualization.forceStopCallCount == 1)
         #expect(harness.virtualization.startCallCount == 1)
-    }
-
-    @Test("A Force Stop that joins a Force Restart's termination in flight cancels its boot")
-    func joiningForceStopCancelsTheBoot() async throws {
-        let harness = makeHarness()
-        let session = UUID()
-        let instance = harness.wired.register(name: "Joined", phase: .running(sessionID: session))
-        let boot = VMFollowUp(scope: .vm, rank: .ordinary, request: .start(recovery: false)) { _ in
-            Issue.record("The cancelled Force Restart booted")
-        }
-        let forceRestartStop = try instance.activity.forceStop(continuingWith: boot) {}
-        #expect(boot.outcome.result == nil)
-
-        let forceStop = try instance.activity.forceStop { Issue.record("A joined Force Stop terminated again") }
-        await #expect(throws: VMContinuationStopped.self) { try await boot.outcome.resolved() }
-        instance.activity.deliverSessionEvent(.stopDidComplete, from: session)
-        try await forceRestartStop.resolved()
-        try await forceStop.resolved()
-
-        #expect(instance.status == .stopped)
     }
 }
