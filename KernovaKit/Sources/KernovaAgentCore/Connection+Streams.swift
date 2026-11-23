@@ -54,7 +54,6 @@ extension Connection {
             data.count <= writableData(at: index)
         else { return misuse("send \(data.count) raw bytes past writableData on stream \(id.rawValue)") }
         streams[index].sendWindow -= data.count
-        streams[index].queuedRaw += data.count
         streams[index].enqueue(.data(data))
         connectionSendCredit -= data.count
         queuedRawTotal += data.count
@@ -167,7 +166,6 @@ extension Connection {
                 queuedRawTotal -= bytes.count
             }
         }
-        record.queuedRaw = 0
         record.unsentMessages = 0
         streams[index] = record
     }

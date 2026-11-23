@@ -36,8 +36,6 @@ final class SimPipe {
     private(set) var delivered = 0
     /// The writer shut down: the reader sees EOF once the pipe is empty.
     var writerClosed = false
-    /// The reader shut down: the writer's next write fails.
-    var readerClosed = false
     var eofDelivered = false
     var stalledUntil: SimTime?
     /// When the last accepted byte finishes serializing.

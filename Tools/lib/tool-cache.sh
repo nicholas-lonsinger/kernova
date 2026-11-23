@@ -44,7 +44,7 @@ tool_cache_root() {
 # symbolic links — and the Swift toolchain `swift` resolves in the repository
 # root, where every tool here builds: a swiftly proxy on PATH picks its
 # toolchain by directory. A build with another toolchain names it among its
-# values (tool_swift_identity).
+# own inputs.
 tool_dir() {
     local root key
     root=$(tool_cache_root) || return
@@ -85,16 +85,12 @@ tool_key() (
     printf '%s' "$manifest" | "${tool_sha256[@]}" | cut -c 1-16
 )
 
-# tool_swift_identity <swift command>... — the toolchain `<swift command>
-# -print-target-info` runs: its compiler, the triple it targets less the OS
-# version, and where it is installed.
-tool_swift_identity() {
-    "$@" -print-target-info | grep -E '"(compilerVersion|unversionedTriple|runtimeResourcePath)"'
-}
-
-# The toolchain a build here uses, and on macOS the SDK it builds against.
+# The toolchain a build here uses — its compiler, the triple it targets less
+# the OS version, and where it is installed, because an executable SwiftPM
+# links for Linux loads the Swift runtime through an rpath to the toolchain's
+# own directory — and on macOS the SDK it builds against.
 tool_toolchain() {
-    tool_swift_identity swift || return
+    swift -print-target-info | grep -E '"(compilerVersion|unversionedTriple|runtimeResourcePath)"' || return
     if [ "$(uname -s)" = Darwin ]; then
         xcrun --sdk macosx --show-sdk-build-version || return
     fi

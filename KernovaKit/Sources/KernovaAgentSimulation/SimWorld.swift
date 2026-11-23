@@ -422,8 +422,10 @@ package final class SimWorld {
         transcript.add(UInt64(bytes.count))
         transcript.add(bytes.prefix(4096))
         link.observer.written(bytes, by: side, world: self)
-        // A write after the far side shut down goes nowhere; this side ends when its
-        // own reader reaches EOF, after reading whatever the far side sent last.
+        // A write after the far side shut down goes nowhere. The real transport may fail
+        // it instead, after which ConnectionDriver drops every later transmit; either
+        // way this side ends when its own reader reaches EOF, after reading whatever
+        // the far side sent last.
         let write = pipe.write(bytes, now: now)
         if pipe.isCut, let fault = pipe.cutFault { faultTookEffect(fault) }
         pipe.writePending = true
@@ -529,7 +531,6 @@ package final class SimWorld {
         link.shutDown.insert(side)
         link.timerToken[side, default: 0] += 1
         link.pipe(writtenBy: side).writerClosed = true
-        link.pipe(readBy: side).readerClosed = true
         let other: SimSide = side == .host ? .peer : .host
         at(now) { world in world.scheduleRead(link, other) }
         if side == .peer {
@@ -726,7 +727,6 @@ package final class SimWorld {
             link.shutDown.insert(.peer)
             link.timerToken[.peer, default: 0] += 1
             link.toHost.writerClosed = true
-            link.toPeer.readerClosed = true
             checker.discard(link: link, side: .peer)
             link.peer = nil
             scheduleRead(link, .host)
