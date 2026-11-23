@@ -23,7 +23,7 @@ struct Scenario: Sendable, CustomTestStringConvertible {
 
     var testDescription: String { name }
 
-    /// The seeds a run covers: `KERNOVA_SIM_SEEDS` raises the count for a nightly run,
+    /// The seeds a run covers: `KERNOVA_SIM_SEEDS` sets every scenario's count in place of its own, and
     /// `KERNOVA_SIM_SEED` replays one.
     var seedList: [UInt64] {
         let environment = ProcessInfo.processInfo.environment

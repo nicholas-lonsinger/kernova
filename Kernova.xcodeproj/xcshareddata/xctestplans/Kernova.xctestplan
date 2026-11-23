@@ -12,6 +12,10 @@
     "defaultTestExecutionTimeAllowance" : 300,
     "environmentVariableEntries" : [
       {
+        "key" : "KERNOVA_SIM_SEEDS",
+        "value" : "2"
+      },
+      {
         "key" : "KERNOVA_SOURCE_ROOT",
         "value" : "$(SRCROOT)"
       }
