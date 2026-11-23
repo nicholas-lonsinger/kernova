@@ -90,6 +90,21 @@ struct VMCommandEnvelopeRouterTests {
             .path(percentEncoded: false)
     }
 
+    // MARK: - Reads
+
+    @Test("A request in the vocabulary before MAC address step routes is refused as another version")
+    func requestOfThePreMACRouteVocabularyIsRefused() async throws {
+        let harness = makeHarness()
+        let request = Data(#"{"protocolVersion":13,"verb":{"list":{}}}"#.utf8)
+
+        let response = try await harness.transport.sendRaw(request)
+
+        #expect(VMCommandRequest.currentProtocolVersion == 19)
+        #expect(
+            response.result
+                == .refused(.unsupportedProtocolVersion(peer: 13, expected: VMCommandRequest.currentProtocolVersion)))
+    }
+
     // MARK: - Refusals
 
     @Test("A destructive verb with no consent comes back as the prompt to gather")
@@ -246,6 +261,45 @@ struct VMCommandEnvelopeRouterTests {
     }
 
     // MARK: - Configuration
+
+    @Test("The keyspace, a read and a write each cross the wire as their own payload")
+    func configurationVerbsCrossTheWire() async throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, name: "Alpha", guestOS: .macOS) {
+            $0.cpuCount = 4
+            $0.clipboardSharingEnabled = true
+        }
+
+        #expect(
+            try await harness.transport.send(.configurationKeys).result
+                == .configurationKeys(VMConfigurationKeyRegistry.keys.map(\.descriptor)))
+
+        #expect(
+            try await harness.transport.send(.configuration(.name("Alpha"), keys: ["cpus"])).result
+                == .configuration([ConfigurationEntry(key: "cpus", value: "4")]))
+
+        let assignments = [
+            ConfigurationEntry(key: "cpus", value: "3"),
+            ConfigurationEntry(key: "clipboard.passthrough", value: "true"),
+        ]
+        // The consent travels with the write: without it, the passthrough the
+        // batch turns on is refused and nothing is written.
+        let refused = try await harness.transport.send(
+            .setConfiguration(.name("Alpha"), assignments: assignments, consent: .none))
+        guard case .confirmationRequired(let prompt)? = refused.failure else {
+            Issue.record("expected a consent refusal, got \(String(describing: refused.failure))")
+            return
+        }
+        #expect(prompt.kind == .enableClipboardPassthrough)
+        #expect(instance.configuration.cpuCount == 4)
+
+        #expect(
+            try await harness.transport.send(
+                .setConfiguration(.name("Alpha"), assignments: assignments, consent: .all)
+            ).result == .configuration(assignments))
+        #expect(instance.configuration.cpuCount == 3)
+        #expect(instance.configuration.clipboardPassthroughEnabled)
+    }
 
     @Test("A share add crosses the wire as the path the client named and its flag")
     func shareAddCrossesTheWire() async throws {

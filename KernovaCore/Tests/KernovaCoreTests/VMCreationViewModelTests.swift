@@ -146,6 +146,22 @@ struct VMCreationViewModelTests {
 
     // MARK: - buildInstallContext
 
+    @Test("buildInstallContext snapshots downloadLatest with the looked-up destination")
+    func buildInstallContextDownloadLatest() async throws {
+        let vm = VMCreationViewModel.overFakeEngine(
+            probeService: MockRestoreImageProbeService(), ipswService: MockIPSWService())
+        try await vm.loadLatestImageDetails()?.joined()
+
+        let context = vm.buildInstallContext()
+
+        #expect(context.source == .downloadLatest)
+        #expect(
+            context.downloadDestinationPath
+                == vm.downloadPath(forFilename: "UniversalMac_26.5.2_25F84_Restore.ipsw"))
+        #expect(context.localIPSWPath == nil)
+        #expect(!context.requestedFreshDownload)
+    }
+
     @Test("buildInstallContext snapshots localFile with chosen path")
     func buildInstallContextLocalFile() {
         let vm = VMCreationViewModel.overFakeEngine(localImageInspector: MockLocalRestoreImageInspector())
@@ -158,5 +174,63 @@ struct VMCreationViewModelTests {
         #expect(context.localIPSWPath == "/tmp/macOS-26.ipsw")
         #expect(context.downloadDestinationPath == nil)
         #expect(context.localIPSWBookmark == bookmark)
+    }
+
+    // MARK: - Custom URL Source
+
+    @Test("Two off-convention URLs sharing a basename get different destinations")
+    func pastedImagesWithOneBasenameGetDistinctDestinations() {
+        let vm = VMCreationViewModel.overFakeEngine()
+        vm.selectPastedImage(
+            makeProbedImage(
+                urlString: "https://a.example.com/restore.ipsw", version: nil, build: nil))
+        let first = vm.ipswDownloadPath
+        vm.selectPastedImage(
+            makeProbedImage(
+                urlString: "https://b.example.com/restore.ipsw", version: nil, build: nil))
+
+        #expect(first != vm.ipswDownloadPath)
+    }
+
+    // MARK: - Local File Selection
+
+    @Test("An unsupported pick leaves an unusable verdict and blocks advance")
+    func selectLocalFileUnsupportedLeavesUnusable() async throws {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "13.0", build: "22A5286j", isSupportedOnThisHost: false)
+        let vm = VMCreationViewModel.overFakeEngine(localImageInspector: inspector)
+        vm.currentStep = .bootConfig
+        vm.selectedOS = .macOS
+
+        vm.selectLocalFile(path: "/tmp/picked.ipsw", bookmark: nil)
+        try await vm.localFileInspectionTask?.joined()
+
+        #expect(
+            vm.ipswSelection
+                == .localFile(
+                    LocalRestoreImage(
+                        path: "/tmp/picked.ipsw", bookmark: nil, inspection: .unusable(.unsupported))))
+        #expect(vm.canAdvance == false)
+        #expect(vm.validationMessage == "Choose a restore image this Mac can install.")
+    }
+
+    // MARK: - Adopting an Existing File
+
+    @Test("An image the host can't run is refused even when the build matches")
+    func refusesUnsupportedExistingFile() async throws {
+        let inspector = MockLocalRestoreImageInspector()
+        inspector.inspectResult = InspectedRestoreImage(
+            version: "15.6.1", build: "24G90", isSupportedOnThisHost: false)
+        let vm = VMCreationViewModel.overFakeEngine(localImageInspector: inspector)
+        vm.selectCatalogEntry(makeCatalogEntry(version: "15.6.1", build: "24G90"))
+
+        let verdict = await vm.adoptExistingDownloadFile(at: try #require(vm.ipswDownloadPath))
+
+        #expect(
+            verdict
+                == .unusable(
+                    message: LocalRestoreImageError.unsupported.errorDescription ?? ""))
+        #expect(vm.ipswSource == .catalogVersion)
     }
 }

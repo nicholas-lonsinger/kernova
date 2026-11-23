@@ -201,6 +201,37 @@ struct VMLifecycleCoordinatorTests {
         #expect(instance.configuration.installContext?.requestedFreshDownload == false)
     }
 
+    @Test("installMacOS clears requestedFreshDownload before the download runs")
+    func installMacOSFreshDownloadClearsTheFlagOnce() async {
+        // A download that fails leaves the context for the retry Start — with
+        // the flag already spent, so the retry resumes the partial rather than
+        // trashing it and starting over.
+        let temp = scratch.url
+            .appendingPathComponent("freshDownloadOnce", isDirectory: true)
+        let (coordinator, _, _, ipswService, _, downloadService) = makeCoordinator(downloadsDirectory: temp)
+        downloadService.setDownloadError(DownloadError.downloadFailed(URLError(.notConnectedToInternet)))
+
+        // Honored, not lapsed: the persisted destination is already the one the
+        // resolved image derives.
+        let context = MacOSInstallContext(
+            source: .downloadLatest,
+            downloadDestinationPath: temp.appendingPathComponent(
+                RestoreImageFilename.destination(for: ipswService.fetchResult.url)
+            ).path(percentEncoded: false),
+            requestedFreshDownload: true
+        )
+        let library = makeWiredLibrary()
+        let instance = library.registerFixture { $0.installContext = context }
+        defer { withExtendedLifetime(library) {} }
+
+        await #expect(throws: DownloadError.self) {
+            try await coordinator.launchGuestSetup(on: instance).resolved()
+        }
+
+        #expect(downloadService.lastDownloadDiscardsExisting == true)
+        #expect(instance.configuration.installContext?.requestedFreshDownload == false)
+    }
+
     @Test("installMacOS rejects requestedFreshDownload on a non-IPSW path")
     func installMacOSFreshDownloadRejectsNonIPSWPath() async throws {
         // The non-IPSW file sits inside the (injected) Downloads directory —
@@ -290,6 +321,62 @@ struct VMLifecycleCoordinatorTests {
         }
         instance.activity.placeForTesting(.initialBoot)
         return instance
+    }
+
+    @Test("downloadLinuxImage resolves, downloads, verifies and attaches the ISO")
+    func downloadLinuxImageHappyPath() async throws {
+        let fixture = try makeLinuxFixture()
+        let entry = makeLinuxCatalogEntry()
+        let instance = makeLinuxInstance(
+            context: LinuxInstallContext(source: .catalogEntry(entry)), in: fixture)
+
+        try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
+
+        let expected = fixture.downloads.appendingPathComponent(
+            fixture.resolveService.resolveResult.destinationFilename)
+        #expect(fixture.resolveService.resolveCallCount == 1)
+        #expect(fixture.resolveService.lastResolvedEntry == entry)
+        #expect(fixture.downloadService.lastDownloadRemoteURL == fixture.resolveService.resolveResult.isoURL)
+        #expect(fixture.downloadService.lastDownloadDestinationURL == expected)
+        // The resolution's own size is the ceiling the transfer is held to.
+        #expect(
+            fixture.downloadService.lastDownloadExpectedSizeBytes
+                == fixture.resolveService.resolveResult.sizeBytes)
+
+        // The installer boots ahead of the synthesized main disk, read-only and
+        // on the USB bus its `.iso` extension implies.
+        let disks = try #require(instance.configuration.storageDisks)
+        #expect(disks.count == 2)
+        #expect(disks[0].path == expected.path(percentEncoded: false))
+        #expect(disks[0].readOnly)
+        #expect(disks[0].kind == .usbMassStorage)
+        // Labelled for the image the mirror published, not for the
+        // discriminated filename the bytes landed in.
+        #expect(disks[0].label == "debian-13.6.0-arm64-netinst")
+        #expect(disks[1].label == "Main Disk")
+        #expect(disks[1].isInternal)
+        #expect(
+            instance.configuration.installedImage
+                == .linuxCatalogImage(
+                    distribution: entry.distribution, version: entry.version,
+                    digest: try matchedDigest(fixture, source: .checksumList(entry.manifestURL))))
+
+        // The intent is spent: the next Start takes the normal boot path.
+        #expect(instance.configuration.linuxInstallContext == nil)
+        #expect(instance.setupState == nil)
+        #expect(fixture.fileSystem.trashedURLs.isEmpty)
+        // The pipeline put the VM in `.installing`; it has to come to rest in a
+        // status the auto-boot chained off this return can start from.
+        #expect(instance.status == .stopped)
+    }
+
+    /// The record of the fixture's bytes matching `source`.
+    private func matchedDigest(
+        _ fixture: LinuxFixture, source: DigestSource
+    ) throws -> InstallerImageDigest {
+        try #require(
+            ExpectedDigest(sha256: fixture.digest, source: source)
+                .match(fixture.digest, filename: fixture.resolveService.resolveResult.filename))
     }
 
     @Test("downloadLinuxImage persists the destination before the download runs")
@@ -428,6 +515,48 @@ struct VMLifecycleCoordinatorTests {
     }
 
     // MARK: - Linux Installer Image From a URL
+
+    /// A pasted-URL context naming the image the fixture's resolve answers with.
+    private func makeCustomURLContext(
+        fixture: LinuxFixture, verified: Bool
+    ) -> LinuxInstallContext {
+        LinuxInstallContext(
+            source: .customURL(
+                CustomLinuxImage(
+                    url: fixture.resolveService.resolveResult.isoURL,
+                    sha256: verified ? fixture.digest : nil)))
+    }
+
+    @Test("A URL pick with no digest computes its checksum and records it unchecked")
+    func downloadLinuxImageFromUnverifiedURL() async throws {
+        let fixture = try makeLinuxFixture()
+        // With no digest supplied there is nothing to hold the bytes to, which
+        // is what the wizard told the user.
+        let context = makeCustomURLContext(fixture: fixture, verified: false)
+        let instance = makeLinuxInstance(context: context, in: fixture)
+
+        var observedStepIDs: [SetupStepID] = []
+        let persist = instance.onUpdateConfiguration
+        instance.onUpdateConfiguration = { permit, mutate in
+            if let id = instance.setupState?.currentStep?.id { observedStepIDs.append(id) }
+            return persist?(permit, mutate) ?? .refused(.noLibrary)
+        }
+
+        try await fixture.coordinator.launchGuestSetup(on: instance).resolved()
+
+        #expect(observedStepIDs == [.download, .checksum])
+        #expect(instance.configuration.storageDisks?.count == 2)
+        #expect(instance.configuration.linuxInstallContext == nil)
+        #expect(fixture.fileSystem.trashedURLs.isEmpty)
+        #expect(instance.status == .stopped)
+        #expect(
+            instance.configuration.installedImage
+                == .linuxURLImage(
+                    url: fixture.resolveService.resolveResult.isoURL,
+                    digest: .unchecked(
+                        filename: fixture.resolveService.resolveResult.filename,
+                        sha256: fixture.digest)))
+    }
 
     @Test("A URL pick whose bytes miss the supplied digest is trashed, not attached")
     func downloadLinuxImageFromURLChecksumMismatch() async throws {
