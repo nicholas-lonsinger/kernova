@@ -142,7 +142,6 @@ extension Connection {
         }
         let adverts = receivedAdverts(hello.features, remoteVersion: hello.protocolVersion)
         remoteAdverts = adverts
-        remoteState = state
         remoteHello = RemoteHello(
             protocolVersion: hello.protocolVersion, claim: claim, state: state, adverts: adverts.map(\.value),
             sessionToken: Normalize.clip(hello.sessionToken, maxBytes: Normalize.hashBytes))
@@ -237,7 +236,6 @@ extension Connection {
             if remoteHello.claim.role == .sessionPeer, state.sessionID != remoteHello.state?.sessionID {
                 return fatal(.protocolError, "a session peer's session_id changed")
             }
-            remoteState = state
             emit(.peerStateChanged(state))
         case .capabilities(let update):
             remoteAdverts = receivedAdverts(update.features, remoteVersion: remoteHello.protocolVersion)

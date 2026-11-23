@@ -137,7 +137,6 @@ extension Connection {
             streams[index].openHandedOut = true
             highestLocalHandedOut = id.rawValue
         case .data(let payload):
-            streams[index].queuedRaw -= payload.count
             queuedRawTotal -= payload.count
         case .message:
             streams[index].unsentMessages -= 1

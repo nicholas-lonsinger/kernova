@@ -80,7 +80,6 @@ package struct Connection: Sendable {
     /// The far side's Hello, once read.
     package internal(set) var remoteHello: RemoteHello?
     var remoteAdverts: [ReceivedAdvert] = []
-    var remoteState: PeerSessionState?
     /// Host: its own policy, the one source of every `PolicyUpdate` it sends.
     /// Peer: the last `PolicyUpdate` read, nil before the first.
     package internal(set) var currentPolicy: PolicySnapshot?

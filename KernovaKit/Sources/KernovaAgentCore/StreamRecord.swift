@@ -35,7 +35,6 @@ struct StreamRecord: Sendable {
     /// Its OPEN has been handed out (always, for a stream the far side opened).
     var openHandedOut: Bool
     var pendingReset: WireError?
-    var queuedRaw = 0
     /// Raw DATA a machine reserved and has not yet sent; no other send may spend it.
     var reservedRaw = 0
     /// This side's END has been handed out.
