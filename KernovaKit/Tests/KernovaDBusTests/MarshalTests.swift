@@ -4,6 +4,48 @@ import Testing
 
 @Suite("DBusMarshal round trips, alignment and byte order")
 struct MarshalTests {
+    static let byteOrders: [DBusByteOrder] = [.littleEndian, .bigEndian]
+
+    static let samples: [DBusValue] = [
+        .byte(0), .byte(0xFF),
+        .boolean(false), .boolean(true),
+        .int16(.min), .int16(-1), .int16(.max),
+        .uint16(0), .uint16(.max),
+        .int32(.min), .int32(.max),
+        .uint32(0), .uint32(.max),
+        .int64(.min), .int64(.max),
+        .uint64(0), .uint64(.max),
+        .double(0), .double(-1.5), .double(.infinity), .double(.leastNonzeroMagnitude),
+        .string(""), .string("foo"), .string("é"),
+        // U+10FFFF and the noncharacter U+FDD0, which the specification allows.
+        .string(String(decoding: [0xF4, 0x8F, 0xBF, 0xBF, 0xEF, 0xB7, 0x90], as: UTF8.self)),
+        .objectPath("/"), .objectPath("/org/freedesktop/login1"),
+        .signature(""), .signature("a{sv}"),
+        .unixFD(3),
+        .array(elementType: .int64, []),
+        .array(elementType: .byte, [.byte(1), .byte(2)]),
+        .array(elementType: .string, [.string("a"), .string("bc")]),
+        .array(
+            elementType: .array(.int16), [.array(elementType: .int16, [.int16(1)]), .array(elementType: .int16, [])]),
+        .struct([.byte(1), .uint64(2), .string("three")]),
+        .struct([.struct([.byte(1)]), .byte(2)]),
+        .dictionary(
+            key: .string, value: .variant,
+            [(.string("a"), .variant(.int32(1))), (.string("b"), .variant(.string("x")))]),
+        .dictionary(key: .uint32, value: .array(.byte), []),
+        .variant(.byte(7)),
+        .variant(.variant(.uint64(5))),
+        .variant(.array(elementType: .struct([.string, .uint32]), [.struct([.string("s"), .uint32(9)])])),
+    ]
+
+    @Test("Every value round-trips alone and after a byte", arguments: samples, byteOrders)
+    func roundTrip(value: DBusValue, byteOrder: DBusByteOrder) throws {
+        for values in [[value], [.byte(0xAB), value], [value, value]] {
+            let bytes = try DBusMarshal.encode(values, byteOrder: byteOrder)
+            let signature = try DBusSignature(values.map(\.type))
+            #expect(try DBusMarshal.decode(bytes, signature: signature, byteOrder: byteOrder) == values)
+        }
+    }
 
     @Test("The specification's array example: an INT64 array pads to 8 after its length")
     func specificationArray() throws {
@@ -15,6 +57,22 @@ struct MarshalTests {
     func emptyArrayPadding() throws {
         let bytes = try DBusMarshal.encode([.array(elementType: .struct([.byte]), [])], byteOrder: .littleEndian)
         #expect(bytes == [0, 0, 0, 0, 0, 0, 0, 0])
+    }
+
+    @Test("Each fixed type aligns to its size", arguments: byteOrders)
+    func fixedAlignment(byteOrder: DBusByteOrder) throws {
+        let cases: [(DBusValue, Int)] = [
+            (.int16(1), 2), (.uint16(1), 2), (.int32(1), 4), (.uint32(1), 4), (.boolean(true), 4), (.unixFD(1), 4),
+            (.int64(1), 8), (.uint64(1), 8), (.double(1), 8), (.string("x"), 4), (.objectPath("/"), 4),
+            (.signature("y"), 1), (.variant(.byte(1)), 1),
+        ]
+        for (value, alignment) in cases {
+            let bytes = try DBusMarshal.encode([.byte(1), value], byteOrder: byteOrder)
+            let padding = (alignment - 1) % alignment
+            #expect(bytes[1..<(1 + padding)].allSatisfy { $0 == 0 }, "\(value)")
+            let alone = try DBusMarshal.encode([value], byteOrder: byteOrder)
+            #expect(bytes.count == 1 + padding + alone.count, "\(value)")
+        }
     }
 
     @Test("Values nest 64 containers deep, variants included, and no deeper")

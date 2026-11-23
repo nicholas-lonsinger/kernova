@@ -12,6 +12,7 @@ struct LaunchdJobsTests {
     static let user = MacInstallLayout.user(home: "/Users/pbear", userID: 501)
     static let system = MacInstallLayout.system(consoleUserID: 501)
     static let tool = "/Volumes/Kernova Guest Agent/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent"
+    static let userRoot = "/Users/pbear/Library/Application Support/Kernova/Guest Agent"
     static let systemRoot = "/Library/Application Support/Kernova/Guest Agent"
 
     @Test("\"For everyone\" adds the system peer's LaunchDaemon, and bootstraps each list into its own domain")
@@ -39,6 +40,41 @@ struct LaunchdJobsTests {
                 "  run launchctl bootstrap system /Library/LaunchDaemons/app.kernova.macosagent.system.plist",
                 "  run launchctl bootstrap gui/501 /Library/LaunchAgents/app.kernova.macosagent.session.plist",
             ])
+    }
+
+    @Test("The system peer's LaunchDaemon runs the agent's system peer through current")
+    func systemPlist() {
+        let plist = Self.parse(LaunchdPlists.system(Self.system))
+        #expect(plist["Label"] as? String == "app.kernova.macosagent.system")
+        #expect(
+            plist["ProgramArguments"] as? [String] == [
+                Self.systemRoot + "/current/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent", "system",
+            ])
+        #expect(plist["RunAtLoad"] as? Bool == true)
+        #expect((plist["KeepAlive"] as? [String: Bool]) == ["SuccessfulExit": false])
+        #expect(plist["LimitLoadToSessionType"] == nil && plist["UserName"] == nil)
+    }
+
+    @Test("The rollback check runs the rollback slot's agent every check interval")
+    func rollbackPlists() {
+        let user = Self.parse(LaunchdPlists.rollback(Self.user))
+        #expect(user["Label"] as? String == "app.kernova.macosagent.rollback")
+        #expect(user["StartInterval"] as? Int == UpdateRollbackPolicy.checkIntervalSeconds)
+        #expect(user["LimitLoadToSessionType"] as? String == "Aqua")
+        #expect(user["RunAtLoad"] == nil && user["KeepAlive"] == nil)
+        #expect(
+            user["ProgramArguments"] as? [String] == [
+                Self.userRoot + "/rollback/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent", "rollback-check",
+                "--scope", "user",
+            ])
+        let system = Self.parse(LaunchdPlists.rollback(Self.system))
+        #expect(system["Label"] as? String == "app.kernova.macosagent.system.rollback")
+        #expect(
+            system["ProgramArguments"] as? [String] == [
+                Self.systemRoot + "/rollback/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent",
+                "rollback-check", "--scope", "system",
+            ])
+        #expect(system["LimitLoadToSessionType"] == nil)
     }
 
     @Test("Markup in a path is escaped")

@@ -273,6 +273,15 @@ struct GuestStreamAcceptorTests {
         #expect(probe.notices.elements.map(\.1).filter { $0.hasPrefix("Refusing") }.count == 2)
         probe.acceptor.stop()
     }
+
+    @Test("A stream that cannot be built gives its slot back")
+    func failedOpenReleases() {
+        let probe = Probe()
+        #expect(!probe.acceptor.offer { _ in nil })
+        let admitted = (0..<GuestStreamAcceptor.connectionLimit).compactMap { _ in probe.offer() }
+        #expect(admitted.count == GuestStreamAcceptor.connectionLimit)
+        probe.acceptor.stop()
+    }
 }
 
 extension ConnectionClosure {

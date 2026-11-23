@@ -101,10 +101,55 @@ struct InstallerTests {
         .uninstall(root: definitions.root, definitions: definitions)
     }
 
+    /// The account's uid for a directory or file in the system root, the invoker's for every other path. The
+    /// `current` and `rollback` links stay the invoker's: the installer gives a link no owner, since that could
+    /// only be done by name, and a link's owner grants nothing.
+    static func systemOwner(_ path: String) -> uid_t {
+        let account = getpwnam(Self.account)?.pointee.pw_uid ?? 0
+        guard path != systemRoot.current, path != systemRoot.rollback else { return getuid() }
+        return path == systemRoot.path || path.hasPrefix(systemRoot.path + "/") ? account : getuid()
+    }
+
     static let userDirectories = [
         "/home", "/home/pbear", "/home/pbear/.local", "/home/pbear/.local/share", "/home/pbear/.config",
         "/home/pbear/.config/services",
     ]
+
+    static let systemDirectories = ["/opt", "/etc", "/etc/services"]
+
+    static let systemInstall: [String: String] = Dictionary(
+        uniqueKeysWithValues: systemDirectories.map { ($0, "d0755") }
+    ).merging([
+        "/opt/kernova-agent": "d0755",
+        "/opt/kernova-agent/slots": "d0755",
+        "/opt/kernova-agent/slots/a": "d0755",
+        "/opt/kernova-agent/slots/a/agent": "f0755",
+        "/opt/kernova-agent/state.json": "f0644",
+        "/opt/kernova-agent/current": "lslots/a",
+        "/opt/kernova-agent/rollback": "lslots/a",
+        "/etc/services/agent.service": "f0644",
+    ]) { $1 }
+
+    private static func checkFiles(_ scratch: Scratch, _ definitions: TestDefinitions) throws {
+        let root = definitions.root
+        let payload = FileManager.default.contents(atPath: scratch.root + root.slot("a") + "/" + TestLander.name)
+        #expect(payload.map(Array.init) == scratch.payloadBytes)
+        let state = try InstallState.decoded(Array(try #require(scratch.contents(root.state)).utf8))
+        #expect(state.active == "a")
+        #expect(state.slots["a"]?.versionLabel == "9.9 (99)")
+        #expect(state.slots["a"]?.payloadSHA256 == lowercaseHex(SHA256.hash(scratch.payloadBytes)))
+        #expect(scratch.contents(definitions.definition) == definitions.text)
+    }
+
+    @Test(
+        "A system install writes the same, through descriptors, every directory and file in the agent's root handed to its account",
+        .enabled(if: runsAsRoot, "handing files to another account needs root"))
+    func systemInstall() throws {
+        let scratch = try Scratch()
+        try scratch.installer(account: Self.account).run(Self.install(Self.system))
+        #expect(try scratch.tree(owner: Self.systemOwner) == Self.systemInstall)
+        try Self.checkFiles(scratch, Self.system)
+    }
 
     @Test(
         "A link the account planted where a slot belongs is refused, never followed",

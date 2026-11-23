@@ -75,6 +75,28 @@ struct ItemAdapterTests {
         #expect(try bench.names("landed").isEmpty, "discardForTermination returned with a landing still on disk")
     }
 
+    @Test("a pull begun after a termination discard opens nothing")
+    func beginAfterDiscardOpensNothing() throws {
+        let bench = try Bench()
+        let sink = ItemSinkAdapter(fileSystem: POSIXTreeFileSystem(), decodingWorkers: 0)
+        let reports = Locked<[ItemSinkInput]>([])
+        let reporter = ItemSinkReporter(ItemConnection(role: .host)) { report in
+            reports.withLock { $0.append(report) }
+        }
+        var representation = Representation()
+        representation.storage = .file
+        // A directory that does not exist: a pull that begins reports it refused.
+        let order = ItemPullOrder(
+            PullRequest(), landing: .staged(directory: bench.path("missing"), name: .exactly(Data("item".utf8))))
+        sink.discardForTermination()
+
+        sink.handle(.begin(Bench.id, order, representation), reporter: reporter)
+        // Waits on every lane there is, so a lane the begin opened has run.
+        sink.discardForTermination()
+
+        #expect(reports.withLock { $0 }.isEmpty)
+    }
+
     @Test("a tree that cannot be read is logged as an error naming its entry, whether it fails opening or midway")
     func readFailureLogged() async throws {
         let bench = try Bench()

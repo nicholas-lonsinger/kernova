@@ -12,6 +12,7 @@ import Testing
 enum TranscriptFiles {
     static let root = SourceTree.url("KernovaKit/Tests/KernovaAgentCoreTests/Transcripts")
     static let frozen = root.appendingPathComponent("frozen")
+    static let current = root.appendingPathComponent("current")
 
     /// Every frozen file the exchanges define: `Fnnh` with the host pinned, `Fnnp` the peer.
     static var frozenNames: [String] {
@@ -55,5 +56,17 @@ struct TranscriptTests {
                 return
             }
         }
+    }
+
+    @Test("Each current transcript replays duet, byte for byte", arguments: Exchange.current.map(\.id))
+    func duet(_ id: String) throws {
+        let exchange = try #require(Exchange.current.first { $0.id == id })
+        let expected = try #require(
+            TranscriptFiles.read(TranscriptFiles.current.appendingPathComponent("\(id).transcript")), "\(id) is missing"
+        )
+        let duet = try #require(Duet(exchange))
+        duet.run()
+        #expect(duet.failures.isEmpty, "\(duet.failures)")
+        #expect(duet.renderDuet() == expected)
     }
 }
