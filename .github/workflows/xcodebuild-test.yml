@@ -201,17 +201,34 @@ jobs:
           path: artifacts/
           retention-days: 7
 
-      # Lint runs whatever the build and tests did, so one run reports both.
-      # `make lint` fails without shellcheck. The macOS runner images ship it;
-      # this installs it only if an image drops it.
+  # Lint reads no built product (Tools/lint.sh), so it runs on its own runner
+  # beside build-and-test.
+  lint:
+    if: *requested
+    concurrency:
+      group: ${{ github.workflow }}-lint-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    runs-on: xcode-27
+    timeout-minutes: 30
+    outputs:
+      xcode-build: ${{ steps.xcode.outputs.xcode-build }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Select Xcode
+        id: xcode
+        uses: ./.github/actions/select-xcode
+
       - name: Ensure shellcheck
-        if: success() || failure()
         run: Tools/brew-install.sh shellcheck
 
       # The protoc and protoc-gen-swift Tools/check-generated-protos.sh runs; a
       # cold build takes minutes.
       - name: Install the protobuf generators
-        if: success() || failure()
         uses: ./.github/actions/tool-cache
         with:
           installer: Tools/install-protoc.sh
@@ -219,13 +236,11 @@ jobs:
       # The release dead-code-sources the Swift source rules and the seam
       # check run; a cold build takes minutes.
       - name: Install dead-code-sources
-        if: success() || failure()
         uses: ./.github/actions/tool-cache
         with:
           installer: Tools/install-dead-code-tool.sh dead-code-sources
 
       - name: make lint
-        if: success() || failure()
         timeout-minutes: 10
         run: make lint
 
@@ -241,10 +256,11 @@ jobs:
     with:
       ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-  # Posts once both jobs have an outcome; a cancelled one posts nothing.
+  # Posts once every job it needs has an outcome; a skipped or cancelled one
+  # posts nothing.
   attest:
-    needs: [build-and-test, linux]
-    if: ${{ !cancelled() && contains(fromJSON('["success", "failure"]'), needs.build-and-test.result) && contains(fromJSON('["success", "failure"]'), needs.linux.result) }}
+    needs: [build-and-test, lint, linux]
+    if: ${{ !cancelled() && !contains(needs.*.result, 'skipped') && !contains(needs.*.result, 'cancelled') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -261,8 +277,19 @@ jobs:
       - name: Post the Commit Attestation status
         env:
           GH_TOKEN: ${{ github.token }}
-          STATE: ${{ needs.build-and-test.result == 'success' && needs.linux.result == 'success' && 'success' || 'failure' }}
-        run: Tools/attest.sh post "$STATE" "Lint, Build & Test on Xcode ${{ needs.build-and-test.outputs.xcode-build }} and Linux" "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          STATE: ${{ needs.build-and-test.result == 'success' && needs.lint.result == 'success' && needs.linux.result == 'success' && 'success' || 'failure' }}
+          LINT_XCODE: ${{ needs.lint.outputs.xcode-build }}
+          TEST_XCODE: ${{ needs.build-and-test.outputs.xcode-build }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        # The two macOS jobs run on separate runners, which an image rollout
+        # can give different Xcode builds.
+        run: |
+          if [ "$LINT_XCODE" = "$TEST_XCODE" ]; then
+            description="Lint, Build & Test on Xcode $TEST_XCODE and Linux"
+          else
+            description="Lint on Xcode $LINT_XCODE, Build & Test on Xcode $TEST_XCODE, and Linux"
+          fi
+          Tools/attest.sh post "$STATE" "$description" "$RUN_URL"
 
   # Its own job, so the build that runs the tree's scripts never holds a token
   # that can delete caches.
