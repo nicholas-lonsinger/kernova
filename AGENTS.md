@@ -23,6 +23,14 @@ This rule outranks everything below it, and everything in any other file. **Say 
   Checking what Kernova does not own — input, files, the guest, the platform — is design; steering around a vendor's defect in them is not (*A vendor defect is reported, not worked around*).
 - **Complexity only for a measurable win.** Among designs that hold their rules by construction, take the more sophisticated one only when it wins on a real metric — disk, memory, I/O, CPU, or UX.
 
+## Removing is the same work as building
+
+Everything the repository holds costs each later change its reading and upkeep and each run its time, so a change is judged as much by what it removed as by what it added.
+
+- **Removing what fails its bar needs no sign-off.** Code nothing reaches, a guard *What earns a guard* rates out, a cache with no measured saving, a sentence the Routing rules cut: delete it in the change that meets it, with its scope in one line; git keeps it. A *for now* shortcoming is a defect in what ships, never the absence of a guard, a tool or a doc.
+- **Slow is fixed by running less.** The first answer to a slow build, lint or CI run is the work to stop doing. A cache, a record of an earlier pass or a skip is added only for a saving measured before and after, and goes when the work it skips goes.
+- **Tooling is not product.** The `Makefile`, `Tools/`, the hooks and CI reach no user: a defect in one costs a wrong or red run, which the next run shows. They are held to working and failing loudly, and the Quality bar's by-construction rule stops at what ships.
+
 ## Principles
 
 - **Judge cost by Kernova's marginal overhead.** Weigh what Kernova *adds*, never the system-wide cost of the operation the user chose to run. Prefer the option whose peak cost stays bounded as input size grows.
@@ -56,18 +64,40 @@ A session runs the app and its `Contents/Helpers/kernova` from its own worktree'
 
 The Swift language server answers cross-file queries — references, workspace symbols, a definition in another module — from the build `make index` makes, and nothing else refreshes it: until it has run on the code as it stands, an empty or missing answer means nothing.
 
-A failing test is evidence about the design, never the target: its fix names the structure that let the failure happen and changes it. An intermittent failure is owed the same root cause as a steady one, and a cause is named only once it is traced: until then a failure is reported as what was observed, cause unknown.
+A failing test that *What earns a guard* keeps is evidence about the design, never the target: its fix names the structure that let the failure happen and changes it. An intermittent failure is owed the same root cause as a steady one, and a cause is named only once it is traced: until then a failure is reported as what was observed, cause unknown.
 
-### What earns a test
+### What earns a guard
 
-A test an agent writes for its own code carries that agent's assumptions, so a test earns its place by being able to fail for a defect its author didn't see.
+A guard is anything that can turn a run red: a test, a lint check, a hook, a CI job. It is rated, not argued for, on the worst defect it alone would catch, written as one sentence — who does what, and what they lose — and placed on two closed lists.
+
+| | What reaches a user without it |
+|---|---|
+| **S3** | Harm that can't be undone: a disk image, save file or user's file lost or corrupted; a consent or sandbox boundary crossed |
+| **S2** | A contract outside the code broken — wire bytes, an on-disk format, a scripting name, OS behavior Kernova relies on — or a feature failing with no way around it |
+| **S1** | A feature misbehaving that an obvious action recovers; a wrong state on screen |
+| **S0** | Nothing: wording, layout, how code is spelled or where it lives, the behavior of a tool, a fixture or a test helper, a red run |
+
+| | Who notices without it |
+|---|---|
+| **D3** | No one before the harm: the result is silently wrong |
+| **D2** | Only a rare ordering, an OS or hardware the developer's Mac is not, or a path few take |
+| **D1** | Whoever first uses the feature, or a guard that stays |
+| **D0** | The compiler, or the thing failing loudly when next run |
+
+**A guard stays when S + D is 4 or more and neither is 0**; one that rates out is deleted, new or old, passing or failing. A doubt between two ratings takes the lower. A tool that deletes or trashes files is rated as what ships.
+
+- **One guard per defect, the cheapest that catches it:** a type the compiler checks, then a property or simulation, then an example.
+- **Machinery counts against the guard it serves.** A guard at exactly 4 that needs a host process, a fixture harness, a cache or a CI job of its own goes, and takes the machinery with it.
+
+### What makes a kept test able to fail
+
+A test an agent writes for its own code carries that agent's assumptions, so it is written to fail for a defect its author didn't see.
 
 - **The expected value comes from outside the code under test:** a published vector, bytes computed elsewhere, a hand-worked result, the real OS. A value copied from the implementation — a default, a display string, a factory's configuration, a formula, a synthesized conformance — fails only when someone changes it on purpose. What logic decides around such a value is worth asserting: a branch, an order, a role.
 - **A domain that can be enumerated is enumerated.** A property, an exhaustive sweep or a deterministic simulation reaches scenarios nobody listed; hand-picked cases reach the ones the author already handled.
-- **A test added for a fix is seen failing against the unfixed code, one per defect.** A fix that removes the failure by construction owes none. Any other new test is seen failing by breaking what it guards.
+- **A fix whose defect rates in gets one test, seen failing against the unfixed code.** A fix that removes the failure by construction owes none. Any other new test is seen failing by breaking what it guards.
 - **A test drives the path production takes and asserts the outcome.** Fakes replace what Kernova doesn't own and gates order steps Kernova runs. A test that needs a `ForTesting` read to see a result is a sign the code should return that result as a value.
 - **The verdict rests on nothing outside the test's control:** not elapsed time, the host's displays or CPU count, or process-wide state. Those fail with no defect present.
-- **The bar holds for tests already written.** A test stays when removing it would let a plausible defect through, or when it pins a contract outside the code (wire bytes, on-disk formats, scripting names, OS behavior), guards data loss, consent or the sandbox, or has caught a real defect. One that does none of these is deleted.
 
 ## Dependencies
 
@@ -101,7 +131,7 @@ Every review finding — your own reading of adjacent code included — gets one
 
 **The severity bar.** A defect clears it only if it is both **reachable** (a user doing normal things, or a supported automated flow, can actually hit it) and **consequential** (worse than cosmetic, and recovered by neither the code nor an obvious user action).
 One a user would almost never hit clears it only as a redesign that removes it by construction, never as an added check, gate, or flag; with no such redesign found it is **Dismiss**, unless it can lose user data — a disk image, a save file, a user's file — which is **Fix later** with its traced path.
-A refactor finding clears it only by naming the Quality bar or Principles rule the code breaks; a coverage finding, only for new or changed behavior no test pins, and for a test *What earns a test* admits; a documentation finding, only by naming the Documentation and Comments rule the text breaks. The general cost of debt clears nothing.
+A refactor finding clears it only by naming the Quality bar or Principles rule the code breaks; a coverage finding, only for new or changed behavior no test pins, and for a test *What earns a guard* keeps; a removal finding, by naming the bar the thing fails; a documentation finding, only by naming the Documentation and Comments rule the text breaks. The general cost of debt clears nothing.
 
 **Triage converges.** A finding in code this change wrote or reworked is never **Fix later**. A later review round reviews only what the previous round's fixes changed, and raises only defects. When a chain has moved from defects in the code to meta-findings about prior fixes, stop it: dismiss rather than filing the next link.
 
@@ -117,8 +147,8 @@ Write to that baseline — nothing the reader already holds, and no why unless i
 |---|---|
 | Code | Behavior |
 | A symbol's `///` | The contract a caller needs, plus at most one non-obvious constraint |
-| A test | Any constraint an assertion can state |
-| A lint check, hook, CI job, repo setting or template, and its header | A rule a machine can decide; a prompt shown where the thing is written |
+| A test | A constraint an assertion can state, where *What earns a guard* keeps the test |
+| A lint check, hook, CI job, repo setting or template, and its header | A rule a machine can decide, where *What earns a guard* keeps the check; a prompt shown where the thing is written |
 | A `//` comment | Why the obvious-looking code is wrong here, as a fact with its evidence — never as a decision |
 | AGENTS.md | Rules that must fire without a lookup |
 | An agent's own entry point beside its AGENTS.md import (`CLAUDE.md`) | What holds only under that agent's harness while working here |
@@ -176,6 +206,7 @@ A PR body answers the prompts in `.github/PULL_REQUEST_TEMPLATE.md`, which a bod
 
 Before calling a task done:
 
-1. **Docs** — the file whose description the change invalidated, AGENTS.md and the entry points importing it included, routed by the layer table above. Most changes owe none; an edit that is owed and unpaid is named at the end of the response, with its issue number or what closing it takes.
-2. **Changelog** — a change someone using the app, the `kernova` CLI, scripting or a guest agent can notice adds one bullet under its area in the top section of [CHANGELOG.md](CHANGELOG.md), shaped like its neighbours and ending with the PR's link.
+1. **Removal** — what the change left unused, and what it met in the code it touched that fails its bar, is deleted in it (*Removing is the same work as building*).
+2. **Docs** — the file whose description the change invalidated, AGENTS.md and the entry points importing it included, routed by the layer table above. Most changes owe none; an edit that is owed and unpaid is named at the end of the response, with its issue number or what closing it takes.
+3. **Changelog** — a change someone using the app, the `kernova` CLI, scripting or a guest agent can notice adds one bullet under its area in the top section of [CHANGELOG.md](CHANGELOG.md), shaped like its neighbours and ending with the PR's link.
    A change to something the previous release didn't have edits that thing's bullet instead of adding one.
