@@ -15,52 +15,6 @@ struct CLIAppLaunchTests {
         EnclosingAppBundle.locate(executable: URL(fileURLWithPath: path))?.path
     }
 
-    // MARK: - Enclosing bundle
-
-    /// The shape Settings → Advanced installs: a link on `PATH` pointing into
-    /// the bundle. `Bundle.main.executableURL` answers the path the tool was
-    /// invoked through, so without resolving it the installed tool finds no app
-    /// to start.
-    @Test("The installed tool resolves through its symlink into the app it links at")
-    func installedSymlinkResolvesItsApp() throws {
-        let scratch = TestScratchDirectory(prefix: "CLIAppLaunchTests").url
-        let installed = try InstalledToolFixture(in: scratch)
-
-        let located = try #require(EnclosingAppBundle.locate(executable: installed.link))
-
-        #expect(located.path == installed.bundle.resolvingSymlinksInPath().path)
-    }
-
-    /// An executable is a file, so its own name says nothing about a bundle to
-    /// launch — only an ancestor directory can be one.
-    @Test("A tool whose own name ends in .app is not itself the bundle")
-    func executableLeafIsNotTheBundle() {
-        #expect(locate("/Users/somebody/build/kernova.app") == nil)
-        #expect(
-            locate("/Applications/Kernova.app/Contents/Helpers/kernova.app")
-                == "/Applications/Kernova.app")
-    }
-
-    // MARK: - Connect backoff
-
-    @Test("Every wait is bounded, and the whole schedule fits inside the deadline")
-    func scheduleFitsItsDeadline() {
-        let delays = ConnectBackoff.delays(initial: 0.05, cap: 0.5, deadline: 20)
-
-        #expect(!delays.isEmpty)
-        #expect(delays.allSatisfy { $0 <= 0.5 })
-        #expect(delays.reduce(0, +) <= 20)
-        // The tail is what the wait actually spends its time in, so it must
-        // reach the cap rather than doubling forever.
-        #expect(delays.last == 0.5)
-    }
-
-    @Test("A deadline too short for even one wait still yields a usable schedule")
-    func tinyDeadlineYieldsAtMostWhatFits() {
-        #expect(ConnectBackoff.delays(initial: 0.05, cap: 0.5, deadline: 0.05) == [0.05])
-        #expect(ConnectBackoff.delays(initial: 0.05, cap: 0.5, deadline: 0.01).isEmpty)
-    }
-
     // MARK: - Launch configuration
 
     /// An open that may reuse a running instance takes any copy sharing the

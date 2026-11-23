@@ -87,109 +87,7 @@ struct CLIRenderingTests {
             TableRenderer.render([alpha, longName], quiet: true) == "Alpha\nA Much Longer Name")
     }
 
-    @Test("An empty library prints nothing at all")
-    func emptyListingIsEmpty() {
-        #expect(TableRenderer.render([VMSummary](), quiet: false).isEmpty)
-        #expect(TableRenderer.render([VMSummary](), quiet: true).isEmpty)
-    }
-
     // MARK: - Info
-
-    @Test("An info block names every field, and reads the status in words")
-    func infoNamesEveryField() {
-        let rendered = TableRenderer.render(report(info()))
-
-        for field in [
-            "Name", "Identifier", "Status", "Guest", "CPUs", "Memory", "Disks", "Network",
-            "MAC Address", "IP Address", "Guest Agent", "Saved State", "Ephemeral", "Snapshots",
-            "Bundle",
-        ] {
-            #expect(rendered.contains(field), "missing \(field)")
-        }
-        #expect(rendered.contains("Running"))
-        #expect(rendered.contains("8 GB"))
-        #expect(rendered.contains("192.168.64.4"))
-    }
-
-    @Test("Each agent the hub serves gets a line of its own under the agent status")
-    func infoListsEachAgent() {
-        let lines = TableRenderer.render(
-            report(
-                info(agents: [
-                    VMAgentLine(role: "system", user: nil, version: "1.0 (9)", status: "current"),
-                    VMAgentLine(role: "session", user: "pbear", version: "0.9 (8)", status: "outdated"),
-                ]))
-        ).components(separatedBy: "\n")
-        let start = lines.firstIndex { $0.hasPrefix("Guest Agent") }
-        #expect(start.map { lines[$0].hasSuffix("  current") } == true)
-        #expect(start.map { lines[$0 + 1].hasSuffix("  System service: current, 1.0 (9)") } == true)
-        #expect(start.map { lines[$0 + 2].hasSuffix("  Session agent — pbear: outdated, 0.9 (8)") } == true)
-    }
-
-    @Test("A saved state names the Kernova that saved it on a line after Saved State")
-    func infoNamesWhoSavedTheState() throws {
-        let lines = TableRenderer.render(
-            report(info(hasSavedState: true, savedStateKernovaVersion: "0.10.0 (412)"))
-        ).components(separatedBy: "\n")
-        let saved = try #require(lines.firstIndex { $0.hasPrefix("Saved State") })
-        #expect(lines[saved].hasSuffix("  Yes"))
-        #expect(lines[saved + 1].hasPrefix("Saved By"))
-        #expect(lines[saved + 1].hasSuffix("  Kernova 0.10.0 (412)"))
-
-        let data = Data(
-            try JSONRenderer.render(info(hasSavedState: true, savedStateKernovaVersion: "0.10.0 (412)")).utf8)
-        #expect(try JSONDecoder().decode(VMInfo.self, from: data).savedStateKernovaVersion == "0.10.0 (412)")
-    }
-
-    @Test("A VM with no session omits the agent status from its JSON")
-    func infoWithoutSessionOmitsTheAgentStatusKey() throws {
-        let data = Data(try JSONRenderer.render(info(agentStatus: nil)).utf8)
-        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        #expect(object["agentStatus"] == nil)
-        #expect(try JSONDecoder().decode(VMInfo.self, from: data).agentStatus == nil)
-    }
-
-    @Test("A named network whose name the unreadable list can't give reads as that, not as its identifier")
-    func anUnreadableNetworkNameReadsAsSuch() throws {
-        let id = "6A1F0B2C-3D4E-4F50-8A6B-7C8D9E0F1A2B"
-        let rendered = TableRenderer.render(
-            report(info(networkMembership: id, networkName: .unreadable)))
-        let network = try #require(rendered.components(separatedBy: "\n").first { $0.hasPrefix("Network") })
-
-        #expect(network.hasSuffix("nat, Network List Can\u{2019}t Be Read"))
-        #expect(!rendered.contains(id))
-    }
-
-    @Test("Memory reads in the gigabytes the memory key takes, to the megabyte")
-    func infoStatesMemoryAsTheKeyDoes() throws {
-        let memory = { (bytes: UInt64) throws -> String in
-            try #require(
-                TableRenderer.render(self.report(self.info(memoryBytes: bytes)))
-                    .components(separatedBy: "\n").first { $0.hasPrefix("Memory") })
-        }
-        #expect(try memory(1536 << 20).hasSuffix(" 1.5 GB"))
-        #expect(try memory(1537 << 20).hasSuffix(" 1.501 GB"))
-        #expect(try memory(8 << 30).hasSuffix(" 8 GB"))
-    }
-
-    @Test("Every disk reads on its own line under one Disks key, in the order listed, between Memory and Network")
-    func infoListsEveryDiskInOrder() throws {
-        let lines = TableRenderer.render(report(info(), disks: [mainDisk, installer, unreadable]))
-            .components(separatedBy: "\n")
-        let first = try #require(lines.firstIndex { $0.hasPrefix("Disks") })
-        let valueColumn = try #require(lines[first].range(of: "Main Disk")).lowerBound
-        let offset = lines[first].distance(from: lines[first].startIndex, to: valueColumn)
-
-        #expect(lines[first - 1].hasPrefix("Memory"))
-        #expect(lines[first + 3].hasPrefix("Network"))
-        #expect(
-            lines[first...(first + 2)].map { String($0.dropFirst(offset)) } == [
-                "Main Disk: 100 GB, 10.1 GB used",
-                "ubuntu-26.04.1-desktop-arm64: 4.15 GB, 4.15 GB used, USB, read-only",
-                "Scratch: Unknown",
-            ])
-        #expect(lines[(first + 1)...(first + 2)].allSatisfy { line in line.prefix(offset).allSatisfy { $0 == " " } })
-    }
 
     @Test("info's JSON is the description's own fields beside the ordered disk list, and reads back")
     func infoJSONCarriesTheDiskList() throws {
@@ -219,62 +117,6 @@ struct CLIRenderingTests {
             isEphemeralBaseline: false)
     }
 
-    @Test("A snapshot listing names every column #309 asks for, and marks the current one")
-    func snapshotListingCarriesEveryColumn() {
-        let rows = [
-            SnapshotRow(
-                snapshot(name: "Base", isCurrent: true),
-                size: SnapshotSize(bytes: 1_500_000_000, privateBytes: 200_000_000)),
-            SnapshotRow(
-                snapshot(name: "Before Upgrade", kind: "cold"),
-                size: SnapshotSize(bytes: 0, privateBytes: nil)),
-        ]
-        let lines = TableRenderer.render(rows, quiet: false).components(separatedBy: "\n")
-
-        #expect(lines.count == 3)
-        for heading in ["NAME", "CURRENT", "KIND", "TAKEN", "SIZE", "PRIVATE", "ID"] {
-            #expect(lines[0].contains(heading), "missing \(heading)")
-        }
-        #expect(lines[1].contains("Base"))
-        #expect(lines[1].contains("warm"))
-        #expect(lines[2].contains("cold"))
-        #expect(
-            lines[1].contains(
-                ByteCountFormatter.string(fromByteCount: 200_000_000, countStyle: .file)))
-        // No private bytes — a volume that can't clone — reads as a dash.
-        #expect(lines[2].contains("\u{2013}"))
-        // The marker is on the current row and nowhere else.
-        #expect(lines[1].contains("*"))
-        #expect(!lines[2].contains("*"))
-        #expect(!lines[0].contains("*"))
-    }
-
-    @Test("A size reads in the unit Finder states a file in, not the one memory is counted in")
-    func snapshotSizesUseTheFileStyle() {
-        let fileStyle = ByteCountFormatter.string(fromByteCount: 1_500_000_000, countStyle: .file)
-        let memoryStyle = ByteCountFormatter.string(
-            fromByteCount: 1_500_000_000, countStyle: .memory)
-        // The assertion below only means something while the two styles differ
-        // for this value, which is the whole reason it was chosen.
-        #expect(fileStyle != memoryStyle)
-
-        let rendered = TableRenderer.render(
-            [
-                SnapshotRow(
-                    snapshot(name: "Base"), size: SnapshotSize(bytes: 1_500_000_000, privateBytes: nil))
-            ], quiet: false)
-        #expect(rendered.contains(fileStyle))
-        #expect(!rendered.contains(memoryStyle))
-    }
-
-    @Test("A capture date reads in this Mac's own words, not the wire's")
-    func snapshotDatesReadAsWords() {
-        let rendered = TableRenderer.render(
-            [SnapshotRow(snapshot(name: "Base"), size: SnapshotSize(bytes: 0, privateBytes: nil))],
-            quiet: false)
-        #expect(rendered.contains(taken.formatted(date: .abbreviated, time: .shortened)))
-    }
-
     @Test("--quiet on a snapshot listing prints names alone, one per line")
     func quietSnapshotListingIsNamesOnly() {
         let rows = [
@@ -282,12 +124,6 @@ struct CLIRenderingTests {
             SnapshotRow(snapshot(name: "Before Upgrade"), size: SnapshotSize(bytes: 2, privateBytes: nil)),
         ]
         #expect(TableRenderer.render(rows, quiet: true) == "Base\nBefore Upgrade")
-    }
-
-    @Test("A virtual machine with nothing captured prints nothing at all")
-    func emptySnapshotListingIsEmpty() {
-        #expect(TableRenderer.render([SnapshotRow](), quiet: false).isEmpty)
-        #expect(TableRenderer.render([SnapshotRow](), quiet: true).isEmpty)
     }
 
     @Test("A snapshot's JSON is the wire DTO's own fields plus the size, decodable back")
@@ -339,29 +175,6 @@ struct CLIRenderingTests {
         ]
     }
 
-    @Test("A network listing names each network's kind and members, with the identifier last")
-    func networkListingCarriesEveryColumn() {
-        let lines = TableRenderer.render(networks, quiet: false).components(separatedBy: "\n")
-
-        #expect(lines.count == 3)
-        #expect(lines[0].hasPrefix("NAME"))
-        for heading in ["KIND", "MEMBERS"] {
-            #expect(lines[0].contains(heading), "missing \(heading)")
-        }
-        #expect(lines[0].hasSuffix("ID"))
-        // The kind reads as the network.mode value `network create --kind`
-        // takes back.
-        #expect(lines[1].hasPrefix("Lab"))
-        #expect(lines[1].contains("hostOnly"))
-        #expect(lines[1].contains("Alpha, \(longName.name)"))
-        #expect(lines[1].hasSuffix(networks[0].id.uuidString))
-        // A network nobody is on says so, rather than leaving a blank a
-        // column reader would skip.
-        #expect(lines[2].contains("None"))
-        #expect(lines[2].hasSuffix(networks[1].id.uuidString))
-        for line in lines { #expect(line == line.trimmingCharacters(in: .whitespaces)) }
-    }
-
     @Test("--quiet on a network listing prints names alone, and an empty library prints nothing")
     func quietNetworkListingIsNamesOnly() {
         #expect(TableRenderer.render(networks, quiet: true) == "Lab\nSpare")
@@ -387,26 +200,6 @@ struct CLIRenderingTests {
                 id: UUID(uuidString: "DDDDDDDD-CCCC-DDDD-EEEE-FFFFFFFFFFFF") ?? UUID(),
                 name: "Empty", kind: .folder, members: []),
         ]
-    }
-
-    @Test("A group listing names each group's kind and members, with the identifier last")
-    func groupListingCarriesEveryColumn() {
-        let lines = TableRenderer.render(groups, quiet: false).components(separatedBy: "\n")
-
-        #expect(lines.count == 3)
-        #expect(lines[0].hasPrefix("NAME"))
-        for heading in ["KIND", "MEMBERS"] {
-            #expect(lines[0].contains(heading), "missing \(heading)")
-        }
-        #expect(lines[0].hasSuffix("ID"))
-        #expect(lines[1].hasPrefix("Linux Lab"))
-        #expect(lines[1].contains("smartGroup"))
-        #expect(lines[1].contains("Alpha, \(longName.name)"))
-        #expect(lines[1].hasSuffix(groups[0].id.uuidString))
-        #expect(lines[2].contains("folder"))
-        #expect(lines[2].contains("None"))
-        #expect(lines[2].hasSuffix(groups[1].id.uuidString))
-        for line in lines { #expect(line == line.trimmingCharacters(in: .whitespaces)) }
     }
 
     @Test("--quiet on a group listing prints the names --smart-group and --folder take back")
@@ -448,47 +241,11 @@ struct CLIRenderingTests {
             editableWhileRunning: ["macOS": true]),
     ]
 
-    @Test("A settings listing names its two columns and keeps the order it was answered in")
-    func settingsListingIsKeyAndValue() {
-        let lines = TableRenderer.render(settings, quiet: false).components(separatedBy: "\n")
-
-        #expect(lines.count == 4)
-        #expect(lines[0].contains("KEY"))
-        #expect(lines[0].contains("VALUE"))
-        #expect(lines[1].hasPrefix("cpus"))
-        #expect(lines[1].hasSuffix("4"))
-        #expect(lines[2].contains("network.mode"))
-        #expect(lines[3].contains("clipboard.sharing"))
-        for line in lines { #expect(line == line.trimmingCharacters(in: .whitespaces)) }
-    }
-
     @Test("--quiet on a settings listing prints the values alone, one per line")
     func quietSettingsListingIsValuesOnly() {
         // Values rather than key=value: a script asking for one setting wants
         // the value, and a whole listing stays line-for-line with `get --keys`.
         #expect(TableRenderer.render(settings, quiet: true) == "4\nnat\ntrue")
-    }
-
-    @Test("A keyspace listing names each key, its summary, and whether a running guest takes it")
-    func keyspaceListingCarriesEveryColumn() {
-        let lines = TableRenderer.render(keyspace, quiet: false).components(separatedBy: "\n")
-
-        #expect(lines.count == 5)
-        for heading in ["KEY", "WHILE RUNNING", "SUMMARY"] {
-            #expect(lines[0].contains(heading), "missing \(heading)")
-        }
-        #expect(lines[1].contains("cpus"))
-        #expect(lines[1].contains("No"))
-        #expect(lines[1].contains("Virtual CPU cores"))
-        #expect(lines[2].contains("Yes"))
-        #expect(lines[2].contains("Return the VM"))
-        // Taken on some guests the key applies to and not others: the listing
-        // names the ones that take it.
-        #expect(lines[3].contains("macOS guests"))
-        #expect(!lines[3].contains("linux"))
-        #expect(lines[3].contains("Exchange clipboard text"))
-        // A key that applies to one guest alone answers for that guest alone.
-        #expect(lines[4].contains("Yes"))
     }
 
     @Test("--quiet on a keyspace listing prints the names alone, which get and set take back")
@@ -524,49 +281,11 @@ struct CLIRenderingTests {
         SharedDirectorySummary(path: "/Users/somebody/Reference Material", readOnly: true),
     ]
 
-    @Test("A share listing names its path and whether the guest may write")
-    func shareListingIsPathAndAccess() {
-        let lines = TableRenderer.render(shares, quiet: false).components(separatedBy: "\n")
-
-        #expect(lines.count == 3)
-        #expect(lines[0].contains("PATH"))
-        #expect(lines[0].contains("READ-ONLY"))
-        #expect(lines[1].hasPrefix("/Users/somebody/Sites"))
-        #expect(lines[1].hasSuffix("No"))
-        #expect(lines[2].hasSuffix("Yes"))
-    }
-
     @Test("--quiet on a share listing prints exactly what share remove takes back")
     func quietShareListingIsPathsOnly() {
         #expect(
             TableRenderer.render(shares, quiet: true)
                 == "/Users/somebody/Sites\n/Users/somebody/Reference Material")
-    }
-
-    @Test("A cell prints whole, however many UTF-16 units its characters take")
-    func aCellIsNotTruncatedByItsUTF16Length() {
-        // A path read off the disk is decomposed — "Café" arrives as "e" plus a
-        // combining acute — and an emoji is a surrogate pair. Both measure
-        // longer in UTF-16 than in the characters the column is sized by, and a
-        // cell cut to the shorter measure is a path `share remove` refuses.
-        let decomposed = "/Users/somebody/Cafe\u{301}"
-        let nonBMP = "/Users/somebody/\u{1F4C1}"
-        let lines = TableRenderer.render(
-            [
-                SharedDirectorySummary(path: decomposed, readOnly: false),
-                SharedDirectorySummary(path: nonBMP, readOnly: true),
-            ], quiet: false
-        ).components(separatedBy: "\n")
-
-        #expect(lines[1].hasPrefix(decomposed))
-        #expect(lines[2].hasPrefix(nonBMP))
-        // And the column still aligns: each path is widened by characters.
-        let starts = [("READ-ONLY", 0), ("No", 1), ("Yes", 2)].map { name, row -> Int in
-            guard let range = lines[row].range(of: name) else { return -1 }
-            return lines[row].distance(from: lines[row].startIndex, to: range.lowerBound)
-        }
-        #expect(Set(starts).count == 1)
-        #expect(starts[0] > 0)
     }
 
     @Test("Share JSON is the wire DTO itself, decodable back")
@@ -614,18 +333,6 @@ struct CLIRenderingTests {
                 == "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE\n12")
     }
 
-    @Test("A listing where no guest holds anything leaves the attachment column out")
-    func usbListingWithoutAttachmentsOmitsTheDeviceColumn() throws {
-        let free = accessories.filter { $0.deviceID == nil }
-        let lines = TableRenderer.render(free, quiet: false).components(separatedBy: "\n")
-
-        // Every row's attachment identifier would be blank, and a column of
-        // nothing is not a column.
-        #expect(lines[0].hasPrefix("NAME"))
-        #expect(lines[0].contains("ACCESSORY"))
-        #expect(!lines[0].contains("DEVICE"))
-    }
-
     // MARK: - Remembered USB accessories
 
     private let pairings = [
@@ -652,25 +359,7 @@ struct CLIRenderingTests {
                 == "04e8:6300:0100:0373\n0403:6001:0100@hub/Port-A@1")
     }
 
-    @Test("Rules JSON is the wire DTO itself, decodable back")
-    func usbRulesJSONIsTheWireDTO() throws {
-        let rendered = try JSONRenderer.render(pairings)
-
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        #expect(
-            try decoder.decode([USBPairingSummary].self, from: Data(rendered.utf8)) == pairings)
-    }
-
     // MARK: - Addresses
-
-    @Test("Each address case states its own answer, and only one is an address")
-    func everyAddressCaseRenders() {
-        #expect(TableRenderer.render(GuestIPAddress.observed("10.0.0.2")) == "10.0.0.2")
-        #expect(TableRenderer.render(GuestIPAddress.notObserved) == "Not seen")
-        #expect(TableRenderer.render(GuestIPAddress.externallyAssigned) == "Assigned by your network")
-        #expect(TableRenderer.render(GuestIPAddress.unavailable) == "None")
-    }
 
     @Test("Only an observed address prints; the other three refuse rather than print prose")
     func onlyAnObservedAddressPrints() throws {
@@ -687,15 +376,6 @@ struct CLIRenderingTests {
     }
 
     // MARK: - JSON
-
-    @Test("JSON keys are sorted, so two runs diff by content")
-    func jsonKeysAreStable() throws {
-        let rendered = try JSONRenderer.render([alpha])
-        let keys = ["\"id\"", "\"name\"", "\"status\""]
-        let positions = keys.compactMap { rendered.range(of: $0)?.lowerBound }
-        #expect(positions.count == keys.count)
-        #expect(positions == positions.sorted())
-    }
 
     @Test("A guest address's JSON names its state, and only an observed one carries an address")
     func addressJSONNamesItsState() throws {

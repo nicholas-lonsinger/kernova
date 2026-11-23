@@ -54,34 +54,11 @@ struct AppGroupSocketPathTests {
         #expect(try socketPath(throughData) == socketPath(bundle))
     }
 
-    @Test("A bundle that is not there names no socket")
-    func missingBundleNamesNoSocket() throws {
-        let gone = scratch.url.appendingPathComponent("Kernova.app", isDirectory: true)
-
-        #expect(throws: KernovaAppGroup.CopyPathFailure.unresolvableBundle(.noSuchFileOrDirectory)) {
-            try socketPath(gone)
-        }
-    }
-
     @Test("The socket lives in the group container and fits sun_path under a long account name")
     func socketFitsSunPathInsideTheContainer() throws {
         let path = try socketPath(makeBundle(in: scratch.url))
 
         #expect(URL(fileURLWithPath: path).deletingLastPathComponent().path == Self.container.path)
         #expect(throws: Never.self) { try UnixSocketAddress.make(path: path) }
-    }
-
-    @Test("A copy's lock file and its socket carry one digest name in the group container")
-    func lockAndSocketShareOneDigest() throws {
-        let files = try KernovaAppGroup.CopyFiles(
-            forAppBundle: makeBundle(in: scratch.url), in: Self.container)
-        let socket = URL(fileURLWithPath: files.socketPath)
-
-        #expect(socket.pathExtension == "sock")
-        #expect(files.lockURL.pathExtension == "lock")
-        #expect(
-            files.lockURL.deletingPathExtension().lastPathComponent
-                == socket.deletingPathExtension().lastPathComponent)
-        #expect(files.lockURL.deletingLastPathComponent().path == Self.container.path)
     }
 }

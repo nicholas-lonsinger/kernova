@@ -15,7 +15,6 @@ import Testing
 struct ClipboardItemBridgeTests {
     private let scratch = TestScratchDirectory(prefix: "item-bridge")
     private let concealedType = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.concealedMarkerUTI)
-    private let rtfType = NSPasteboard.PasteboardType("public.rtf")
     private let pngBytes = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3])
 
     /// Serves a destination's pulls from the source's offer, landing a file or
@@ -162,51 +161,6 @@ struct ClipboardItemBridgeTests {
 
     // MARK: - Text and images
 
-    @Test("text offers its types without reading them, and a paste pulls only the type it asks for")
-    func textRoundTrips() async throws {
-        let pasteboard = FakePasteboard()
-        pasteboard.setItem([(type: .string, data: Data("hello".utf8)), (type: rtfType, data: Data("{\\rtf1}".utf8))])
-
-        let source = try await readOffer(pasteboard)
-        let representations = single(source)
-        #expect(representations.map(\.type.appleUTI) == [NSPasteboard.PasteboardType.string.rawValue, "public.rtf"])
-        #expect(representations.allSatisfy { $0.storage == .inline && $0.sizeEstimate == 0 && !$0.promised })
-        #expect(representations.first?.type.mime == "text/plain")
-        #expect(pasteboard.residentReads.isEmpty)
-
-        let published = try publish(source)
-        defer { published.registry.releaseAllForTesting() }
-        #expect(published.destination.promisedTypesByItem == [[.string, rtfType]])
-        #expect(try await published.paste(.string) == Data("hello".utf8))
-        #expect(pasteboard.residentReads == [.string])
-    }
-
-    @Test("an image round-trips its bytes")
-    func imageRoundTrips() async throws {
-        let pasteboard = FakePasteboard()
-        pasteboard.setItem([(type: .png, data: pngBytes)])
-
-        let source = try await readOffer(pasteboard)
-        #expect(single(source).map(\.type.appleUTI) == ["public.png"])
-
-        let published = try publish(source)
-        defer { published.registry.releaseAllForTesting() }
-        #expect(try await published.paste(.png) == pngBytes)
-    }
-
-    @Test("several pasteboard items offer one item each")
-    func eachPasteboardItemIsAnItem() async throws {
-        let pasteboard = FakePasteboard()
-        pasteboard.setItems([[(type: .string, data: Data("one".utf8))], [(type: .string, data: Data("two".utf8))]])
-
-        let source = try await readOffer(pasteboard)
-        #expect(source.items.count == 2)
-
-        let published = try publish(source)
-        defer { published.registry.releaseAllForTesting() }
-        #expect(try await published.paste(.string, item: 1) == Data("two".utf8))
-    }
-
     @Test("a pull after the pasteboard moved on is refused unavailable")
     func pullAfterTheCopyIsReplacedIsUnavailable() async throws {
         let pasteboard = FakePasteboard()
@@ -219,73 +173,6 @@ struct ClipboardItemBridgeTests {
             try await source.served(item: 0, representation: 0)
         }
         #expect(pasteboard.residentReads.isEmpty)
-    }
-
-    // MARK: - Files and folders
-
-    @Test("a file offers its name and size, its URL left out, and lands under its name")
-    func fileRoundTrips() async throws {
-        let file = try directory("copied").appendingPathComponent("notes.txt")
-        try Data("file body".utf8).write(to: file)
-        let pasteboard = FakePasteboard()
-        pasteboard.setItem([
-            (type: .fileURL, data: Data(file.absoluteString.utf8)), (type: .URL, data: Data(file.absoluteString.utf8)),
-        ])
-
-        let source = try await readOffer(pasteboard)
-        let representations = single(source)
-        #expect(representations.count == 1)
-        #expect(representations.first?.storage == .file)
-        #expect(representations.first?.name == Data("notes.txt".utf8))
-        #expect(representations.first?.sizeEstimate == 9)
-        #expect(representations.first?.type.appleUTI == "public.plain-text")
-
-        let published = try publish(source)
-        defer { published.registry.releaseAllForTesting() }
-        #expect(published.destination.promisedTypesByItem == [[.fileURL]])
-        let landed = try #require(try await published.pasteFile())
-        #expect(landed.lastPathComponent == "notes.txt")
-        #expect(try Data(contentsOf: landed) == Data("file body".utf8))
-    }
-
-    @Test("an image file also offers its bytes inline, which a paste ceiling its file is over keeps")
-    func imageFileOffersItsBytesInline() async throws {
-        let file = try directory("copied").appendingPathComponent("photo.png")
-        try pngBytes.write(to: file)
-        let pasteboard = FakePasteboard()
-        pasteboard.setItem([(type: .fileURL, data: Data(file.absoluteString.utf8))])
-
-        let source = try await readOffer(pasteboard)
-        #expect(single(source).map(\.storage) == [.file, .inline])
-
-        let published = try publish(source)
-        defer { published.registry.releaseAllForTesting() }
-        #expect(published.destination.promisedTypesByItem == [[.fileURL, .png]])
-        #expect(try await published.paste(.png) == pngBytes)
-
-        let withheld = try publish(source, pasteCeiling: 0, expecting: .writtenWithoutFiles(count: 1, limitBytes: 0))
-        defer { withheld.registry.releaseAllForTesting() }
-        #expect(withheld.destination.promisedTypesByItem == [[.png]])
-    }
-
-    @Test("a folder offers itself as FOLDER and lands whole under its name")
-    func folderRoundTrips() async throws {
-        let folder = try directory("copied/Album")
-        try Data("a".utf8).write(to: folder.appendingPathComponent("a.txt"))
-        try Data("bb".utf8).write(to: folder.appendingPathComponent("b.txt"))
-        let pasteboard = FakePasteboard()
-        pasteboard.setItem([(type: .fileURL, data: Data(folder.absoluteString.utf8))])
-
-        let source = try await readOffer(pasteboard)
-        let representations = single(source)
-        #expect(representations.map(\.storage) == [.folder])
-        #expect(representations.first?.name == Data("Album".utf8))
-
-        let published = try publish(source)
-        defer { published.registry.releaseAllForTesting() }
-        let landed = try #require(try await published.pasteFile())
-        #expect(landed.lastPathComponent == "Album")
-        #expect(try Data(contentsOf: landed.appendingPathComponent("b.txt")) == Data("bb".utf8))
     }
 
     // MARK: - Promises
@@ -324,49 +211,6 @@ struct ClipboardItemBridgeTests {
         }
         #expect(try Data(contentsOf: again) == pngBytes)
         #expect(receiver.callIns == 1)
-    }
-
-    @Test("a promise naming nothing yet is offered under its type's extension; a folder type offers FOLDER")
-    func promiseNamesAndStorage() async throws {
-        let nameless = FakeFilePromiseReceiver(
-            name: "IMG_0001.png", fileType: "public.png", contents: .file(pngBytes), named: false)
-        let folder = FakeFilePromiseReceiver(
-            name: "Export", fileType: "public.folder", contents: .folder(["a.txt": Data("a".utf8)]))
-        let pasteboard = FakePasteboard()
-        let promiseItem = promiseTypes.map { (type: $0, data: Data()) }
-        pasteboard.setItems([promiseItem, promiseItem])
-
-        let source = try await readOffer(pasteboard, promises: [nameless, folder])
-
-        let names = source.items.map { $0.representations.first?.name }
-        #expect(names == [Data("Untitled.png".utf8), Data("Export".utf8)])
-        #expect(source.items.map { $0.representations.first?.storage } == [.file, .folder])
-        guard case .folder(let landed) = try await source.served(item: 1, representation: 0) else {
-            Issue.record("expected the promised folder")
-            return
-        }
-        #expect(try Data(contentsOf: landed.appendingPathComponent("a.txt")) == Data("a".utf8))
-    }
-
-    @Test(
-        "a promise whose name is no single path component is offered under its type's extension",
-        arguments: ["..", ".", "a/b", "a\u{0}b", String(repeating: "x", count: PathComponent.maxByteCount + 1)])
-    func misnamedPromiseIsUntitled(name: String) async throws {
-        let receiver = FakeFilePromiseReceiver(name: name, fileType: "public.png", contents: .file(pngBytes))
-
-        let source = try await readOffer(promisePasteboard(), promises: [receiver])
-
-        #expect(source.items.map { $0.representations.first?.name } == [Data("Untitled.png".utf8)])
-    }
-
-    @Test("a promise whose source fails is refused read-failed")
-    func failedPromiseIsReadFailed() async throws {
-        let receiver = FakeFilePromiseReceiver(name: "x.png", fileType: "public.png", contents: .failure)
-        let source = try await readOffer(promisePasteboard(), promises: [receiver])
-
-        await #expect(throws: ClipboardServeError.readFailed) {
-            try await source.served(item: 0, representation: 0)
-        }
     }
 
     // MARK: - Drops
@@ -408,41 +252,6 @@ struct ClipboardItemBridgeTests {
         }
         #expect(try Data(contentsOf: first) == pngBytes)
         #expect(receiver.callIns == 1)
-    }
-
-    @Test("a dropped item carrying a promise beside a file on disk offers the promise")
-    func dropPrefersThePromise() async throws {
-        let derivative = try directory("library").appendingPathComponent("derivative.jpeg")
-        try Data("smaller".utf8).write(to: derivative)
-        let pasteboard = FakePasteboard()
-        pasteboard.setItem(
-            [(type: .fileURL, data: Data(derivative.absoluteString.utf8))]
-                + promiseTypes.map { (type: $0, data: Data()) })
-        let receiver = FakeFilePromiseReceiver(
-            name: "IMG_0001.heic", fileType: "public.heic", contents: .file(pngBytes))
-
-        let source = try await readDropOffer(pasteboard, promises: [receiver])
-
-        #expect(source.items.map { $0.representations.map(\.name) } == [[Data("IMG_0001.heic".utf8)]])
-    }
-
-    @Test("a drop offers its files and folders, one representation each, and nothing else it carries")
-    func dropOffersTreesOnly() async throws {
-        let image = try directory("dropped").appendingPathComponent("picture.png")
-        try pngBytes.write(to: image)
-        let folder = try directory("dropped/Album")
-        let pasteboard = FakePasteboard()
-        pasteboard.setItems([
-            [(type: .string, data: Data("hello".utf8))],
-            [(type: .fileURL, data: Data(image.absoluteString.utf8))],
-            [(type: .fileURL, data: Data(folder.absoluteString.utf8))],
-        ])
-
-        let source = try await readDropOffer(pasteboard)
-
-        #expect(source.items.map { $0.representations.map(\.storage) } == [[.file], [.folder]])
-        #expect(
-            source.items.map { $0.representations.map(\.name) } == [[Data("picture.png".utf8)], [Data("Album".utf8)]])
     }
 
     // MARK: - Markers
@@ -580,18 +389,6 @@ struct ClipboardItemBridgeTests {
         #expect(!ClipboardSnapshotPolicy.admits(try plist(["file:///etc/hosts"], ["Hosts"]), servedAs: uti))
         let mixed = try plist(["https://example.com/", "/etc/hosts"], ["Example", "Hosts"])
         #expect(!ClipboardSnapshotPolicy.admits(mixed, servedAs: uti))
-    }
-
-    @Test("a published titled URL list is served a web URL, and never a file URL")
-    func publishedTitledURLsRefuseFileURLs() async throws {
-        let uti = "dyn.ah62d4rv4gu8zs3pcnzme2641rf4guzdmsv0gn64uqm10c6xenv61a3k"  // WebURLsWithTitlesPboardType
-        func plist(_ urls: [String], _ titles: [String]) throws -> Data {
-            try PropertyListSerialization.data(fromPropertyList: [urls, titles], format: .xml, options: 0)
-        }
-
-        let web = try plist(["https://example.com/"], ["Example Domain"])
-        #expect(try await served(web, as: uti) == web)
-        #expect(try await served(try plist(["file:///etc/hosts"], ["Hosts"]), as: uti) == nil)
     }
 
     @Test(

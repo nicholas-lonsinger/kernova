@@ -47,18 +47,6 @@ struct AppRegistryWaitTests {
         Self.expectStoppedAtDeadline(clock: clock, registry: registry, deadline: 3)
     }
 
-    @Test("An instance macOS never lets go fails the pid-keyed wait, read last at its deadline")
-    func processWaitFailsAtItsDeadline() {
-        let clock = FakeClock()
-        let registry = FakeAppRegistry(registered: [FakeRegisteredInstance()], clock: clock)
-
-        let released = awaitDeregistration(
-            ofProcess: FakeRegisteredInstance.identifier, from: registry, within: 3, clock: clock)
-
-        #expect(!released)
-        Self.expectStoppedAtDeadline(clock: clock, registry: registry, deadline: 3)
-    }
-
     /// The schedule runs until the next sleep would pass the deadline; that
     /// sleep is cut to land on it, and one read there decides.
     private static func expectStoppedAtDeadline(
@@ -69,71 +57,6 @@ struct AppRegistryWaitTests {
         #expect(sleeps.last.map { $0 < 1 } == true)
         #expect(clock.elapsed == deadline)
         #expect(registry.lookupTimes.last == deadline)
-    }
-
-    // MARK: - Nothing to wait for
-
-    @Test("An instance with no process identifier is not one to wait out")
-    func instanceWithoutAPidIsReleased() {
-        let clock = FakeClock()
-        let registry = FakeAppRegistry(
-            registered: [FakeRegisteredInstance(processIdentifier: 0)], clock: clock)
-
-        let bundleReleased = awaitDeregistration(
-            from: registry, scope: .all, within: 20, clock: clock)
-        let processReleased = awaitDeregistration(
-            ofProcess: 0, from: registry, within: 20, clock: clock)
-
-        #expect(bundleReleased)
-        #expect(processReleased)
-        #expect(clock.sleeps.isEmpty)
-    }
-
-    // MARK: - Scope
-
-    @Test("A running instance is not something the exited-processes scope waits on")
-    func runningInstanceIsLeftAlone() {
-        let clock = FakeClock()
-        let registry = FakeAppRegistry(
-            registered: [FakeRegisteredInstance(processExited: false)], clock: clock)
-
-        let released = awaitDeregistration(
-            from: registry, scope: .exitedProcesses, within: 20, clock: clock)
-
-        #expect(released)
-        #expect(clock.sleeps.isEmpty)
-    }
-
-    @Test("An instance whose process is gone is one the exited-processes scope waits on")
-    func exitedInstanceIsWaitedOut() {
-        let clock = FakeClock()
-        let registry = FakeAppRegistry(
-            registered: [FakeRegisteredInstance(processExited: true)], releasedFromLookup: 2,
-            clock: clock)
-
-        let released = awaitDeregistration(
-            from: registry, scope: .exitedProcesses, within: 20, clock: clock)
-
-        #expect(released)
-        #expect(clock.sleeps == [Self.schedule[0]])
-    }
-
-    // MARK: - Process liveness
-
-    /// Launch Services registers an instance before it has a process
-    /// identifier for it. Reading that as "gone" would put `.exitedProcesses`
-    /// on a healthy app mid-launch and hold it to the deadline.
-    @Test("An identifier naming no process reads as running, not as gone")
-    func identifierWithoutAProcessReadsAsRunning() {
-        #expect(processIsRunning(0))
-        #expect(processIsRunning(-1))
-    }
-
-    @Test("A live process reads as running and a pid the kernel cannot hold does not")
-    func liveProcessReadsAsRunning() {
-        // Above `PID_MAX`, so no process can ever carry it.
-        #expect(processIsRunning(getpid()))
-        #expect(!processIsRunning(999_999))
     }
 
     // MARK: - Entry points

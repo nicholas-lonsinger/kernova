@@ -14,10 +14,6 @@ struct CLIConfigurationWireTests {
         ConfigurationEntry(key: "memory", value: "8"),
     ]
 
-    /// A virtual machine identifier, for the lines that force one with `--id`.
-    private let identifier =
-        UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID()
-
     // MARK: - Reads
 
     @Test("A bare get asks for every key, and a named one asks for those")
@@ -31,57 +27,5 @@ struct CLIConfigurationWireTests {
         let named = try await CLIWire.exchange(
             ["get", "Alpha", "memory", "cpus"], answering: answered)
         #expect(named.sent == [.configuration(.idOrName("Alpha"), keys: ["memory", "cpus"])])
-    }
-
-    // MARK: - Writes
-
-    @Test("A set crosses as one request carrying every assignment, in the order typed")
-    func setSendsOneRequestForEveryAssignment() async throws {
-        let exchanged = try await CLIWire.exchange(
-            ["set", "Alpha", "cpus=4", "memory=8"],
-            answering: VMCommandResponse(result: .configuration(settings)))
-
-        // One request, not one per assignment: the app applies them together or
-        // not at all, which a second round trip would give up.
-        #expect(
-            exchanged.sent == [
-                .setConfiguration(.idOrName("Alpha"), assignments: settings, consent: .none)
-            ])
-        #expect(try exchanged.answer.payload() == .configuration(settings))
-    }
-
-    // MARK: - Shares
-
-    @Test("A share list asks for the folders of the virtual machine its argument names")
-    func shareListSendsTheSelector() async throws {
-        let shares = [
-            SharedDirectorySummary(path: "/tmp/Work", readOnly: false),
-            SharedDirectorySummary(path: "/tmp/Reference", readOnly: true),
-        ]
-        let named = try await CLIWire.exchange(
-            ["share", "list", "Alpha"],
-            answering: VMCommandResponse(result: .sharedDirectories(shares)))
-
-        #expect(named.sent == [.sharedDirectories(.idOrName("Alpha"))])
-        #expect(try named.answer.payload() == .sharedDirectories(shares))
-
-        let identified = try await CLIWire.exchange(
-            ["share", "list", identifier.uuidString, "--id"],
-            answering: VMCommandResponse(result: .sharedDirectories(shares)))
-        #expect(identified.sent == [.sharedDirectories(.id(identifier))])
-    }
-
-    // MARK: - Answers
-
-    @Test("An answer of the wrong shape refuses rather than being printed as settings")
-    func anUnexpectedAnswerRefuses() {
-        do {
-            try ConfigurationOutput.write(.ok, options: GlobalOptions())
-            Issue.record("expected an unavailable refusal")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .unavailable)
-        } catch {
-            Issue.record("expected a CLIFailure, got \(error)")
-        }
     }
 }

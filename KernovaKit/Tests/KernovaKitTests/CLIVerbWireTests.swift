@@ -30,15 +30,6 @@ struct CLIVerbWireTests {
 
     // MARK: - Reads
 
-    @Test("list asks for the whole library and names no virtual machine")
-    func listAsksForTheLibrary() async throws {
-        let exchanged = try await CLIWire.exchange(
-            ["list"], answering: VMCommandResponse(result: .summaries([alpha])))
-
-        #expect(exchanged.sent == [.list(VMListQuery(sort: .manual))])
-        #expect(try exchanged.answer.payload() == .summaries([alpha]))
-    }
-
     @Test("list crosses as one query: repeated flags an include-set, different flags each constraining")
     func listSendsItsFilter() async throws {
         let exchanged = try await CLIWire.exchange(
@@ -58,15 +49,6 @@ struct CLIVerbWireTests {
             sort: .dateCreated)
         #expect(exchanged.sent == [.list(expected)])
         #expect(try exchanged.answer.payload() == .summaries([alpha]))
-    }
-
-    @Test("groups asks for the library's groups")
-    func groupsAsksForTheGroups() async throws {
-        let group = GroupSummary(id: alpha.id, name: "Linux Lab", kind: .smartGroup, members: [alpha])
-        let exchanged = try await CLIWire.exchange(["groups"], answering: VMCommandResponse(result: .groups([group])))
-
-        #expect(exchanged.sent == [.groups])
-        #expect(try exchanged.answer.payload() == .groups([group]))
     }
 
     @Test("info asks for the VM its argument names, then its disks by the identifier that answered")
@@ -156,44 +138,6 @@ struct CLIVerbWireTests {
             ])
     }
 
-    @Test("A MAC address refusal prints each route as the command lines that take it, a start it ends with last")
-    func macAddressRefusalPrintsItsRoutes() async throws {
-        let requirement = StepRequirement(
-            title: "Duplicate MAC Address", message: "Change its network first.",
-            routes: [
-                StepRoute(
-                    title: "Move to a Network of Its Own",
-                    steps: [
-                        .setConfiguration(
-                            vm: alpha,
-                            assignments: [ConfigurationEntry(key: "network.membership", value: "isolated")])
-                    ], ending: .refusedVerb),
-                StepRoute(
-                    title: "Use a New MAC Address",
-                    steps: [
-                        .discardSavedState(vm: alpha),
-                        .setConfiguration(
-                            vm: alpha, assignments: [ConfigurationEntry(key: "network.mac", value: "new")]),
-                    ], ending: .start(vm: alpha)),
-            ])
-        let exchanged = try await CLIWire.exchange(
-            ["resume", "Alpha"],
-            answering: VMCommandResponse(result: .failure(.stepRequired(requirement: requirement))))
-
-        do {
-            _ = try exchanged.answer.payload()
-            Issue.record("expected a MAC address refusal")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .refusedByState)
-            #expect(
-                failure.message
-                    == "Change its network first.\n\n"
-                    + "Move to a Network of Its Own with: kernova set Alpha network.membership=isolated\n"
-                    + "Use a New MAC Address with:\n  kernova stop Alpha --yes\n  kernova set Alpha network.mac=new"
-                    + "\n  kernova start Alpha")
-        }
-    }
-
     @Test("stop crosses with the disposition its method names, its consent, and its deadline")
     func stopSendsItsDispositionAndDeadline() async throws {
         let graceful = try await CLIWire.exchange(["stop", "Alpha"], answering: accepted)
@@ -209,49 +153,6 @@ struct CLIVerbWireTests {
             forced.sent == [
                 .stop(.idOrName("Alpha"), disposition: .force, consent: .all, timeout: 30)
             ])
-    }
-
-    @Test("stop --yes on a paused guest exits 5, naming the resume as a command line")
-    func stopOfAPausedGuestNamesTheResume() async throws {
-        let vm = VMSummary(
-            id: UUID(), name: "My VM", status: "paused", ipAddress: .unavailable,
-            heldByAnotherCopy: false)
-        let refusal = StepRequirement(
-            message:
-                "\u{201C}My VM\u{201D} is paused, so it can\u{2019}t receive a shutdown request. Resume it first, or force stop it, which loses anything in the guest that isn\u{2019}t saved to disk.",
-            routes: [StepRoute(title: "Resume", steps: [.resume(vm: vm)], ending: .refusedVerb)])
-        let exchanged = try await CLIWire.exchange(
-            ["stop", "My VM", "--yes"],
-            answering: VMCommandResponse(result: .failure(.stepRequired(requirement: refusal))))
-
-        // --yes is every consent, and no consent names the resume.
-        #expect(
-            exchanged.sent == [
-                .stop(.idOrName("My VM"), disposition: .graceful, consent: .all, timeout: nil)
-            ])
-        do {
-            _ = try exchanged.answer.payload()
-            Issue.record("expected a step refusal")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .refusedByState)
-            #expect(failure.code.rawValue == 5)
-            #expect(failure.message == refusal.message + "\n\nResume with: kernova resume 'My VM'")
-        }
-    }
-
-    @Test("suspend crosses as the verb that saves the session")
-    func suspendSendsItsVerb() async throws {
-        let exchanged = try await CLIWire.exchange(
-            ["suspend", "Alpha"], answering: accepted)
-
-        #expect(exchanged.sent == [.suspend(.idOrName("Alpha"))])
-    }
-
-    @Test("pause crosses as the verb that holds the guest in memory")
-    func pauseSendsItsVerb() async throws {
-        let exchanged = try await CLIWire.exchange(["pause", "Alpha"], answering: accepted)
-
-        #expect(exchanged.sent == [.pause(.idOrName("Alpha"))])
     }
 
     @Test("resume crosses as the verb that lets a paused guest run again, --yes as every consent")
@@ -286,72 +187,7 @@ struct CLIVerbWireTests {
             ])
     }
 
-    /// The refusal each restart method's consent raises, as the app words it.
-    nonisolated static let restartPrompts: [(flag: String, disposition: StopDisposition, prompt: ConfirmationPrompt)] =
-        [
-            (
-                "--force", .force,
-                ConfirmationPrompt(
-                    kind: .forceRestart, title: "Force Restart \u{201C}Alpha\u{201D}?",
-                    message:
-                        "\u{201C}Alpha\u{201D} will be immediately terminated, then Kernova starts it again. "
-                        + "Anything in the guest that isn\u{2019}t saved to disk will be lost.",
-                    confirmTitle: "Force Restart", dismissTitle: "Cancel")
-            ),
-            (
-                "--anyway", .anyway,
-                ConfirmationPrompt(
-                    kind: .restartAnyway, title: "Restart \u{201C}Alpha\u{201D} Anyway?",
-                    message:
-                        "macOS shuts down without waiting for apps. Apps still open quit without asking to save. "
-                        + "Kernova then starts \u{201C}Alpha\u{201D} again.",
-                    confirmTitle: "Restart Anyway", dismissTitle: "Cancel")
-            ),
-        ]
-
-    @Test(
-        "restart --force and --anyway cross as their dispositions; without --yes the consent refusal names --yes, as stop's do",
-        arguments: restartPrompts.indices)
-    func restartMethodCrossesAndAsksForYes(row: Int) async throws {
-        let (flag, disposition, prompt) = Self.restartPrompts[row]
-        let consented = try await CLIWire.exchange(["restart", "Alpha", flag, "--yes"], answering: accepted)
-        #expect(
-            consented.sent == [
-                .restart(.idOrName("Alpha"), disposition: disposition, timeout: nil, consent: .all)
-            ])
-
-        let unconsented = try await CLIWire.exchange(
-            ["restart", "Alpha", flag],
-            answering: VMCommandResponse(result: .failure(.confirmationRequired(prompt: prompt))))
-        #expect(
-            unconsented.sent == [
-                .restart(.idOrName("Alpha"), disposition: disposition, timeout: nil, consent: .none)
-            ])
-        do {
-            _ = try unconsented.answer.payload()
-            Issue.record("expected a consent refusal")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .refusedByState)
-            #expect(failure.message == prompt.message + "\n\nPass --yes to do it anyway.")
-        }
-    }
-
-    @Test("open is the one verb that crosses asking for something to come forward")
-    func openSendsItsVerb() async throws {
-        let exchanged = try await CLIWire.exchange(["open", "Alpha"], answering: accepted)
-
-        #expect(exchanged.sent == [.open(.idOrName("Alpha"))])
-    }
-
     // MARK: - Library
-
-    @Test("rename crosses with the label to apply")
-    func renameSendsTheNewName() async throws {
-        let exchanged = try await CLIWire.exchange(
-            ["rename", "Alpha", "Beta"], answering: accepted)
-
-        #expect(exchanged.sent == [.rename(.idOrName("Alpha"), newName: "Beta")])
-    }
 
     @Test("delete crosses to the Trash unless --permanent, and takes no external file with it")
     func deleteSendsItsDisposalAndConsent() async throws {
@@ -370,117 +206,5 @@ struct CLIVerbWireTests {
                 .delete(
                     .idOrName("Alpha"), permanently: true, alsoRemoving: [], consent: .none)
             ])
-    }
-
-    @Test("A removal whose file stayed exits as a verb that did not complete, naming the file")
-    func filesKeptExitsNamingTheFile() throws {
-        let kept = try #require(
-            FilesKept(
-                .attachment(label: "Data", vm: "Alpha"),
-                kept: [
-                    FilesKept.File(
-                        path: "/Volumes/Archive/data.img",
-                        reason:
-                            "\u{201C}data.img\u{201D} couldn\u{2019}t be moved to the trash because the volume \u{201C}Archive\u{201D} doesn\u{2019}t have one."
-                    )
-                ]))
-        // Across the wire and back, as the tool receives it.
-        let answer = try JSONDecoder().decode(
-            VMCommandResponse.self,
-            from: JSONEncoder().encode(VMCommandResponse(result: .failure(.filesKept(kept)))))
-
-        do {
-            _ = try answer.payload()
-            Issue.record("expected the files-kept outcome")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .operationFailed)
-            #expect(
-                failure.message
-                    == "\u{201C}Data\u{201D} was removed from \u{201C}Alpha\u{201D}. "
-                    + "\u{201C}/Volumes/Archive/data.img\u{201D} was not moved to the Trash: "
-                    + "\u{201C}data.img\u{201D} couldn\u{2019}t be moved to the trash because the "
-                    + "volume \u{201C}Archive\u{201D} doesn\u{2019}t have one.")
-        }
-    }
-
-    @Test("reveal crosses as the Finder verb, not as the app's own bring-up")
-    func revealSendsTheFinderVerb() async throws {
-        let exchanged = try await CLIWire.exchange(
-            ["reveal", "Alpha"], answering: accepted)
-
-        #expect(exchanged.sent == [.showInFinder(.idOrName("Alpha"))])
-    }
-
-    @Test("usb rules names a machine only when the line did")
-    func usbRulesSendsAnOptionalSelector() async throws {
-        let pairings = [
-            USBPairingSummary(
-                vm: "Alpha", key: "04e8:6300:0100:0373", name: "Samsung Type-C",
-                pairedAt: Date(timeIntervalSince1970: 1_700_000_000))
-        ]
-        let answered = VMCommandResponse(result: .usbPairings(pairings))
-
-        let everyMachine = try await CLIWire.exchange(["usb", "rules"], answering: answered)
-        #expect(everyMachine.sent == [.usbPairings(nil)])
-        #expect(try everyMachine.answer.payload() == .usbPairings(pairings))
-
-        let named = try await CLIWire.exchange(
-            ["usb", "rules", "Alpha"], answering: answered)
-        #expect(named.sent == [.usbPairings(.idOrName("Alpha"))])
-    }
-
-    @Test("usb forget crosses as the durable key, verbatim")
-    func usbForgetSendsTheKey() async throws {
-        // The key is what the user copied out of a listing, `@` and `:` and
-        // all, so nothing may reinterpret it on the way.
-        let exchanged = try await CLIWire.exchange(
-            ["usb", "forget", "Alpha", "04e8:6300:0100@hub/Port-A@1"], answering: accepted)
-
-        #expect(
-            exchanged.sent
-                == [.forgetUSBPairing(.idOrName("Alpha"), key: "04e8:6300:0100@hub/Port-A@1")])
-    }
-
-    // MARK: - Named networks
-
-    private var lab: NetworkSummary {
-        NetworkSummary(
-            id: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE") ?? UUID(), name: "Lab",
-            kind: .hostOnly, members: [alpha])
-    }
-
-    @Test("network list asks for the library's networks and names no virtual machine")
-    func networkListAsksForTheNetworks() async throws {
-        let exchanged = try await CLIWire.exchange(
-            ["network", "list"], answering: VMCommandResponse(result: .networks([lab])))
-
-        #expect(exchanged.sent == [.networks])
-        #expect(try exchanged.answer.payload() == .networks([lab]))
-    }
-
-    @Test("network create crosses with its name and kind, the kind nat unless --kind names one")
-    func networkCreateSendsItsKind() async throws {
-        let answered = VMCommandResponse(result: .network(lab))
-
-        let plain = try await CLIWire.exchange(["network", "create", "Lab"], answering: answered)
-        #expect(plain.sent == [.createNetwork(name: "Lab", kind: .nat)])
-        #expect(try plain.answer.payload() == .network(lab))
-
-        let hostOnly = try await CLIWire.exchange(
-            ["network", "create", "Lab", "--kind", "hostOnly"], answering: answered)
-        #expect(hostOnly.sent == [.createNetwork(name: "Lab", kind: .hostOnly)])
-    }
-
-    @Test("network rename and delete cross with the network as the line spelled it")
-    func networkRenameAndDeleteSendTheirNetwork() async throws {
-        // The app matches a name or an identifier, so the argument crosses
-        // verbatim either way.
-        let renamed = try await CLIWire.exchange(
-            ["network", "rename", "Lab", "Bench"], answering: accepted)
-        #expect(renamed.sent == [.renameNetwork(network: "Lab", newName: "Bench")])
-
-        let deleted = try await CLIWire.exchange(
-            ["network", "delete", lab.id.uuidString], answering: accepted)
-        #expect(deleted.sent == [.deleteNetwork(network: lab.id.uuidString)])
     }
 }

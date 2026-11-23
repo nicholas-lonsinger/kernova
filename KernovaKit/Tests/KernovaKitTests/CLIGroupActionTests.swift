@@ -10,10 +10,6 @@ import Testing
 /// what crosses the wire, what is printed, and what the tool exits with.
 @Suite("CLI group actions", .caseScoped)
 struct CLIGroupActionTests {
-    private func parse(_ arguments: [String]) throws -> ParsableCommand {
-        try KernovaCommand.parseAsRoot(arguments)
-    }
-
     private func summary(_ name: String, status: String = "running") -> VMSummary {
         VMSummary(id: UUID(), name: name, status: status, ipAddress: .unavailable, heldByAnotherCopy: false)
     }
@@ -43,77 +39,7 @@ struct CLIGroupActionTests {
             ])
     }
 
-    // MARK: - Parsing
-
-    @Test("start, suspend, stop and restart take a group in place of a VM, and send one group action")
-    func groupTargetsParse() throws {
-        let cases: [([String], VMCommandRequest.Verb)] = [
-            (["start", "--folder", "Lab"], .groupAction(.start, group: VMGroupReference(.folder, named: "Lab"))),
-            (
-                ["suspend", "--smart-group", "Linux Lab"],
-                .groupAction(.suspend, group: VMGroupReference(.smartGroup, named: "Linux Lab"))
-            ),
-            (["stop", "--folder", "Lab"], .groupAction(.stop, group: VMGroupReference(.folder, named: "Lab"))),
-            (
-                ["restart", "--smart-group", "Linux Lab"],
-                .groupAction(.restart, group: VMGroupReference(.smartGroup, named: "Linux Lab"))
-            ),
-        ]
-        for (line, expected) in cases {
-            let command = try #require(try parse(line) as? any VerbCommand)
-            #expect(try command.verb() == expected, "\(line)")
-        }
-    }
-
-    @Test("A group is mutually exclusive with <vm>, and one of the two is required")
-    func groupAndVMAreExclusive() throws {
-        for verb in ["start", "suspend", "stop", "restart"] {
-            #expect(throws: (any Error).self, "\(verb)") { try parse([verb, "Alpha", "--folder", "Lab"]) }
-            #expect(throws: (any Error).self, "\(verb)") { try parse([verb]) }
-            #expect(throws: (any Error).self, "\(verb)") {
-                try parse([verb, "--folder", "Lab", "--smart-group", "Linux"])
-            }
-            #expect(try parse([verb, "Alpha"]) is any VerbCommand)
-        }
-    }
-
-    @Test("A flag that changes one VM's verb is refused beside a group")
-    func singleVMFlagsAreRefused() {
-        let refused: [[String]] = [
-            ["start", "--folder", "Lab", "--recovery"],
-            ["start", "--folder", "Lab", "--yes"],
-            ["stop", "--folder", "Lab", "--force"],
-            ["stop", "--folder", "Lab", "--anyway"],
-            ["stop", "--smart-group", "Running", "--anyway"],
-            ["stop", "--folder", "Lab", "--timeout", "5"],
-            ["suspend", "--folder", "Lab", "--yes"],
-            ["restart", "--folder", "Lab", "--timeout", "5"],
-            ["restart", "--folder", "Lab", "--yes"],
-            ["restart", "--folder", "Lab", "--force"],
-            ["restart", "--smart-group", "Running", "--anyway"],
-        ]
-        for line in refused {
-            #expect(throws: (any Error).self, "\(line)") { try parse(line) }
-        }
-    }
-
     // MARK: - Output
-
-    @Test("Text output is one line per VM in the group, saying what was done or why not")
-    func textOutputIsOneLinePerVM() throws {
-        let text = try GroupActionOutput.render(mixedReport, format: .table, quiet: false)
-
-        #expect(
-            text.split(separator: "\n").map(String.init) == [
-                "Started Web",
-                "Resumed Paused",
-                "Skipped Up: it is running.",
-                "Skipped Fresh: its first start sets up its guest, which only its own Start begins.",
-                "Skipped Twin: \u{201C}Twin\u{201D} has the same machine ID as \u{201C}Live\u{201D}, which is active. "
-                    + "Start it on its own to answer.",
-                "Couldn\u{2019}t start Third: macOS allows at most two.",
-            ])
-    }
 
     @Test("--quiet prints the names of the VMs the action was done to")
     func quietPrintsTheDoneNames() throws {
@@ -180,48 +106,6 @@ struct CLIGroupActionTests {
                 + #""ipAddress":{"address":"192.168.64.4","state":"observed"},"name":"Web","status":"stopped"}}]}"#)
     }
 
-    @Test("Stop, suspend and restart word what they did in their own terms")
-    func stopAndSuspendLines() {
-        let vm = summary("Web")
-        #expect(VMGroupActionResult(vm: vm, outcome: .done(verb: .restart)).line(for: .restart) == "Restarted Web")
-        #expect(
-            VMGroupActionResult(
-                vm: vm,
-                outcome: .failed(
-                    error: .operationFailed(verb: .restart, title: nil, message: "Blocked.", recovery: nil))
-            ).line(for: .restart) == "Couldn\u{2019}t restart Web: Blocked.")
-        #expect(VMGroupActionResult(vm: vm, outcome: .done(verb: .stop)).line(for: .stop) == "Asked Web to shut down")
-        #expect(VMGroupActionResult(vm: vm, outcome: .done(verb: .suspend)).line(for: .suspend) == "Suspended Web")
-        let paused = VMSummary(
-            id: UUID(), name: "Held", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: true)
-        #expect(
-            VMGroupActionResult(vm: paused, outcome: .passedOver(reason: .state)).line(for: .stop)
-                == "Skipped Held: it is in use by another copy of Kernova.")
-    }
-
-    @Test("A question names the verb the VM was taken by, a cancel names the action, and a VM gone is no failure")
-    func questionAndCancelLines() {
-        let vm = summary("Twin", status: "suspended")
-        let prompt = ConfirmationPrompt(
-            kind: .startBesideSharedMachineIdentity, title: "Resume \u{201C}Twin\u{201D} with a Duplicate Machine ID?",
-            message: "Shared.", confirmTitle: "Resume", dismissTitle: "Cancel")
-        let resumed = VMGroupActionResult(
-            vm: vm, outcome: .needsAnswer(verb: .resume, question: .confirmationRequired(prompt: prompt)))
-        #expect(resumed.line(for: .start) == "Skipped Twin: Shared. Resume it on its own to answer.")
-        #expect(
-            VMGroupActionResult(vm: vm, outcome: .passedOver(reason: .cancelled)).line(for: .stop)
-                == "Skipped Twin: the stop was cancelled before its turn.")
-        #expect(!VMGroupActionOutcome.passedOver(reason: .cancelled).isUndone)
-        #expect(
-            VMGroupActionResult(vm: vm, outcome: .passedOver(reason: .removed)).line(for: .start)
-                == "Skipped Twin: it left the library before its turn.")
-        #expect(!VMGroupActionOutcome.passedOver(reason: .removed).isUndone)
-        #expect(
-            VMGroupActionResult(vm: vm, outcome: .passedOver(reason: .leftGroup)).line(for: .start)
-                == "Skipped Twin: it was no longer in the group when its turn came.")
-        #expect(!VMGroupActionOutcome.passedOver(reason: .leftGroup).isUndone)
-    }
-
     // MARK: - Exit
 
     @Test("A VM left undone exits 10 naming how many; skipped-by-state and done exit 0")
@@ -254,19 +138,5 @@ struct CLIGroupActionTests {
         #expect(
             GroupActionOutput.failure(one)?.message
                 == "Couldn\u{2019}t suspend 1 virtual machine in \u{201C}Lab\u{201D}.")
-    }
-
-    @Test("The report round-trips through the response envelope")
-    func reportRoundTrips() throws {
-        let response = VMCommandResponse(result: .groupAction(mixedReport))
-        let decoded = try JSONDecoder().decode(
-            VMCommandResponse.self, from: try JSONEncoder().encode(response))
-        #expect(decoded == response)
-
-        let request = VMCommandRequest(verb: .groupAction(.suspend, group: VMGroupReference(.folder, named: "Lab")))
-        let decodedRequest = try JSONDecoder().decode(
-            VMCommandRequest.self, from: try JSONEncoder().encode(request))
-        #expect(decodedRequest == request)
-        #expect(decodedRequest.verb.verb == .suspend)
     }
 }

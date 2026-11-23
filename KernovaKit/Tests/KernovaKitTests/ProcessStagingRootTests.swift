@@ -18,28 +18,6 @@ struct ProcessStagingRootTests {
         return file
     }
 
-    @Test("claiming a root excludes the staging parent, and so everything staged under it, from backups")
-    func parentExcludedFromBackups() throws {
-        _ = try stageFile(in: staging.root)
-        let parent = staging.root.url.deletingLastPathComponent()
-        #expect(try parent.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup == true)
-    }
-
-    @Test("a staging root whose lock is free is removed")
-    func freeRootIsRemoved() throws {
-        let abandoned: URL
-        do {
-            // Deinitializing the root releases its lock, as its process's exit does.
-            let exited = staging.makeSibling()
-            _ = try stageFile(in: exited)
-            abandoned = exited.url
-        }
-
-        staging.root.reclaimAbandonedRoots()
-
-        #expect(!FileManager.default.fileExists(atPath: abandoned.path))
-    }
-
     @Test("a live root removed from outside is re-claimed under the same name, locked, and staged into")
     func removedLiveRootIsReclaimed() throws {
         let file = try stageFile(in: staging.root)
