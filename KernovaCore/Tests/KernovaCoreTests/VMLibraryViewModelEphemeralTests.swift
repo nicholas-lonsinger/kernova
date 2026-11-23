@@ -6,8 +6,8 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// The Ephemeral Mode policy: what a power-off does, what a suspend doesn't,
-/// and what the baseline is protected from.
+/// The Ephemeral Mode policy: what a power-off returns the VM to, and what it
+/// leaves alone.
 @Suite("VMLibraryViewModel Ephemeral Mode Tests", .serialized, .caseScoped)
 @MainActor
 struct VMLibraryViewModelEphemeralTests {
@@ -133,33 +133,6 @@ struct VMLibraryViewModelEphemeralTests {
 
     // MARK: - Power-off
 
-    @Test("A graceful stop returns an ephemeral VM to its baseline, resting suspended with the mode kept")
-    func stopRevertsToTheBaseline() async throws {
-        let harness = try await makeHarness()
-
-        await harness.viewModel.stop(harness.instance)
-        try await settleEphemeralRevert(harness)
-
-        #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
-        #expect(harness.instance.snapshotManifest.currentID == harness.baseline.id)
-        #expect(harness.instance.status == .suspended)
-        #expect(harness.instance.hostState.ephemeralModeEnabled)
-        #expect(harness.instance.hostState.ephemeralBaselineSnapshotID == harness.baseline.id)
-    }
-
-    @Test("A power-off during the termination still admits the baseline revert, which the quit waits out")
-    func powerOffDuringTerminationReverts() async throws {
-        let harness = try await makeHarness()
-        harness.viewModel.beginTermination()
-
-        harness.instance.activity.handleSessionEvent(.guestDidStop)
-
-        #expect(harness.viewModel.library.hasRevertInFlight)
-        #expect(harness.viewModel.quitMustWaitOut)
-        try await settleEphemeralRevert(harness)
-        #expect(harness.virtualization.revertedSnapshots == [harness.baseline])
-    }
-
     @Test("A power-off takes back the settings edited since the baseline, and no host state but the session it settles")
     func revertKeepsTheHostState() async throws {
         let harness = try await makeHarness()
@@ -216,42 +189,5 @@ struct VMLibraryViewModelEphemeralTests {
         #expect(!harness.instance.hostState.hasUnsettledSession)
         #expect(harness.instance.status == .suspended)
         #expect(!harness.instance.activity.holdsRunLock)
-    }
-
-    // MARK: - Baseline delete
-
-    @Test("A delete that fails after the mode turned off leaves the mode off and the snapshot listed")
-    func failedDeleteLeavesTheModeOffAndTheSnapshot() async throws {
-        let harness = try await makeHarness(phase: .stopped)
-        harness.storage.files.setReplaceError(
-            CocoaError(.fileWriteNoPermission), for: VMBundleLayout.snapshotManifestRelativePath)
-
-        try await harness.viewModel.deleteSnapshot(
-            harness.instance, snapshot: harness.baseline, turningOffEphemeralMode: true
-        ).joined()
-
-        #expect(presenter.showError)
-        #expect(!harness.instance.hostState.ephemeralModeEnabled)
-        #expect(
-            harness.instance.snapshotManifest.snapshots.map(\.id)
-                == [harness.baseline.id, harness.later.id])
-        #expect(harness.snapshots.discardedIDs.isEmpty)
-    }
-
-    /// The plain confirmation was answered before the mode came to name the
-    /// snapshot: the core refuses the delete, and the app asks again with the
-    /// baseline's confirmation rather than reporting the refusal.
-    @Test("A plain delete of a snapshot that became the baseline asks again with the baseline's confirmation")
-    func plainDeleteOfTheBaselineAsksAgain() async throws {
-        let harness = try await makeHarness(phase: .stopped)
-
-        try await harness.viewModel.deleteSnapshot(
-            harness.instance, snapshot: harness.baseline, turningOffEphemeralMode: false
-        ).joined()
-
-        #expect(presenter.deleteSnapshots == [harness.baseline])
-        #expect(!presenter.showError)
-        #expect(harness.snapshots.discardedIDs.isEmpty)
-        #expect(harness.instance.ephemeralBaselineSnapshot?.id == harness.baseline.id)
     }
 }

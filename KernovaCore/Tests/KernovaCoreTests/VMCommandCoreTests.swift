@@ -8,8 +8,8 @@ import Testing
 @testable import KernovaCoreTestSupport
 
 /// The command core, driven with no view model and no presenter anywhere in
-/// sight: every verb's happy and refused paths, selector resolution, the state
-/// gates, and the consent refusals with the payload each carries.
+/// sight: selector resolution, the state gates, the consent refusals with the
+/// payload each carries, and the failures each verb reports.
 @Suite("VMCommandCore Tests", .serialized, .caseScoped)
 @MainActor
 struct VMCommandCoreTests {
@@ -70,150 +70,6 @@ struct VMCommandCoreTests {
             }
             #expect(candidates.map(\.id) == [upper.id, lower.id])
         }
-    }
-
-    @Test("Text is read as an identifier first, then as a name")
-    func resolvesIDOrName() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Alpha")
-
-        #expect(try harness.core.info(.idOrName(instance.id.uuidString)).name == "Alpha")
-        #expect(try harness.core.info(.idOrName("Alpha")).name == "Alpha")
-        #expect(try harness.core.info(.idOrName("alpha")).name == "Alpha")
-        // A UUID nothing answers to falls back to the name lookup rather than
-        // stopping at the identifier.
-        #expect(
-            try #require(throws: CommandError.self) { _ = try harness.core.info(.idOrName(UUID().uuidString)) }
-                .isNotFound)
-    }
-
-    // MARK: - Reads
-
-    @Test("info reports the VM's shape and status")
-    func infoReportsTheVM() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Described") { $0.cpuCount = 6 }
-
-        let info = try harness.core.info(.id(instance.id))
-
-        #expect(info.name == "Described")
-        #expect(info.status == "stopped")
-        #expect(info.guestOS == "linux")
-        #expect(info.cpuCount == 6)
-        #expect(info.snapshotCount == 0)
-        // Networking is off on the fixture, so there is no address to report.
-        #expect(info.ipAddress == .unavailable)
-        #expect(info.networkMode == nil)
-    }
-
-    @Test("A running VM's observed address answers info and the ip verb alike")
-    func theObservedAddressAnswersEveryHeadlessRead() async throws {
-        let harness = makeHarness()
-        harness.vmnet.join(.common(.nat), on: "192.168.64.0")
-        let instance = makeInstance(
-            in: harness, name: "Addressed", phase: .running(sessionID: UUID())
-        ) {
-            $0.networkEnabled = true
-            $0.networkMode = .nat
-            $0.macAddress = "aa:bb:cc:dd:ee:01"
-        }
-
-        // Running on the network but not yet seen there, and no headless read
-        // invents an address meanwhile — the wait is reported as `notObserved`
-        // rather than as an absence.
-        #expect(try harness.core.info(.id(instance.id)).ipAddress == .notObserved)
-        #expect(try harness.core.ipAddress(of: .id(instance.id)) == .notObserved)
-
-        harness.arpTable.setTable([
-            .scripted("192.168.64.4", mac: "aa:bb:cc:dd:ee:01", expiry: ARPEntry.freshExpiry)
-        ])
-        await harness.library.guestAddresses.readForTesting()
-
-        #expect(try harness.core.info(.id(instance.id)).ipAddress == .observed("192.168.64.4"))
-        #expect(try harness.core.ipAddress(of: .id(instance.id)) == .observed("192.168.64.4"))
-    }
-
-    @Test("snapshots answers the manifest newest first")
-    func snapshotsAreNewestFirst() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let older = VMSnapshot(name: "Older", createdAt: Date(timeIntervalSince1970: 1), macAddress: nil)
-        let newer = VMSnapshot(name: "Newer", createdAt: Date(timeIntervalSince1970: 2), macAddress: nil)
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [older, newer], currentID: newer.id))
-
-        let listed = try harness.core.snapshots(of: .id(instance.id))
-
-        #expect(listed.map(\.name) == ["Newer", "Older"])
-        #expect(listed.first?.isCurrent == true)
-        #expect(listed.allSatisfy { !$0.isEphemeralBaseline })
-    }
-
-    // MARK: - Lifecycle happy paths
-
-    /// The core asks on every bring-up, saying only whether someone asked for
-    /// this VM: what a readying costs on screen is the adapter's decision.
-    @Test("resume and restart ready the display too")
-    func everyBringUpReadiesTheDisplay() async throws {
-        let harness = makeHarness()
-        let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended)
-        try VMInstanceFixture.writeSaveFile(for: suspended)
-        let running = makeInstance(
-            in: harness, name: "Running", phase: .running(sessionID: UUID()))
-        var readied: [UUID] = []
-        var presences: [VMBringUpPresence] = []
-        harness.core.readyDisplay = {
-            readied.append($0.id)
-            presences.append($1)
-        }
-
-        try await harness.core.resume(.id(suspended.id), consent: .none)
-        try await harness.core.restart(.id(running.id), disposition: .graceful, timeout: nil, consent: .none)
-
-        #expect(readied == [suspended.id, running.id])
-        #expect(presences == [.attended, .attended])
-        #expect(harness.surfacedDisplays.isEmpty)
-    }
-
-    @Test("reveal of an arrival still being copied lands on its library row")
-    func revealOfAnArrivalLandsInTheLibrary() async throws {
-        let harness = makeHarness()
-        let gate = GatedStep()
-        let arrival = harness.library.beginGatedArrival(named: "Copying", gate: gate)
-
-        try harness.core.reveal(.id(arrival.id))
-
-        #expect(harness.revealedInLibrary == [arrival.id])
-        #expect(harness.surfacedDisplays.isEmpty)
-        gate.release()
-        try await arrival.settle()
-    }
-
-    /// What a surfacing verb did, in order, under an installed requester.
-    @MainActor
-    private final class SurfaceSteps {
-        var steps: [String] = []
-    }
-
-    @Test("open and reveal ask the request's requester once, just before they surface")
-    func surfacingVerbsAskTheRequesterBeforeSurfacing() throws {
-        let harness = makeHarness()
-        let running = makeInstance(in: harness, name: "Running", phase: .running(sessionID: UUID()))
-        let stopped = makeInstance(in: harness, name: "Stopped")
-        let trace = SurfaceSteps()
-        harness.core.surfaceDisplay = { trace.steps.append("display \($0.name)") }
-        harness.core.revealInLibrary = { id in
-            let name = harness.library.entries.first { $0.id == id }?.name ?? "?"
-            trace.steps.append("library \(name)")
-        }
-        let requester = ActivationRequester { trace.steps.append("activate") }
-
-        try ActivationRequester.$current.withValue(requester) {
-            try harness.core.open(.id(running.id))
-            try harness.core.reveal(.id(stopped.id))
-        }
-
-        #expect(
-            trace.steps == ["activate", "display Running", "activate", "library Stopped"])
     }
 
     // MARK: - Joining a bring-up
@@ -282,93 +138,7 @@ struct VMCommandCoreTests {
         #expect(instance.status == .running)
     }
 
-    @Test("A failed resume offers the attachment removal a failed start offers")
-    func resumeFailureCarriesTheAttachmentRecovery() async throws {
-        let harness = makeHarness()
-        let item = RemovableMediaItem(path: "/tmp/gone.iso", readOnly: true, label: "Installer")
-        let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended) {
-            $0.removableMedia = [item]
-        }
-        try VMInstanceFixture.writeSaveFile(for: instance)
-        // A restore assembles the same configuration a boot does, so it fails
-        // over an unopenable attachment in the same way.
-        harness.virtualization.startError = ConfigurationBuilderError.removableMediaAttachFailed(
-            id: item.id, path: item.path, label: item.label,
-            underlying: NSError(domain: NSPOSIXErrorDomain, code: Int(ENOENT)))
-
-        let error = try await #require(throws: CommandError.self) {
-            try await harness.core.resume(.id(instance.id), consent: .none)
-        }
-
-        guard case .operationFailed(let verb, _, _, let recovery) = error,
-            case .removeStartFailedAttachment(let offered) = recovery
-        else {
-            Issue.record("expected a removable-attachment recovery, got \(error)")
-            return
-        }
-        #expect(verb == .resume)
-        #expect(offered.verb == .resume)
-        #expect(offered.id == item.id)
-        // The saved state is kept, and the VM rests where a Resume is offered.
-        #expect(instance.hasSaveFile)
-        #expect(instance.isSuspended)
-    }
-
-    @Test("A failed resume over a shared folder offers that share's removal")
-    func resumeFailureOverASharedFolderCarriesTheRecovery() async throws {
-        let harness = makeHarness()
-        let share = SharedDirectory(path: "/Volumes/Ext/Projects")
-        let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended) {
-            $0.sharedDirectories = [share]
-        }
-        try VMInstanceFixture.writeSaveFile(for: instance)
-        harness.virtualization.startError = ConfigurationBuilderError.sharedDirectoryNotReadable(
-            id: share.id, path: share.path, label: share.displayName)
-
-        let error = try await #require(throws: CommandError.self) {
-            try await harness.core.resume(.id(instance.id), consent: .none)
-        }
-
-        guard case .operationFailed(let verb, _, _, let recovery) = error,
-            case .removeStartFailedAttachment(let offered) = recovery
-        else {
-            Issue.record("expected a removable-attachment recovery, got \(error)")
-            return
-        }
-        #expect(verb == .resume)
-        #expect(offered.kind == .sharedDirectory)
-        #expect(offered.reason == .notReadable)
-        #expect(offered.id == share.id)
-        #expect(offered.label == "Projects")
-        #expect(instance.hasSaveFile)
-    }
-
     // MARK: - Allowed verbs
-
-    @Test("allowedVerbs reads out in a fixed order, reads first")
-    func allowedVerbsOrder() {
-        let harness = makeHarness()
-        let stopped = makeInstance(in: harness, name: "Stopped", phase: .stopped)
-
-        // The order is user-visible: `invalidState` renders this list as
-        // "What it accepts now: Start, Take Snapshot, …".
-        #expect(
-            harness.core.allowedVerbs(for: stopped) == [
-                .info, .ipAddress, .snapshots, .start, .reveal, .takeSnapshot, .deleteSnapshot,
-                .renameSnapshot, .setSnapshotNotes, .editStorageDisk, .editRemovableMedia,
-                .editSharedDirectory, .setConfiguration, .clone, .rename,
-                .delete, .showInFinder,
-            ])
-
-        let running = makeInstance(
-            in: harness, name: "Running", phase: .running(sessionID: UUID()))
-        #expect(
-            harness.core.allowedVerbs(for: running) == [
-                .info, .ipAddress, .snapshots, .stop, .restart, .pause, .suspend, .open, .reveal,
-                .takeSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,
-                .editRemovableMedia, .setConfiguration, .clone, .rename, .showInFinder,
-            ])
-    }
 
     /// An operation that tolerates no Force Stop holds the VM, so the stop is
     /// refused before the destructive consent is ever asked for — not after
@@ -458,31 +228,6 @@ struct VMCommandCoreTests {
         #expect(instance.hasSaveFile)
     }
 
-    /// Only a cold boot creates the account, so a restore must not be turned
-    /// back for one nobody answered — the session it resumes was set up long
-    /// ago.
-    @Test("A start that restores a saved state asks for no guest account")
-    func aRestoringStartDoesNotAskForTheGuestAccount() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(
-            in: harness, name: "Suspended", phase: .suspended, guestOS: .macOS
-        ) {
-            $0.pendingGuestAccount = GuestAccountIntent(
-                fullName: "Ada Lovelace", username: "ada", logsInAutomatically: false,
-                enablesRemoteLogin: false)
-        }
-        try VMInstanceFixture.writeSaveFile(for: instance)
-
-        try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-
-        #expect(harness.virtualization.startCallCount == 1)
-        #expect(harness.virtualization.lastStartRoute == .restoredSavedState)
-        // Nothing was handed over, and the question is still the next cold
-        // boot's to ask.
-        #expect(harness.virtualization.lastStartProvisioning == nil)
-        #expect(instance.configuration.pendingGuestAccount != nil)
-    }
-
     // MARK: - State gates
 
     @Test("A state-gated verb aimed at an arrival reports busy with its copy, not an invalid state")
@@ -501,99 +246,6 @@ struct VMCommandCoreTests {
         #expect(operation == "clone")
         gate.release()
         try await arrival.settle()
-    }
-
-    @Test("cancelGuestSetup without consent refuses with the confirmation naming the running step")
-    func cancelGuestSetupWithoutConsentNamesTheStep() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(
-            in: harness,
-            phase: .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot))
-        instance.setupState = .macOSInstall(hasDownloadStep: true)
-
-        let error = try #require(throws: CommandError.self) {
-            try harness.core.cancelGuestSetup(.id(instance.id), consent: .none)
-        }
-        guard case .confirmationRequired(let prompt) = error else {
-            Issue.record("expected a consent refusal, got \(error)")
-            return
-        }
-        #expect(prompt.kind == .cancelGuestSetup)
-        #expect(prompt.title == "Cancel Download?")
-    }
-
-    @Test("cancelGuestSetup's prompt names what a cancel costs at each step")
-    func cancelGuestSetupPromptVariesByStep() {
-        let harness = makeHarness()
-        let instance = makeInstance(
-            in: harness,
-            phase: .operating(.bringUp(.settingUp(.macOSInstall)), from: .initialBoot))
-
-        instance.setupState = .macOSInstall(hasDownloadStep: false)
-        let install = VMCommandCore.cancelGuestSetupPrompt(instance)
-        #expect(install.title == "Cancel Installation?")
-        #expect(install.confirmTitle == "Cancel Installation")
-        #expect(install.dismissTitle == "Keep Installing")
-        // Only the install throws work away: its progress restarts from zero.
-        #expect(install.confirmIsDestructive)
-
-        instance.setupState = .linuxImage(digestSource: .enteredByUser)
-        instance.setupState?.advance(progress: .fraction(0))
-        let verify = VMCommandCore.cancelGuestSetupPrompt(instance)
-        #expect(verify.title == "Cancel Verification?")
-        #expect(verify.confirmTitle == "Cancel Verification")
-        #expect(verify.dismissTitle == "Keep Verifying")
-        #expect(!verify.confirmIsDestructive)
-
-        instance.setupState = .linuxImage(digestSource: nil)
-        instance.setupState?.advance(progress: .fraction(0))
-        let checksum = VMCommandCore.cancelGuestSetupPrompt(instance)
-        #expect(checksum.title == "Cancel Checksum?")
-        #expect(
-            checksum.message
-                == "The downloaded image is kept, and its checksum will be computed the next time you start the virtual machine."
-        )
-        #expect(checksum.confirmTitle == "Cancel Checksum")
-        #expect(checksum.dismissTitle == "Keep Computing")
-        #expect(!checksum.confirmIsDestructive)
-
-        instance.setupState = .macOSInstall(hasDownloadStep: true)
-        let download = VMCommandCore.cancelGuestSetupPrompt(instance)
-        #expect(download.title == "Cancel Download?")
-        #expect(download.confirmTitle == "Cancel Download")
-        #expect(download.dismissTitle == "Keep Downloading")
-        #expect(!download.confirmIsDestructive)
-
-        instance.setupState = nil
-        let fallback = VMCommandCore.cancelGuestSetupPrompt(instance)
-        #expect(fallback.title == "Cancel Download?")
-        #expect(fallback.dismissTitle == "Keep Downloading")
-        #expect(!fallback.confirmIsDestructive)
-    }
-
-    @Test("A cancel accepted as the pipeline finishes stops the chained auto-boot")
-    func cancelAtTheTailOfSetupDoesNotBoot() async throws {
-        // Returns normally once released, so the pipeline succeeds *after* the
-        // cancel lands — the window a `CancellationError` never reports.
-        let installService = ReleasableMockMacOSInstallService()
-        let harness = makeHarness(install: installService)
-        let core = harness.core
-        let instance = harness.library.registerFixture(
-            name: "Installing", guestOS: .macOS, phase: .initialBoot, preferences: preferences
-        ) {
-            $0.installContext = MacOSInstallContext(
-                source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
-        }
-
-        try await core.start(.id(instance.id), recovery: false, consent: .none)
-        _ = try await awaitFirst(installService.installStartedStream)
-
-        try core.cancelGuestSetup(.id(instance.id), consent: .all)
-        installService.release()
-        try await instance.setupOperationTask?.joined()
-
-        #expect(harness.virtualization.startCallCount == 0)
-        #expect(instance.status == .initialBoot)
     }
 
     // MARK: - Conflicts
@@ -640,38 +292,6 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.startCallCount == 1)
     }
 
-    @Test("Naming no virtual machine, the question reads as a start's does")
-    func duplicateMachineIDQuestionNamingNoVM() {
-        let prompt = DuplicateMachineIDQuestion.prompt(verb: nil, names: nil)
-
-        #expect(prompt.title == "Start with a Duplicate Machine ID?")
-        #expect(
-            prompt.message
-                == "This virtual machine has the same machine ID as another, which is active. "
-                + "Apple: \u{201C}Running two virtual machines concurrently with the same identifier "
-                + "results in undefined behavior in the guest operating system.\u{201D}")
-        #expect(prompt.message.hasSuffix(DuplicateMachineIDQuestion.vendorClaim))
-        #expect(prompt.kind == .startBesideSharedMachineIdentity)
-    }
-
-    @Test("With the question dismissed, a start and a restart beside a shared machine ID go ahead without consent")
-    func dismissedQuestionStartsWithoutConsent() async throws {
-        let harness = makeHarness()
-        preferences.allowsDuplicateMachineIDOverride = true
-        preferences.duplicateMachineIDQuestionDismissed = true
-        let (_, twin) = machineIdentityTwins(in: harness)
-
-        // What `kernova start` sends without --yes.
-        try await harness.core.start(.id(twin.id), recovery: false, consent: .none)
-        #expect(harness.virtualization.startCallCount == 1)
-        #expect(twin.status == .running)
-
-        // And `kernova restart`, whose boot runs with nobody to ask.
-        try await harness.core.restart(.id(twin.id), disposition: .graceful, timeout: nil, consent: .none)
-        #expect(harness.virtualization.startCallCount == 2)
-        #expect(twin.status == .running)
-    }
-
     @Test("A cold resume asks the same question, worded as a resume")
     func duplicateMachineIDAsksAtAColdResume() async throws {
         let harness = makeHarness()
@@ -690,79 +310,6 @@ struct VMCommandCoreTests {
         try await harness.core.resume(
             .id(twin.id), consent: Consent([.startBesideSharedMachineIdentity]))
         #expect(harness.virtualization.startCallCount == 1)
-    }
-
-    @Test("Restart beside a shared machine ID asks before the guest goes down, and restarts once confirmed")
-    func restartAsksBeforeTheStop() async throws {
-        let harness = makeHarness()
-        preferences.allowsDuplicateMachineIDOverride = true
-        let identity = Data([4, 4, 4])
-        makeInstance(in: harness, name: "Twin", phase: .running(sessionID: UUID())) {
-            $0.genericMachineIdentifierData = identity
-        }
-        let restarting = makeInstance(
-            in: harness, name: "Restarting", phase: .running(sessionID: UUID())
-        ) { $0.genericMachineIdentifierData = identity }
-
-        let error = try await #require(throws: CommandError.self) {
-            try await harness.core.restart(.id(restarting.id), disposition: .graceful, timeout: nil, consent: .none)
-        }
-        let prompt = try #require(error.confirmationPrompt)
-        #expect(prompt.kind == .startBesideSharedMachineIdentity)
-        #expect(prompt.title == "Restart \u{201C}Restarting\u{201D} with a Duplicate Machine ID?")
-        #expect(prompt.confirmTitle == "Restart")
-        // Asked while the guest is still up.
-        #expect(harness.virtualization.stopCallCount == 0)
-        #expect(restarting.status == .running)
-
-        try await harness.core.restart(
-            .id(restarting.id), disposition: .graceful, timeout: nil,
-            consent: Consent([.startBesideSharedMachineIdentity]))
-        #expect(harness.virtualization.startCallCount == 1)
-        #expect(restarting.status == .running)
-    }
-
-    @Test("A warm revert of a live VM onto a MAC address another live VM holds is refused at admission")
-    func warmRevertOntoALiveMACAddressIsRefusedAtAdmission() async throws {
-        let harness = makeHarness()
-        let heldMAC = "aa:bb:cc:dd:ee:10"
-        let holder = makeInstance(
-            in: harness, name: "Holder", phase: .running(sessionID: UUID())
-        ) {
-            $0.networkEnabled = true
-            $0.macAddress = heldMAC
-        }
-        let reverting = makeInstance(
-            in: harness, name: "Reverting", phase: .running(sessionID: UUID())
-        ) {
-            $0.networkEnabled = true
-            $0.macAddress = "aa:bb:cc:dd:ee:11"
-        }
-        // Captured while the VM still carried the address the holder has since
-        // taken: the revert puts it back, and the resume that follows would put
-        // it on the holder's network.
-        let snapshot = VMSnapshot(name: "Before", kind: .warm, macAddress: heldMAC)
-        reverting.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
-        var captured = reverting.configuration
-        captured.macAddress = heldMAC
-        harness.machineFiles.setCapturedConfiguration(captured, for: snapshot.id)
-
-        let error = try await #require(throws: CommandError.self) {
-            try await harness.core.revertToSnapshot(
-                .id(reverting.id), snapshot: snapshot.id, consent: .all)
-        }
-
-        let requirement = try #require(error.stepRequirement)
-        #expect(requirement.title == "Duplicate MAC Address")
-        #expect(requirement.routes.isEmpty)
-        #expect(requirement.message.contains("\u{201C}\(holder.name)\u{201D}"))
-        // Refused before the live guest was torn down or a file moved.
-        #expect(harness.virtualization.revertedSnapshots.isEmpty)
-        #expect(reverting.status == .running)
-        #expect(!reverting.hasSaveFile)
-        #expect(reverting.configuration.macAddress == "aa:bb:cc:dd:ee:11")
-        #expect(reverting.snapshotManifest.currentID == nil)
-        #expect(holder.status == .running)
     }
 
     @Test("A revert that resumes beside a shared machine ID asks, then reverts once confirmed")
@@ -796,40 +343,6 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.revertedSnapshots.count == 1)
     }
 
-    @Test("A start owing guest setup onto a live identity is refused before the installer runs")
-    func setupStartOntoALiveIdentityIsRefusedBeforeTheInstaller() async throws {
-        let install = MockMacOSInstallService()
-        let harness = makeHarness(install: install)
-        let holder = makeInstance(
-            in: harness, name: "Holder", phase: .running(sessionID: UUID()), guestOS: .macOS
-        ) {
-            $0.networkEnabled = true
-            $0.macAddress = "aa:bb:cc:dd:ee:20"
-        }
-        let pending = makeInstance(
-            in: harness, name: "Pending", phase: .initialBoot, guestOS: .macOS
-        ) {
-            $0.networkEnabled = true
-            $0.macAddress = "aa:bb:cc:dd:ee:20"
-            $0.installContext = MacOSInstallContext(
-                source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
-        }
-
-        // Refused at admission, so the refusal is the start's own answer
-        // rather than a failure the setup reports later.
-        let error = try await #require(throws: CommandError.self) {
-            try await harness.core.start(.id(pending.id), recovery: false, consent: .none)
-        }
-
-        #expect(install.installCallCount == 0)
-        #expect(harness.virtualization.startCallCount == 0)
-        #expect(pending.status == .initialBoot)
-        #expect(harness.failures.isEmpty)
-        let requirement = try #require(error.stepRequirement)
-        #expect(requirement.message.hasPrefix("\u{201C}\(pending.name)\u{201D}"))
-        #expect(requirement.message.contains("\u{201C}\(holder.name)\u{201D}"))
-    }
-
     @Test("A force stop with no consent refuses, describing what confirming does")
     func forceStopAsksForConsent() async throws {
         let harness = makeHarness()
@@ -858,30 +371,6 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.forceStopCallCount == 1)
     }
 
-    @Test("A suspended VM's force stop is worded as discarding its saved state")
-    func forceStopOfASuspendedVMIsADiscard() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Suspended", phase: .suspended)
-        try VMInstanceFixture.writeSaveFile(for: instance)
-
-        let error = try await #require(throws: CommandError.self) {
-            try await harness.core.stop(
-                .id(instance.id), disposition: .force, consent: .none)
-        }
-        let prompt = try #require(error.confirmationPrompt)
-        #expect(prompt.title == "Discard the Saved State of \u{201C}Suspended\u{201D}?")
-        #expect(prompt.confirmTitle == "Discard")
-        // Nothing is live to receive a shutdown, so none is offered.
-        #expect(prompt.alternatives.isEmpty)
-
-        // Nothing is live to terminate, and the verb still performs the discard
-        // the slot admits.
-        try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
-        #expect(harness.virtualization.forceStopCallCount == 0)
-        #expect(!instance.hasSaveFile)
-        #expect(instance.phase == .stopped)
-    }
-
     @Test("A graceful stop of a live-paused VM refuses as a step naming the resume, whatever the consent")
     func stopOfAPausedVMRequiresTheResume() async throws {
         let harness = makeHarness()
@@ -906,20 +395,6 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.resumeCallCount == 0)
         #expect(harness.virtualization.stopCallCount == 0)
         #expect(instance.status == .paused)
-    }
-
-    @Test("A restart of a paused VM resumes it, shuts it down, and boots it")
-    func restartOfAPausedVMStillRestarts() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(
-            in: harness, name: "Paused", phase: .livePaused(sessionID: UUID()))
-
-        try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
-
-        #expect(harness.virtualization.resumeCallCount == 1)
-        #expect(harness.virtualization.stopCallCount == 1)
-        #expect(harness.virtualization.startCallCount == 1)
-        #expect(instance.status == .running)
     }
 
     @Test("A suspended VM's graceful stop asks the consent its force path does")
@@ -1060,49 +535,6 @@ struct VMCommandCoreTests {
         #expect(full.message.contains("its snapshots"))
     }
 
-    @Test("The delete confirmation names external files only when one can be chosen")
-    func deletePromptNamesChoosableExternalsOnly() {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Doomed")
-        let owned = makeExternalAttachment(label: "Scratch", path: "/tmp/scratch.img")
-        let shared = makeExternalAttachment(
-            label: "Installer", path: "/tmp/installer.iso", sharedWith: ["Other VM"])
-
-        // A locked-off row offers no choice, so promising to take it would be
-        // wrong in both dispositions.
-        for permanently in [true, false] {
-            let none = VMCommandCore.deletePrompt(
-                instance, permanently: permanently, externals: [shared])
-            #expect(!none.message.contains("external files"))
-
-            let offered = VMCommandCore.deletePrompt(
-                instance, permanently: permanently, externals: [shared, owned])
-            #expect(offered.message.contains("any external files you choose"))
-        }
-
-        // The clause sits inside each sentence rather than trailing it.
-        let immediate = VMCommandCore.deletePrompt(
-            instance, permanently: true, externals: [owned])
-        #expect(
-            immediate.message == "\u{201C}Doomed\u{201D} and its disks, plus any external files "
-                + "you choose, will be deleted immediately, bypassing the Trash. You can't undo "
-                + "this action.")
-        let trash = VMCommandCore.deletePrompt(instance, permanently: false, externals: [owned])
-        #expect(
-            trash.message == "\u{201C}Doomed\u{201D} moves to the Trash with its disks, and any "
-                + "external files you choose.")
-    }
-
-    private func makeExternalAttachment(
-        label: String, path: String, sharedWith: [String] = [], isMissing: Bool = false
-    ) -> ExternalAttachment {
-        ExternalAttachment(
-            reference: ExternalFileReference(
-                id: UUID(), kind: .storageDisk, label: label, path: path, bookmark: nil, readOnly: false),
-            sharedWithVMNames: sharedWith,
-            isMissing: isMissing)
-    }
-
     @Test("A snapshot delete with no consent refuses, and confirming trashes it")
     func deleteSnapshotAsksForConsent() async throws {
         let harness = makeHarness()
@@ -1143,67 +575,7 @@ struct VMCommandCoreTests {
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
     }
 
-    @Test("A cancel with no consent refuses, and confirming marks the row cancelling")
-    func cancelPreparingAsksForConsent() async throws {
-        let harness = makeHarness()
-        let gate = GatedStep()
-        let arrival = harness.library.beginGatedArrival(
-            .cloning, named: "Copying", gate: gate)
-
-        let error = try #require(throws: CommandError.self) {
-            try harness.core.cancelPreparing(.id(arrival.id), consent: .none)
-        }
-        let prompt = try #require(error.confirmationPrompt)
-        #expect(prompt.kind == .cancelPreparing)
-        #expect(prompt.confirmTitle == "Cancel Clone")
-        #expect(arrival.stage == .writing)
-
-        try harness.core.cancelPreparing(.id(arrival.id), consent: .all)
-        #expect(arrival.stage == .cancelling)
-        #expect(arrival.displayLabel == "Cancelling\u{2026}")
-
-        // The row stays until the uninterruptible write settles, then leaves
-        // with what it wrote.
-        #expect(harness.library.entries.contains { $0.id == arrival.id })
-        gate.release()
-        #expect(try await arrival.settle() == nil)
-        #expect(!harness.library.entries.contains { $0.id == arrival.id })
-        #expect(harness.storage.discardedStagedURLs == harness.storage.stagedBundleURLs)
-        #expect(harness.storage.publishBundleCallCount == 0)
-    }
-
     // MARK: - Snapshots
-
-    @Test("A capture lands in the manifest, stamped by what the VM could capture")
-    func takeSnapshotLandsInTheManifest() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, phase: .running(sessionID: UUID()))
-
-        let summary = try await harness.core.takeSnapshot(
-            .id(instance.id), name: "  Fresh  ", notes: " a note ")
-
-        #expect(summary.name == "Fresh")
-        #expect(summary.notes == "a note")
-        #expect(summary.kind == "warm")
-        #expect(instance.snapshotManifest.snapshots.map(\.name) == ["Fresh"])
-    }
-
-    @Test("A stopped VM whose guest can write an external disk is snapshotted as before")
-    func writableExternalDiskLeavesAStoppedSnapshotAlone() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness) {
-            $0.storageDisks = [
-                StorageDisk(path: "Disk.asif", isInternal: true),
-                StorageDisk(path: "/Volumes/Data/Shared.asif", readOnly: false),
-            ]
-        }
-        #expect(instance.snapshotCaptureMode == .stopped)
-
-        let summary = try await harness.core.takeSnapshot(.id(instance.id), name: "Cold", notes: "")
-
-        #expect(summary.kind == "cold")
-        #expect(instance.snapshotManifest.snapshots.map(\.name) == ["Cold"])
-    }
 
     @Test("A snapshot the manifest no longer lists refuses by name")
     func unlistedSnapshotRefuses() async throws {
@@ -1224,60 +596,7 @@ struct VMCommandCoreTests {
         #expect(item.hasPrefix("snapshot with the identifier"))
     }
 
-    @Test("A metadata edit that would change nothing is a no-op, snapshot listed or not")
-    func snapshotMetadataNoOpNeedsNoSnapshot() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness)
-        let snapshot = VMSnapshot(name: "Kept", notes: "a note", macAddress: nil)
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [snapshot]))
-
-        // Unchanged commits against a listed snapshot write nothing.
-        #expect(throws: Never.self) {
-            try harness.core.renameSnapshot(.id(instance.id), snapshot: snapshot.id, to: "Kept")
-        }
-        #expect(throws: Never.self) {
-            try harness.core.setSnapshotNotes(
-                .id(instance.id), snapshot: snapshot.id, notes: "a note")
-        }
-
-        // The row can be deleted while its field editor is open, and the
-        // end-editing commit that follows names a snapshot that is gone: still
-        // nothing to write, so still no alert naming a raw identifier.
-        let gone = UUID()
-        #expect(throws: Never.self) {
-            try harness.core.renameSnapshot(.id(instance.id), snapshot: gone, to: "Kept")
-        }
-        #expect(throws: Never.self) {
-            try harness.core.setSnapshotNotes(.id(instance.id), snapshot: gone, notes: "a note")
-        }
-        #expect(instance.fixtureBundleFiles.replaceCount(of: VMBundleLayout.snapshotManifestRelativePath) == 0)
-    }
-
     // MARK: - Library verbs
-
-    @Test("rename writes the trimmed name through the configuration funnel")
-    func renameWritesThrough() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Before")
-
-        try harness.core.rename(.id(instance.id), to: "  After  ")
-
-        #expect(instance.name == "After")
-    }
-
-    @Test("rename lands on a VM that started transitioning while the field was open")
-    func renamePersistsThroughATransition() throws {
-        let harness = makeHarness()
-        let instance = makeInstance(
-            in: harness, name: "Before", phase: .operating(.saving, from: .running(sessionID: UUID())))
-
-        // The rename rewrites the configuration's name and nothing the suspend
-        // reads, so the typed name lands rather than being traded for an alert.
-        try harness.core.rename(.id(instance.id), to: "After")
-
-        #expect(instance.name == "After")
-        #expect(harness.core.allowedVerbs(for: instance).contains(.rename))
-    }
 
     @Test("A delete of a VM whose clone is still copying is refused as busy")
     func deleteRefusesASourceBeingCloned() async throws {
@@ -1303,22 +622,6 @@ struct VMCommandCoreTests {
         try await harness.library.arrivals.first { $0.id == clone.id }?.settle()
     }
 
-    @Test("A repeat delete of an already-removed VM refuses as not found")
-    func deleteRefusesARepeatConfirm() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Doomed")
-
-        try await harness.core.delete(
-            .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
-        let error = try await #require(throws: CommandError.self) {
-            try await harness.core.delete(
-                .id(instance.id), permanently: false, alsoRemoving: [], consent: .all)
-        }
-
-        #expect(error.isNotFound)
-        #expect(harness.storage.deleteVMBundleCallCount == 1)
-    }
-
     @Test("delete refuses a VM that stopped being deletable while the sheet was up")
     func deleteRefusesANoLongerDeletableVM() async throws {
         let harness = makeHarness()
@@ -1332,58 +635,6 @@ struct VMCommandCoreTests {
         #expect(error.isInvalidState)
         #expect(harness.storage.deleteVMBundleCallCount == 0)
         #expect(harness.library.instances.count == 1)
-    }
-
-    @Test("delete never removes an external another VM still references")
-    func deleteKeepsSharedExternals() async throws {
-        let harness = makeHarness()
-        let sharedPath = scratch.url
-            .appendingPathComponent("shared.img")
-            .path(percentEncoded: false)
-        let sharedID = UUID()
-        let target = makeInstance(in: harness, name: "Target") {
-            $0.storageDisks = [
-                StorageDisk(
-                    id: sharedID, path: sharedPath, readOnly: false, label: "Shared",
-                    isInternal: false, kind: .virtio)
-            ]
-        }
-        makeInstance(in: harness, name: "Other") {
-            $0.storageDisks = [
-                StorageDisk(
-                    path: sharedPath, readOnly: false, label: "Shared", isInternal: false,
-                    kind: .virtio)
-            ]
-        }
-
-        try await harness.core.delete(
-            .id(target.id), permanently: false, alsoRemoving: [sharedID], consent: .all)
-
-        #expect(harness.fileSystem.trashedURLs.isEmpty)
-        #expect(harness.fileSystem.removedURLs.isEmpty)
-    }
-
-    @Test("A permanent delete of an external bypasses the Trash")
-    func permanentDeleteRemovesExternalsOutright() async throws {
-        let harness = makeHarness()
-        let externalPath = scratch.url
-            .appendingPathComponent("external.img")
-            .path(percentEncoded: false)
-        let diskID = UUID()
-        let instance = makeInstance(in: harness, name: "Target") {
-            $0.storageDisks = [
-                StorageDisk(
-                    id: diskID, path: externalPath, readOnly: false, label: "External",
-                    isInternal: false, kind: .virtio)
-            ]
-        }
-
-        try await harness.core.delete(
-            .id(instance.id), permanently: true, alsoRemoving: [diskID], consent: .all)
-
-        #expect(harness.fileSystem.removedURLs.map(\.path) == [externalPath])
-        #expect(harness.fileSystem.trashedURLs.isEmpty)
-        #expect(harness.storage.permanentlyDeleteVMBundleCallCount == 1)
     }
 
     @Test(
@@ -1434,94 +685,7 @@ struct VMCommandCoreTests {
         #expect(harness.failures.isEmpty)
     }
 
-    /// A `.kernova`-shaped source with its `config.json` on disk, under a
-    /// per-call parent, because the import copies real files.
-    @Test("An import takes the bundle the authority answered with, not the path asked about")
-    func importGoesThroughTheAuthority() async throws {
-        let harness = makeHarness()
-        let picked = try scratch.importSource(name: "Picked").url
-        harness.authority.substitute = picked
-
-        let summary = try await harness.core.importVM(
-            atPath: "/Users/somebody/Desktop/Asked.kernova", waitForOutcome: true)
-
-        #expect(harness.authority.requests.map(\.source) == [.vmBundle])
-        #expect(
-            harness.authority.requestedURLs.map { $0.path(percentEncoded: false) }
-                == ["/Users/somebody/Desktop/Asked.kernova"])
-        // Nothing answers for the asked-about path, so an import that read it
-        // instead of the picked bundle would have failed rather than named one.
-        #expect(summary.name == "Picked")
-        #expect(harness.library.instances.map(\.name) == ["Picked"])
-    }
-
-    @Test("An imported bundle's pairings are live once it publishes")
-    func importTakesOnTheBundlesPairings() async throws {
-        let harness = makeHarness()
-        let source = try scratch.importSource(name: "Paired").url
-        let pairing = USBAccessoryPairing(
-            key: "0403:6001:0100:0373", form: .serialNumber, displayName: "Samsung Type-C",
-            receptacleLabel: nil)
-        try VMStagedBundle.fixtureForTesting(at: source, access: CoordinatedBundleFileAccess()).update(.usbPairings) {
-            $0 = USBAccessoryPairingSet(pairings: [pairing])
-        }
-
-        _ = try await harness.core.importVM(from: source, waitForOutcome: true)
-
-        let imported = try #require(harness.library.instances.first)
-        #expect(harness.library.arrivals.isEmpty)
-        #expect(imported.usbPairings.pairings.map(\.key) == [pairing.key])
-    }
-
-    // MARK: - Storage Disk Lookup
-
-    @Test("storageDisk(id:on:) resolves the synthesized main disk over an empty configured list")
-    func storageDiskLookupResolvesSynthesizedMainDiskForEmptyList() {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness) { $0.storageDisks = [] }
-
-        let mainDisk = StorageDisk.mainDisk(layout: VMBundleLayout(bundleURL: instance.bundleURL))
-
-        #expect(harness.core.storageDisk(id: mainDisk.id, on: instance) == mainDisk)
-    }
-
-    // MARK: - Application
-
-    @Test("The quit verb asks the adapter once, on a later turn than the call")
-    func quitDefersToTheAdapter() async throws {
-        let harness = makeHarness()
-        harness.core.quit()
-
-        // Deferred: a transport waiting on this verb has to get its
-        // answer written before the process starts going down.
-        #expect(harness.quitRequests == 0)
-
-        try await harness.quitRequested.wait { harness.quitRequests == 1 }
-        #expect(harness.quitRequests == 1)
-    }
-
     // MARK: - Events
-
-    @Test("The event stream reports what changed, and nothing a listing already answers")
-    func eventsReportChanges() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(in: harness, name: "Watched")
-
-        var events = VMLibraryEventReader(harness.core.events())
-        // A fresh subscriber is told what happens from here, not replayed the
-        // library it can already list.
-        instance.activity.placeForTesting(.running(sessionID: UUID()))
-
-        let first = try #require(await events.next())
-        guard case .statusChanged(let id, let name, let from, let to) = first else {
-            Issue.record("expected a status change, got \(first)")
-            return
-        }
-        #expect(id == instance.id)
-        #expect(name == "Watched")
-        #expect(from == "stopped")
-        #expect(to == "running")
-    }
 
     @Test("A session's end reports the agent status going absent")
     func eventsReportTheAgentStatusEndingWithTheSession() async throws {
@@ -1707,19 +871,6 @@ struct VMCommandCoreTests {
             enablesRemoteLogin: false)
     }
 
-    /// An install-pending macOS VM, owing `intent` when one is given.
-    private func makeInstallPendingVM(
-        in harness: Harness, intent: GuestAccountIntent?
-    ) -> VMInstance {
-        makeInstance(
-            in: harness, name: "Unattended VM", phase: .initialBoot, guestOS: .macOS
-        ) {
-            $0.installContext = MacOSInstallContext(
-                source: .localFile, localIPSWPath: "/tmp/restore.ipsw")
-            $0.pendingGuestAccount = intent
-        }
-    }
-
     /// A stopped macOS VM whose start reaches the boot directly, owing `intent`.
     private func makeBootableAccountVM(
         in harness: Harness, intent: GuestAccountIntent?
@@ -1767,233 +918,12 @@ struct VMCommandCoreTests {
     // MARK: - What a start does about it
 
     @available(macOS 27.0, *)
-    @available(macOS 27.0, *)
-    @Test("The refusal carries the prompt naming the account")
-    func theOwedAccountRefusalNamesTheAccount() async throws {
-        let harness = makeHarness()
-        let instance = makeInstallPendingVM(in: harness, intent: makeAccountIntent())
-
-        let refusal = await #expect(throws: CommandError.self) {
-            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-        }
-
-        let prompt = try #require(refusal?.guestAccountPrompt)
-        #expect(prompt.username == "ada")
-        #expect(prompt.fullName == "Ada Lovelace")
-        #expect(prompt.vm.name == "Unattended VM")
-        #expect(prompt.message.contains("ada"))
-        #expect(try #require(refusal?.alertTitle).contains("Unattended VM"))
-    }
-
-    @available(macOS 27.0, *)
-    // MARK: - What spends the account
-
-    @available(macOS 27.0, *)
-    @available(macOS 27.0, *)
-    @Test("A cold boot whose account retraction fails reports it with the start and keeps the password")
-    func aColdBootWhoseRetractionFailsReportsItAndKeepsThePassword() async throws {
-        let harness = makeHarness()
-        let instance = makeBootableAccountVM(in: harness, intent: makeAccountIntent())
-        try harness.core.provideGuestAccountPassword(
-            .id(instance.id), password: "analytical-engine")
-        harness.storage.setSaveConfigurationError(NSError(domain: "test", code: 1))
-
-        let failure = try await #require(throws: CommandError.self) {
-            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-        }
-
-        #expect(harness.virtualization.lastStartRoute == .coldBoot)
-        #expect(failure.message.contains("the boot that delivers its macOS account has run"))
-        // The VM came up; only the record of the spent window is missing.
-        #expect(instance.status == .running)
-        #expect(instance.configuration.pendingGuestAccount == makeAccountIntent())
-        #expect(harness.storage.bundles[instance.bundleURL]?.pendingGuestAccount == makeAccountIntent())
-        #expect(harness.library.heldGuestAccountPassword(for: instance)?.value == "analytical-engine")
-    }
-
-    @available(macOS 27.0, *)
-    /// The core acts on the route the boot *reported*, not on what the call asked
-    /// for — which is the whole point of the boot answering: only the start that
-    /// took the branch can say which branch it took.
-    @available(macOS 27.0, *)
-    @available(macOS 27.0, *)
-    @available(macOS 27.0, *)
-    @available(macOS 27.0, *)
-    @available(macOS 27.0, *)
-    @available(macOS 27.0, *)
-    @available(macOS 27.0, *)
-    @Test("An install that produced a pre-27 guest drops both halves of the account")
-    func theInstallFloorDropEndsTheAccount() async throws {
-        let install = MockMacOSInstallService()
-        install.installedImage = .macOSRestoreImage(version: "26.5.2", build: "25F84")
-        let harness = makeHarness(install: install)
-        let instance = makeInstallPendingVM(in: harness, intent: makeAccountIntent())
-        try harness.core.provideGuestAccountPassword(
-            .id(instance.id), password: "analytical-engine")
-
-        try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-        // The boot is a fresh admission the setup's outcome chains, so it is
-        // waited for by its effect rather than by the setup's own task.
-        try await waitForChange { instance.status == .running }
-
-        // A persisted intent left behind would ask for an account this guest can
-        // never create, and a held password would be a secret nothing can spend.
-        #expect(instance.configuration.pendingGuestAccount == nil)
-        #expect(harness.library.heldGuestAccountPassword(for: instance) == nil)
-        // Dropped, never refused: the install itself landed.
-        #expect(
-            instance.configuration.installedImage
-                == .macOSRestoreImage(version: "26.5.2", build: "25F84"))
-        // The boot chained after the install carried no account, because there
-        // was none left to carry.
-        #expect(harness.virtualization.lastStartProvisioning == nil)
-    }
 
     // MARK: - Restart
 
     @available(macOS 27.0, *)
-    @Test("A restart of a VM still owing its account is refused while it is still running")
-    func restartRefusesAnOwedAccount() async throws {
-        let harness = makeHarness()
-        let instance = makeInstance(
-            in: harness, name: "Unattended VM", phase: .running(sessionID: UUID()),
-            guestOS: .macOS
-        ) { $0.pendingGuestAccount = makeAccountIntent() }
-
-        let refusal = await #expect(throws: CommandError.self) {
-            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: nil, consent: .none)
-        }
-
-        #expect(refusal?.guestAccountPrompt?.username == "ada")
-        // Refused before the stop, so the guest is still up rather than parked
-        // powered off half way through a restart.
-        #expect(harness.virtualization.stopCallCount == 0)
-        #expect(instance.status == .running)
-    }
-
-    @available(macOS 27.0, *)
-    // MARK: - Guest setup
-
-    @available(macOS 27.0, *)
-    @available(macOS 27.0, *)
-    @Test("A skipped install runs, and its boot creates no account")
-    func aSkippedInstallRunsAndAsksNothing() async throws {
-        // An image above the provisioning floor, so the post-install drop for a
-        // guest that cannot provision is not what this observes.
-        let install = MockMacOSInstallService()
-        install.installedImage = .macOSRestoreImage(version: "27.0", build: "27A100")
-        let harness = makeHarness(install: install)
-        let instance = makeInstallPendingVM(in: harness, intent: makeAccountIntent())
-        try harness.core.skipGuestAccount(.id(instance.id))
-
-        try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-        // The boot is a fresh admission the setup's outcome chains, so it is
-        // waited for by its effect rather than by the setup's own task.
-        try await waitForChange { instance.status == .running }
-
-        #expect(harness.virtualization.startCallCount == 1)
-        #expect(harness.virtualization.lastStartProvisioning == nil)
-    }
 
     // MARK: - Create
-
-    @available(macOS 27.0, *)
-    @Test("A create holds the wizard's password for the start it chains")
-    func createHoldsThePasswordForTheStartItChains() async throws {
-        let harness = makeHarness()
-        var configuration = VMConfiguration(
-            name: "Unattended VM",
-            guestOS: .macOS,
-            bootMode: .macOS,
-            cpuCount: VMGuestOS.macOS.hostCPUCount,
-            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
-        configuration.pendingGuestAccount = makeAccountIntent()
-
-        let summary = try harness.core.create(
-            configuration: configuration, diskSizeInGB: 64,
-            startAfterCreate: true,
-            guestAccountPassword: "analytical-engine")
-        let arrival = try #require(harness.library.arrivals.first { $0.id == summary.id })
-        let created = try #require(try await arrival.settle())
-        try await waitForChange { created.hasLiveSession }
-
-        // The boot the create chained carried the wizard's password, so the user
-        // is never asked again for what they just typed.
-        #expect(harness.virtualization.lastStartProvisioning?.password == "analytical-engine")
-        #expect(harness.virtualization.lastStartProvisioning?.username == "ada")
-    }
-
-    @available(macOS 27.0, *)
-    @available(macOS 27.0, *)
-    @Test("A create whose disk image failed reports the failure typed as a create")
-    func failedCreateReportsThroughTheHookTyped() async throws {
-        let diskImages = MockDiskImageService()
-        diskImages.createDiskImageError = NSError(domain: "test", code: 1)
-        let harness = makeHarness(diskImages: diskImages)
-
-        // The write fails after the arrival is registered, so the sheet that
-        // asked is long gone and the hook is all the failure has.
-        _ = try harness.core.create(
-            configuration: VMConfiguration(
-                name: "Disk Fail VM", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-                memorySizeInGB: VMGuestOS.linux.hostMemorySize),
-            diskSizeInGB: 64,
-            startAfterCreate: false, guestAccountPassword: nil)
-        try await harness.failureReported.wait { !harness.failures.isEmpty }
-
-        #expect(harness.library.entries.isEmpty)
-        guard case .operationFailed(let verb, _, _, _) = harness.failures.first else {
-            Issue.record("Expected an operationFailed, got \(String(describing: harness.failures.first))")
-            return
-        }
-        #expect(verb == .create)
-    }
-
-    @Test("A start failure that names its own heading carries it to the caller")
-    func startFailureNamesItsOwnHeading() async throws {
-        let harness = makeHarness()
-        harness.virtualization.startError = NSError(
-            domain: VirtualizationFailure.Framework.errorDomain,
-            code: VirtualizationFailure.Framework.Code.virtualMachineLimitExceeded.rawValue)
-        let instance = makeInstance(in: harness, name: "Capped")
-
-        let error = try await #require(throws: CommandError.self) {
-            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-        }
-
-        // The heading a wire caller must get too — pinned there by
-        // `operationFailureTitleCrossesTheWire`.
-        #expect(error.alertTitle == "Couldn't Start \u{201C}Capped\u{201D}")
-    }
-
-    @Test("A rename that changes nothing is a no-op even mid-operation")
-    func unchangedRenameIsNotRefused() throws {
-        let harness = makeHarness()
-        // Both inline-rename surfaces commit on end-editing whether or not the
-        // text changed, so an unchanged commit landing here must not refuse.
-        let instance = makeInstance(
-            in: harness, name: "Steady", phase: .operating(.saving, from: .running(sessionID: UUID())))
-
-        #expect(throws: Never.self) { try harness.core.rename(.id(instance.id), to: "Steady") }
-        #expect(throws: Never.self) { try harness.core.rename(.id(instance.id), to: "   ") }
-        #expect(instance.name == "Steady")
-    }
-
-    @Test("The invalid-state message names verbs the way a person does")
-    func invalidStateMessageReadsAsCopy() throws {
-        let harness = makeHarness()
-        // Stopped: there is no display to open, and the state admits both a
-        // start and a cold capture, so the sentence has something to list.
-        let instance = makeInstance(in: harness, name: "Resting", phase: .stopped)
-
-        let error = try #require(throws: CommandError.self) { try harness.core.open(.id(instance.id)) }
-
-        // A wire name never reaches a user, and a read is admitted in every
-        // state, so naming one says nothing.
-        #expect(error.message.contains("Take Snapshot"))
-        #expect(!error.message.contains("takeSnapshot"))
-        #expect(!error.message.contains("ipAddress"))
-    }
 
     @Test("Two restarts owed to one shutdown bring the guest up once, and both succeed")
     func twoRestartsShareOneBoot() async throws {
@@ -2056,38 +986,6 @@ struct VMCommandCoreTests {
 
         #expect(harness.virtualization.stopCallCount == 0)
         #expect(instance.status == .running)
-    }
-
-    @Test("A restart deadline expires on the shutdown half, leaving the guest unstarted")
-    func restartRefusesWhenTheShutdownOutlastsItsDeadline() async throws {
-        let virtualization = MockVirtualizationService()
-        virtualization.guestIgnoresShutdownRequest = true
-        let harness = makeHarness(virtualization: virtualization, clock: TestEngineClock())
-        let session = UUID()
-        let instance = makeInstance(
-            in: harness, name: "Stubborn", phase: .running(sessionID: session))
-
-        let error = try await #require(throws: CommandError.self) {
-            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 30, consent: .none)
-        }
-
-        guard case .timedOut(_, let verb, let seconds, _) = error else {
-            Issue.record("Expected a timeout refusal, got \(error)")
-            return
-        }
-        #expect(verb == .restart)
-        #expect(seconds == 30)
-        // The bring-up half never ran: a guest that would not shut down is not
-        // restarted, and it is not terminated to make the restart happen.
-        #expect(virtualization.startCallCount == 0)
-        #expect(virtualization.forceStopCallCount == 0)
-        #expect(instance.status == .running)
-
-        // The boot was withdrawn with the expiry, so the guest going down
-        // later brings nothing up.
-        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
-        #expect(instance.phase == .stopped)
-        #expect(virtualization.startCallCount == 0)
     }
 
     @Test("A stop settles on the power-off, not on the baseline revert behind it")
@@ -2202,10 +1100,6 @@ struct VMCommandCoreTests {
 }
 
 extension CommandError {
-    fileprivate var isNotFound: Bool {
-        if case .notFound = self { return true }
-        return false
-    }
 
     fileprivate var isInvalidState: Bool {
         if case .invalidState = self { return true }

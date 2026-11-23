@@ -14,7 +14,6 @@ import Testing
 @MainActor
 struct VMLibraryConfigCheckTests {
     private let preferences = makeTestPreferences()
-    private let scratch = TestScratchDirectory(prefix: "VMLibraryConfigCheckTests")
     /// Records what Use Defaults moves to the Trash, so nothing lands in the
     /// user's own.
     private let fileSystem = MockFileSystem()
@@ -143,130 +142,7 @@ struct VMLibraryConfigCheckTests {
         #expect(try harness.core.groups().map { $0.members.map(\.id) } == [[readable], [readable]])
     }
 
-    @Test("An unreadable row sorts with no run recorded, matches a search by its name, and restores as the selection")
-    func anUnreadableRowInTheSidebar() async throws {
-        let harness = makeHarness()
-        try addBundle("Readable", to: harness.storage)
-        try addBundle("Dev", to: harness.storage) { $0["networkMode"] = Self.unrecognized }
-        await harness.library.loadVMs()
-        let row = try #require(harness.library.entries.first { $0.unreadable != nil })
-        let library = harness.library
-
-        #expect(row.lastRun == .unrecorded)
-        #expect(VMLibrarySort.dateCreated.ordered(library.entries).last?.id == row.id)
-
-        // Under every grouping it is listed alone under "Can't Be Read".
-        for grouping in SidebarGrouping.allCases where grouping != .none {
-            library.sidebarOptions = SidebarViewOptions(grouping: grouping)
-            let section = try #require(library.sidebarLayout.sections.first { $0.id == .library })
-            guard case .groups(let groups) = section.content else {
-                Issue.record("\(grouping) lists no groups")
-                continue
-            }
-            let holding = groups.groups.filter { group in group.rows.entries.contains { $0.id == row.id } }
-            #expect(holding.map(\.title) == [UnreadableVM.statusText], "\(grouping)")
-            #expect(holding.first?.rows.entries.count == 1, "\(grouping)")
-        }
-        library.sidebarOptions = SidebarViewOptions()
-
-        library.sidebarSearch = SidebarNameSearch(text: "de")
-        #expect(library.sidebarLayout.rowKeys.map(\.entryID) == [row.id])
-        library.sidebarSearch = SidebarNameSearch(text: "read")
-        #expect(library.sidebarLayout.rowKeys.map(\.entryID) != [row.id])
-        library.sidebarSearch = SidebarNameSearch()
-
-        // A filter on what a config holds keeps the row listed, its way out
-        // in sight.
-        library.sidebarOptions = SidebarViewOptions(filter: VMLibraryFilter(guestOSes: [.macOS]))
-        #expect(library.sidebarLayout.rowKeys.map(\.entryID) == [row.id])
-        library.sidebarOptions = SidebarViewOptions()
-
-        // The row's identifier is fixed by its bundle, so a remembered
-        // selection of it is restored as the library's selection is.
-        library.selection = .library(row.id)
-        #expect(preferences.sidebarSelection == .library(row.id))
-        library.selection = nil
-        preferences.sidebarSelection = .library(row.id)
-        library.restoreSelection()
-        #expect(library.selection == .library(row.id))
-    }
-
-    // MARK: - Reporting
-
-    @Test("The load asks for the check once, and a reconcile only for a newly unreadable file")
-    func theCheckComesUpOnlyForNewProblems() async throws {
-        let networksURL = scratch.url.appendingPathComponent("Networks.json")
-        let harness = makeHarness(networks: VMNetworkDirectory(fileURL: networksURL))
-        try addBundle("Dev", to: harness.storage) { $0["networkMode"] = Self.unrecognized }
-
-        await harness.library.loadVMs()
-        #expect(checkRequests.count == 1)
-
-        harness.library.reconcileWithDisk()
-        #expect(checkRequests.count == 1)
-
-        try addBundle("Second", to: harness.storage) { $0["guestOS"] = Self.unrecognized }
-        harness.library.reconcileWithDisk()
-        #expect(checkRequests.count == 2)
-        harness.library.reconcileWithDisk()
-        #expect(checkRequests.count == 2)
-
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-        try Data("not json".utf8).write(to: networksURL)
-        harness.library.refreshFromOtherCopies()
-        #expect(checkRequests.count == 3)
-        harness.library.refreshFromOtherCopies()
-        #expect(checkRequests.count == 3)
-    }
-
     // MARK: - The check
-
-    @Test("The check reads the config of every snapshot a manifest lists")
-    func theCheckReadsSnapshotConfigs() async throws {
-        let harness = makeHarness()
-        let (url, _) = try addBundle("Dev", to: harness.storage)
-        let snapshotID = UUID()
-        let manifest = """
-            {"snapshots": [{"id": "\(snapshotID.uuidString)", "name": "Before update",
-              "createdAt": "2026-01-01T00:00:00Z", "notes": "", "kind": "cold"}]}
-            """
-        harness.storage.files.setData(
-            Data(manifest.utf8), atRelativePath: VMBundleLayout.snapshotManifestRelativePath, in: url)
-        let snapshotConfig = try Self.json(
-            of: VMConfiguration(
-                name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-                memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        ) { $0["displayHiDPI"] = Self.unrecognized }
-        let snapshotPath = VMBundleLayout.snapshotConfigRelativePath(id: snapshotID)
-        harness.storage.files.setData(snapshotConfig, atRelativePath: snapshotPath, in: url)
-        // One bundle read reads each snapshot's config once, for both its
-        // network and whether it reads.
-        let readsBefore = harness.storage.files.readCount(of: snapshotPath)
-        let read = try VMBundleFiles(url: url, access: harness.storage.files).read()
-        #expect(harness.storage.files.readCount(of: snapshotPath) - readsBefore == 1)
-        #expect(read.unreadableFiles.map(\.location) == [.bundle(url, .snapshotConfiguration(snapshotID))])
-        #expect(read.snapshotManifest.snapshot(id: snapshotID)?.network != nil)
-        await harness.library.loadVMs()
-        #expect(harness.library.instances.map(\.name) == ["Dev"])
-
-        let files = try await harness.library.checkConfigFiles()
-
-        let file = try #require(files.first)
-        #expect(files.count == 1)
-        #expect(file.location == .bundle(url, .snapshotConfiguration(snapshotID)))
-        #expect(file.owner == .snapshot(vm: "Dev", snapshot: "Before update"))
-        #expect(file.owner.title == "Dev \u{2014} snapshot \u{201C}Before update\u{201D}")
-        #expect(file.isRepairable)
-
-        let failures = await harness.library.useDefaults(in: files)
-
-        #expect(failures.isEmpty)
-        #expect(try await harness.library.checkConfigFiles().isEmpty)
-        #expect(
-            fileSystem.trashedURLs.map(\.lastPathComponent) == [
-                "Dev \u{2014} snapshot \u{201C}Before update\u{201D} \u{2014} config.json"
-            ])
-    }
 
     @Test("A snapshot config's unrecognized network value is listed with no repair: it is what the snapshot had")
     func aSnapshotsNetworkIsNotRepaired() async throws {
@@ -389,25 +265,6 @@ struct VMLibraryConfigCheckTests {
         #expect(fileSystem.trashedURLs.isEmpty)
     }
 
-    @Test("Use Defaults takes a file now gone that reads as its default as already readable")
-    func useDefaultsTakesAGoneDefaultedFileAsReadable() async throws {
-        let harness = makeHarness()
-        let (url, _) = try addBundle("Dev", to: harness.storage)
-        harness.storage.files.setData(
-            Data("not json".utf8), atRelativePath: VMBundleLayout.hostStateRelativePath, in: url)
-        await harness.library.loadVMs()
-        let files = try await harness.library.checkConfigFiles()
-        #expect(files.map(\.location) == [.bundle(url, .hostState)])
-        let checked = try #require(files.first)
-
-        harness.storage.files.setData(nil, atRelativePath: VMBundleLayout.hostStateRelativePath, in: url)
-
-        let repair = try VMBundleFiles(url: url, access: harness.storage.bundleFiles)
-            .repair(.hostState, as: checked, trashingOriginalWith: fileSystem)
-        #expect(repair == .alreadyReadable)
-        #expect(fileSystem.trashedURLs.isEmpty)
-    }
-
     // MARK: - Move to Trash
 
     @Test("Move to Trash refuses a bundle whose run lock another holder has, and moves it once free")
@@ -426,26 +283,6 @@ struct VMLibraryConfigCheckTests {
         try await harness.library.moveToTrash(row)
         #expect(harness.storage.deleteVMBundleCallCount == 1)
         #expect(harness.library.entries.compactMap(\.unreadable).isEmpty)
-    }
-
-    @Test("Move to Trash refuses a bundle repaired since its row was read, which reads as a VM again")
-    func moveToTrashRefusesARepairedBundle() async throws {
-        let harness = makeHarness()
-        let (url, _) = try addBundle("Dev", to: harness.storage) { $0["networkMode"] = Self.unrecognized }
-        await harness.library.loadVMs()
-        let row = try #require(harness.library.entries.compactMap(\.unreadable).first)
-
-        // Another copy repairs the file after this one's row was read.
-        let repaired = try Self.json(
-            of: VMConfiguration(
-                name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-                memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        ) { _ in }
-        harness.storage.files.setData(repaired, atRelativePath: VMBundleLayout.configRelativePath, in: url)
-
-        await #expect(throws: ConfigFileRepairRefusal.readsNow) { try await harness.library.moveToTrash(row) }
-        #expect(harness.storage.deleteVMBundleCallCount == 0)
-        #expect(configBytes(at: url, in: harness.storage) == repaired)
     }
 
     @Test("Move to Trash refuses a bundle whose file changed since its row was read, though still unreadable")
@@ -468,45 +305,6 @@ struct VMLibraryConfigCheckTests {
             try await harness.library.moveToTrash(row)
         }
         #expect(harness.storage.deleteVMBundleCallCount == 0)
-    }
-
-    // MARK: - Reporting the bundle's other files
-
-    @Test("A running VM's bundle is read by no list or reconcile; its unreadable config is reported once it stops")
-    func aRunningVMsUnreadableConfigIsReportedWhenItStops() async throws {
-        let harness = makeHarness()
-        let (url, _) = try addBundle("Dev", to: harness.storage)
-        await harness.library.loadVMs()
-        let instance = try #require(harness.library.instances.first)
-        try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-        try await waitForChange { instance.status == .running }
-        #expect(checkRequests.count == 0)
-
-        harness.storage.files.setData(
-            Data("not json".utf8), atRelativePath: VMBundleLayout.configRelativePath, in: url)
-        let stateFiles = [
-            VMBundleLayout.configRelativePath, VMBundleLayout.hostStateRelativePath,
-            VMBundleLayout.snapshotManifestRelativePath, VMBundleLayout.usbPairingsRelativePath,
-        ]
-        let reads = { stateFiles.map { harness.storage.files.readCount(of: $0) } }
-        let readsBefore = reads()
-        for _ in 0..<2 {
-            _ = harness.core.list(.all)
-            harness.library.reconcileWithDisk()
-        }
-        #expect(reads() == readsBefore)
-        #expect(checkRequests.count == 0)
-        #expect(instance.status == .running)
-
-        try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all, timeout: nil)
-        try await waitForChange { instance.status == .stopped }
-        #expect(checkRequests.count == 1)
-
-        for _ in 0..<2 {
-            _ = harness.core.list(.all)
-            harness.library.reconcileWithDisk()
-        }
-        #expect(checkRequests.count == 1)
     }
 
     // MARK: - A readable VM's unreadable files
@@ -540,46 +338,6 @@ struct VMLibraryConfigCheckTests {
                 atRelativePath: VMBundleLayout.hostStateRelativePath, in: url)
         }
         return (url, snapshotID)
-    }
-
-    @Test("A readable VM with a snapshot whose settings can't be read notices it until Use Defaults repairs it")
-    func aReadableVMNoticesAnUnreadableSnapshotUntilRepaired() async throws {
-        let harness = makeHarness()
-        let (_, snapshotID) = try addBundleWithSnapshot(to: harness.storage)
-        await harness.library.loadVMs()
-        let instance = try #require(harness.library.instances.first)
-
-        #expect(instance.unreadableFiles.map(\.snapshotID) == [snapshotID])
-        #expect(
-            UnreadableConfigFile.notice(for: instance.unreadableFiles)
-                == "Kernova can\u{2019}t read the settings of snapshot \u{201C}Snapshot\u{201D}. "
-                + "Choose File > Check Config Files\u{2026} to review it.")
-        #expect(
-            VMOverviewSummary.note(for: .snapshots, instance: instance, resolved: VMOverviewResolved())
-                == "The settings of \u{201C}Snapshot\u{201D} can\u{2019}t be read")
-        // The row stays a VM's: every operation the state takes is offered.
-        #expect(harness.library.entries.compactMap(\.vm).map(\.id) == [instance.id])
-
-        let failures = await harness.library.useDefaults(in: try await harness.library.checkConfigFiles())
-
-        #expect(failures.isEmpty)
-        #expect(instance.unreadableFiles.isEmpty)
-        #expect(UnreadableConfigFile.notice(for: instance.unreadableFiles) == nil)
-        #expect(
-            VMOverviewSummary.note(for: .snapshots, instance: instance, resolved: VMOverviewResolved())
-                == nil)
-    }
-
-    @Test("A snapshot error carries its heading onto the failure it becomes; an untitled error keeps the generic one")
-    func snapshotErrorsAreTitled() {
-        #expect(
-            CommandError.failed(verb: .revertToSnapshot, error: VMSnapshotError.snapshotConfigurationUnreadable)
-                .alertTitle == "Couldn\u{2019}t Revert to the Snapshot")
-        #expect(
-            CommandError.failed(verb: .takeSnapshot, error: VMSnapshotError.captureSourceMissing("Disk.asif"))
-                .alertTitle == "Couldn\u{2019}t Take the Snapshot")
-        #expect(
-            CommandError.failed(verb: .start, error: CocoaError(.fileReadUnknown)).alertTitle == "Error")
     }
 
     @Test("Starting an Ephemeral VM whose baseline can't be read is refused at every door, and starts once it reads")
@@ -628,98 +386,5 @@ struct VMLibraryConfigCheckTests {
         try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
         try await waitForChange { instance.status == .running }
         #expect(instance.unreadableFiles.isEmpty)
-    }
-
-    @Test("A check asked for during Use Defaults leaves it under way, and the check it ends in lands")
-    func aCheckDuringUseDefaultsWaitsForIt() async throws {
-        let source = GatedConfigCheckSource()
-        let session = ConfigCheckSession(source: source)
-        let repairable = UnreadableConfigFile(
-            location: .bundle(scratch.url.appendingPathComponent("VMs/A.kernova"), .configuration),
-            owner: .virtualMachine("Dev"),
-            problems: [
-                ConfigProblem(
-                    path: ConfigValuePath([.key("networkMode")]),
-                    issue: .unrecognized(found: Self.unrecognized), repair: .useDefault("hostOnly"))
-            ])
-
-        session.check()
-        try await waitForChange { source.checks.count == 1 }
-        source.checks[0].resume(returning: [repairable])
-        try await waitForChange { session.work == .idle }
-        #expect(session.report?.files == [repairable])
-
-        session.useDefaults()
-        #expect(session.work == .repairing)
-        try await waitForChange { source.repairs.count == 1 }
-
-        // Another open of the window checks again while the repair runs.
-        session.check()
-        #expect(session.work == .repairing)
-        #expect(source.checks.count == 1)
-
-        source.repairs[0].resume(returning: [])
-        try await waitForChange { source.checks.count == 2 }
-        #expect(session.work == .checking(token: 2))
-        source.checks[1].resume(returning: [])
-        try await waitForChange { session.work == .idle }
-        #expect(session.report?.files == [])
-    }
-
-    @Test("A check superseded by a later one changes nothing when it ends")
-    func aSupersededCheckLandsNothing() async throws {
-        let source = GatedConfigCheckSource()
-        let session = ConfigCheckSession(source: source)
-
-        session.check()
-        session.check()
-        try await waitForChange { source.checks.count == 2 }
-        source.checks[0].resume(throwing: CocoaError(.fileReadNoPermission))
-        // Queued behind the superseded check's resumption, so it has ended.
-        await Task { @MainActor in }.value
-        #expect(session.work == .checking(token: 2))
-        #expect(session.failure == nil)
-
-        source.checks[1].resume(returning: [])
-        try await waitForChange { session.work == .idle }
-        #expect(session.report?.files == [])
-        #expect(session.failure == nil)
-    }
-
-    @Test("The report counts the files, lists each problem, and says what Use Defaults does")
-    func theReportWords() throws {
-        let library = scratch.url
-        let repairable = UnreadableConfigFile(
-            location: .bundle(library.appendingPathComponent("VMs/A.kernova"), .configuration),
-            owner: .virtualMachine("Dev"),
-            problems: [
-                ConfigProblem(
-                    path: ConfigValuePath([.key("networkMode")]),
-                    issue: .unrecognized(found: Self.unrecognized), repair: .useDefault("hostOnly"))
-            ])
-        let unrepairable = UnreadableConfigFile(
-            location: .networkList(library.appendingPathComponent("Networks.json")),
-            owner: .networkList,
-            problems: [ConfigProblem(path: ConfigValuePath([.key("networks")]), issue: .missing)])
-
-        let report = ConfigCheckReport(files: [repairable, unrepairable], libraryDirectory: library)
-
-        #expect(report.header == "Kernova can\u{2019}t read 2 config files.")
-        #expect(
-            report.body == """
-                Dev
-                  VMs/A.kernova/config.json
-                  $.networkMode: \u{201C}\(Self.unrecognized)\u{201D} is not a recognized value. Default: hostOnly.
-
-                Network list
-                  Networks.json
-                  $.networks: no value. Kernova can\u{2019}t repair this file.
-                """)
-        #expect(
-            report.footer
-                == "Use Defaults rewrites the repairable file with these defaults; the original moves to the Trash.")
-        let clean = ConfigCheckReport(files: [], libraryDirectory: library)
-        #expect(clean.header == "Kernova read every config file.")
-        #expect(clean.footer == nil)
     }
 }

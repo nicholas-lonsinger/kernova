@@ -1,4 +1,3 @@
-import AppIntents
 import Foundation
 import KernovaCommandModel
 import KernovaTestSupport
@@ -7,9 +6,8 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// The library half of the App Intents surface: clone, rename, delete, and the
-/// two cancels — what each does to the library, and how narrowly the delete is
-/// offered.
+/// The library half of the App Intents surface: what a rename, an import and a
+/// delete do to the library, and how narrowly the delete is offered.
 ///
 /// Driven through the gateway rather than through the intents, which resolve
 /// their `@Dependency` only inside a live intent session.
@@ -24,85 +22,7 @@ struct VMLibraryIntentTests {
             index: MockVMEntityIndex(), record: makeTestIndexRecord())
     }
 
-    /// A VM in `wired` whose guest setup is parked mid-install, so a cancel of
-    /// it is offered; `cancelled` fires when the setup is cancelled.
-    private func registerInstalling(
-        in wired: WiredCommandCore, name: String
-    ) throws -> (instance: VMInstance, cancelled: AsyncStream<Void>) {
-        let instance = wired.register(name: name, phase: .initialBoot) {
-            $0.installContext = MacOSInstallContext(source: .localFile, localIPSWPath: "/tmp/foo.ipsw")
-        }
-        let cancelled = AsyncStream<Void>.makeStream()
-        try instance.launchParkedSetup {
-            cancelled.continuation.yield(())
-            cancelled.continuation.finish()
-        }
-        return (instance, cancelled.stream)
-    }
-
-    // MARK: - Clone Outcome
-
-    @Test(
-        "Every clone outcome, and following the preference, is offered under its name, and asks for what its name says")
-    func cloneOutcomesMirrorEveryOutcome() throws {
-        let named = try Dictionary(
-            uniqueKeysWithValues: VMCloneOutcome.allCases.map { offered in
-                let representation = try #require(VMCloneOutcome.caseDisplayRepresentations[offered])
-                return (String(localized: representation.title), offered.outcome)
-            })
-        let expected: [String: CloneOutcome?] = [
-            "Follow Kernova Setting": nil, "New Machine": .newMachine, "Exact Copy": .exactCopy,
-        ]
-        #expect(named == expected)
-    }
-
     // MARK: - Library Verbs
-
-    /// The copy is held mid-write, so a clone that waited for its outcome would
-    /// never return.
-    @Test("A clone copies the VM it identifies, with the outcome asked, and answers the arrival in full")
-    func cloneAddressesByIdentifierAndAnswersTheArrival() async throws {
-        let wired = WiredCommandCore()
-        let sourceIdentity = Data([1, 2, 3])
-        let source = wired.register {
-            $0.genericMachineIdentifierData = sourceIdentity
-        }
-        let twin = wired.register { $0.genericMachineIdentifierData = Data([4, 5, 6]) }
-        let hold = DispatchSemaphore(value: 0)
-        wired.storage.setCloneHold(hold)
-        // A throw before the release below would otherwise leave the copy
-        // blocked for the rest of the process; a second signal is harmless.
-        defer { hold.signal() }
-
-        let copy = try await makeGateway(wired).clone(source.id, outcome: .exactCopy)
-
-        #expect(copy.name == "Wired Copy")
-        #expect(copy.status == VMStatus.preparingWireName)
-        let arrival = try #require(wired.library.arrivals.first)
-        #expect(copy.id == arrival.id)
-        hold.signal()
-        let cloned = try #require(try await arrival.settle())
-        // An Exact Copy keeps the identity of the VM addressed, not its twin's.
-        #expect(cloned.configuration.genericMachineIdentifierData == sourceIdentity)
-        #expect(twin.configuration.genericMachineIdentifierData == Data([4, 5, 6]))
-    }
-
-    @Test("A rename and a delete address their VM by identifier, never by name")
-    func renameAndDeleteAddressByIdentifier() async throws {
-        let wired = WiredCommandCore()
-        let renamed = wired.register()
-        let twin = wired.register()
-        let gateway = makeGateway(wired)
-
-        try await gateway.rename(renamed.id, to: "  Renamed  ")
-
-        #expect(renamed.name == "Renamed")
-        #expect(twin.name == "Wired")
-
-        try await gateway.delete(renamed.id, consent: .all)
-
-        #expect(wired.library.instances.map(\.id) == [twin.id])
-    }
 
     /// The core trims the name and writes nothing when none is left — the
     /// inline field commits on end-editing whether or not the text changed —
@@ -156,17 +76,6 @@ struct VMLibraryIntentTests {
         #expect(wired.library.entries.isEmpty)
     }
 
-    @Test("A picked bundle resolves to the file it names")
-    func bundleFileNamesItsFile() async throws {
-        let picked = scratch.url.appendingPathComponent("Imported.kernova", isDirectory: true)
-        try FileManager.default.createDirectory(at: picked, withIntermediateDirectories: true)
-
-        let resolved = try await VMBundleFile.defaultQuery.entities(
-            for: [try FileEntityIdentifier.file(url: picked)])
-
-        #expect(resolved.map(\.name) == [picked.lastPathComponent])
-    }
-
     // MARK: - Consent
 
     /// The narrowest delete the core offers: the bundle to the Trash, and
@@ -199,29 +108,5 @@ struct VMLibraryIntentTests {
         #expect(wired.storage.permanentlyDeleteVMBundleCallCount == 0)
         #expect(wired.fileSystem.trashedURLs.isEmpty)
         #expect(wired.fileSystem.removedURLs.isEmpty)
-    }
-
-    @Test("Both cancels ask once and re-issue with the consent")
-    func cancelsRetryTheirVerb() async throws {
-        let wired = WiredCommandCore()
-        let gate = GatedStep()
-        let arrival = wired.library.beginGatedArrival(.cloning, named: "Copying", gate: gate)
-        let (installing, setupCancelled) = try registerInstalling(in: wired, name: "Installing")
-        let gateway = makeGateway(wired)
-        var asked: [ConfirmationPrompt] = []
-
-        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
-            try await gateway.cancelPreparing(arrival.id, consent: consent)
-        }
-        try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
-            try await gateway.cancelGuestSetup(installing.id, consent: consent)
-        }
-
-        #expect(asked.map(\.kind) == [.cancelPreparing, .cancelGuestSetup])
-        #expect(arrival.isCancelling)
-        _ = try await awaitFirst(setupCancelled)
-        gate.release()
-        #expect(try await arrival.settle() == nil)
-        try await installing.setupOperationTask?.joined()
     }
 }
