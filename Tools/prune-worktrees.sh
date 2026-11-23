@@ -15,7 +15,10 @@
 # the pull request carried on from. The removal is `git worktree remove`
 # without --force, so git itself refuses a tree with modified or untracked
 # files; ignored files (DerivedData/, artifacts/, the .worktreeinclude copies)
-# go with the tree, and the branch it had checked out is deleted.
+# go with the tree, and the branch it had checked out is deleted. A worktree
+# whose folder is already gone has only its record and branch left: the record
+# is dropped unless a live session holds its lock, and the branch is deleted
+# when its work is merged.
 #
 # Claude Code locks each worktree it creates with the reason
 # `claude <agent|session> <name> (pid <pid> start <time>)`, naming the process
@@ -67,10 +70,22 @@ merged_pr_holding() {
     return 1
 }
 
+gone=()
 while IFS=$'\x1f' read -r wt branch locked reason; do
-    [ "${wt%/*}" = "$root" ] && [ -d "$wt" ] || continue
+    [ "${wt%/*}" = "$root" ] || continue
     name=${wt#"$root/"}
     why=''
+    if [ ! -d "$wt" ]; then
+        if [ -n "$locked" ] && kept_by "$reason"; then
+            echo "keep $name: $why"
+            continue
+        fi
+        # git's own prune, below, drops a record no lock holds.
+        echo "${would}drop record $name: its folder is gone"
+        [ -n "$dry" ] || [ -z "$locked" ] || git worktree unlock "$wt" || continue
+        [ -z "$branch" ] || gone+=("$branch")
+        continue
+    fi
     if [ "$wt" -ef "$own" ]; then
         why='the checkout running this'
     elif [ -n "$locked" ] && kept_by "$reason"; then
@@ -102,6 +117,15 @@ done < <(awk '
     END { emit() }
 ' <<<"$listing")
 git worktree prune -v ${dry:+-n}
+for branch in ${gone[@]+"${gone[@]}"}; do
+    head=$(git rev-parse -q --verify "refs/heads/$branch") || continue
+    if content_on "$ref" "$head" || merged_pr_holding "$head" >/dev/null; then
+        echo "${would}delete branch $branch: its work is merged"
+        [ -n "$dry" ] || git branch -q -D "$branch"
+    else
+        echo "leave branch $branch: work not on main"
+    fi
+done
 
 # A build's bundles are registered by path, and the record outlives the
 # checkout that held them.
