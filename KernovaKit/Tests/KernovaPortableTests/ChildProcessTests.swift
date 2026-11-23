@@ -11,7 +11,6 @@ struct ChildProcessTests {
     func anAbandonedExitKillsTheChild() async throws {
         let child = try ChildProcess(Self.shell, ["-c", "echo listening; exec sleep 30"])
         #expect(try await child.firstLine() == "listening")
-        // deadline-under-test - the deadline firing is the asserted outcome
         await #expect(throws: TestFailure.self) { try await child.exit(timeout: 0.5) }
         #expect(try await child.exit().status == SIGKILL)
     }

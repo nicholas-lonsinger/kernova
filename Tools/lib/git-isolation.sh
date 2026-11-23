@@ -3,12 +3,6 @@
 #
 #     . "$ROOT/Tools/lib/git-isolation.sh"
 #     isolate_git "$tmp"
-#
-# git exports GIT_DIR and its companions to a hook's child processes, so a
-# fixture run under `pre-push` inherits the pushing checkout's repository. With
-# GIT_DIR set, `git init <dir>` re-initializes GIT_DIR instead of <dir>, and
-# for a linked worktree's gitdir it guesses bare and writes `core.bare = true`
-# into the shared config.
 
 # shellcheck shell=bash
 

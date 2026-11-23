@@ -8,9 +8,9 @@
 #         over the content tree — and exits with its status. On exit 0 with
 #         the kind's fingerprint unchanged across the run, records the
 #         fingerprint under that kind. A lint run with untracked files present
-#         is not recorded: lint lists what it checks from git, while a check
-#         such as a link's target reads the disk, so an untracked file is read
-#         without being checked.
+#         is not recorded: the fingerprint covers them, but shellcheck checks
+#         only the scripts git tracks, so an untracked script would be
+#         recorded without being checked.
 #     Tools/attest.sh
 #         Attests a clean, pushed HEAD: posts success once each kind has a
 #         record of its fingerprint, recording a run of each kind it lacks,

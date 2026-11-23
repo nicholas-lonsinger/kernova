@@ -47,7 +47,7 @@ public struct KernovaLogger: Sendable {
     ///
     /// A struct around the function, so a lock box storing a sink stores a
     /// struct: a function stored there directly gains a reabstraction thunk
-    /// on every lock hold (`Tools/swift-rules/lock-values.pm`).
+    /// on every lock hold.
     public struct ForwardingSink: Sendable {
         private let forward: Forward
 

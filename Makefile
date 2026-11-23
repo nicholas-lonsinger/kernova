@@ -70,15 +70,14 @@ setup: install-hooks ## Set up a clone: hooks, Homebrew tools, the swift.org too
 	@Tools/doctor.sh
 
 # One-time per clone: point this repo's git at the checked-in hooks —
-# `.githooks/pre-push` runs `make lint` before each push (bypass an
-# individual push with `git push --no-verify`), `.githooks/commit-msg` checks
-# that an agent's co-author trailer names the model and version, and
-# `.githooks/post-checkout` sets up fresh worktrees: it copies the gitignored
-# files listed in .worktreeinclude from the main checkout. Per-repo config
-# (no `--global`); core.hooksPath is shared by all worktrees of this repo.
-install-hooks: ## Point git at .githooks/ (pre-push lint; commit-msg model trailer; post-checkout worktree setup)
+# `.githooks/commit-msg` checks that an agent's co-author trailer names the
+# model and version, and `.githooks/post-checkout` sets up fresh worktrees: it
+# copies the gitignored files listed in .worktreeinclude from the main
+# checkout. Per-repo config (no `--global`); core.hooksPath is shared by all
+# worktrees of this repo.
+install-hooks: ## Point git at .githooks/ (commit-msg model trailer; post-checkout worktree setup)
 	git config core.hooksPath .githooks
-	@echo 'Hooks installed. Pre-push runs `make lint`; commit-msg checks that the co-author trailer names the model and version; post-checkout sets up new worktrees (.worktreeinclude copies).'
+	@echo 'Hooks installed. Commit-msg checks that the co-author trailer names the model and version; post-checkout sets up new worktrees (.worktreeinclude copies).'
 
 # Silent when the hooks are wired up, or under CI (which has no hooks to
 # install); otherwise a one-line nudge. Runs as a prerequisite of the
@@ -90,7 +89,7 @@ install-hooks: ## Point git at .githooks/ (pre-push lint; commit-msg model trail
 # correctly also counts as installed).
 check-hooks:
 	@if [ -z "$${CI:-}" ] && ! Tools/hooks-installed.sh >/dev/null; then \
-		printf 'Note: git hooks are not installed. Run `make install-hooks` (one-time per clone) to lint before push and auto-set-up new worktrees.\n' >&2; \
+		printf 'Note: git hooks are not installed. Run `make install-hooks` (one-time per clone) to check co-author trailers and auto-set-up new worktrees.\n' >&2; \
 	fi
 
 # One-time per checkout: sourcekit-lsp reads compiler flags and the index from

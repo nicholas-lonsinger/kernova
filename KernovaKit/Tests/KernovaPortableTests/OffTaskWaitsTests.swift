@@ -17,7 +17,6 @@ struct OffTaskWaitsTests {
                     waits.run {
                         hasEntered.withLock { $0 = true }
                         entered.notify()
-                        // deadline-under-test - the deadline firing is the asserted outcome
                         let backstop = Backstop("a release nothing makes", timeout: 0.1)
                         try backstop.wait(for: DispatchSemaphore(value: 0))
                     }
