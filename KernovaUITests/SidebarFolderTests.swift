@@ -48,45 +48,8 @@ struct SidebarFolderTests {
         return rows.entries.map(\.name)
     }
 
-    private func row(_ key: SidebarRowKey, in outline: NSOutlineView) -> Int {
-        (0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? SidebarRow)?.key == key } ?? -1
-    }
-
-    private func row(of section: SidebarSectionID, in outline: NSOutlineView) -> Int {
-        (0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? SidebarSection)?.id == section } ?? -1
-    }
-
     private func members(of folder: VMFolder, in viewModel: VMLibraryViewModel) -> [UUID]? {
         viewModel.library.organization.folder(withID: folder.id)?.members
-    }
-
-    // MARK: - Drags
-
-    /// Drags `items` to `point` through the outline view's own drag
-    /// destination, from the outline itself unless `fromFinder`, dropping
-    /// them there unless the outline refuses; answers the operation it
-    /// offered.
-    @discardableResult
-    private func drag(
-        _ items: [NSPasteboardWriting], to point: NSPoint, in outline: NSOutlineView, fromFinder: Bool = false
-    ) -> NSDragOperation {
-        let pasteboard = NSPasteboard(name: NSPasteboard.Name("sidebar-folder-drop-\(UUID())"))
-        defer { pasteboard.releaseGlobally() }
-        pasteboard.clearContents()
-        pasteboard.writeObjects(items)
-        let drag = FakeDraggingInfo(
-            window: outline.window, location: outline.convert(point, to: nil), pasteboard: pasteboard,
-            source: fromFinder ? nil : outline)
-        _ = outline.draggingEntered(drag)
-        let operation = outline.draggingUpdated(drag)
-        guard operation != [] else {
-            outline.draggingExited(drag)
-            return operation
-        }
-        #expect(outline.prepareForDragOperation(drag))
-        #expect(outline.performDragOperation(drag))
-        outline.concludeDragOperation(drag)
-        return operation
     }
 
     // MARK: - Lifecycle

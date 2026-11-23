@@ -202,11 +202,4 @@ final class SerialSocketRelay: Sendable {
             fd = -1
         }
     }
-
-    #if DEBUG
-    /// `true` once a client connection has been accepted and not yet torn down.
-    var hasClientForTesting: Bool {
-        client.withLock { $0.fd >= 0 }
-    }
-    #endif
 }

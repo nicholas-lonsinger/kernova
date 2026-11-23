@@ -1,5 +1,4 @@
 import AppKit
-import KernovaTestSupport
 
 @testable import KernovaCore
 @testable import KernovaUI
@@ -7,13 +6,12 @@ import KernovaTestSupport
 /// Stands in for the login session's focus, so no test changes the test host's
 /// Dock presence, asks for the front, or makes a window key.
 ///
-/// Holds the state a test gives it, and records every request in order. A
-/// presented window is ordered in behind the rest, where a stage window stays
-/// beyond every display, and one presented key reads as key while it is
-/// visible and the app reads as active — AppKit's key and main window can be
-/// `nil` while the app is inactive. Nothing else a request asks for is
-/// performed: `activate()` leaves ``isActive`` as given, as AppKit grants
-/// activation, if at all, after the request returns.
+/// The app reads as inactive and not hidden, and every request is recorded in
+/// order. A presented window is ordered in behind the rest, where a stage
+/// window stays beyond every display; AppKit's key and main window are `nil`
+/// while the app is inactive. Nothing else a request asks for is performed:
+/// `activate()` leaves ``isActive`` as it was, as AppKit grants activation, if
+/// at all, after the request returns.
 @MainActor
 final class RecordingSessionFocus: SessionFocus {
     enum Request: Equatable {
@@ -26,87 +24,43 @@ final class RecordingSessionFocus: SessionFocus {
         case cancelMenuBarTracking
     }
 
-    var activationPolicy: NSApplication.ActivationPolicy
-    let isActive: Bool
-    /// Held across an unhide, so every presentation that would unhide records
-    /// its own request.
-    let isHidden: Bool
+    private(set) var activationPolicy: NSApplication.ActivationPolicy = .regular
+    let isActive = false
+    let isHidden = false
     private(set) var requests: [Request] = []
-    /// Notified after each request is recorded.
-    let gate = AsyncGate()
-    /// Runs inside each request, once it is recorded — where AppKit would act
-    /// on it.
-    var onRequest: (Request) -> Void = { _ in }
-    /// Runs as each presented window is about to be ordered in — where AppKit
-    /// fits it onto its screen.
-    var willOrderIn: (NSWindow) -> Void = { _ in }
 
-    private weak var recordedKeyWindow: NSWindow?
-    private weak var recordedMainWindow: NSWindow?
-    private let miniaturized = NSHashTable<NSWindow>.weakObjects()
     private let center = NotificationCenter()
     private let changed = Notification.Name("RecordingSessionFocus.focusChanged")
-
-    init(
-        activationPolicy: NSApplication.ActivationPolicy = .regular, isActive: Bool = false,
-        isHidden: Bool = false
-    ) {
-        self.activationPolicy = activationPolicy
-        self.isActive = isActive
-        self.isHidden = isHidden
-    }
-
-    private func record(_ request: Request) {
-        requests.append(request)
-        onRequest(request)
-        gate.notify()
-    }
 
     func setActivationPolicy(_ policy: NSApplication.ActivationPolicy) {
         guard policy != activationPolicy else { return }
         activationPolicy = policy
-        record(.setActivationPolicy(policy))
+        requests.append(.setActivationPolicy(policy))
     }
 
-    func activate() { record(.activate) }
+    func activate() { requests.append(.activate) }
 
-    func unhideWithoutActivation() { record(.unhideWithoutActivation) }
+    func unhideWithoutActivation() { requests.append(.unhideWithoutActivation) }
 
     func present(_ window: NSWindow, _ presentation: WindowPresentation) {
-        willOrderIn(window)
         window.orderBack(nil)
-        miniaturized.remove(window)
-        if presentation == .keyAndFront {
-            recordedKeyWindow = window
-            if window.canBecomeMain { recordedMainWindow = window }
-        }
-        record(.present(window, presentation))
-        if presentation == .keyAndFront { postFocusChanged() }
+        requests.append(.present(window, presentation))
+        if presentation == .keyAndFront { center.post(name: changed, object: nil) }
     }
 
-    func toggleFullScreenMode(of window: NSWindow) { record(.toggleFullScreenMode(window)) }
+    func toggleFullScreenMode(of window: NSWindow) { requests.append(.toggleFullScreenMode(window)) }
 
-    func showAboutPanel(options: [NSApplication.AboutPanelOptionKey: Any]) { record(.showAboutPanel) }
+    func showAboutPanel(options: [NSApplication.AboutPanelOptionKey: Any]) { requests.append(.showAboutPanel) }
 
-    func cancelMenuBarTracking() { record(.cancelMenuBarTracking) }
+    func cancelMenuBarTracking() { requests.append(.cancelMenuBarTracking) }
 
-    var keyWindow: NSWindow? { onScreenWhileActive(recordedKeyWindow) }
+    var keyWindow: NSWindow? { nil }
 
-    var mainWindow: NSWindow? { onScreenWhileActive(recordedMainWindow) }
-
-    private func onScreenWhileActive(_ window: NSWindow?) -> NSWindow? {
-        guard isActive, let window, window.isVisible else { return nil }
-        return window
-    }
+    var mainWindow: NSWindow? { nil }
 
     func standing(of window: NSWindow) -> WindowStanding {
-        WindowStanding(
-            isVisible: window.isVisible, isMiniaturized: miniaturized.contains(window), isOnActiveSpace: true)
+        WindowStanding(isVisible: window.isVisible, isMiniaturized: false, isOnActiveSpace: true)
     }
 
     var focusChanged: [HostNotification] { [HostNotification(center: center, name: changed)] }
-
-    private func postFocusChanged() {
-        center.post(name: changed, object: nil)
-    }
 }

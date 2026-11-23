@@ -29,7 +29,7 @@ package final class VMIntentGateway {
     /// Fills the library's search with a term and puts the library window in
     /// front of the user.
     private let showSearchResults: @MainActor (String) -> Void
-    private let logger: KernovaLogger
+    private let logger = KernovaLogger(subsystem: "app.kernova", category: "VMIntentGateway")
 
     /// The library subscription that keeps the Spotlight index current.
     private var libraryEvents: Task<Void, Never>?
@@ -49,15 +49,13 @@ package final class VMIntentGateway {
         readiness: LibraryReadiness,
         index: any VMEntityIndexing = SpotlightVMEntityIndex(),
         record: VMIndexRecord = VMIndexRecord(),
-        showSearchResults: @escaping @MainActor (String) -> Void = { _ in },
-        logger: KernovaLogger = KernovaLogger(subsystem: "app.kernova", category: "VMIntentGateway")
+        showSearchResults: @escaping @MainActor (String) -> Void = { _ in }
     ) {
         self.commands = commands
         self.readiness = readiness
         self.index = index
         self.record = record
         self.showSearchResults = showSearchResults
-        self.logger = logger
         // Weakly, one main-actor call at a time: an owner that goes away
         // between two batches is what ends the subscription.
         libraryEvents = Task { [weak self] in

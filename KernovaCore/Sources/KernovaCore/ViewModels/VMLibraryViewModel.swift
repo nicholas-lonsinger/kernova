@@ -844,8 +844,7 @@ package final class VMLibraryViewModel {
             bridgedInterfaces: bridgedInterfaces,
             appActivation: hostNotifications.appDidBecomeActive,
             hostPasteboard: hostPasteboard,
-            bundleProducts: bundleProducts,
-            logSink: nil
+            bundleProducts: bundleProducts
         )
         self.library = library
         let sleepWake = VMSleepWakeCoordinator(
@@ -860,8 +859,7 @@ package final class VMLibraryViewModel {
             storageService: storageService,
             diskImageService: diskImageService,
             fileSystem: fileSystem,
-            preferences: preferences,
-            logSink: nil
+            preferences: preferences
         )
         self.commandsLeavingEditsOpen = commands
 

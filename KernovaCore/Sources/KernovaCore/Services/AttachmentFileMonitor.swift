@@ -398,11 +398,4 @@ package final class AttachmentFileMonitor {
             await refreshPaths(in: parent)
         }
     }
-
-    #if DEBUG
-    /// Snapshot of currently-watched parent directories.
-    var watchedParentsForTesting: Set<String> {
-        Set(parentSources.keys)
-    }
-    #endif
 }

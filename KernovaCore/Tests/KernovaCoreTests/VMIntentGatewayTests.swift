@@ -2,7 +2,6 @@ import AppIntents
 import CoreSpotlight
 import Foundation
 import KernovaCommandModel
-import KernovaLogging
 import KernovaTestSupport
 import Testing
 
@@ -22,13 +21,11 @@ struct VMIntentGatewayTests {
     private func makeGateway(
         over harness: WiredCommandCore,
         record: VMIndexRecord = makeTestIndexRecord(),
-        index: MockVMEntityIndex = MockVMEntityIndex(),
-        log: LogCapture = LogCapture()
+        index: MockVMEntityIndex = MockVMEntityIndex()
     ) -> VMIntentGateway {
         VMIntentGateway(
             commands: harness.core, readiness: LibraryReadiness(awaitReady: {}), index: index,
-            record: record,
-            logger: KernovaLogger(subsystem: "app.kernova", category: "VMIntentGateway", sink: log.sink))
+            record: record)
     }
 
     // MARK: - Consent

@@ -113,19 +113,6 @@ struct ConfigurationBuilderTests {
 
     // MARK: - Network
 
-    /// Assembles `config` and returns its network devices.
-    ///
-    /// `assemble(validate: false)` for the same reason as the audio helper: the
-    /// device is built regardless of the flag, and CI runners can't validate.
-    private func networkDevices(for config: VMConfiguration) throws
-        -> [VZNetworkDeviceConfiguration]
-    {
-        let bundleURL = try scratch.makeEngineBundle(withDisk: true)
-        return try ConfigurationBuilder.testing()
-            .assemble(from: config, bundleURL: bundleURL, validate: false)
-            .configuration.networkDevices
-    }
-
     @Test("An isolated VM attaches its own network of its mode, through a view opened for it")
     func isolatedModesAttachTheVMsOwnNetwork() throws {
         let bundleURL = try scratch.makeEngineBundle(withDisk: true)

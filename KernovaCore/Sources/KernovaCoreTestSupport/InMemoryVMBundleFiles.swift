@@ -321,7 +321,6 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing {
 
     func hostState(at url: URL) -> VMHostState? { read(at: url)?.hostState }
     func manifest(at url: URL) -> VMSnapshotManifest? { read(at: url)?.snapshotManifest }
-    func pairings(at url: URL) -> USBAccessoryPairingSet? { read(at: url)?.usbPairings }
 
     private static func encode<Value: Encodable>(_ value: Value) -> Data {
         do {

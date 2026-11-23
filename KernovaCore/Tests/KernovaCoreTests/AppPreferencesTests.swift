@@ -27,6 +27,24 @@ struct AppPreferencesTests {
         #expect(prefs.alwaysShowAdvancedOptions == false)
     }
 
+    @Test("A stored filter's network no build spells is removed alone; every other option is kept")
+    func sidebarViewOptionsDropAnUnknownNetworkAlone() throws {
+        let (prefs, defaults) = makePreferences()
+        defaults.set(
+            Data(
+                #"""
+                {"sort":"name","grouping":"state","showsDetails":true,
+                 "filter":{"networks":["bogus:common","none"],"guestOSes":["macOS"]}}
+                """#.utf8), forKey: "KernovaSidebarViewOptions")
+
+        #expect(
+            prefs.sidebarViewOptions
+                == SidebarViewOptions(
+                    filter: VMLibraryFilter(
+                        guestOSes: [.macOS], networks: [try #require(VMLibraryFilter.Network(rawValue: "none"))]),
+                    sort: .name, grouping: .state, showsDetails: true))
+    }
+
     @Test("vmOrder round-trips through UserDefaults")
     func vmOrderRoundTrips() {
         let (prefs, defaults) = makePreferences()
@@ -76,6 +94,34 @@ struct AppPreferencesTests {
         prefs.cloneOutcome = .newMachine
         #expect(prefs.cloneOutcome == .newMachine)
         #expect(defaults.bool(forKey: "cloneKeepsMachineID") == false)
+    }
+
+    @Test("A guest running macOS 12 or earlier is offered only Clone as Exact Copy")
+    func cloneMenuItemsOfAMontereyGuestOfferOnlyAnExactCopy() {
+        let (prefs, _) = makePreferences()
+        var monterey = VMConfiguration(
+            name: "Monterey", guestOS: .macOS, bootMode: .macOS, cpuCount: VMGuestOS.macOS.hostCPUCount,
+            memorySizeInGB: VMGuestOS.macOS.hostMemorySize)
+        monterey.lastSeenGuestOSVersion = "12.7.6"
+        for preferred in CloneOutcome.allCases {
+            prefs.cloneOutcome = preferred
+            let items = prefs.cloneMenuItems(for: monterey)
+            #expect(items.primary.outcome == .exactCopy)
+            #expect(items.alternate == nil)
+            #expect(prefs.cloneOutcome(for: monterey) == .exactCopy)
+        }
+
+        // A guest whose version nothing has vouched for, or one past 12, offers both.
+        var unknown = monterey
+        unknown.lastSeenGuestOSVersion = nil
+        var ventura = monterey
+        ventura.lastSeenGuestOSVersion = "13.0"
+        prefs.cloneOutcome = .newMachine
+        for configuration in [unknown, ventura] {
+            let items = prefs.cloneMenuItems(for: configuration)
+            #expect(items.primary.outcome == .newMachine)
+            #expect(items.alternate?.outcome == .exactCopy)
+        }
     }
 
     @Test("clipboardMaxPasteBytes round-trips every offered ceiling through UserDefaults")

@@ -18,27 +18,6 @@ struct VMSettingsSystemPanelTests {
 
     // MARK: - Edits committed after the machine is pinned
 
-    /// A control the System panel writes a machine setting from — one the VM's
-    /// running session or saved state pins.
-    enum MachineEdit: String, CaseIterable, Sendable {
-        case cpuField, memoryField, widthField, matchWindowSwitch, hiDPISwitch, audioInput,
-            audioOutput, inputDevices
-
-        /// The key the edit writes, which a refusal names.
-        var key: String {
-            switch self {
-            case .cpuField: "cpus"
-            case .memoryField: "memory"
-            case .widthField: "display.width"
-            case .matchWindowSwitch: "display.sizeToWindow"
-            case .hiDPISwitch: "display.hidpi"
-            case .audioInput: "audio.input"
-            case .audioOutput: "audio.output"
-            case .inputDevices: "input.devices"
-            }
-        }
-    }
-
     /// A stopped, registered macOS VM in a pane open on System that is not
     /// read-only, booting at `resolution` in manual mode, with a presenter
     /// recording what the refusal shows.
@@ -80,44 +59,6 @@ struct VMSettingsSystemPanelTests {
         vc.viewDidAppear()
         vc.showCategory(.system)
         return (vc, instance, presenter, storage)
-    }
-
-    /// Moves `edit`'s control off the value the model holds, as a user would,
-    /// without committing it.
-    private func change(_ edit: MachineEdit, in vc: VMSettingsViewController, _ config: VMConfiguration)
-        throws
-    {
-        switch edit {
-        case .cpuField:
-            let field = try #require(editableField("CPU cores", in: vc.view))
-            typeText(TypedField.cpus.changedValue(from: config), into: field)
-        case .memoryField:
-            let field = try #require(editableField("Memory", in: vc.view))
-            typeText(TypedField.memory.changedValue(from: config), into: field)
-        case .widthField:
-            let field = try #require(editableField("Width", in: vc.view))
-            typeText(TypedField.width.changedValue(from: config), into: field)
-        case .matchWindowSwitch, .hiDPISwitch, .audioInput, .audioOutput:
-            let toggle = try #require(firstSwitch(action: switchAction(edit), in: vc.view))
-            toggle.state = toggle.state == .on ? .off : .on
-        case .inputDevices:
-            let popUp = try #require(firstPopUp(action: "inputDevicesChanged", in: vc.view))
-            let other = try #require(
-                popUp.itemArray.firstIndex {
-                    ($0.representedObject as? VMInputDeviceMode) != config.inputDeviceMode
-                })
-            popUp.selectItem(at: other)
-        }
-    }
-
-    private func switchAction(_ edit: MachineEdit) -> String {
-        switch edit {
-        case .matchWindowSwitch: "displayMatchWindowToggled"
-        case .hiDPISwitch: "displayHiDPIToggled"
-        case .audioInput: "audioInputToggled"
-        case .audioOutput: "audioOutputToggled"
-        case .cpuField, .memoryField, .widthField, .inputDevices: ""
-        }
     }
 
     /// Every end-edit field, which a start can catch mid-edit.

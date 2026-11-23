@@ -9,12 +9,7 @@ final class MockNetworkDeviceControl: NetworkDeviceControlling {
     /// The attachment the device currently realizes; tests nil it to simulate
     /// the framework's disconnect behavior.
     var plan: NetworkAttachmentPlan?
-    /// Plans `apply` refuses, simulating the host withdrawing what the plan
-    /// names between resolution and attach — a bridge interface vanishing, a
-    /// vmnet network that will not materialize.
-    var refusedPlans: [NetworkAttachmentPlan] = []
     private(set) var appliedPlans: [NetworkAttachmentPlan] = []
-    private(set) var detachCount = 0
     /// The session view a vmnet plan joins its network through, refusing the
     /// plan while that network is not materialized — as the real handle does.
     let vmnetNetworks: VmnetSessionNetworks
@@ -30,7 +25,6 @@ final class MockNetworkDeviceControl: NetworkDeviceControlling {
     var currentPlan: NetworkAttachmentPlan? { plan }
 
     func apply(_ plan: NetworkAttachmentPlan) -> Bool {
-        guard !refusedPlans.contains(plan) else { return false }
         if let selection = plan.vmnetSelection,
             vmnetNetworks.joinedNetworkIfMaterialized(for: selection) == nil
         {
@@ -42,7 +36,6 @@ final class MockNetworkDeviceControl: NetworkDeviceControlling {
     }
 
     func detach() {
-        detachCount += 1
         plan = nil
     }
 

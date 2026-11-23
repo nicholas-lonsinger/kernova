@@ -38,9 +38,6 @@ package final class HubDropService: Sendable {
     /// Each pull's wait for its content, and the grant it is read under until its serve ends.
     private let serves = ClipboardServeWaits()
     private let reporter: ClipboardTransferReporter
-    #if DEBUG
-    private let stagingReleases = Mutex<[Task<Void, Never>]>([])
-    #endif
 
     /// A service staging promises under `stagingRoot` and reporting to `reporter`.
     package init(stagingRoot: ProcessStagingRoot, reporter: ClipboardTransferReporter) {
@@ -227,9 +224,6 @@ package final class HubDropService: Sendable {
     #if DEBUG
     /// How many offers are open; tests only.
     var openOffersForTesting: Int { offers.withLock(\.count) }
-
-    /// Each removal of a drop's promise staging, in the order it was begun; tests only.
-    var stagingReleasesForTesting: [Task<Void, Never>] { stagingReleases.withLock { $0 } }
     #endif
 
     /// The code a drop's surfaces word a peer's failure to land it with.
@@ -252,7 +246,7 @@ package final class HubDropService: Sendable {
     private func release(_ staging: URL?, after promises: [CalledInFilePromise]) {
         guard let staging else { return }
         let files = promises.flatMap(\.files)
-        let removal = Task {
+        Task {
             for file in files { _ = try? await file.landed.value }
             do {
                 try StagedItemRemoval.remove(at: staging)
@@ -261,10 +255,5 @@ package final class HubDropService: Sendable {
                     .warning, "Cannot remove a drop's staged promises: \(String(describing: error), privacy: .public)")
             }
         }
-        #if DEBUG
-        stagingReleases.withLock { $0.append(removal) }
-        #else
-        _ = removal
-        #endif
     }
 }

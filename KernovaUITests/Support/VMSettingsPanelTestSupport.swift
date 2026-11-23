@@ -127,30 +127,13 @@ func settingsRow(labeled label: String, in view: NSView) -> NSView? {
         }
 }
 
-/// `view`'s alignment rect in `ancestor`'s coordinates — the rect a stack
-/// spaces, which for a text field is inset from its frame.
-@MainActor
-func alignmentRect(of view: NSView, in ancestor: NSView) throws -> NSRect {
-    let superview = try #require(view.superview)
-    return superview.convert(view.alignmentRect(forFrame: view.frame), to: ancestor)
-}
-
-/// Like ``containsLabel(_:in:)``, but only counts a label that is actually
-/// shown (no hidden label or hidden ancestor).
+/// Whether `view` shows a label reading `text`: one neither hidden itself nor
+/// under a hidden ancestor.
 @MainActor
 func visibleLabel(_ text: String, in view: NSView) -> Bool {
     firstSubview(NSTextField.self, in: view) {
         $0.stringValue == text && isVisible($0, within: view)
     } != nil
-}
-
-extension InfoPopoverParagraph {
-    /// The paragraph's text, whatever style the popover renders it in.
-    var text: String {
-        switch self {
-        case .headline(let text), .body(let text), .code(let text): text
-        }
-    }
 }
 
 /// The editable field in the grouped-form card row titled `label`, however
@@ -159,30 +142,4 @@ extension InfoPopoverParagraph {
 func editableField(_ label: String, in view: NSView) -> NSTextField? {
     guard let row = settingsRow(labeled: label, in: view) else { return nil }
     return findEditableField(in: row)
-}
-
-/// Types `text` over whatever `field` holds, as a user would: focused, through
-/// its field editor, so the field records the text as typed. A field in no
-/// window yet is hosted in a test window first — only a window's field editor
-/// types.
-@MainActor
-func typeText(_ text: String, into field: NSTextField) {
-    if field.currentEditor() == nil {
-        let window =
-            field.window
-            ?? {
-                var root: NSView = field
-                while let parent = root.superview { root = parent }
-                let window = makeTestWindow(styleMask: [.titled])
-                window.contentView = root
-                return window
-            }()
-        #expect(window.makeFirstResponder(field))
-    }
-    guard let editor = field.currentEditor() as? NSTextView else {
-        Issue.record("Expected a field editor on the focused field")
-        return
-    }
-    editor.selectAll(nil)
-    editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
 }

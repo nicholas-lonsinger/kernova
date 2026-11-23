@@ -18,25 +18,20 @@ struct VMLibraryViewModelEphemeralTests {
         let viewModel: VMLibraryViewModel
         let storage: MockVMStorageService
         let virtualization: MockVirtualizationService
-        let snapshots: MockVMBundleMachineFiles
         let instance: VMInstance
         let baseline: VMSnapshot
         let later: VMSnapshot
-        /// The second ephemeral VM, present only when `secondVM` was asked for.
-        let other: VMInstance?
-        let otherBaseline: VMSnapshot?
     }
 
-    /// Registers one VM's bundle, its two snapshots, and what each of them
-    /// captured, and answers the pair.
+    /// Registers an Ephemeral VM's bundle, its two snapshots, and what each of
+    /// them captured, and answers the pair.
     private func seedVM(
-        named name: String, ephemeral: Bool, storage: MockVMStorageService,
-        snapshots: MockVMBundleMachineFiles, baselineKind: VMSnapshotKind = .warm,
-        unsettled: Bool = false
+        named name: String, storage: MockVMStorageService, snapshots: MockVMBundleMachineFiles,
+        unsettled: Bool
     ) throws -> (config: VMConfiguration, baseline: VMSnapshot, later: VMSnapshot) {
         let baseline = VMSnapshot(
             name: "\(name) clean install", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            kind: baselineKind, macAddress: nil)
+            kind: .warm, macAddress: nil)
         let later = VMSnapshot(
             name: "\(name) mid-session", createdAt: Date(timeIntervalSince1970: 1_700_001_000), macAddress: nil)
 
@@ -46,7 +41,7 @@ struct VMLibraryViewModelEphemeralTests {
         let bundleURL = try storage.bundleURL(for: config)
         storage.setConfiguration(config, at: bundleURL)
         var hostState = VMHostState(hasUnsettledSession: unsettled)
-        if ephemeral { hostState.applyEphemeralMode(enabled: true, baseline: baseline.id) }
+        hostState.applyEphemeralMode(enabled: true, baseline: baseline.id)
         storage.setHostState(hostState, at: bundleURL)
         storage.files.setManifest(
             VMSnapshotManifest(snapshots: [baseline, later], currentID: later.id), at: bundleURL)
@@ -58,34 +53,19 @@ struct VMLibraryViewModelEphemeralTests {
         return (config, baseline, later)
     }
 
-    /// Loads the VMs through the view model — the path that wires the power-off
-    /// hook — each carrying two snapshots, the older of which is its baseline.
+    /// Loads an Ephemeral VM through the view model — the path that wires the
+    /// power-off hook — carrying two snapshots, the older of which is its
+    /// baseline, and running.
     ///
-    /// `ephemeral` decides whether the first VM's mode is on; `phase` is where
-    /// it rests once loaded. `secondVM` adds a second, always-ephemeral VM, for
-    /// the cases that turn on the two being tracked apart.
-    ///
-    /// With `unsettled`, the first VM's last session ended unsettled — what a
-    /// copy of Kernova dying under it leaves — and the VM is left where the
-    /// load left it; `heldElsewhere` has another copy hold its bundle through
-    /// the load.
-    private func makeHarness(
-        ephemeral: Bool = true, phase: VMLifecyclePhase = .running(sessionID: UUID()),
-        secondVM: Bool = false, baselineKind: VMSnapshotKind = .warm,
-        unsettled: Bool = false, heldElsewhere: Bool = false
-    ) async throws -> Harness {
+    /// With `unsettled`, the VM's last session ended unsettled — what a copy of
+    /// Kernova dying under it leaves — and the VM is left where the load left
+    /// it.
+    private func makeHarness(unsettled: Bool = false) async throws -> Harness {
         let storage = MockVMStorageService()
         let virtualization = MockVirtualizationService()
         let snapshots = MockVMBundleMachineFiles(files: storage.files)
 
-        let first = try seedVM(
-            named: "Throwaway", ephemeral: ephemeral, storage: storage, snapshots: snapshots,
-            baselineKind: baselineKind, unsettled: unsettled)
-        if heldElsewhere { storage.files.holdElsewhere(try storage.bundleURL(for: first.config)) }
-        let second =
-            secondVM
-            ? try seedVM(named: "Sandbox", ephemeral: true, storage: storage, snapshots: snapshots)
-            : nil
+        let seeded = try seedVM(named: "Throwaway", storage: storage, snapshots: snapshots, unsettled: unsettled)
 
         let viewModel = VMLibraryViewModel(
             storageService: storage,
@@ -111,19 +91,12 @@ struct VMLibraryViewModelEphemeralTests {
         viewModel.presenter = presenter
         await viewModel.library.loadVMs()
         let instance = try #require(
-            viewModel.instances.first { $0.configuration.id == first.config.id })
-        if !unsettled { instance.activity.placeForTesting(phase) }
-        // A suspension is a slot on disk, not a phase name: every predicate the
-        // discard paths read asks the file.
-        if phase == .suspended { try VMInstanceFixture.writeSaveFile(for: instance) }
-        let other = second.flatMap { seeded in
-            viewModel.instances.first { $0.configuration.id == seeded.config.id }
-        }
+            viewModel.instances.first { $0.configuration.id == seeded.config.id })
+        if !unsettled { instance.activity.placeForTesting(.running(sessionID: UUID())) }
 
         return Harness(
             viewModel: viewModel, storage: storage, virtualization: virtualization,
-            snapshots: snapshots, instance: instance, baseline: first.baseline,
-            later: first.later, other: other, otherBaseline: second?.baseline)
+            instance: instance, baseline: seeded.baseline, later: seeded.later)
     }
 
     /// Awaits every revert a power-off started, if it started any.

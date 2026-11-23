@@ -440,19 +440,18 @@ package final class VMInstance {
 
     // MARK: - Initializer
 
-    /// A VM whose bundle is on disk, whose clipboard publishes to and polls
-    /// `hostPasteboard` and stages under `stagingRoot`, and whose
-    /// ``activity`` forwards its records to `logSink`.
+    /// A VM whose bundle is on disk, and whose clipboard publishes to and polls
+    /// `hostPasteboard` and stages under `stagingRoot`.
     init(
         bundle: VMBundle, phase: VMLifecyclePhase, preferences: AppPreferences,
         hostPasteboard: any ClipboardPasteboard, bundleProducts: AppBundleProducts,
-        logSink: KernovaLogger.ForwardingSink?, agentConnector: (any HostConnectionMaking)? = nil,
+        agentConnector: (any HostConnectionMaking)? = nil,
         stagingRoot: ProcessStagingRoot = ClipboardFileStaging.processRoot
     ) {
         self.bundleProducts = bundleProducts
         self.instanceID = bundle.configuration.id
         self.bundle = bundle
-        self.activity = VMActivity(phase: phase, logSink: logSink)
+        self.activity = VMActivity(phase: phase)
         self.preferences = preferences
         let snapshots = AgentHubSnapshotRelay()
         let payloads = BundledGuestAgentPayloads(bundleProducts.guestAgents, guestOS: bundle.configuration.guestOS)

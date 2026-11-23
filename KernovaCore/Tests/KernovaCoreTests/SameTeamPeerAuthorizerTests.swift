@@ -15,4 +15,11 @@ struct SameTeamPeerAuthorizerTests {
         #expect(!SameTeamPeerAuthorizer.isSameTeam(peer: nil, own: "8MT4P4GZL2"))
         #expect(!SameTeamPeerAuthorizer.isSameTeam(peer: "", own: "8MT4P4GZL2"))
     }
+
+    @Test("The comparison is exact — a team is not a prefix match")
+    func teamsMatchExactly() {
+        #expect(!SameTeamPeerAuthorizer.isSameTeam(peer: "8MT4P4GZL", own: "8MT4P4GZL2"))
+        #expect(!SameTeamPeerAuthorizer.isSameTeam(peer: "8MT4P4GZL22", own: "8MT4P4GZL2"))
+        #expect(!SameTeamPeerAuthorizer.isSameTeam(peer: "8mt4p4gzl2", own: "8MT4P4GZL2"))
+    }
 }

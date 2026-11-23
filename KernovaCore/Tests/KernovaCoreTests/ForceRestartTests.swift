@@ -19,10 +19,6 @@ struct ForceRestartTests {
         Harness(WiredCommandCore(virtualization: MockVirtualizationService(), preferences: preferences))
     }
 
-    private func forceRestart(_ harness: Harness, _ instance: VMInstance, consent: Consent) async throws {
-        try await harness.core.restart(.id(instance.id), disposition: .force, timeout: nil, consent: consent)
-    }
-
     @Test("The intent gateway's restart is refused for Force Restart's consent without one, and restarts with one")
     func intentGatewayRoute() async throws {
         let harness = makeHarness()

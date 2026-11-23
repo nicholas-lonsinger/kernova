@@ -86,10 +86,6 @@ struct StopAnywayTests {
         return Fixture(harness: harness, instance: instance, probe: probe, system: system)
     }
 
-    private func stopAnyway(_ fixture: Fixture, consent: Consent) async throws {
-        try await fixture.harness.core.stop(.id(fixture.instance.id), disposition: .anyway, consent: consent)
-    }
-
     // MARK: - Restart Anyway
 
     private func restartAnyway(_ fixture: Fixture, consent: Consent) async throws {

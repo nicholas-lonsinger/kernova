@@ -1,7 +1,6 @@
 import Foundation
 import KernovaAgentHost
 import KernovaCommandModel
-import KernovaLogging
 import Synchronization
 import Testing
 
@@ -71,8 +70,7 @@ func makeTestLifecycle(
 /// ``VMLibrary/registerFixture(name:guestOS:phase:preferences:hostState:snapshots:pairings:files:agentConnector:mutate:)``.
 ///
 /// The caller keeps the library alive for as long as it edits: each instance
-/// reaches it weakly. The library and its VMs forward their records to
-/// `logSink`.
+/// reaches it weakly.
 @MainActor
 func makeWiredLibrary(
     storage: MockVMStorageService = MockVMStorageService(),
@@ -90,8 +88,7 @@ func makeWiredLibrary(
     appActivation: HostNotification = HostNotifications.isolated().appDidBecomeActive,
     hostPasteboard: any ClipboardPasteboard = FakePasteboard(),
     bundleProducts: AppBundleProducts = .testing,
-    virtualizationHost: any VirtualizationHostProviding = FakeVirtualizationHost(),
-    logSink: KernovaLogger.ForwardingSink? = nil
+    virtualizationHost: any VirtualizationHostProviding = FakeVirtualizationHost()
 ) -> VMLibrary {
     let library = VMLibrary(
         storageService: storage,
@@ -108,8 +105,7 @@ func makeWiredLibrary(
         bridgedInterfaces: bridgedInterfaces,
         appActivation: appActivation,
         hostPasteboard: hostPasteboard,
-        bundleProducts: bundleProducts,
-        logSink: logSink)
+        bundleProducts: bundleProducts)
     return library
 }
 
@@ -128,13 +124,6 @@ extension HostNotifications {
             systemDidWake: named("systemDidWake"),
             volumeDidMount: named("volumeDidMount"),
             volumeDidUnmount: named("volumeDidUnmount"))
-    }
-}
-
-extension HostNotification {
-    /// Posts this notification into its own center, as the host would.
-    func post() {
-        center.post(name: name, object: nil)
     }
 }
 
@@ -527,7 +516,7 @@ func withOperation<T>(
 ) async throws -> T {
     let instance = VMInstance(
         bundle: bundle, phase: .stopped, preferences: makeTestPreferences(), hostPasteboard: FakePasteboard(),
-        bundleProducts: .testing, logSink: nil)
+        bundleProducts: .testing)
     return try await withOperation(on: instance, .deletingSnapshot, body)
 }
 
@@ -560,26 +549,6 @@ extension VMInstance {
     var isHeldByRevert: Bool {
         guard case .bringUp(.reverting)? = phase.operation?.kind else { return false }
         return true
-    }
-
-    /// Launches a guest setup operation whose body parks until cancelled —
-    /// an install or download in flight, as far as anything reading the VM can
-    /// tell — calling `onCancel` as the cancel lands.
-    ///
-    /// The VM must owe the setup and be at rest, as any launch requires.
-    @discardableResult
-    func launchParkedSetup(onCancel: @escaping @Sendable () -> Void = {}) throws -> VMOutcome {
-        let kind: GuestSetupKind =
-            configuration.linuxInstallContext != nil ? .linuxImageDownload : .macOSInstall
-        return try activity.launchBringUp(.settingUp(kind)) {
-            (_: borrowing VMBringUpContext) async throws -> VMOperationEnding<Void> in
-            await withTaskCancellationHandler {
-                try? await Task.sleep(for: .seconds(60))
-            } onCancel: {
-                onCancel()
-            }
-            throw CancellationError()
-        }
     }
 
     /// The task the guest setup holding the VM runs in, or `nil` when none
@@ -671,33 +640,6 @@ extension VMMemorySize {
     func adding(gibibytes: UInt32) -> VMMemorySize {
         VMMemorySize(mebibytes: mebibytes + VMMemorySize.gibibytes(gibibytes).mebibytes)
     }
-}
-
-extension VMLifecycleCoordinator {
-    /// ``launchTakeSnapshot(_:mode:snapshot:resolving:record:)`` awaited,
-    /// answering the snapshot that landed — for a test that drives a capture
-    /// to its end.
-    @MainActor
-    func takeSnapshot(
-        _ instance: VMInstance, mode: VMCaptureMode, snapshot: VMSnapshotCaptureRequest,
-        record: @escaping @MainActor (borrowing VMEditPermit, VMSnapshot) throws -> Void
-    ) async throws -> VMSnapshot {
-        let outcome = VMOutcome()
-        let landed = LandedSnapshot()
-        try launchTakeSnapshot(instance, mode: mode, snapshot: snapshot, resolving: outcome) {
-            permit, captured in
-            try record(permit, captured)
-            landed.snapshot = captured
-        }
-        try await outcome.resolved()
-        return try #require(landed.snapshot)
-    }
-}
-
-/// The snapshot a capture listed, set inside the capture operation.
-@MainActor
-private final class LandedSnapshot {
-    var snapshot: VMSnapshot?
 }
 
 extension VMOutcome {

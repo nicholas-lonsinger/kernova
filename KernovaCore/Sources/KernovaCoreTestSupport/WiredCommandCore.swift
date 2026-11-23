@@ -2,7 +2,6 @@ import Foundation
 import KernovaAgentHost
 import KernovaCommandModel
 import KernovaKit
-import KernovaLogging
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
@@ -11,10 +10,8 @@ import KernovaTestSupport
 @testable import KernovaCore
 
 /// A real ``VMCommandCore`` over a wired library and mock services, with the
-/// adapter hooks that put things in front of the user recorded rather than
+/// display it surfaces and the failures it reports recorded rather than
 /// presented — what a front door's tests drive in place of the AppKit adapter.
-/// The core, the library and its VMs forward their records to the one
-/// `logSink` it is built with.
 ///
 /// A test overriding one of those hooks replaces its recording.
 @MainActor
@@ -47,15 +44,6 @@ final class WiredCommandCore {
 
     /// Each VM ``VMCommandCore/surfaceDisplay`` put in front of the user.
     private(set) var surfacedDisplays: [UUID] = []
-    /// Each row ``VMCommandCore/revealInLibrary`` put in front of the user.
-    private(set) var revealedInLibrary: [UUID] = []
-    /// Each VM ``VMCommandCore/revealInFinder`` selected in the Finder.
-    private(set) var revealedInFinder: [UUID] = []
-    /// How many times ``VMCommandCore/requestQuit`` fired.
-    private(set) var quitRequests = 0
-    /// Fires each time ``quitRequests`` rises: the core requests the quit from
-    /// a later main-actor turn, so a test awaits it.
-    let quitRequested = AsyncGate()
     /// Each failure ``VMCommandCore/onFailure`` received.
     private(set) var failures: [CommandError] = []
     /// Fires each time ``failures`` grows: an unattended failure is reported
@@ -76,8 +64,7 @@ final class WiredCommandCore {
         preferences: AppPreferences = makeTestPreferences(),
         virtualizationHost: any VirtualizationHostProviding = FakeVirtualizationHost(),
         bundleProducts: AppBundleProducts = .testing,
-        clock: any EngineClock = makePlatformEngineClock(),
-        logSink: KernovaLogger.ForwardingSink? = nil
+        clock: any EngineClock = makePlatformEngineClock()
     ) {
         let machineFiles = MockVMBundleMachineFiles(files: storage.files, fileSystem: fileSystem)
         let vmnet = ScriptedVmnetNetworks()
@@ -102,8 +89,7 @@ final class WiredCommandCore {
             organization: organization,
             guestAccountPasswords: passwords,
             bundleProducts: bundleProducts,
-            virtualizationHost: virtualizationHost,
-            logSink: logSink)
+            virtualizationHost: virtualizationHost)
         let core = VMCommandCore(
             library: library,
             lifecycle: lifecycle,
@@ -111,8 +97,7 @@ final class WiredCommandCore {
             diskImageService: diskImages,
             fileSystem: fileSystem,
             preferences: preferences,
-            clock: clock,
-            logSink: logSink)
+            clock: clock)
         let authority = MockSandboxSourceAuthority()
         core.sourceAuthority = authority
 
@@ -136,12 +121,6 @@ final class WiredCommandCore {
         self.pairingCoordinator = pairingCoordinator
 
         core.surfaceDisplay = { [weak self] in self?.surfacedDisplays.append($0.id) }
-        core.revealInLibrary = { [weak self] in self?.revealedInLibrary.append($0) }
-        core.revealInFinder = { [weak self] in self?.revealedInFinder.append($0.id) }
-        core.requestQuit = { [weak self] in
-            self?.quitRequests += 1
-            self?.quitRequested.notify()
-        }
         core.onFailure = { [weak self] failure, _ in
             self?.failures.append(failure)
             self?.failureReported.notify()

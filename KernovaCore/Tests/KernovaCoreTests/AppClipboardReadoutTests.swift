@@ -64,21 +64,4 @@ struct AppClipboardReadoutTests {
         #expect(!latest.cancelled.withLock { $0 })
         withExtendedLifetime((shown.operation, latest.operation)) {}
     }
-
-    // MARK: - Readout ranking
-
-    /// Stands a completed transfer — one that still has a bar to dwell on — on
-    /// `instance`.
-    private func finish(on instance: VMInstance, at date: Date) {
-        instance.clipboardTransfers.finish(
-            ClipboardTransferFinish(
-                gesture: .paste,
-                outcome: .completed(
-                    final: ClipboardProgressSnapshot(
-                        direction: .inbound, peerName: instance.name, currentItemName: nil,
-                        filesCompleted: 1, fileCount: 1, bytesTransferred: 2, totalBytes: 2,
-                        bytesPerSecond: nil, secondsRemaining: nil, gesture: .paste,
-                        elapsedSeconds: 1)),
-                peerName: instance.name, date: date))
-    }
 }

@@ -4,7 +4,6 @@ import Testing
 import Virtualization
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 @testable import KernovaVirtualization
 
 /// What a stop's completion tells the VM it was sent to, and how a session a

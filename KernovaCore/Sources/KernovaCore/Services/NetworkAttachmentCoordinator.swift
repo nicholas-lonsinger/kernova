@@ -412,8 +412,6 @@ package final class NetworkAttachmentCoordinator {
     }
 
     #if DEBUG
-    /// The in-flight backoff retry, for event-driven test waits.
-    var retryTaskForTesting: Task<Void, Never>? { retryTask }
     /// The in-flight vmnet materialization, for event-driven test waits.
     var vmnetMaterializationTaskForTesting: Task<Void, Never>? { vmnetMaterializationTask }
     #endif

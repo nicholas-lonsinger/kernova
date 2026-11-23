@@ -44,21 +44,9 @@ struct SidebarSmartGroupTests {
         )
     }
 
-    private func group(_ name: String, _ filter: VMLibraryFilter) -> VMSmartGroup {
-        VMSmartGroup(id: UUID(), name: name, filter: filter)
-    }
-
     private func names(in section: SidebarLayout.Section) -> [String] {
         guard case .rows(let rows) = section.content else { return [] }
         return rows.entries.map(\.name)
-    }
-
-    private func row(_ key: SidebarRowKey, in outline: NSOutlineView) -> Int {
-        (0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? SidebarRow)?.key == key } ?? -1
-    }
-
-    private func row(of section: SidebarSectionID, in outline: NSOutlineView) -> Int {
-        (0..<outline.numberOfRows).first { (outline.item(atRow: $0) as? SidebarSection)?.id == section } ?? -1
     }
 
     // MARK: - Header and menu

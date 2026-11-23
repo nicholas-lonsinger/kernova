@@ -1,7 +1,6 @@
 import Cocoa
 import CoreServices
 import Foundation
-import KernovaCommandModel
 import KernovaTestSupport
 import Testing
 

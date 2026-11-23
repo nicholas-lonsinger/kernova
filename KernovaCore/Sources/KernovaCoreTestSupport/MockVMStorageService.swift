@@ -37,10 +37,7 @@ final class MockVMStorageService: VMStorageProviding {
         var lastCloneRelativePaths: [String]?
         var cloneVMBundleError: (any Error)?
         var publishBundleError: (any Error)?
-        var discardStagedBundleError: (any Error)?
-        var deleteVMBundleError: (any Error)?
         var listVMBundlesError: (any Error)?
-        var afterPublish: (@MainActor () -> Void)?
         var publishHold: DispatchSemaphore?
         var cloneHold: DispatchSemaphore?
     }
@@ -135,14 +132,6 @@ final class MockVMStorageService: VMStorageProviding {
         state.withLock { $0.publishBundleError = error }
     }
 
-    func setDiscardStagedBundleError(_ error: (any Error)?) {
-        state.withLock { $0.discardStagedBundleError = error }
-    }
-
-    func setDeleteVMBundleError(_ error: (any Error)?) {
-        state.withLock { $0.deleteVMBundleError = error }
-    }
-
     func setListVMBundlesError(_ error: (any Error)?) {
         state.withLock { $0.listVMBundlesError = error }
     }
@@ -152,40 +141,10 @@ final class MockVMStorageService: VMStorageProviding {
         files.setReplaceError(error, for: VMBundleLayout.configRelativePath)
     }
 
-    /// Thrown by every later replace of `host-state.json`.
-    func setSaveHostStateError(_ error: (any Error)?) {
-        files.setReplaceError(error, for: VMBundleLayout.hostStateRelativePath)
-    }
-
-    /// Makes the bundle's `config.json` read as present but unreadable, or
-    /// readable again.
-    func setConfigurationUnreadable(_ isUnreadable: Bool, at bundleURL: URL) {
-        files.setUnreadable(isUnreadable, relativePath: VMBundleLayout.configRelativePath, at: bundleURL)
-    }
-
     /// Makes the bundle's `host-state.json` read as present but unreadable, or
     /// readable again.
     func setHostStateUnreadable(_ isUnreadable: Bool, at bundleURL: URL) {
         files.setUnreadable(isUnreadable, relativePath: VMBundleLayout.hostStateRelativePath, at: bundleURL)
-    }
-
-    // periphery:ignore:parameters isolation - `isolated` keeps `body` on the caller's actor
-    /// Runs `body` with `hook` installed to run on the main actor once each
-    /// publish's rename has landed and before the publishing arrival resumes —
-    /// the window between the rename and the arrival's adoption. The publish
-    /// runs detached while the main actor waits on it, so the hop cannot
-    /// deadlock.
-    ///
-    /// The hook is gone once `body` ends, so one capturing the library that
-    /// owns this store keeps neither alive past it.
-    func withAfterPublish<Value>(
-        _ hook: @escaping @MainActor () -> Void,
-        isolation: isolated (any Actor)? = #isolation,
-        _ body: () async throws -> Value
-    ) async rethrows -> Value {
-        state.withLock { $0.afterPublish = hook }
-        defer { state.withLock { $0.afterPublish = nil } }
-        return try await body()
     }
 
     /// Holds every later publish on its own thread, after its rename has
@@ -310,9 +269,6 @@ final class MockVMStorageService: VMStorageProviding {
             publishLanded.notify()
             waits.run { try Backstop("the test's release of the publish").wait(for: publishHold) }
         }
-        if let afterPublish = state.withLock({ $0.afterPublish }) {
-            DispatchQueue.main.sync { MainActor.assumeIsolated { afterPublish() } }
-        }
     }
 
     /// A bundle the store holds is identified as the default case-insensitive
@@ -330,18 +286,9 @@ final class MockVMStorageService: VMStorageProviding {
     }
 
     func discardStagedBundle(at stagedURL: URL) throws {
-        try state.withLock { state in
-            state.discardedStagedURLs.append(stagedURL)
-            if let error = state.discardStagedBundleError { throw error }
-        }
+        state.withLock { $0.discardedStagedURLs.append(stagedURL) }
         try? FileManager.default.removeItem(at: stagedURL)
         files.removeBundle(at: stagedURL)
-    }
-
-    /// Moves a bundle within the store, as the Finder moving it inside the VMs
-    /// directory would.
-    func moveBundle(from source: URL, to destination: URL) {
-        files.moveBundle(from: source, to: destination)
     }
 
     @discardableResult
@@ -351,10 +298,7 @@ final class MockVMStorageService: VMStorageProviding {
     }
 
     func deleteVMBundle(at bundleURL: URL) throws {
-        try state.withLock { state in
-            state.deleteVMBundleCallCount += 1
-            if let error = state.deleteVMBundleError { throw error }
-        }
+        state.withLock { $0.deleteVMBundleCallCount += 1 }
         files.removeBundle(at: bundleURL)
     }
 

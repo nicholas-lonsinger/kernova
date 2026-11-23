@@ -1,10 +1,6 @@
 import Foundation
 import Synchronization
 
-#if SWIFT_PACKAGE
-import KernovaTestSupport
-#endif
-
 @testable import KernovaCore
 
 /// Recording mock for `FileSystemOperating`.
@@ -27,10 +23,6 @@ final class MockFileSystem: FileSystemOperating {
     }
 
     private let state = Mutex(State())
-
-    /// Fires after each recorded trash or remove, so a test can wait on a
-    /// cleanup production runs from a detached task instead of polling for it.
-    let recorded = AsyncGate()
 
     /// URLs passed to `trashItem(at:)`, in call order.
     ///
@@ -65,7 +57,6 @@ final class MockFileSystem: FileSystemOperating {
             if let error = state.trashError { throw error }
             state.trashedURLs.append(url)
         }
-        recorded.notify()
     }
 
     func removeItem(at url: URL) throws {
@@ -73,6 +64,5 @@ final class MockFileSystem: FileSystemOperating {
             if let error = state.removeError { throw error }
             state.removedURLs.append(url)
         }
-        recorded.notify()
     }
 }

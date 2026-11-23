@@ -1,6 +1,5 @@
 import Foundation
 import KernovaCommandModel
-import KernovaLogging
 import KernovaTestSupport
 import Synchronization
 import Testing
@@ -65,7 +64,7 @@ struct VMOtherCopyHoldTests {
             bundle: VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: access.store))
                 .make(VMInstanceFixture.read(url, from: access)),
             phase: .stopped, preferences: makeTestPreferences(),
-            hostPasteboard: FakePasteboard(), bundleProducts: .testing, logSink: nil)
+            hostPasteboard: FakePasteboard(), bundleProducts: .testing)
     }
 
     // MARK: - Edits

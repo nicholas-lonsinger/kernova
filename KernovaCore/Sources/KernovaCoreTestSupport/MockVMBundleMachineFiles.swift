@@ -27,11 +27,8 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         var discardedIDs: [UUID] = []
         var removedDirectoryIDs: [UUID] = []
         var sweptStagingBundleURLs: [URL] = []
-        var sizes: [UUID: SnapshotSize] = [:]
         var diskSizes: [UUID: VMBundleLayout.DiskSizes] = [:]
         var diskSizeReads = 0
-        var captureError: (any Error)?
-        var discardError: (any Error)?
         var platformMachineIdentifier: Data?
     }
 
@@ -54,11 +51,6 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
     }
 
     // MARK: - Seeding
-
-    /// Seeds the size one snapshot reports.
-    func setSize(_ size: SnapshotSize, for snapshotID: UUID) {
-        state.withLock { $0.sizes[snapshotID] = size }
-    }
 
     /// Seeds the figures one disk image reports; an image not seeded reads
     /// as unreadable.
@@ -85,17 +77,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
     var removedDirectoryIDs: [UUID] { state.withLock { $0.removedDirectoryIDs } }
     var sweptStagingBundleURLs: [URL] { state.withLock { $0.sweptStagingBundleURLs } }
 
-    // MARK: - Error injection
-
-    /// Sets the error every later disk or suspend-slot capture throws.
-    func setCaptureError(_ error: (any Error)?) {
-        state.withLock { $0.captureError = error }
-    }
-
-    /// Sets the error every later `discardSnapshot` throws.
-    func setDiscardError(_ error: (any Error)?) {
-        state.withLock { $0.discardError = error }
-    }
+    // MARK: - Platform files
 
     /// Once set, `createMacPlatformFiles` writes `identifier` as the bundle's
     /// `MachineIdentifier` and answers it, decoding no hardware model — which
@@ -121,17 +103,10 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
     }
 
     func captureDisks(bundleURL: URL, snapshotID: UUID, relativePaths: [String]) throws {
-        try state.withLock { state in
-            if let error = state.captureError { throw error }
-            state.capturedPaths[snapshotID] = relativePaths
-        }
+        state.withLock { $0.capturedPaths[snapshotID] = relativePaths }
     }
 
-    func captureSuspendSlot(bundleURL: URL, snapshotID: UUID) throws {
-        try state.withLock { state in
-            if let error = state.captureError { throw error }
-        }
-    }
+    func captureSuspendSlot(bundleURL: URL, snapshotID: UUID) throws {}
 
     /// Answers the plan for a snapshot this store captured or was seeded with;
     /// a snapshot with no recorded configuration refuses, exactly as a snapshot
@@ -159,10 +134,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
     func installRestore(bundleURL: URL, plan: VMSnapshotRestorePlan) throws {}
 
     func discardSnapshot(bundleURL: URL, snapshotID: UUID) throws {
-        try state.withLock { state in
-            if let error = state.discardError { throw error }
-            state.discardedIDs.append(snapshotID)
-        }
+        state.withLock { $0.discardedIDs.append(snapshotID) }
     }
 
     func removeSnapshotDirectory(bundleURL: URL, snapshotID: UUID) {
@@ -173,12 +145,9 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         state.withLock { $0.sweptStagingBundleURLs.append(bundleURL) }
     }
 
+    /// Every snapshot reports zero bytes.
     func snapshotSizes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: SnapshotSize] {
-        state.withLock { state in
-            var sizes: [UUID: SnapshotSize] = [:]
-            for id in snapshotIDs { sizes[id] = state.sizes[id] ?? SnapshotSize(bytes: 0, privateBytes: nil) }
-            return sizes
-        }
+        Dictionary(uniqueKeysWithValues: snapshotIDs.map { ($0, SnapshotSize(bytes: 0, privateBytes: nil)) })
     }
 
     func diskSizes(

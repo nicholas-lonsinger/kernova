@@ -1,9 +1,6 @@
 import Cocoa
-import KernovaAgentCore
-import KernovaAgentHost
 import KernovaKit
 import KernovaTestSupport
-import KernovaWire
 import Testing
 
 @testable import KernovaCore
@@ -51,10 +48,6 @@ struct VMToolbarManagerTests {
             capabilities: VMCapabilityCatalog(library: library ?? makeLibrary().library),
             instanceProvider: selection ?? { instance }
         )
-    }
-
-    private func item(_ rawIdentifier: String, in toolbar: NSToolbar) -> NSToolbarItem? {
-        toolbar.items.first { $0.itemIdentifier.rawValue == rawIdentifier }
     }
 
     // MARK: - Clipboard commands

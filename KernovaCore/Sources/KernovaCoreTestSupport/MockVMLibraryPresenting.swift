@@ -23,53 +23,16 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     /// `nil` for an alert offering none.
     private(set) var errorSettingsDestinations: [SettingsDestination?] = []
     private(set) var startFailedAttachments: [StartFailedAttachment] = []
-    private(set) var startFailedAttachmentInstances: [VMInstance] = []
-    /// The VMs each start report named — an attachment failure, a message
-    /// failure, or the launch account — in the order reported.
-    private(set) var startReportVMIDs: [[UUID]] = []
-    /// Whether each delete-sheet request asked for the immediate (bypass-Trash)
-    /// variant.
-    private(set) var deleteSheetPermanentlyFlags: [Bool] = []
     private(set) var revertSnapshots: [VMSnapshot] = []
-    /// Parallel to `revertSnapshots`: the VM each request named.
-    private(set) var revertSnapshotInstances: [VMInstance] = []
     private(set) var deleteSnapshots: [VMSnapshot] = []
-    private(set) var deleteSnapshotInstances: [VMInstance] = []
     private(set) var forceStopInstances: [VMInstance] = []
-    private(set) var recoveryBootInstances: [VMInstance] = []
-    private(set) var pausedStopInstances: [VMInstance] = []
-    private(set) var cancelPreparingArrivals: [VMArrival] = []
-    private(set) var installerMountedNames: [String] = []
-    private(set) var installerMountedPurposes: [GuestAgentInstallerPurpose] = []
-    /// Parallel to `installerMountedNames`: how each request said the disk
-    /// reaches the guest.
-    private(set) var installerMountedDeliveries: [GuestAgentDiskDelivery] = []
-    /// Each Linux install question asked: the VM and the choice it started on.
-    private(set) var linuxAgentInstallChoices: [(instance: VMInstance, initial: LinuxAgentInstallChoice)] = []
-    /// Pairing prompts raised, each still unanswered until a test answers it.
-    private(set) var usbPairingRequests: [USBAccessoryPairingRequest] = []
-    /// Guest-account prompts raised, in order.
-    private(set) var guestAccountPasswordRequests: [GuestAccountPasswordRequest] = []
-    /// What this mock answers a guest-account prompt with, answered on the spot.
-    ///
-    /// The start that raises one suspends on the answer, so a recorded-and-left
-    /// request would hang the call under test rather than fail it.
-    var guestAccountPasswordAnswer: PresenterAnswer<GuestAccountPasswordAnswer> = .answered(.skip)
-    private(set) var focusGuestDisplayInstances: [VMInstance] = []
     /// Confirmations a verb asked for, in order.
     private(set) var confirmationRequests: [ConfirmationRequest] = []
-    /// What this mock answers a confirmation with, answered on the spot for the
-    /// reason ``guestAccountPasswordAnswer`` is.
+    /// What this mock answers a confirmation with, answered on the spot.
+    ///
+    /// The verb that raises one suspends on the answer, so a recorded-and-left
+    /// request would hang the call under test rather than fail it.
     var confirmationAnswer: PresenterAnswer<ConfirmationAnswer> = .answered(.decline)
-    /// Route questions a verb asked, in order.
-    private(set) var stepRouteRequests: [StepRouteRequest] = []
-    /// What this mock answers a route question with, answered on the spot for
-    /// the reason ``guestAccountPasswordAnswer`` is; unasked by default, which
-    /// leaves the refusal to the error path.
-    var stepRouteAnswer: PresenterAnswer<StepRoute?> = .unasked
-    /// The title of the route this mock chooses instead, when set — the routes
-    /// a real refusal names are the core's to build.
-    var choosesRouteTitled: String?
 
     func presentError(_ message: String, title: String, about subject: AlertSubject) {
         record(message, title: title, about: subject, openingSettingsAt: nil)
@@ -91,69 +54,48 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     }
     func presentStartFailedAttachment(_ failure: StartFailedAttachment, for instance: VMInstance) {
         startFailedAttachments.append(failure)
-        startFailedAttachmentInstances.append(instance)
-        startReportVMIDs.append([instance.id])
     }
-    /// Recorded as the error alert it is drawn as, and as a start report.
+    /// Recorded as the error alert it is drawn as.
     func presentStartFailure(_ message: String, title: String, for instance: VMInstance) {
         presentError(message, title: title, about: .vm(instance))
-        startReportVMIDs.append([instance.id])
     }
-    /// Recorded as the error alert it is drawn as, and as a start report.
+    /// Recorded as the error alert it is drawn as.
     func presentStartSummary(title: String, undone: [VMGroupActionResult]) {
         presentError(undone.undoneMessage(for: .start), title: title, about: .library)
-        startReportVMIDs.append(undone.map(\.vm.id))
     }
-    func presentDeleteSheet(for instance: VMInstance, permanently: Bool) {
-        deleteSheetPermanentlyFlags.append(permanently)
-    }
+    func presentDeleteSheet(for instance: VMInstance, permanently: Bool) {}
     func presentTakeSnapshotSheet(for instance: VMInstance, purpose: TakeSnapshotPurpose) {}
     func presentRevertSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance) {
         revertSnapshots.append(snapshot)
-        revertSnapshotInstances.append(instance)
     }
     func presentDeleteSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance) {
         deleteSnapshots.append(snapshot)
-        deleteSnapshotInstances.append(instance)
     }
     func presentForceStop(for instance: VMInstance) { forceStopInstances.append(instance) }
-    func presentRecoveryBoot(for instance: VMInstance) { recoveryBootInstances.append(instance) }
-    func presentStopPaused(for instance: VMInstance) { pausedStopInstances.append(instance) }
-    func presentCancelPreparing(for arrival: VMArrival) { cancelPreparingArrivals.append(arrival) }
+    func presentRecoveryBoot(for instance: VMInstance) {}
+    func presentStopPaused(for instance: VMInstance) {}
+    func presentCancelPreparing(for arrival: VMArrival) {}
     func presentInstallerMounted(
         for instance: VMInstance, purpose: GuestAgentInstallerPurpose,
         delivery: GuestAgentDiskDelivery
-    ) {
-        installerMountedNames.append(instance.name)
-        installerMountedPurposes.append(purpose)
-        installerMountedDeliveries.append(delivery)
-    }
-    func presentLinuxAgentInstallChoice(for instance: VMInstance, initial: LinuxAgentInstallChoice) {
-        linuxAgentInstallChoices.append((instance, initial))
-    }
-    func presentUSBAccessoryPairing(_ request: USBAccessoryPairingRequest) {
-        usbPairingRequests.append(request)
-    }
+    ) {}
+    func presentLinuxAgentInstallChoice(for instance: VMInstance, initial: LinuxAgentInstallChoice) {}
+    func presentUSBAccessoryPairing(_ request: USBAccessoryPairingRequest) {}
+    /// Skips the account, answered on the spot for the reason
+    /// ``confirmationAnswer`` is.
     func presentGuestAccountPassword(_ request: GuestAccountPasswordRequest) {
-        guestAccountPasswordRequests.append(request)
-        request.answer(guestAccountPasswordAnswer)
+        request.answer(.answered(.skip))
     }
     func presentConfirmationRequest(_ request: ConfirmationRequest) {
         confirmationRequests.append(request)
         request.answer(confirmationAnswer)
     }
+    /// Unasked, which leaves the refusal to the error path.
     func presentStepRoutes(_ request: StepRouteRequest) {
-        stepRouteRequests.append(request)
-        if let choosesRouteTitled {
-            request.answer(.answered(request.requirement.routes.first { $0.title == choosesRouteTitled }))
-        } else {
-            request.answer(stepRouteAnswer)
-        }
+        request.answer(.unasked)
     }
     func presentCreationWizard() {}
-    func focusGuestDisplay(for instance: VMInstance) {
-        focusGuestDisplayInstances.append(instance)
-    }
+    func focusGuestDisplay(for instance: VMInstance) {}
 
     // MARK: - Mirror accessors (read like the former VM flags)
 
@@ -162,19 +104,8 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     var errorTitle: String? { errorTitles.last }
     var errorSubject: AlertSubject? { errorSubjects.last }
     var errorSettingsDestination: SettingsDestination? { errorSettingsDestinations.last ?? nil }
-    /// Whether the most recent delete-sheet request asked for immediate delete.
-    var lastDeleteSheetPermanently: Bool? { deleteSheetPermanentlyFlags.last }
     var showForceStopConfirmation: Bool { !forceStopInstances.isEmpty }
     var instanceToForceStop: VMInstance? { forceStopInstances.last }
-    var showRecoveryBootConfirmation: Bool { !recoveryBootInstances.isEmpty }
-    var instanceToRecoveryBoot: VMInstance? { recoveryBootInstances.last }
-    var instanceToStopPaused: VMInstance? { pausedStopInstances.last }
-    var showCancelPreparingConfirmation: Bool { !cancelPreparingArrivals.isEmpty }
-    var arrivalToCancel: VMArrival? { cancelPreparingArrivals.last }
-    var showInstallerMountedAlert: Bool { !installerMountedNames.isEmpty }
-    var installerMountedVMName: String? { installerMountedNames.last }
-    var installerMountedPurpose: GuestAgentInstallerPurpose? { installerMountedPurposes.last }
-    var installerMountedDelivery: GuestAgentDiskDelivery? { installerMountedDeliveries.last }
 }
 
 extension AlertSubject {

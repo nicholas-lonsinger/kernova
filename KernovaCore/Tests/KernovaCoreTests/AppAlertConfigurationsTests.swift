@@ -11,6 +11,20 @@ import Testing
 @Suite("AppAlertConfigurations", .serialized, .caseScoped)
 @MainActor
 struct AppAlertConfigurationsTests {
+    private let preferences = makeTestPreferences()
+
+    private func makeConfigurations() -> (AppAlertConfigurations, VMLibraryViewModel) {
+        let viewModel = makeLibraryViewModel(preferences: preferences)
+        return (AppAlertConfigurations(viewModel: viewModel), viewModel)
+    }
+
+    private func makeInstance(
+        name: String = "Test VM", in viewModel: VMLibraryViewModel,
+        hostState: VMHostState = VMHostState()
+    ) -> VMInstance {
+        viewModel.library.admitFixture(name: name, hostState: hostState)
+    }
+
     // MARK: - The start-failed removal offer
 
     private func makeStartFailure(
@@ -20,6 +34,24 @@ struct AppAlertConfigurationsTests {
         StartFailedAttachment(
             verb: verb, kind: kind, reason: reason, id: UUID(), label: "Archive",
             message: message)
+    }
+
+    /// A saved state survives a removal of removable media, so the Start the
+    /// recovery runs restores it — and the button says so.
+    @Test("The removal offer names Resume where the saved state survives the removal")
+    func startFailedAlertNamesResumeWhereTheStateSurvives() throws {
+        let (configurations, viewModel) = makeConfigurations()
+        let vm = makeInstance(in: viewModel)
+        try VMInstanceFixture.writeSaveFile(for: vm)
+
+        let media = configurations.startFailedAttachmentConfig(
+            makeStartFailure(.notFound, message: "gone", verb: .resume, kind: .removableMedia),
+            vm)
+        let disk = configurations.startFailedAttachmentConfig(
+            makeStartFailure(.notFound, message: "gone", verb: .resume), vm)
+
+        #expect(media.buttons.map(\.title) == ["Remove and Resume", "Cancel"])
+        #expect(disk.buttons.map(\.title) == ["Remove and Start", "Cancel"])
     }
 
     /// Settings are locked while a saved state is on disk, so the one remedy

@@ -18,8 +18,6 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
     private struct State: Sendable {
         var acceptor: GuestStreamAcceptor?
         var commands: [HostCommand] = []
-        var policies: [PolicySnapshot] = []
-        var bundles: [[BundledPayload]] = []
         var handlers: [(queue: DispatchQueue, handler: @Sendable (HostEvent) -> Void)] = []
         /// How each power peer answers a power request, by connection index.
         var powerAnswers: [Int: @Sendable (PowerAction) -> [PowerRequestResult]] = [:]
@@ -33,10 +31,6 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
 
     /// Every command sent to any connection, in order.
     package var commands: [HostCommand] { state.withLock(\.commands) }
-    /// The policy each connection was built with, in order.
-    package var policies: [PolicySnapshot] { state.withLock(\.policies) }
-    /// The bundles each connection was built to offer, in order.
-    package var bundles: [[BundledPayload]] { state.withLock(\.bundles) }
     /// Whether a hub has started this transport.
     package var isStarted: Bool { state.withLock { $0.acceptor != nil } }
 
@@ -128,8 +122,6 @@ package final class AgentHubProbe: HostConnectionMaking, GuestStreamTransport {
         deliveringOn queue: DispatchQueue, _ handler: @escaping @Sendable (HostEvent) -> Void
     ) -> any HostConnectionHandle {
         let index = state.withLock { state in
-            state.policies.append(policy)
-            state.bundles.append(bundles)
             state.handlers.append((queue, handler))
             return state.handlers.count
         }

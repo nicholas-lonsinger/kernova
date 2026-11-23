@@ -21,13 +21,6 @@ struct NetworkAttachmentCoordinatorTests {
         init(_ choice: NetworkChoice?) { self.choice = choice }
     }
 
-    /// Mutable eligibility the coordinator's `isEligible` closure reads,
-    /// standing in for the live `VMInstance.status` gate.
-    @MainActor
-    private final class EligibilityBox {
-        var isEligible = true
-    }
-
     private struct Harness {
         let coordinator: NetworkAttachmentCoordinator
         let device: MockNetworkDeviceControl
@@ -35,11 +28,7 @@ struct NetworkAttachmentCoordinatorTests {
         let vmnet: ScriptedVmnetNetworks
         /// The VM the coordinator's session view is for.
         let owner: UUID
-        let observer: MockNetworkLinkObserver
-        let clock: TestEngineClock
-        let eligibility: EligibilityBox
         let choiceBox: ChoiceBox
-        let reports: ReportRecorder
         /// How many networks the harness stood up before the coordinator ran.
         let preMaterialized: Int
 
@@ -56,21 +45,12 @@ struct NetworkAttachmentCoordinatorTests {
         }
     }
 
-    /// Records every attachment report, standing in for
-    /// `VMInstance.networkAttachment`.
-    @MainActor
-    private final class ReportRecorder {
-        private(set) var values: [NetworkAttachmentState?] = []
-        func record(_ value: NetworkAttachmentState?) { values.append(value) }
-    }
-
     private func makeHarness(
         choice: NetworkChoice?,
         devicePlan: NetworkAttachmentPlan? = nil,
         available: [BridgedInterface] = [],
         primary: String? = nil,
         entitled: Bool = false,
-        retryDelays: [TimeInterval] = [],
         materialized: [VmnetNetworkSelection] = [.common(.nat), .common(.hostOnly)]
     ) -> Harness {
         let provider = MockBridgedInterfaceProvider(available: available, primary: primary)
@@ -80,27 +60,22 @@ struct NetworkAttachmentCoordinatorTests {
         let device = MockNetworkDeviceControl(plan: devicePlan, vmnetNetworks: sessionNetworks)
         // In order: joining a network takes the VM off the one before it.
         for network in materialized { vmnet.join(network, through: sessionNetworks) }
-        let observer = MockNetworkLinkObserver()
-        let clock = TestEngineClock()
-        let eligibility = EligibilityBox()
         let choiceBox = ChoiceBox(choice)
-        let reports = ReportRecorder()
         let coordinator = NetworkAttachmentCoordinator(
             vmName: "Test VM",
             device: device,
             interfaces: provider,
-            linkObserver: observer,
+            linkObserver: MockNetworkLinkObserver(),
             vmnetNetworks: sessionNetworks,
             entitlements: entitled ? .entitled : .unentitled,
-            retryDelays: retryDelays,
-            clock: clock,
-            isEligible: { eligibility.isEligible },
+            retryDelays: [],
+            clock: TestEngineClock(),
+            isEligible: { true },
             choice: { choiceBox.choice },
-            onAttachmentChange: { reports.record($0) })
+            onAttachmentChange: { _ in })
         return Harness(
             coordinator: coordinator, device: device, provider: provider,
-            vmnet: vmnet, owner: owner, observer: observer, clock: clock, eligibility: eligibility,
-            choiceBox: choiceBox, reports: reports,
+            vmnet: vmnet, owner: owner, choiceBox: choiceBox,
             preMaterialized: vmnet.operations.createdKinds.count)
     }
 

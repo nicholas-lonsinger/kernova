@@ -39,10 +39,6 @@ package final class VMCommandSocketListener {
     private var connections: [ObjectIdentifier: VMCommandConnection] = [:]
 
     #if DEBUG
-    /// Fires on the main actor whenever a connection is adopted or forgotten,
-    /// so a test can await the transport's own bookkeeping rather than poll it.
-    var onConnectionsChangedForTesting: (@MainActor () -> Void)?
-
     /// How many clients are connected.
     var connectionCountForTesting: Int { connections.count }
     #endif
@@ -165,16 +161,10 @@ package final class VMCommandSocketListener {
                 self?.forget(connection)
             }
         }
-        #if DEBUG
-        onConnectionsChangedForTesting?()
-        #endif
     }
 
     private func forget(_ connection: VMCommandConnection) {
-        guard connections.removeValue(forKey: ObjectIdentifier(connection)) != nil else { return }
-        #if DEBUG
-        onConnectionsChangedForTesting?()
-        #endif
+        connections.removeValue(forKey: ObjectIdentifier(connection))
     }
 
     // MARK: - Accept

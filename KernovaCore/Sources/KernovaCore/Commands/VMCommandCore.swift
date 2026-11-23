@@ -56,7 +56,7 @@ package enum VMBringUpPresence: Sendable, Equatable {
 @MainActor
 package final class VMCommandCore {
     /// What this core's verbs log to.
-    let logger: KernovaLogger
+    let logger = KernovaLogger(subsystem: "app.kernova", category: "VMCommandCore")
 
     // MARK: - Collaborators
 
@@ -187,8 +187,7 @@ package final class VMCommandCore {
 
     // MARK: - Initialization
 
-    /// A core over `library`, whose verbs' records forward to `logSink` —
-    /// `nil` forwards them to the process sink.
+    /// A core over `library`.
     init(
         library: VMLibrary,
         lifecycle: VMLifecycleCoordinator,
@@ -196,10 +195,8 @@ package final class VMCommandCore {
         diskImageService: any DiskImageProviding,
         fileSystem: any FileSystemOperating,
         preferences: AppPreferences,
-        clock: any EngineClock = makePlatformEngineClock(),
-        logSink: KernovaLogger.ForwardingSink?
+        clock: any EngineClock = makePlatformEngineClock()
     ) {
-        self.logger = KernovaLogger(subsystem: "app.kernova", category: "VMCommandCore", sink: logSink)
         self.library = library
         self.lifecycle = lifecycle
         self.storageService = storageService

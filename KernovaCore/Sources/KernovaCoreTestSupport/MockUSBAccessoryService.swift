@@ -1,9 +1,5 @@
 import Foundation
 
-#if SWIFT_PACKAGE
-import KernovaTestSupport
-#endif
-
 @testable import KernovaCore
 
 /// Stand-in for `USBAccessoryProviding` over an explicit accessory list, with
@@ -14,7 +10,6 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
     var onAccessoryAssigned: (@MainActor (USBAccessoryInfo) -> Void)?
     var accessoriesHeldByGuests: (@MainActor () -> [USBAccessoryInfo])?
 
-    var startObservingCallCount = 0
     var attachedRegistryIDs: [UInt64] = []
     var detachedDeviceIDs: [UUID] = []
     var attachError: (any Error)?
@@ -24,9 +19,7 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
     /// will detach. A fresh identifier when nil.
     var nextDeviceID: UUID?
 
-    func startObserving() {
-        startObservingCallCount += 1
-    }
+    func startObserving() {}
 
     /// Plays macOS assigning `info` to Kernova, listing it and telling the
     /// coordinator.
@@ -51,44 +44,9 @@ final class MockUSBAccessoryService: USBAccessoryProviding {
         return info
     }
 
-    // MARK: - Suspension
-
-    /// Suspends the next `attach` until ``resumeAttach()``, so a test can hold
-    /// an edit open and observe what happens underneath it. One at a time, for
-    /// the reason `SuspendingMockRemovableMediaDeviceService` states.
-    var suspendNextAttach = false
-
-    private var suspendedContinuation: CheckedContinuation<Void, Never>?
-
-    /// Fired as an attach parks in `suspendIfNeeded()`.
-    private let suspended = AsyncGate()
-
-    /// Waits until a suspended `attach` has actually reached its suspension,
-    /// throwing at the backstop if none does.
-    func attachStarted() async throws {
-        try await suspended.wait { suspendedContinuation != nil }
-    }
-
-    /// Lets the suspended `attach` finish.
-    func resumeAttach() {
-        suspendedContinuation?.resume()
-        suspendedContinuation = nil
-    }
-
-    private func suspendIfNeeded() async {
-        guard suspendNextAttach else { return }
-        suspendNextAttach = false
-        precondition(suspendedContinuation == nil, "Only one attach can be suspended at a time")
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            suspendedContinuation = continuation
-            suspended.notify()
-        }
-    }
-
     func attach(_ reservation: borrowing VMAccessoryReservation) async throws -> AttachedUSBAccessory {
         let registryID = reservation.registryID
         attachedRegistryIDs.append(registryID)
-        await suspendIfNeeded()
         if let attachError { throw attachError }
         guard let info = accessories.first(where: { $0.registryID == registryID }) else {
             throw USBAccessoryError.accessoryNotFound

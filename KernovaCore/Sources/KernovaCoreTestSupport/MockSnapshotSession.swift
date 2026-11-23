@@ -18,8 +18,6 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
     private(set) var guestState: GuestState
     private(set) var calls: [String] = []
 
-    var saveError: (any Error)?
-
     /// Whether a save lays a stand-in file at the URL it was handed, as VZ
     /// lays the saved state — for a caller that reads the file's presence.
     private let writesStateFile: Bool
@@ -32,10 +30,6 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
     init(guestState: GuestState, writesStateFile: Bool = false) {
         self.guestState = guestState
         self.writesStateFile = writesStateFile
-    }
-
-    func setSaveError(_ error: any Error) {
-        saveError = error
     }
 
     func setAfterSave(_ work: @escaping @Sendable () async -> Void) {
@@ -54,41 +48,20 @@ actor MockSnapshotSession: VMSnapshotSessionOperating {
         guestState = .running
     }
 
-    /// Device UUIDs `detachUSBDevice(uuid:)` was asked for, in order.
-    private(set) var detachedUSBDeviceIDs: [UUID] = []
-    var detachError: (any Error)?
+    private var detachError: (any Error)?
 
-    /// The one device `detachError` answers for, `nil` for every one of them.
-    private var detachErrorDeviceID: UUID?
-
-    /// Fails the detach of `deviceID`, or of every device when none is named —
-    /// which is what separates a sweep that throws part-way from one that
-    /// throws on its first device.
-    func setDetachError(_ error: any Error, forDeviceID deviceID: UUID? = nil) {
+    /// Fails the detach of every device.
+    func setDetachError(_ error: any Error) {
         detachError = error
-        detachErrorDeviceID = deviceID
-    }
-
-    /// Runs as each detach begins, before it can throw — the moment a sweep
-    /// has committed to taking that device off.
-    private var beforeDetach: (@Sendable (UUID) async -> Void)?
-
-    func setBeforeDetach(_ work: @escaping @Sendable (UUID) async -> Void) {
-        beforeDetach = work
     }
 
     func detachUSBDevice(uuid: UUID) async throws {
         calls.append("detachUSBDevice")
-        await beforeDetach?(uuid)
-        if let detachError, detachErrorDeviceID == nil || detachErrorDeviceID == uuid {
-            throw detachError
-        }
-        detachedUSBDeviceIDs.append(uuid)
+        if let detachError { throw detachError }
     }
 
     func saveMachineState(to url: URL, _ grant: VMLiveStateCapture.SaveGrant) async throws {
         calls.append("saveMachineState")
-        if let saveError { throw saveError }
         if writesStateFile {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
