@@ -46,7 +46,7 @@ var products: [Product] = [
 ]
 
 var dependencies: [Package.Dependency] = [
-    .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.39.0")
+    .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.41.0")
 ]
 
 var targets: [Target] = [

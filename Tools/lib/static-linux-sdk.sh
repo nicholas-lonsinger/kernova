@@ -12,7 +12,7 @@
 # shellcheck disable=SC2034 # read by the scripts that source this
 STATIC_SDK_VERSION=0.1.0
 # shellcheck disable=SC2034
-STATIC_SDK_CHECKSUM=cef5592d7430ed3c5ae1ddda479849c6f5252bd94a5723db1559f984caf38a7c
+STATIC_SDK_CHECKSUM=529e6982974de78793c8348c1459105a772f54b464a51edf074e5b9c4bfe7c73
 
 # pinned_swift_version: the swift.org release .swift-version pins.
 pinned_swift_version() {
