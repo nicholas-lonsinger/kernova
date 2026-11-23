@@ -72,20 +72,17 @@ verdict() { # <exit-code> <token> [key=value ...]
 # worktree_state — prints the worktree token for the calling checkout.
 worktree_state() {
     local own head_ref head tip
-    if ! own=$(git rev-parse --show-toplevel 2>/dev/null) || ! read_worktree_layout "$own"; then
-        echo none; return
-    fi
-    [ "$own" -ef "$main_root" ] && { echo none; return; }
+    own=$(git rev-parse --show-toplevel 2>/dev/null) || { echo none; return; }
+    # The git dir is the common one exactly in the primary checkout.
+    [ "$(git rev-parse --absolute-git-dir)" = "$(git rev-parse --path-format=absolute --git-common-dir)" ] &&
+        { echo none; return; }
     head_ref=$(git symbolic-ref -q HEAD) || { echo none; return; }
     [ "$head_ref" = "refs/heads/$branch" ] && { echo none; return; }
-    if ! worktree_clean "$own" || ! worktree_unhidden "$own"; then
-        echo dirty; return
-    fi
+    worktree_clean "$own" || { echo dirty; return; }
     head=$(git rev-parse --verify -q HEAD) || { echo unmerged; return; }
     tip=$(git rev-parse --verify -q "$default_ref") || { echo unmerged; return; }
     [ "$head" = "$tip" ] && { echo merged; return; }
-    # The object name, never HEAD: content_on_default runs git in main_root.
-    content_on_default "$head" || { echo unmerged; return; }
+    content_on "$default_ref" "$head" || { echo unmerged; return; }
     echo merged
 }
 

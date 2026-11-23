@@ -3,17 +3,13 @@
 #     lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #     . "$lib_dir/lib/output.sh"
 #
-# Semantics stay with each script — a marker that also increments a counter
-# (ghosts' `ghost`/`fixed`) is defined by its owner, because the counter is
-# what the script's summary reports on.
-#
 # The presentation rules, which are the part that has to stay consistent:
 #
-#   pass/warn/fail markers  one line, one glyph, at two spaces.
-#   value()                 DATA — a path, version, id, or resolved setting.
-#                           Prints in the terminal's DEFAULT foreground.
-#   detail()                ASIDE — an explanation, a remediation command, a
-#                           pointer to another target. Dim, and skippable.
+#   pass()    one line, one glyph, at two spaces.
+#   value()   DATA — a path, version, id, or resolved setting. Prints in the
+#             terminal's DEFAULT foreground.
+#   detail()  ASIDE — an explanation, a remediation command, a pointer to
+#             another target. Dim, and skippable.
 #
 # The value/detail split is the rule worth keeping: dimming an aside is the
 # point of it, but dimming a version number or a resolved path hides the answer
@@ -31,32 +27,16 @@
 # shellcheck shell=bash
 
 # Colour only when writing to a TTY — keep CI logs and pipes plain.
-#
-# c_cyan carries no use inside this file: it is consumed by ghosts.sh for the
-# worktree label. Lint checks this file on its own too, where that reads as dead.
-# shellcheck disable=SC2034
 if [ -t 1 ]; then
-    c_green=$'\033[0;32m'; c_red=$'\033[0;31m'; c_yellow=$'\033[0;33m'
-    c_cyan=$'\033[0;36m'
-    c_dim=$'\033[2m'; c_bold=$'\033[1m'; c_reset=$'\033[0m'
+    c_green=$'\033[0;32m'; c_dim=$'\033[2m'; c_reset=$'\033[0m'
 else
-    c_green=''; c_red=''; c_yellow=''; c_cyan=''
-    c_dim=''; c_bold=''; c_reset=''
+    c_green=''; c_dim=''; c_reset=''
 fi
 
-section() { printf '\n%s%s%s\n' "$c_bold" "$1" "$c_reset"; }
-
 pass()    { printf '  %s✓%s %s\n' "$c_green"  "$c_reset" "$1"; }
-warn()    { printf '  %s⚠%s %s\n' "$c_yellow" "$c_reset" "$1"; }
 
 # Data the reader came for — default foreground, never dim.
 value()   { printf '    %s\n' "$1"; }
 
 # An aside the reader can skip — dim.
 detail()  { printf '    %s%s%s\n' "$c_dim" "$1" "$c_reset"; }
-
-# Display-only: abbreviate $HOME to ~ so deep DerivedData paths stay scannable.
-pretty_path() { printf '%s' "${1/#$HOME/~}"; }
-
-# Display-only: a directory's on-disk footprint, human-readable (1.8G).
-disk_size() { du -sh "$1" 2>/dev/null | cut -f1; }

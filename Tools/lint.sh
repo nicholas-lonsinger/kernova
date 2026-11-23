@@ -14,7 +14,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 die() { echo "lint: $1" >&2; exit 1; }
 
 shell_sources=()
-while IFS= read -r f; do shell_sources+=("$f"); done < <(git ls-files '*.sh' '*.command' '.githooks/*')
+while IFS= read -r f; do shell_sources+=("$f"); done < <(git ls-files '*.sh' '*.command')
 [ "${#shell_sources[@]}" -gt 0 ] || die 'git tracks no shell scripts — not a git checkout?'
 command -v shellcheck >/dev/null 2>&1 || die 'shellcheck is not installed: brew install shellcheck'
 shellcheck "${shell_sources[@]}" || exit 1
@@ -30,6 +30,4 @@ while IFS= read -r root; do swift+=("$root"); done < <(swift_roots)
 xcrun swift-format lint --strict --parallel --recursive "${swift[@]}" || exit 1
 pass "swift-format: ${#swift[@]} roots"
 
-for suite in Tools/tests/worktrees.sh Tools/tests/ghosts.sh; do
-    bash "$suite" || exit 1
-done
+bash Tools/tests/prune-worktrees.sh || exit 1

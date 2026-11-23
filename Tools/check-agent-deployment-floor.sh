@@ -56,6 +56,7 @@ fi
 # comparison above reads, so require the reference.
 for f in "${agent_xcconfigs[@]}"; do
     assigned=$(sed -n 's/^[[:space:]]*MACOSX_DEPLOYMENT_TARGET[[:space:]]*=[[:space:]]*//p' "$f" | head -1 | sed 's/[[:space:]]*$//')
+    # shellcheck disable=SC2016 # the build-setting reference itself
     if [ "$assigned" != '$(KERNOVA_AGENT_DEPLOYMENT_TARGET)' ]; then
         echo "check-agent-deployment-floor: $f sets MACOSX_DEPLOYMENT_TARGET = ${assigned:-<nothing>}, expected \$(KERNOVA_AGENT_DEPLOYMENT_TARGET)" >&2
         status=1
