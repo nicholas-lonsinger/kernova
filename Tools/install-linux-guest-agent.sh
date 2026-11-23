@@ -14,10 +14,9 @@
 # Beside what tool_dir hashes for every entry, the entry's name hashes files,
 # read from disk so an uncommitted or untracked edit is built, so finding an
 # entry needs no swift.org toolchain: the directory of each of agent_targets,
-# the package's manifest and the tracked pins; this script and Tools/lib,
-# which every Tools script sources from and where the SDK is pinned;
-# .swift-version, which pins the toolchain; and the flags as run, with the
-# checkout's path written `.`.
+# the package's manifest and the tracked pins; this script and the libraries it
+# sources, one of which pins the SDK; .swift-version, which pins the
+# toolchain; and the flags as run, with the checkout's path written `.`.
 #
 # Each set of inputs gives one agent because it is built once and copied, not
 # because two builds agree: an -O build passes withoutActuallyEscaping's escape
@@ -82,7 +81,8 @@ case "${KERNOVA_AGENT_FAULT:-}" in
     *) echo "error: KERNOVA_AGENT_FAULT=$KERNOVA_AGENT_FAULT is not a fault this build knows" >&2; exit 1 ;;
 esac
 
-paths=("Tools/${BASH_SOURCE[0]##*/}" Tools/lib .swift-version KernovaKit/Package.swift
+paths=("Tools/${BASH_SOURCE[0]##*/}" Tools/lib/tool-cache.sh Tools/lib/linux-swift.sh Tools/lib/static-linux-sdk.sh
+    Tools/lib/package-pins.sh Tools/lib/linux-agent.sh .swift-version KernovaKit/Package.swift
     Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved)
 for target in "${agent_targets[@]}"; do paths+=("KernovaKit/Sources/$target"); done
 values=()
