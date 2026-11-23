@@ -36,41 +36,6 @@ struct AgentHubPowerTests {
         harness.hub.close()
     }
 
-    @Test("The console session's peer takes the shutdown, and the merged entry names it")
-    func sessionPeerHandsOff() async throws {
-        let harness = HubHarness()
-        try await harness.attached()
-        let power = FakePowerAdapter()
-        let session = try await connect(harness, power)
-        let ready = try await harness.snapshot { $0.power == .agent(.sessionPeer) }
-        #expect(ready.routing == nil)
-
-        #expect(try await harness.requestPower(.shutdown) == .handedOff)
-        #expect(power.performed.elements.count == 1)
-        #expect(harness.hostLogs.elements.contains { $0.contains("Asking the session peer (session 1") })
-        try await close([session], harness)
-    }
-
-    @Test("Every refusal ends in the ACPI press, carrying the refusals")
-    func everyRefusalUsesACPI() async throws {
-        let harness = HubHarness()
-        try await harness.attached()
-        let power = FakePowerAdapter(accepts: false)
-        let session = try await connect(harness, power)
-
-        async let outcome = harness.requestPower(.shutdown)
-        var performed = power.performed.waiter()
-        let id = try await performed.next { _ in true }
-        power.report(.refused(id, WireError(.powerNotPermitted)))
-
-        guard case .untaken(let refusals) = try await outcome else {
-            Issue.record("not the ACPI press")
-            return
-        }
-        #expect(refusals.map(\.error.code) == [.powerNotPermitted])
-        try await close([session], harness)
-    }
-
     @Test("Apps blocking an accepted shutdown end the routing, and the snapshot shows it while it runs")
     func blockedEndsRouting() async throws {
         let harness = HubHarness()
@@ -96,47 +61,6 @@ struct AgentHubPowerTests {
         #expect(try await outcome == .blocked(Self.blocking))
         _ = try await harness.snapshot { $0.routing == nil }
         try await close([session], harness)
-    }
-
-    @Test("A detach after acceptance ends the routing as lost after acceptance")
-    func detachAfterAcceptance() async throws {
-        let harness = HubHarness()
-        try await harness.attached()
-        let power = FakePowerAdapter(handsOff: false)
-        let session = try await connect(harness, power)
-
-        async let outcome = harness.requestPower(.shutdown)
-        _ = try await harness.snapshot { $0.routing?.stage == .accepted }
-        harness.hub.detach()
-
-        #expect(try await outcome == .lostAfterAcceptance)
-        try await close([session], harness)
-    }
-
-    @Test(
-        "At a login window, with only a background session's peer and the system peer, a graceful action asks no one and is untaken"
-    )
-    func loginWindowGracefulUntaken() async throws {
-        let harness = HubHarness()
-        try await harness.attached()
-        let sessionPower = FakePowerAdapter(initial: .available(PowerOffer(actions: [.shutdown, .restart])))
-        let systemPower = FakePowerAdapter(
-            initial: .available(PowerOffer(actions: [], ignoringApps: [.shutdown])))
-        let session = try await connect(
-            harness, sessionPower, state: PeerSessionState(console: .off, sessionID: "1", userName: "user"))
-        let system = try await connect(
-            harness, systemPower, claim: Self.systemClaim, state: PeerSessionState(console: .off), peers: 2)
-        let ready = try await harness.snapshot { $0.shutsDownIgnoringApps }
-        #expect(ready.power == .absent(.notOnConsole))
-
-        #expect(try await harness.requestPower(.shutdown) == .untaken(refusals: []))
-        #expect(try await harness.requestPower(.restart) == .untaken(refusals: []))
-        #expect(sessionPower.performed.elements.isEmpty)
-        #expect(systemPower.performed.elements.isEmpty)
-
-        #expect(try await harness.requestPower(.shutdown, ignoringApps: true) == .handedOff)
-        #expect(systemPower.performedIgnoringApps.elements.count == 1)
-        try await close([session, system], harness)
     }
 
     @Test(

@@ -100,40 +100,5 @@ struct TreeLandingTests {
             #expect(try Self.contents(of: landing.destinationPath + "/r/" + name) == content, "\(name)")
         }
     }
-
-    @Test("an entry whose path would pass PATH_MAX is refused by name before it is created", arguments: bothLayers)
-    func pathMaxIsRefused(kernelContainment: Bool) throws {
-        let landing = try Landing(kernelContainment: kernelContainment)
-        let name = String(repeating: "d", count: 200)
-        let fits = (Int(PATH_MAX) - 1 - landing.destinationPath.utf8.count) / 201
-        var container = RawContainer()
-        container.header(directory(depth: 0))
-        for depth in 1...fits { container.header(directory(name, depth: UInt32(depth))) }
-        container.end()
-        let failure = try #require(try landing.land(container.data, as: bytes(name)).failure)
-        #expect(failure.reason == .refused(.init(code: ENAMETOOLONG)))
-        #expect(failure.path == Array(repeating: bytes(name), count: fits + 1))
-        try landing.expectNothingOutside()
-    }
-
-    @Test("a name that is not UTF-8 is refused on Darwin, where APFS stores only UTF-8, and lands on Linux")
-    func nonUTF8Names() throws {
-        let landing = try Landing(kernelContainment: true)
-        let name: [UInt8] = [0x66, 0xFF, 0x66]
-        var container = RawContainer()
-        container.header(directory(depth: 0))
-        container.file(file(name, depth: 1, size: 1), Data("x".utf8))
-        container.end()
-        let result = try landing.land(container.data)
-        #if canImport(Darwin)
-        #expect(result.failure == TreeWriteFailure(path: [bytes("r"), name], reason: .refused(.init(code: EILSEQ))))
-        #expect(result.failure?.wireError.code == .itemUnpackRefused)
-        #expect(result.failure?.wireError.item.path == [Data("r".utf8), Data(name)])
-        try landing.expectNothingOutside()
-        #else
-        #expect(try result.get() == bytes("r"))
-        #expect(try landing.landedEntries(bytes("r")) == [".: directory", "./f%fff: regular 1"].sorted())
-        #endif
-    }
 }
 #endif

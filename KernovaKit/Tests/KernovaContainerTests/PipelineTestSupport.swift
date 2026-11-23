@@ -31,8 +31,6 @@ final class SpinningLanes: Sendable {
 
     /// The work handed to the lanes that has started.
     var started: Int { state.withLock(\.started) }
-    /// The work started and not yet returned.
-    var running: Int { state.withLock { $0.started - $0.finished } }
 
     /// `count` lanes of these.
     func workers(_ count: Int) -> ChunkWorkers {
@@ -48,28 +46,6 @@ final class SpinningLanes: Sendable {
                 state.sink &+= spun
             }
         }
-    }
-}
-
-/// Copies of bytes, each in an allocation of its own that counts while it is alive, so a test can tell which feeds
-/// something still holds.
-final class FeedAllocations: Sendable {
-    private let live = Locked(0)
-
-    /// The bytes of the copies still alive.
-    var liveBytes: Int { live.withLock { $0 } }
-
-    /// `bytes` in an allocation of its own.
-    func copy(_ bytes: Data) -> Data {
-        let pointer = UnsafeMutableRawPointer.allocate(byteCount: bytes.count, alignment: 16)
-        bytes.copyBytes(to: pointer.assumingMemoryBound(to: UInt8.self), count: bytes.count)
-        live.withLock { $0 += bytes.count }
-        return Data(
-            bytesNoCopy: pointer, count: bytes.count,
-            deallocator: .custom { [live] pointer, count in
-                live.withLock { $0 -= count }
-                pointer.deallocate()
-            })
     }
 }
 

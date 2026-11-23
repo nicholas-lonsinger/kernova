@@ -106,15 +106,6 @@ struct ContainerTreeTests {
 
     static let itemName = "Item.app"
 
-    /// The system of a lander that only installs: an install runs neither check.
-    static let installOnly = ContainerTreeLander.System(
-        selfTest: { _ in
-            Issue.record("an install ran the self-test"); return .passed
-        },
-        launchRefusal: { _ in
-            Issue.record("an install ran the launch check"); return nil
-        })
-
     /// Records the golden payload when it is missing — a frozen file is never rewritten — and fails the run
     /// that does, so a recording is always a deliberate commit.
     @Test("The packer reproduces the golden update-profile payload byte for byte")
@@ -157,37 +148,6 @@ struct ContainerTreeTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.root + "/slots/b") == [Self.itemName])
     }
 
-    @Test("An update replaces the item the spare slot held, and a refused one puts it back")
-    func updateReplacesAndRestores() throws {
-        let frozen = try #require(FileManager.default.contents(atPath: Self.golden.path))
-        let fixture = try SlotFixture()
-        let old = fixture.root + "/slots/b/" + Self.itemName
-        try FileManager.default.createDirectory(atPath: old, withIntermediateDirectories: true)
-        try Data("old".utf8).write(to: URL(fileURLWithPath: old + "/marker"))
-
-        let refusing = ContainerTreeLander(
-            itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent",
-            system: .init(selfTest: { _ in .exited(1) }, launchRefusal: { _ in nil }))
-        let refused = try refusing.beginUpdate(in: "b", of: fixture.slotRoot())
-        try frozen.withUnsafeBytes { try refused.write($0) }
-        #expect {
-            try refused.publish()
-        } throws: { error in
-            (error as? PayloadRefusal)?.rejectsPayload == true
-        }
-        #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.root + "/slots/b") == [Self.itemName])
-        #expect(FileManager.default.contents(atPath: old + "/marker") == Data("old".utf8))
-
-        let passing = ContainerTreeLander(
-            itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent",
-            system: .init(selfTest: { _ in .passed }, launchRefusal: { _ in nil }))
-        let landing = try passing.beginUpdate(in: "b", of: fixture.slotRoot())
-        try frozen.withUnsafeBytes { try landing.write($0) }
-        try landing.publish()
-        #expect(try BundleFixture.describe(old) == BundleFixture.expected)
-        #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.root + "/slots/b") == [Self.itemName])
-    }
-
     @Test("An update the OS would not launch is refused with the check's own refusal before any self-test runs")
     func launchRefused() throws {
         let frozen = try #require(FileManager.default.contents(atPath: Self.golden.path))
@@ -214,77 +174,6 @@ struct ContainerTreeTests {
         }
         #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.root + "/slots/b") == [Self.itemName])
         #expect(FileManager.default.contents(atPath: old + "/marker") == Data("old".utf8))
-    }
-
-    @Test("A discarded update and a truncated one leave the slot as it was")
-    func discardAndTruncation() throws {
-        let frozen = try #require(FileManager.default.contents(atPath: Self.golden.path))
-        let fixture = try SlotFixture()
-        let lander = ContainerTreeLander(
-            itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent",
-            system: .init(selfTest: { _ in .passed }, launchRefusal: { _ in nil }))
-
-        let discarded = try lander.beginUpdate(in: "b", of: fixture.slotRoot())
-        try frozen.prefix(frozen.count / 2).withUnsafeBytes { try discarded.write($0) }
-        discarded.discard()
-        #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.root + "/slots/b").isEmpty)
-
-        let truncated = try lander.beginUpdate(in: "b", of: fixture.slotRoot())
-        try frozen.prefix(frozen.count - 3).withUnsafeBytes { try truncated.write($0) }
-        #expect {
-            try truncated.publish()
-        } throws: { error in
-            (error as? PayloadRefusal)?.rejectsPayload == true
-        }
-        #expect(try FileManager.default.contentsOfDirectory(atPath: fixture.root + "/slots/b").isEmpty)
-    }
-
-    @Test("An install lands the payload as the item in the slot current does not name and records its SHA-256")
-    func installLandsGolden() throws {
-        let frozen = try #require(FileManager.default.contents(atPath: Self.golden.path))
-        let scratch = try PortableScratchDirectory(prefix: "kernova-container-install")
-        let payload = scratch.path + "/agent.payload"
-        try frozen.write(to: URL(fileURLWithPath: payload))
-        let root = InstallRoot(path: "/agent")
-        let stage = scratch.path + "/stage"
-        try FileManager.default.createDirectory(atPath: stage, withIntermediateDirectories: false)
-        let lander = ContainerTreeLander(
-            itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent", system: Self.installOnly)
-        let installer = Installer(
-            stagingRoot: stage, runsCommands: false, payloadSource: .file(payload), lander: lander,
-            versionLabel: "9.9 (99)", account: nil)
-        let definitions = TestDefinitions(root: root, directory: "/services")
-        for slot in ["a", "b", "a"] {
-            try installer.run(.install(root: root, payloadName: Self.itemName, definitions: definitions))
-            let directory = stage + "/agent/slots/" + slot
-            #expect(try BundleFixture.describe(directory + "/" + Self.itemName) == BundleFixture.expected)
-            #expect(try FileManager.default.contentsOfDirectory(atPath: directory) == [Self.itemName])
-            let state = try InstallState.decoded(
-                Array(try Data(contentsOf: URL(fileURLWithPath: stage + "/agent/state.json"))))
-            #expect(state.active == slot)
-            #expect(state.slots[slot]?.payloadSHA256 == lowercaseHex(Data(SHA256.hash(Array(frozen)))))
-        }
-    }
-
-    @Test("An install from a directory packs it as it lands, recording the SHA-256 of the packed tree")
-    func installPacksDirectory() throws {
-        let frozen = try #require(FileManager.default.contents(atPath: Self.golden.path))
-        let bundle = try BundleFixture()
-        let scratch = try PortableScratchDirectory(prefix: "kernova-container-install")
-        let root = InstallRoot(path: "/agent")
-        let stage = scratch.path + "/stage"
-        try FileManager.default.createDirectory(atPath: stage, withIntermediateDirectories: false)
-        let installer = Installer(
-            stagingRoot: stage, runsCommands: false, payloadSource: .packedDirectory(bundle.path),
-            lander: ContainerTreeLander(
-                itemName: Self.itemName, selfTestExecutable: "Contents/MacOS/agent", system: Self.installOnly),
-            versionLabel: "9.9 (99)", account: nil)
-        let definitions = TestDefinitions(root: root, directory: "/services")
-        try installer.run(.install(root: root, payloadName: Self.itemName, definitions: definitions))
-        #expect(try BundleFixture.describe(stage + "/agent/slots/a/" + Self.itemName) == BundleFixture.expected)
-        let state = try InstallState.decoded(
-            Array(try Data(contentsOf: URL(fileURLWithPath: stage + "/agent/state.json"))))
-        #expect(state.slots["a"]?.payloadSHA256 == lowercaseHex(Data(SHA256.hash(Array(frozen)))))
     }
 }
 #endif

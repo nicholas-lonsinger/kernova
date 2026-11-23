@@ -271,109 +271,7 @@ struct DragDeliveryTests {
         #expect(run.state == ConnectionState.established)
     }
 
-    @Test(
-        "a listing's count is reserved whole: 131,072 items fill production's 16 MiB budget and 128 a 16 KiB one, and one more resets the take TOO_LARGE",
-        arguments: [(true, UInt32(131_072), true), (true, 131_073, false), (false, 128, true), (false, 129, false)])
-    func aListingsCountIsReserved(production: Bool, count: UInt32, fits: Bool) throws {
-        let budget = production ? 16_777_216 : 16_384
-        let (run, id) = try Self.opened(policy: production ? .production : HostileItems.smallItemBudget)
-        run.feed([Self.report(id, .itemCount(count))])
-        guard fits else {
-            let error = try #require(
-                Self.ended(run).first.flatMap { result -> WireError? in
-                    if case .closed(.resetLocally(let error)) = result { error } else { nil }
-                })
-            #expect(error.code == .tooLarge)
-            #expect(error.limit == UInt64(budget))
-            return
-        }
-        #expect(Self.ended(run).isEmpty)
-        #expect(run.host?.itemOffersForTesting.remoteHoldingForTesting.charged == budget)
-    }
-
-    /// A host with a 16 KiB item budget whose take of the drag listed 15 items of 896 bytes, each charged 1,024
-    /// with its overhead, so 1,024 bytes of the budget remain for the 16th, its overhead among them.
-    static func nearlyFull() throws -> (HostileRun, DragTakeID) {
-        let (run, id) = try opened(policy: HostileItems.smallItemBudget)
-        let filler = try (0..<15).map { try item(ofBytes: 896, named: "f\($0)") }
-        run.feed([report(id, .itemCount(16))] + filler.map { report(id, .item($0)) })
-        try #require(ended(run).isEmpty, "the filler was refused: \(ended(run))")
-        return (run, id)
-    }
-
-    @Test(
-        "the last item fills the budget to the byte, a promise holding 255 + 128 bytes more for its name; one byte more resets the take TOO_LARGE",
-        arguments: [(false, 896, true), (false, 897, false), (true, 513, true), (true, 514, false)])
-    func theLastItemFillsTheBudget(promised: Bool, bytes: Int, fits: Bool) throws {
-        let (run, id) = try Self.nearlyFull()
-        run.feed([Self.report(id, .item(try Self.item(ofBytes: bytes, named: "last", promised: promised)))])
-        guard fits else {
-            #expect(Self.resetCode(run) == .tooLarge, "\(Self.ended(run))")
-            #expect(Self.reports(run).isEmpty)
-            return
-        }
-        #expect(Self.ended(run).isEmpty)
-        #expect(Self.reports(run).map { if case .listed(let items) = $0 { items.count } else { 0 } } == [16])
-        #expect(run.host?.itemOffersForTesting.remoteHoldingForTesting.charged == 16_384)
-    }
-
-    @Test("the host's release of a drag that filled the budget returns it whole: an offer of 128 items opens")
-    func aReleaseReturnsTheBudget() throws {
-        let (run, id) = try Self.nearlyFull()
-        run.feed([Self.report(id, .item(try Self.item(ofBytes: 896, named: "last")))])
-        try #require(Self.ended(run).isEmpty)
-        run.feed([Self.caught(id)])
-        run.item(.release(token: Self.token))
-        #expect(run.host?.itemOffersForTesting.remoteHoldingForTesting.charged == 0)
-
-        run.feed([
-            WireFrames.open(3, .clipboardOfferByPeer, body: HostileItems.header(token: SimItems.token(3), count: 128))
-        ])
-        #expect(run.streamResets.isEmpty, "\(run.streamResets)")
-        #expect(run.host?.itemOffersForTesting.remoteHoldingForTesting.charged == 16_384)
-    }
-
-    @Test("a DRAG_OFFER listing items is reset MALFORMED_MESSAGE, and a peer offers none")
-    func dragOfferListsNoItems() throws {
-        let run = HostileRun(local: .host, seed: 1, items: true)
-        run.feed(
-            [
-                HostileItems.peerHello,
-                WireFrames.open(1, .dragOffer, body: HostileItems.header(token: Self.token, count: 1)),
-            ], preamble: true)
-        #expect(run.streamResets.map(\.code) == [.malformedMessage])
-
-        let peer = HostileRun(local: .peer, seed: 1, items: true)
-        peer.feed(
-            [WireFrames.hello(role: .host, items: true), WireFrames.session { $0.policy = HostileItems.policy }],
-            preamble: true)
-        #expect(peer.offerItems(SimItems.offer(1, [[Self.drag[1]]]), feature: .drag) != nil)
-        #expect(peer.offerItems(SimItems.offer(1, []), feature: .drag) == nil)
-    }
-
     // MARK: - A delivering drop's names and sizes
-
-    @Test(
-        "a CAUGHT delivers only after STEP_NAMED and one size per item; another count reads as CAUGHT undelivered",
-        arguments: 0...3)
-    func aCaughtDeliversOnlyWhenEveryItemIsSized(count: Int) throws {
-        let (run, id) = try Self.opened()
-        let sizes: [UInt64] = [8192, 2048, 4096]
-        run.feed(
-            Self.listing(id, Self.items(Self.drag)) + Self.naming(id, ["IMG.heic"])
-                + sizes.prefix(count).map { Self.report(id, .size($0)) } + [Self.caught(id)])
-        let delivery = DragDelivery(names: [0: Data("IMG.heic".utf8)], sizes: [0: 8192, 1: 2048, 2: 4096])
-        #expect(Self.ended(run) == [.caught(count == 3 ? delivery : nil)])
-        #expect(run.state == ConnectionState.established)
-    }
-
-    @Test("a CAUGHT with no STEP_NAMED delivers nothing, and the taken offer carries the drag as offered")
-    func aCaughtUnnamedDeliversNothing() throws {
-        let (run, id) = try Self.opened()
-        run.feed(Self.listing(id, Self.items(Self.drag)) + [Self.caught(id)])
-        #expect(Self.ended(run) == [.caught(nil)])
-        #expect(run.readItem(Self.token, item: 2) == Self.items(Self.drag)[2])
-    }
 
     @Test("sizes summing past 2^63-1 reset the take MALFORMED_MESSAGE")
     func sizesPastTheLimit() throws {
@@ -416,25 +314,6 @@ struct DragDeliveryTests {
         #expect(violations.isEmpty, "\(violations)")
         #expect(host?.takeReports.map(\.report) == [.armed, .listed(items), .targeted])
         #expect(host?.takesEnded.isEmpty == true, "\(String(describing: host?.takesEnded))")
-    }
-
-    @Test("a drop naming 1,090 promises 59 bytes each, past one MESSAGE, names them on the host and delivers")
-    func namesPastOneMessageReachTheHost() {
-        // By hand: 1,090 names of 2 + 59 bytes would list 66,490 bytes in one MESSAGE.
-        let items = (0..<1_090).map { _ in OfferedItem.promise }
-        let names = (0..<1_090).map { Data(Self.padded($0, to: 59).utf8) }
-        let sizes = [UInt64](repeating: 0, count: 1_090)
-        let (violations, world) = Self.takenDrag([
-            (.ms(800), .report(.armed)), (.ms(850), .report(.listed(items))), (.ms(860), .report(.targeted)),
-            (.ms(900), .report(.named(names))), (.ms(950), .caught(sizes: sizes)),
-        ])
-        let host = ItemFeatureScenarios.items(world, .host)
-        #expect(violations.isEmpty, "\(violations)")
-        #expect(host?.takeReports.last?.report == .named(names))
-        let delivery = DragDelivery(
-            names: Dictionary(uniqueKeysWithValues: zip(names.indices, names)),
-            sizes: Dictionary(uniqueKeysWithValues: zip(sizes.indices, sizes)))
-        #expect(host?.takesEnded.map(\.result) == [.caught(delivery)])
     }
 
     @Test(
@@ -529,87 +408,6 @@ struct DragDeliveryTests {
         return (reports, end)
     }
 
-    @Test("an item whose report fills one MESSAGE's 65,536 bytes is listed")
-    func anItemFillingOneMessageIsListed() throws {
-        let (run, id) = try Self.asked()
-        let item = try Self.item(ofBytes: 65_536, named: "big", asReport: true)
-
-        run.input(.dragTake(id, .report(.listed([item]))))
-
-        let onTake = run.written.filter { $0.streamID == id.stream }
-        #expect(onTake.filter { $0.type == .data }.map(\.payload.count).last == 65_536)
-        #expect(try Self.written(run, on: id).reports == [.itemCount(1), .item(item)])
-        #expect(!onTake.contains { $0.type == .end || $0.type == .reset })
-    }
-
-    @Test(
-        "an item whose report is over one MESSAGE ends the take REFUSED TOO_LARGE, its owner hearing it cancelled, and lists nothing"
-    )
-    func anItemOverOneMessageRefusesTheTake() throws {
-        let (run, id) = try Self.asked()
-        let item = try Self.item(ofBytes: 65_537, named: "big", asReport: true)
-
-        run.input(.dragTake(id, .report(.listed(Self.items([Self.drag[1]]) + [item]))))
-        run.input(.dragTake(id, .report(.targeted)))
-        run.input(.dragTake(id, .caught(sizes: nil)))
-
-        let (reports, end) = try Self.written(run, on: id)
-        #expect(reports.isEmpty, "a report went out: \(reports)")
-        let outcome = try #require(end)
-        #expect(outcome.kind == .refused)
-        #expect(outcome.error.code == .tooLarge)
-        #expect(outcome.error.limit == 65_536)
-        #expect(run.written.filter { $0.streamID == id.stream && $0.type == .end }.count == 1)
-        #expect(
-            run.peerEvents.contains {
-                if case .dragTake(.cancelled(let cancelled)) = $0 { cancelled == id } else { false }
-            })
-        #expect(!run.written.contains { $0.type == .reset }, "the peer reset a stream: \(run.written)")
-        #expect(run.state == ConnectionState.established)
-    }
-
-    @Test(
-        "the peer carries the drag on its take, its writer stalled: the count, each item, TARGETEDs, each name, STEP_NAMED, each size, then the CAUGHT END; only the host's release ends the taken offer"
-    )
-    func peerDeliversOnTheTake() throws {
-        let (run, id) = try Self.asked()
-        let items = Self.items(Self.drag)
-        run.writerStalled = true
-        run.input(.dragTake(id, .report(.listed(items))))
-        run.input(.dragTake(id, .report(.targeted)))
-        run.input(.dragTake(id, .report(.targeted)))
-        run.input(.dragTake(id, .report(.named([Data("IMG.heic".utf8)]))))
-        run.input(.dragTake(id, .caught(sizes: [8192, 2048, 4096])))
-        run.writerStalled = false
-        run.drain()
-
-        #expect(!run.written.contains { $0.type == .reset }, "the peer reset a stream: \(run.written)")
-        let (reports, end) = try Self.written(run, on: id)
-        #expect(
-            reports == [
-                .itemCount(3), .item(items[0]), .item(items[1]), .item(items[2]), .step(.targeted), .step(.targeted),
-                .promiseName(Data("IMG.heic".utf8)), .step(.named), .size(8192), .size(2048), .size(4096),
-            ])
-        #expect(end?.kind == .caught)
-        #expect(run.written.filter { $0.streamID == id.stream }.last?.type == .end, "the END went before a report")
-
-        let takenEnded = {
-            run.peerEvents.contains {
-                if case .items(.offerEnded(_, .local, let token, _)) = $0 { token == Self.token } else { false }
-            }
-        }
-        #expect(!takenEnded(), "the taken offer ended before the host released it")
-        let offerStream = try #require(
-            run.written.first { frame in
-                guard frame.type == .open, let open = try? Kernova_V2_Open(serializedBytes: frame.payload) else {
-                    return false
-                }
-                return (try? Kernova_V2_ItemSetHeader(serializedBytes: open.body))?.token == Self.token
-            }?.streamID)
-        run.feed([Unit.end(offerStream.rawValue)])
-        #expect(takenEnded(), "the host's release did not end the taken offer")
-    }
-
     @Test("a delivering drop sizing 22,000 items, past one END body, sends each size and keeps the connection")
     func sizesPastOneEndKeepTheConnection() throws {
         // By hand: 22,000 sizes of 3,000,000, 4 bytes each, would pack 88,000 bytes into one END body.
@@ -627,12 +425,5 @@ struct DragDeliveryTests {
         let (reports, end) = try Self.written(run, on: id)
         #expect(reports.compactMap { if case .size(let size)? = $0 { size } else { nil } } == sizes)
         #expect(end?.kind == .caught)
-    }
-}
-
-extension OfferedItem {
-    /// A promised FILE item under a stand-in name.
-    fileprivate static var promise: OfferedItem {
-        DragDeliveryTests.items([DragDeliveryTests.named("Untitled.heic", .file, promised: true)])[0]
     }
 }

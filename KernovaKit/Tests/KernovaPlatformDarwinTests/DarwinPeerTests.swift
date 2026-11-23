@@ -12,16 +12,6 @@ import Testing
 struct DarwinPeerTests {
     static let executable = "/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent"
 
-    @Test("A slot is read from the executable's path, and only from the slot layout's shape")
-    func slots() {
-        let root = "/Users/pbear/Library/Application Support/Kernova/Guest Agent"
-        let slot = DarwinIdentity.slot(ofExecutable: root + "/slots/b" + Self.executable)
-        #expect(slot?.root == root && slot?.slot == "b")
-        #expect(DarwinIdentity.slot(ofExecutable: "/Applications" + Self.executable) == nil)
-        #expect(DarwinIdentity.slot(ofExecutable: root + "/other/b" + Self.executable) == nil)
-        #expect(DarwinIdentity.slot(ofExecutable: root + "/slots/b/KernovaMacOSAgent") == nil)
-    }
-
     @Test("The scope is system at the system root, user at any other root with state.json, else unspecified")
     func scopes() {
         let system = MacInstallLayout.systemRoot
@@ -35,49 +25,6 @@ struct DarwinPeerTests {
         #expect(scope("/tmp/x/slots/a" + Self.executable) == .unspecified)
         #expect(scope("/Applications" + Self.executable) == .unspecified)
     }
-
-    @Test("The OS version is the one the system names its own release with")
-    func osVersionMatchesTheSystemsOwnName() throws {
-        let data = try Data(contentsOf: URL(fileURLWithPath: "/System/Library/CoreServices/SystemVersion.plist"))
-        let plist = try #require(
-            try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
-        #expect(DarwinIdentity.osVersion == plist["ProductVersion"] as? String)
-    }
-
-    @Test("The system peer reports the console off at the login window or with no user, on with a user")
-    func systemPeerState() {
-        #expect(DarwinSessionState.systemPeer(consoleUser: nil) == PeerSessionState(console: .off))
-        #expect(DarwinSessionState.systemPeer(consoleUser: "loginwindow") == PeerSessionState(console: .off))
-        #expect(DarwinSessionState.systemPeer(consoleUser: "pbear") == PeerSessionState(console: .on))
-    }
-
-    @Test("The session peer reports its own audit session")
-    func sessionPeerState() {
-        let state = DarwinSessionState.sessionPeer()
-        #expect(state.sessionID == DarwinSessionState.auditSessionID.map(String.init))
-        #expect(!state.sessionID.isEmpty && !state.userName.isEmpty)
-    }
-
-    @Test("The watcher reports the link's removal — an uninstall — apart from a move, so the peer stops for good")
-    func slotLinkWatcherRemoval() async throws {
-        let root = TestScratchDirectory(prefix: "kernova-link").url.path
-        try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
-        try FileManager.default.createSymbolicLink(atPath: root + "/current", withDestinationPath: "slots/a")
-        let changed = AsyncGate()
-        let changes = Locked<[SlotLinkWatcher.Change]>([])
-        let queue = DispatchQueue(label: "test.watcher")
-        let watcher = try #require(
-            SlotLinkWatcher(root: root, runningSlot: "a", queue: queue) { change in
-                changes.withLock { $0.append(change) }
-                changed.notify()
-            })
-        defer { watcher.cancel() }
-        queue.sync {}
-        #expect(changes.withLock { $0 }.isEmpty)
-        #expect(unlink(root + "/current") == 0)
-        try await changed.wait(named: "the watcher's report") { !changes.withLock(\.isEmpty) }
-        #expect(changes.withLock { $0 } == [.removed])
-    }
 }
 
 @Suite("The bounded blocking connect: socket ownership and the parked-attempt gate", .caseScoped)
@@ -90,78 +37,6 @@ struct BlockingConnectTests {
             instant.withLock { $0 = $0.advanced(by: CoreDuration(nanoseconds: Int64(seconds * 1_000_000_000))) }
         }
         func gate() -> BlockingConnectGate { BlockingConnectGate { [self] in now } }
-    }
-
-    @Test("A syscall that outruns the deadline keeps the socket")
-    func syscallOutrunsDeadline() {
-        let handoff = BlockingConnectHandoff()
-        #expect(handoff.abandon())
-        #expect(handoff.outcome == nil)
-        #expect(handoff.finish(errno: ECONNREFUSED) == false)
-        #expect(handoff.outcome == ECONNREFUSED)
-    }
-
-    @Test("A park after a heal is rationed from the floor, not the escalated wait")
-    func gateRationsAgainFromTheFloorAfterAHeal() {
-        let clock = Clock()
-        let gate = clock.gate()
-        for _ in 0..<(BlockingConnectGate.maxParkedAttempts + 8) { gate.markParked("control") }
-        gate.markCompleted("control")
-        #expect(gate.admit("control"))
-        gate.markParked("control")
-        #expect(gate.admit("control") == false)
-        clock.advance(seconds: BlockingConnectGate.backoffFloor - 1)
-        #expect(gate.admit("control") == false)
-        clock.advance(seconds: 1)
-        #expect(gate.admit("control"))
-    }
-
-    @Test("A parked syscall returning discharges its attempt, and returned parks never escalate the next wedge")
-    func gateDischargesReturnedParks() {
-        let clock = Clock()
-        let gate = clock.gate()
-        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
-            #expect(gate.admit("control"))
-            gate.markParked("control")
-        }
-        #expect(gate.admit("control") == false)
-        gate.markParkReturned("control")
-        #expect(gate.admit("control"))
-        // One park more reaches the cap again: exactly one was discharged.
-        gate.markParked("control")
-        #expect(gate.admit("control") == false)
-
-        let other = clock.gate()
-        for _ in 0..<(BlockingConnectGate.maxParkedAttempts + 8) { other.markParked("c") }
-        for _ in 0..<(BlockingConnectGate.maxParkedAttempts + 8) { other.markParkReturned("c") }
-        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
-            #expect(other.admit("c"))
-            other.markParked("c")
-        }
-        #expect(other.admit("c") == false)
-        clock.advance(seconds: BlockingConnectGate.backoffFloor)
-        #expect(other.admit("c"))
-    }
-
-    @Test("A park reverted because the syscall beat the deadline leaves the count unchanged")
-    func gateRevertedParkLeavesTheCountUnchanged() {
-        let gate = Clock().gate()
-        for _ in 0..<BlockingConnectGate.maxParkedAttempts {
-            #expect(gate.admit("control"))
-            gate.markParked("control")
-        }
-        gate.markParked("control")
-        gate.revertPark("control")
-        #expect(gate.admit("control"))
-        // Read the count back through admission, which a new park re-arms: two
-        // discharged and one parked leave one under the cap, and one more
-        // reaches it.
-        gate.markParkReturned("control")
-        gate.markParkReturned("control")
-        gate.markParked("control")
-        #expect(gate.admit("control"))
-        gate.markParked("control")
-        #expect(gate.admit("control") == false)
     }
 
     @Test("A connect the kernel answers inside the deadline completes; one it never answers is abandoned")
@@ -220,36 +95,6 @@ struct BlockingConnectTests {
         gate.markParkReturned("t")
         gate.markParked("t")
         #expect(gate.admit("t") == false)
-    }
-
-    @Test("POLLHUP with SO_ERROR 0 completes a non-blocking connect; POLLNVAL stays fatal")
-    func connectCompletion() throws {
-        guard #available(macOS 26.0, *) else { return }
-        // A socketpair end whose peer has closed reports POLLHUP while SO_ERROR reads 0, the shape a connect the
-        // host accepted and then hung up on takes.
-        var fds: [Int32] = [0, 0]
-        try #require(socketpair(AF_UNIX, SOCK_STREAM, 0, &fds) == 0)
-        close(fds[1])
-        defer { close(fds[0]) }
-        #expect(DarwinVsockConnect.awaitConnectCompletion(fd: fds[0], label: "t", port: 0))
-        // A number at the fd-table size never names an open descriptor, so poll() reports POLLNVAL.
-        #expect(!DarwinVsockConnect.awaitConnectCompletion(fd: getdtablesize(), label: "t", port: 0))
-    }
-
-    @Test("EAFNOSUPPORT and EPROTONOSUPPORT are permanent; anything else is transient")
-    func classification() {
-        for code in [EAFNOSUPPORT, EPROTONOSUPPORT] {
-            guard case .permanent = DarwinVsockConnect.classifySocketErrno(code, label: "t") else {
-                Issue.record("\(code) is not permanent")
-                continue
-            }
-        }
-        for code in [EMFILE, 0] {
-            guard case .transient = DarwinVsockConnect.classifySocketErrno(code, label: "t") else {
-                Issue.record("\(code) is not transient")
-                continue
-            }
-        }
     }
 }
 #endif

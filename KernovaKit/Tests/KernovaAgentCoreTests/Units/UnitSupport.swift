@@ -150,14 +150,6 @@ enum Unit {
             (.logs, LocalAdvert(version: 1, availability: .available(Data()))),
         ]
     }
-
-    /// A policy that judges nothing for an hour, so a test may idle without PINGs.
-    static var patientPolicy: ReceiverPolicy {
-        var policy = ReceiverPolicy.production
-        policy.unresponsiveAfter = .seconds(3_600)
-        policy.closeAfter = .seconds(7_200)
-        return policy
-    }
 }
 
 /// A bare connection driven as an endpoint drives it, with no machine to route its events to.
@@ -252,71 +244,6 @@ struct Wire {
     }
 }
 
-/// Two real connections, host and session peer, joined by in-memory bytes.
-struct Pair {
-    var host: Wire
-    var peer: Wire
-    var hostEvents: [ConnectionEvent] = []
-    var peerEvents: [ConnectionEvent] = []
-
-    init(testKinds: Bool = true) {
-        host = Wire.host { if testKinds { $0.addTestKinds() } }
-        peer = Wire.peer { if testKinds { $0.addTestKinds() } }
-        settle()
-    }
-
-    /// Bytes the host hands out now, not yet delivered.
-    mutating func takeHostBytes() -> Data {
-        var data = Data()
-        while let transmit = host.connection.pollTransmit(maxBytes: 1 << 20) {
-            for chunk in transmit.chunks { data.append(chunk) }
-            if transmit.isFinal { host.connection.finalTransmitWritten(now: host.now) }
-        }
-        return data
-    }
-
-    mutating func takePeerBytes() -> Data {
-        var data = Data()
-        while let transmit = peer.connection.pollTransmit(maxBytes: 1 << 20) {
-            for chunk in transmit.chunks { data.append(chunk) }
-            if transmit.isFinal { peer.connection.finalTransmitWritten(now: peer.now) }
-        }
-        return data
-    }
-
-    mutating func hostToPeer() {
-        let bytes = takeHostBytes()
-        if !bytes.isEmpty { peer.connection.receive(bytes, now: peer.now) }
-        collect()
-    }
-
-    mutating func peerToHost() {
-        let bytes = takePeerBytes()
-        if !bytes.isEmpty { host.connection.receive(bytes, now: host.now) }
-        collect()
-    }
-
-    mutating func settle() {
-        for _ in 0..<8 {
-            hostToPeer()
-            peerToHost()
-        }
-    }
-
-    mutating func collect() {
-        hostEvents += host.takeEvents()
-        peerEvents += peer.takeEvents()
-    }
-
-    /// The conservation sum for the direction `sender` → `receiver`.
-    static func conserved(sender: Connection, receiver: Connection) -> Int {
-        let send = sender.footprintForTesting
-        let receive = receiver.footprintForTesting
-        return send.connectionSendCredit + send.queuedRawBytes + receive.heldRawBytes
-            + receive.unreturnedConnectionCredit
-    }
-}
-
 /// The written frames of one stream, by type.
 extension [Frame] {
     func on(_ stream: UInt32) -> [Frame] {
@@ -332,17 +259,5 @@ extension HostileRun {
     /// Frames written since `count`.
     func written(since count: Int) -> [Frame] {
         Array(written.dropFirst(count))
-    }
-
-    /// Advances `span` in 500 ms steps, feeding a PING every `pingEvery` so the
-    /// far side stays live.
-    func advanceLive(_ span: SimTime, pingEvery: SimTime = .sec(2)) {
-        var remaining = span
-        while remaining > 0 {
-            let take = Swift.min(pingEvery, remaining)
-            advance(take)
-            remaining -= take
-            feed([WireFrames.ping()])
-        }
     }
 }

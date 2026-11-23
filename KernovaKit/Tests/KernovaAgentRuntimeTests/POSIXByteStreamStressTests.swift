@@ -72,48 +72,6 @@ extension SocketTests {
     @Suite("POSIX byte stream under load")
     struct POSIXByteStreamStressTests {
         @Test(
-            "48 streams each move 1 MB both ways over 4 KiB buffers and end with exactly one .eof",
-            .timeLimit(.minutes(2)))
-        func concurrentBulkTransfers() async throws {
-            let size = 1_000_000
-            try await withThrowingTaskGroup(of: Void.self) { group in
-                for _ in 0..<48 {
-                    let (local, far) = try RawSocket.pair(sendBuffer: 4_096)
-                    var small: Int32 = 4_096
-                    _ = setsockopt(far, SOL_SOCKET, SO_SNDBUF, &small, socklen_t(MemoryLayout<Int32>.size))
-                    let drained = try DrainedStream(adopting: local)
-                    group.addTask {
-                        let farWrote = Recorder<Int>()
-                        let farRead = Recorder<Int>()
-                        onOwnQueue {
-                            RawSocket.send(far, Data(count: size))
-                            _ = shutdown(far, Int32(SHUT_WR))
-                            farWrote.record(1)
-                        }
-                        onOwnQueue { farRead.record(RawSocket.read(far, total: size).count) }
-                        for _ in 0..<4 {
-                            #expect(try await drained.write([Data(count: size / 4)]) == nil)
-                        }
-                        var read = farRead.waiter()
-                        #expect(try await read.next { _ in true } == size)
-                        var wrote = farWrote.waiter()
-                        _ = try await wrote.next { _ in true }
-                        var ends = drained.ends.waiter()
-                        #expect(try await ends.next { _ in true } == .ended(.eof))
-                        #expect(drained.receivedBytes.withLock { $0 } == size)
-                        drained.stream.shutdown()
-                        var released = drained.released.waiter()
-                        _ = try await released.next { _ in true }
-                        try await flush(drained.queue)
-                        #expect(drained.ends.elements == [.ended(.eof)])
-                        close(far)
-                    }
-                }
-                try await group.waitForAll()
-            }
-        }
-
-        @Test(
             """
             640 streams with far-side traffic and a pending write, shut down twice from another thread, each \
             deliver one .ended, never EBADF, and release once

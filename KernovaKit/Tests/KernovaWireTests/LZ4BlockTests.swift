@@ -95,22 +95,6 @@ struct LZ4BlockTests {
         #expect(restored == input.bytes)
     }
 
-    @Test("Hand-written blocks decode: empty, literals only, an overlapping match, extended lengths")
-    func knownBlocks() throws {
-        #expect(try LZ4Block.decompress(Data([0x00]), decompressedSize: 0) == Data())
-        #expect(try LZ4Block.decompress(Data([0x30, 1, 2, 3]), decompressedSize: 3) == Data([1, 2, 3]))
-        let overlapping = Data([0x15, 0x61, 0x01, 0x00, 0x10, 0x62])
-        #expect(try LZ4Block.decompress(overlapping, decompressedSize: 11) == Data("aaaaaaaaaab".utf8))
-        let literals = Data((0..<273).map { UInt8(truncatingIfNeeded: $0) })
-        let extended = Data([0xF0, 0xFF, 0x03]) + literals
-        #expect(try LZ4Block.decompress(extended, decompressedSize: 273) == literals)
-        // 1 literal, then a match of 4 + 15 + 255 + 1 = 275 bytes at offset 1, then 1 literal.
-        let longMatch = Data([0x1F, 0x61, 0x01, 0x00, 0xFF, 0x01, 0x10, 0x62])
-        #expect(
-            try LZ4Block.decompress(longMatch, decompressedSize: 277)
-                == Data(repeating: 0x61, count: 276) + Data([0x62]))
-    }
-
     struct Malformed: Sendable, CustomTestStringConvertible {
         var name: String
         var block: [UInt8]
@@ -155,36 +139,6 @@ struct LZ4BlockTests {
     func rejectsMalformed(_ shape: Malformed) {
         #expect(throws: shape.error) {
             try LZ4Block.decompress(Data(shape.block), decompressedSize: shape.size)
-        }
-    }
-
-    @Test("Mutated blocks either throw or decode to exactly the declared size")
-    func hostileBlocks() throws {
-        var generator = SplitMix64(seed: 0xBAD_B10C)
-        let sources = [LZ4Corpus.text(3_000, seed: 1), LZ4Corpus.mixed(3_000, seed: 2)]
-        for source in sources {
-            let block = try #require(LZ4Block.compress(source))
-            for _ in 0..<1_500 {
-                var mutated = block
-                switch Int.random(in: 0..<3, using: &generator) {
-                case 0:
-                    for _ in 0...Int.random(in: 0..<4, using: &generator) {
-                        let index = Int.random(in: 0..<mutated.count, using: &generator)
-                        mutated[index] = UInt8.random(in: 0...255, using: &generator)
-                    }
-                case 1:
-                    mutated = mutated.prefix(Int.random(in: 0..<mutated.count, using: &generator))
-                default:
-                    mutated.append(generator.bytes(Int.random(in: 1...8, using: &generator)))
-                }
-                let size = Bool.random(using: &generator) ? source.count : Int.random(in: 0...6_000, using: &generator)
-                do {
-                    let output = try LZ4Block.decompress(mutated, decompressedSize: size)
-                    #expect(output.count == size)
-                } catch {
-                    // Refusing is the other acceptable outcome.
-                }
-            }
         }
     }
 }

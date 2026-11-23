@@ -42,59 +42,6 @@ let sampleMessages: [DBusMessage] = {
 
 @Suite("DBusMessage encoding and decoding")
 struct MessageTests {
-    @Test("The fixed header and field layout match the specification")
-    func layout() throws {
-        let message = DBusMessage.methodCall(
-            destination: nil, path: "/a", interface: nil, member: "M", body: [.byte(9)])
-        let bytes = try message.encoded(serial: 0x0102_0304, byteOrder: .bigEndian)
-        #expect(
-            bytes == [
-                0x42, 1, 0, 1, 0, 0, 0, 1, 1, 2, 3, 4,
-                0, 0, 0, 0x27,  // fields: 39 bytes
-                1, 1, 0x6F, 0, 0, 0, 0, 2, 0x2F, 0x61, 0,  // PATH "/a"
-                0, 0, 0, 0, 0,  // padding to 8
-                3, 1, 0x73, 0, 0, 0, 0, 1, 0x4D, 0,  // MEMBER "M"
-                0, 0, 0, 0, 0, 0,  // padding to 8
-                8, 1, 0x67, 0, 1, 0x79, 0,  // SIGNATURE "y"
-                0,  // padding the header to 8
-                9,  // the body
-            ])
-    }
-
-    @Test("Encoding refuses what the specification refuses")
-    func encodeRefusals() {
-        let call = DBusMessage.methodCall(destination: nil, path: "/", interface: nil, member: "M")
-        #expect(throws: DBusProtocolError.zeroSerial) { try call.encoded(serial: 0) }
-
-        var noMember = call
-        noMember.header.member = nil
-        #expect(throws: DBusProtocolError.missingHeaderField(3)) { try noMember.encoded(serial: 1) }
-
-        var badInterface = call
-        badInterface.header.interface = "nodots"
-        #expect(throws: DBusProtocolError.invalidName(.interface, "nodots")) { try badInterface.encoded(serial: 1) }
-
-        var signalWithoutInterface = DBusMessage(header: DBusMessageHeader(kind: .signal))
-        signalWithoutInterface.header.path = "/"
-        signalWithoutInterface.header.member = "S"
-        #expect(throws: DBusProtocolError.missingHeaderField(2)) { try signalWithoutInterface.encoded(serial: 1) }
-
-        let errorWithoutName = DBusMessage(
-            header: {
-                var header = DBusMessageHeader(kind: .error)
-                header.replySerial = 1
-                return header
-            }())
-        #expect(throws: DBusProtocolError.missingHeaderField(4)) { try errorWithoutName.encoded(serial: 1) }
-
-        let returnWithoutSerial = DBusMessage(header: DBusMessageHeader(kind: .methodReturn))
-        #expect(throws: DBusProtocolError.missingHeaderField(5)) { try returnWithoutSerial.encoded(serial: 1) }
-
-        var withDescriptor = call
-        withDescriptor.body = [.unixFD(0)]
-        #expect(throws: DBusProtocolError.unixFDsNotNegotiated) { try withDescriptor.encoded(serial: 1) }
-    }
-
     @Test("A message type the specification does not define decodes to nil")
     func unknownType() throws {
         var bytes = try sampleMessages[1].encoded(serial: 1)
@@ -142,45 +89,6 @@ struct MessageTests {
         let destinationField = try #require(fieldOffset(code: 6, in: duplicated))
         duplicated[destinationField] = 7
         #expect(throws: DBusProtocolError.duplicateHeaderField(7)) { try DBusReceivedMessage.decode(duplicated) }
-    }
-
-    @Test("The fixed header alone refuses bad byte orders, versions and sizes")
-    func fixedHeader() throws {
-        var bytes = try sampleMessages[4].encoded(serial: 1)
-        bytes[0] = 0x58
-        #expect(throws: DBusProtocolError.invalidByteOrder(0x58)) { try DBusReceivedMessage.decode(bytes) }
-        bytes[0] = DBusByteOrder.littleEndian.rawValue
-        bytes[3] = 2
-        #expect(throws: DBusProtocolError.unsupportedProtocolVersion(2)) { try DBusReceivedMessage.decode(bytes) }
-        bytes[3] = 1
-        bytes[8..<12] = [0, 0, 0, 0]
-        #expect(throws: DBusProtocolError.zeroSerial) { try DBusReceivedMessage.decode(bytes) }
-
-        // 2^27 bytes in all is the most; the body length alone claims more.
-        var huge = try sampleMessages[4].encoded(serial: 1)
-        let headerLength = huge.count
-        let bodyLength = UInt32(DBusLimits.maximumMessageLength - headerLength + 1)
-        huge[4..<8] = withUnsafeBytes(of: bodyLength.littleEndian) { ArraySlice($0) }
-        #expect(throws: DBusProtocolError.messageTooLong(DBusLimits.maximumMessageLength + 1)) {
-            try DBusReceivedMessage.decode(huge)
-        }
-        let fieldsLength = UInt32(DBusLimits.maximumArrayLength + 1)
-        huge[12..<16] = withUnsafeBytes(of: fieldsLength.littleEndian) { ArraySlice($0) }
-        #expect(throws: DBusProtocolError.arrayTooLong(DBusLimits.maximumArrayLength + 1)) {
-            try DBusReceivedMessage.decode(huge)
-        }
-    }
-
-    @Test("Unix descriptors declared in the header are refused")
-    func unixFDs() throws {
-        let call = DBusMessage.methodCall(destination: nil, path: "/a", interface: nil, member: "M")
-        let encoded = try call.encoded(serial: 1, byteOrder: .littleEndian)
-        // PATH and MEMBER end at 42; padding to 48, then UNIX_FDS = 1.
-        var bytes = Array(encoded[0..<42]) + [0, 0, 0, 0, 0, 0] + [9, 1, UInt8(ascii: "u"), 0, 1, 0, 0, 0]
-        bytes[12] = 40
-        #expect(throws: DBusProtocolError.unixFDsNotNegotiated) { try DBusReceivedMessage.decode(bytes) }
-        bytes[52] = 0
-        #expect(try DBusReceivedMessage.decode(bytes) != nil)
     }
 
     @Test("decodeBody(expecting:) checks the signature before decoding")

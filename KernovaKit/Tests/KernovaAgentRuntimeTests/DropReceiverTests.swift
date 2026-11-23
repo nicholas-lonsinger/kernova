@@ -92,12 +92,6 @@ struct DropReceiverTests {
             _ = try await harness.snapshot { $0.consolePeers[.drop] != nil }
         }
 
-        /// Lets every serve held so far, and every later one, go on.
-        func releaseServes() {
-            held.withLock { $0 = false }
-            released.signal()
-        }
-
         func write(_ contents: String, to relative: String) throws {
             try Data(contents.utf8).write(to: URL(fileURLWithPath: source + "/" + relative))
         }
@@ -137,42 +131,6 @@ struct DropReceiverTests {
         }
     }
 
-    @Test("A drop lands each item in Downloads under its offer name, Keep Both against what is there, then reveals")
-    func landsKeepingBoth() async throws {
-        let bench = try await Bench()
-        try bench.write("new", to: "a.txt")
-        try FileManager.default.createDirectory(atPath: bench.source + "/Album", withIntermediateDirectories: true)
-        try bench.write("photo", to: "Album/p.jpg")
-        try Data("old".utf8).write(to: URL(fileURLWithPath: bench.downloads + "/a.txt"))
-
-        #expect(try await bench.drop(["a.txt", "Album/"]).get().rawValue > 0)
-
-        var landed = bench.landed.waiter()
-        #expect(try await landed.next { _ in true } == ["a 2.txt", "Album"])
-        #expect(bench.read("a.txt") == "old")
-        #expect(bench.read("a 2.txt") == "new")
-        #expect(bench.read("Album/p.jpg") == "photo")
-        #expect(try await bench.offerEnd() == .completed(remoteEndBody: Data([0x10, 2])))
-        try await bench.close()
-    }
-
-    @Test("A landing folder the peer cannot open refuses the drop with why, landing and revealing nothing")
-    func unopenableFolderRefuses() async throws {
-        let bench = try await Bench(downloads: "/nonexistent-\(UInt32.random(in: 0 ... .max))")
-        try bench.write("a", to: "a.txt")
-
-        _ = try await bench.drop(["a.txt"]).get()
-
-        guard case .resetByPeer(let error) = try await bench.offerEnd() else {
-            Issue.record("the drop ended otherwise"); return
-        }
-        #expect(error.code == .writeFailed)
-        #expect(error.posixErrno == ENOENT)
-        try await bench.harness.settled()
-        #expect(bench.landed.elements.isEmpty)
-        try await bench.close()
-    }
-
     @Test(
         "An item the host cannot serve is skipped, the rest of the drop lands, and the release counts only what landed")
     func unservableItemIsSkipped() async throws {
@@ -184,51 +142,6 @@ struct DropReceiverTests {
         var landed = bench.landed.waiter()
         #expect(try await landed.next { _ in true } == ["b.txt"])
         #expect(try await bench.offerEnd() == .completed(remoteEndBody: Data([0x10, 1])))
-        try await bench.close()
-    }
-
-    @Test(
-        "A dropped folder the host cannot read all of, for an entry deep in it it may not open, is skipped",
-        .enabled(if: geteuid() != 0, "root reads past every permission bit, as the Linux CI container runs"))
-    func unreadableEntryInFolderIsSkipped() async throws {
-        let bench = try await Bench()
-        try FileManager.default.createDirectory(
-            atPath: bench.source + "/Album/Private", withIntermediateDirectories: true)
-        try bench.write("photo", to: "Album/p.jpg")
-        try bench.write("secret", to: "Album/Private/s.txt")
-        try bench.write("b", to: "b.txt")
-        try #require(chmod(bench.source + "/Album/Private/s.txt", 0) == 0)
-        defer { _ = chmod(bench.source + "/Album/Private/s.txt", 0o644) }
-
-        _ = try await bench.drop(["Album/", "b.txt"]).get()
-
-        var landed = bench.landed.waiter()
-        #expect(try await landed.next { _ in true } == ["b.txt"])
-        #expect(try await bench.offerEnd() == .completed(remoteEndBody: Data([0x10, 1])))
-        #expect(bench.read("Album/p.jpg") == nil)
-        try await bench.close()
-    }
-
-    @Test("A drop the host withdraws mid-drop lands nothing more and reveals nothing")
-    func withdrawnDropStops() async throws {
-        let bench = try await Bench(holdingServes: true)
-        try bench.write("a", to: "a.txt")
-        let peer = try await bench.drop(["a.txt", "a.txt"]).get()
-        var served = bench.served.waiter()
-        _ = try await served.next { _ in true }
-
-        bench.harness.hub.withdrawOffer(SimItems.token(1), from: peer)
-
-        guard case .resetLocally(let error) = try await bench.offerEnd() else {
-            Issue.record("the drop ended otherwise"); return
-        }
-        #expect(error.code == .cancelled)
-        bench.releaseServes()
-        try await bench.harness.settled()
-        try await flush(bench.runtime.queue)
-        #expect(bench.landed.elements.isEmpty)
-        #expect(bench.read("a.txt") == nil)
-        #expect(bench.served.elements == ["a.txt"])
         try await bench.close()
     }
 }

@@ -48,11 +48,6 @@ final class MemoryStream: ByteStream {
         state.withLock { $0.released = released }
     }
 
-    /// Keeps back everything this end writes from now on, so the far end hears silence.
-    func holdOutbound() {
-        state.withLock { $0.holdsOutbound = true }
-    }
-
     func start(on queue: DispatchQueue, _ handler: @escaping @Sendable (ByteStreamEvent) -> Void) {
         let shutBeforeStart = state.withLock { state -> Bool in
             state.queue = queue

@@ -86,23 +86,6 @@ final class RecordingConnector: HostConnectionMaking {
         return Recorded(connection: connection, number: number, commands: commands)
     }
 
-    /// Holds back connection `number`'s `featuresChanged` events from the hub until `releaseFeatures(of:)`.
-    func holdFeatures(of number: Int) {
-        heldFeatures.withLock { $0[number] = [] }
-    }
-
-    /// Delivers connection `number`'s held `featuresChanged` events to the hub, in order, and stops holding.
-    func releaseFeatures(of number: Int) {
-        for deliver in heldFeatures.withLock({ $0.removeValue(forKey: number) }) ?? [] { deliver() }
-    }
-
-    /// Every `.closed` each connection reported, by connection number.
-    var closures: [Int: Int] {
-        events.elements.reduce(into: [:]) { counts, entry in
-            if case .closed = entry.event { counts[entry.connection, default: 0] += 1 }
-        }
-    }
-
     private struct Recorded: HostConnectionHandle {
         let connection: HostConnection
         let number: Int

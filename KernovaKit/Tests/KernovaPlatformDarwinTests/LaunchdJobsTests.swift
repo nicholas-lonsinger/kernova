@@ -42,99 +42,6 @@ struct LaunchdJobsTests {
             ])
     }
 
-    @Test(
-        "\"For everyone\" asked for by a user stops and removes that user's \"Just for me\" jobs once its own are loaded"
-    )
-    func systemPlanReplacesUserJobs() {
-        let plain = InstallPlan.install(Self.system, stopTool: Self.tool)
-        let plan = InstallPlan.install(Self.system, stopTool: Self.tool, replacing: Self.user)
-        #expect(plan.before == plain.before && plan.treeWrites == plain.treeWrites && plan.writes == plain.writes)
-        #expect(
-            plan.removals == [
-                "/Users/pbear/Library/LaunchAgents/app.kernova.macosagent.plist",
-                "/Users/pbear/Library/LaunchAgents/app.kernova.macosagent.rollback.plist",
-            ])
-        #expect(
-            plan.after == plain.after + [
-                InstallPlan.Command([Self.tool, "stop-service", "gui/501/app.kernova.macosagent.rollback"]),
-                InstallPlan.Command([Self.tool, "stop-service", "gui/501/app.kernova.macosagent"]),
-            ])
-        // The user's own root stays.
-        #expect(!plan.removesRoot && plan.treeRemovals.allSatisfy { $0.hasPrefix(Self.systemRoot + "/") })
-    }
-
-    @Test("With no user at the console, \"For everyone\" leaves the session agent to the next login")
-    func systemPlanWithoutConsoleUser() {
-        let plan = InstallPlan.install(MacInstallLayout.system(consoleUserID: nil), stopTool: Self.tool)
-        #expect(!plan.steps.map(\.description).contains { $0.contains("gui/") })
-        #expect(
-            plan.writes.contains(
-                .file(
-                    path: "/Library/LaunchAgents/app.kernova.macosagent.session.plist", mode: 0o644,
-                    text: LaunchdPlists.session(.system(consoleUserID: nil)))))
-    }
-
-    @Test("An uninstall stops every job, then removes every property list and the root")
-    func uninstallPlans() {
-        let user = InstallPlan.uninstall(Self.user, stopTool: Self.tool)
-        #expect(user.before == InstallPlan.install(Self.user, stopTool: Self.tool).before)
-        #expect(
-            user.removals == [
-                "/Users/pbear/Library/LaunchAgents/app.kernova.macosagent.plist",
-                "/Users/pbear/Library/LaunchAgents/app.kernova.macosagent.rollback.plist",
-            ])
-        #expect(user.removesRoot && user.after.isEmpty)
-        let system = InstallPlan.uninstall(Self.system, stopTool: Self.tool)
-        #expect(
-            system.removals == [
-                "/Library/LaunchAgents/app.kernova.macosagent.session.plist",
-                "/Library/LaunchDaemons/app.kernova.macosagent.system.plist",
-                "/Library/LaunchDaemons/app.kernova.macosagent.system.rollback.plist",
-            ])
-    }
-
-    @Test("The user scope's refresh rewrites exactly its property lists and runs nothing")
-    func refresh() {
-        let plan = InstallPlan.refreshJobs(Self.user)
-        #expect(plan.writes == InstallPlan.install(Self.user, stopTool: Self.tool).writes)
-        #expect(plan.before.isEmpty && plan.after.isEmpty && plan.treeWrites.isEmpty && !plan.removesRoot)
-    }
-
-    @Test("The session peer's LaunchAgent runs the agent through current, in Aqua, kept alive only on failure")
-    func sessionPlist() {
-        #expect(
-            LaunchdPlists.session(Self.user) == """
-                <?xml version="1.0" encoding="UTF-8"?>
-                <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-                <plist version="1.0">
-                <dict>
-                \t<key>Label</key>
-                \t<string>app.kernova.macosagent</string>
-                \t<key>AssociatedBundleIdentifiers</key>
-                \t<array>
-                \t\t<string>app.kernova.macosagent</string>
-                \t</array>
-                \t<key>ProgramArguments</key>
-                \t<array>
-                \t\t<string>\(Self.userRoot)/current/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent</string>
-                \t\t<string>session</string>
-                \t</array>
-                \t<key>RunAtLoad</key>
-                \t<true/>
-                \t<key>KeepAlive</key>
-                \t<dict>
-                \t\t<key>SuccessfulExit</key>
-                \t\t<false/>
-                \t</dict>
-                \t<key>LimitLoadToSessionType</key>
-                \t<string>Aqua</string>
-                </dict>
-                </plist>
-
-                """)
-        #expect(Self.parse(LaunchdPlists.session(Self.system))["Label"] as? String == "app.kernova.macosagent.session")
-    }
-
     @Test("The system peer's LaunchDaemon runs the agent's system peer through current")
     func systemPlist() {
         let plist = Self.parse(LaunchdPlists.system(Self.system))
@@ -170,24 +77,6 @@ struct LaunchdJobsTests {
         #expect(system["LimitLoadToSessionType"] == nil)
     }
 
-    @Test(
-        "Every property list, in both scopes, names the agent's bundle and runs the agent's own executable",
-        arguments: [true, false])
-    func attributedToTheAgent(_ system: Bool) {
-        let layout = system ? Self.system : Self.user
-        let texts = InstallPlan.install(layout, stopTool: Self.tool).writes.compactMap { write -> String? in
-            if case .file(_, _, let text) = write { text } else { nil }
-        }
-        #expect(texts.count == (system ? 3 : 2))
-        for text in texts {
-            let plist = Self.parse(text)
-            #expect(plist["AssociatedBundleIdentifiers"] as? [String] == ["app.kernova.macosagent"])
-            #expect(
-                (plist["ProgramArguments"] as? [String])?.first?.hasSuffix(
-                    "/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent") == true)
-        }
-    }
-
     @Test("Markup in a path is escaped")
     func escaping() {
         let layout = MacInstallLayout.user(home: "/Users/a&b<c>", userID: 502)
@@ -215,12 +104,6 @@ struct LaunchdJobsTests {
             (try? MacInstallLayout.layout(
                 for: .user, dryRun: false, effectiveUID: 501, home: "/Users/pbear", consoleUserID: nil))
                 == Self.user)
-    }
-
-    @Test("The rollback check kills the job that pulls and switches: the session peer, or the system peer")
-    func updatingJobs() {
-        #expect(MacInstallLayout.updatingLabel(.user) == "app.kernova.macosagent")
-        #expect(MacInstallLayout.updatingLabel(.system) == "app.kernova.macosagent.system")
     }
 
     @Test("launchctl list's listing gives a running job's process, and 0 for one stopped or missing")

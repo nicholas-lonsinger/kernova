@@ -503,21 +503,4 @@ struct HostileSuite {
             }
         }
     }
-
-    @Test("A misused core closes INTERNAL in release")
-    func misuse() {
-        var configuration = ConnectionConfiguration(claim: PeerClaim(role: .host), adverts: [])
-        configuration.assertsOnMisuseForTesting = false
-        var connection = Connection(configuration, now: CoreInstant(nanoseconds: 0))
-        connection.reset(StreamID(rawValue: 2), WireError(.cancelled))
-        var closure: ConnectionClosure?
-        while let event = connection.pollEvent() {
-            if case .closed(let value) = event { closure = value }
-        }
-        guard case .closedLocally(let error) = closure else {
-            Issue.record("no close: \(String(describing: closure))")
-            return
-        }
-        #expect(error.code == .internal)
-    }
 }

@@ -177,16 +177,6 @@ final class ManualScheduler: RuntimeScheduler {
         }
         for entry in due { entry.queue.async(execute: entry.fire) }
     }
-
-    /// Queues the earliest armed fire now, whatever its deadline: a timer that fires early.
-    func fireEarliestEarly() {
-        let entry = state.withLock { state -> Entry? in
-            guard let earliest = state.entries.min(by: { $0.at < $1.at }) else { return nil }
-            state.entries.removeAll { $0.id == earliest.id }
-            return earliest
-        }
-        if let entry { entry.queue.async(execute: entry.fire) }
-    }
 }
 
 /// Waits until every block already on `queue` has run.
@@ -273,13 +263,6 @@ final class FarHost: Sendable {
         far = Locked(Far(endpoint: HostEndpoint(configuration, generation: generation, now: clock.now)))
     }
 
-    /// A far host offering items on every item feature, with each enabled by its policy.
-    static func offeringItems(clock: ManualScheduler) -> FarHost {
-        var configuration = Fixture.hostConfiguration(policy: SimItems.policy(PolicySnapshot()))
-        configuration.items = SimItems.served
-        return FarHost(clock: clock, configuration: configuration)
-    }
-
     /// Feeds the host endpoint what the peer wrote.
     func read(_ bytes: Data) {
         let now = clock.now
@@ -298,13 +281,6 @@ final class FarHost: Sendable {
             return Self.drain(&far, now)
         }
         events.forEach(self.events.record)
-    }
-
-    /// What the peer's Hello advertised for `feature`; nil before the Hello.
-    func peerAdvert(_ feature: FeatureID) -> Availability<Data>? {
-        far.withLock {
-            $0.endpoint.connection.remoteHello?.adverts.first { $0.feature == feature }?.advert.availability
-        }
     }
 
     /// Everything the host endpoint has to send.
@@ -398,30 +374,6 @@ final class PeerDriverHarness: Sendable {
     /// Runs every block already on the driver queue.
     func settle(fileID: String = #fileID, line: Int = #line) async throws {
         try await flush(driver.queue, fileID: fileID, line: line)
-    }
-
-    /// The events delivered since the last call.
-    func takeEvents() -> [PeerEvent] {
-        events.withLock { events in
-            defer { events.removeAll() }
-            return events
-        }
-    }
-
-    /// Feeds the peer's written bytes to the host endpoint.
-    func hostReads() {
-        far.read(stream.takeWritten())
-    }
-
-    /// Starts the driver, completes its first write, and delivers the host's Hello and what follows it.
-    func handshake(fileID: String = #fileID, line: Int = #line) async throws {
-        driver.start()
-        try await settle(fileID: fileID, line: line)
-        stream.completeWrite()
-        try await settle(fileID: fileID, line: line)
-        hostReads()
-        stream.deliver(.received(far.output()))
-        try await settle(fileID: fileID, line: line)
     }
 }
 

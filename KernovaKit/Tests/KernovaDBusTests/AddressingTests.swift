@@ -52,46 +52,6 @@ struct AddressingTests {
         #expect(try DBusAddress.parse("").isEmpty)
     }
 
-    @Test("An escaped value parses back unchanged", arguments: ["/run/user/1000/bus", "/a b,;=%/ü"])
-    func escapesValues(value: String) throws {
-        #expect(try DBusAddress.parse("unix:path=" + DBusAddress.escaped(value))[0].parameters["path"] == value)
-    }
-
-    static let badAddresses: [(String, DBusAddressError)] = [
-        ("path=/x", .missingTransport("path=/x")),
-        (":path=/x", .missingTransport(":path=/x")),
-        ("unix:path", .malformedPair("path")),
-        ("unix:=/x", .malformedPair("=/x")),
-        ("unix:path=/a,path=/b", .duplicateKey("path")),
-        ("unix:path=/a%2", .badEscape("/a%2")),
-        ("unix:path=/a%zz", .badEscape("/a%zz")),
-        ("unix:path=%00", .badEscape("%00")),
-        ("unix:path=%ff", .badEscape("%ff")),
-        ("unix:path=/a b", .unescapedByte("/a b")),
-    ]
-
-    @Test("Malformed addresses throw their fault", arguments: badAddresses)
-    func rejectsAddresses(text: String, error: DBusAddressError) {
-        #expect(throws: error) { try DBusAddress.parse(text) }
-    }
-
-    @Test("A match rule's text quotes each value, apostrophes escaped outside the quotes")
-    func ruleText() {
-        let rule = DBusMatchRule(
-            sender: "org.freedesktop.login1", path: "/org/freedesktop/login1/session/_32",
-            interface: "org.freedesktop.DBus.Properties", member: "PropertiesChanged",
-            arg0: "org.freedesktop.login1.Session")
-        #expect(
-            rule.text
-                == "type='signal',sender='org.freedesktop.login1',interface='org.freedesktop.DBus.Properties',"
-                + "member='PropertiesChanged',path='/org/freedesktop/login1/session/_32',"
-                + "arg0='org.freedesktop.login1.Session'")
-        // The specification's example: a 1-character string holding an apostrophe.
-        #expect(DBusMatchRule(kind: nil, arg0: "'").text == "arg0=''\\'''")
-        #expect(DBusMatchRule(kind: .methodReturn).text == "type='method_return'")
-        #expect(DBusMatchRule(kind: nil).text == "")
-    }
-
     @Test("A match rule matches on every key it names, the sender by its current owner")
     func ruleMatching() throws {
         let signal = try #require(

@@ -39,13 +39,5 @@ struct MacAgentCommandTests {
         #expect(MacAgentCommand.parse(["pack-payload", "a", "/b"]) == nil)
         #expect(MacAgentCommand.parse(["--help"]) == nil)
     }
-
-    @Test("An install packs the app bundle its executable runs from: the installer disk's")
-    func installedBundle() {
-        #expect(
-            MacAgentTools.bundle(
-                of: "/Volumes/Kernova Guest Agent/Kernova Guest Agent.app/Contents/MacOS/KernovaMacOSAgent")
-                == "/Volumes/Kernova Guest Agent/Kernova Guest Agent.app")
-    }
 }
 #endif

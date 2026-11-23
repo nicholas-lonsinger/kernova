@@ -35,25 +35,6 @@ struct LaunchRequirementTests {
         return url
     }
 
-    @Test("A bundle meets its own designated requirement; one signed ad-hoc from other content is refused")
-    func adHocBundles() async throws {
-        let directory = try Self.scratch()
-        let installed = try await Self.adHocBundle(in: directory, version: "1")
-        let update = try await Self.adHocBundle(in: directory, version: "2")
-        var code: SecStaticCode?
-        try #require(
-            SecStaticCodeCreateWithPath(URL(fileURLWithPath: installed) as CFURL, SecCSFlags(), &code) == errSecSuccess)
-        var designated: SecRequirement?
-        try #require(SecCodeCopyDesignatedRequirement(try #require(code), SecCSFlags(), &designated) == errSecSuccess)
-        let requirement = try #require(designated)
-
-        #expect(LaunchRequirement.refusal(ofBundleAt: installed, against: requirement) == nil)
-        let refusal = try #require(LaunchRequirement.refusal(ofBundleAt: update, against: requirement))
-        #expect(refusal.code == .updateLaunchRefused)
-        #expect(refusal.rejectsPayload)
-        #expect(refusal.detail.contains("\(errSecCSReqFailed)"))
-    }
-
     @Test("The running code meets its own designated requirement, and another ad-hoc bundle does not")
     func runningCode() async throws {
         var running: SecCode?

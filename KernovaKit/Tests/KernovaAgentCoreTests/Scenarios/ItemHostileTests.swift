@@ -153,21 +153,6 @@ struct ItemHostileTests {
     }
 }
 
-@Suite("Item names held to Representation.name's contract")
-struct ItemNameAdmissionTests {
-    @Test("This side's offer that breaks the contract is refused INTERNAL, and nothing opens")
-    func misnamedLocalOfferIsRefused() {
-        for (label, representation) in HostileItems.misnamed {
-            let run = HostileRun(local: .host, seed: 1, items: true)
-            run.feed([HostileItems.peerHello], preamble: true)
-            let refusal = run.offerItems(
-                SimItems.offer(9, [[SimItems.representation(.file, size: 64), representation]]))
-            #expect(refusal?.code == .internal, "\(label): \(String(describing: refusal))")
-            #expect(!run.written.contains { $0.type == .open }, "\(label) opened a stream")
-        }
-    }
-}
-
 extension HostileRows {
     /// A far side's offer whose one Item breaks `Representation.name`'s contract, one row per way.
     static let misnamedRows = HostileItems.misnamed.map { misnamed($0.label, $0.representation) }

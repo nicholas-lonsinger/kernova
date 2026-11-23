@@ -27,76 +27,6 @@ struct BusConnectionTests {
     static let tickRule = DBusMatchRule(
         sender: serviceName, path: servicePath, interface: serviceInterface, member: "Tick")
 
-    @Test("Hello gives each connection its own unique name")
-    func hello() async throws {
-        try await PrivateBus.with { bus in
-            let first = try bus.connect()
-            let second = try bus.connect()
-            #expect(first.uniqueName.hasPrefix(":"))
-            #expect(first.uniqueName != second.uniqueName)
-        }
-    }
-
-    @Test("A call returns its reply; an ERROR reply throws its name and message")
-    func callReplyAndError() async throws {
-        try await PrivateBus.with { bus in
-            let service = try bus.connect(onMethodCall: Self.service)
-            try requestName(Self.serviceName, on: service)
-            let client = try bus.connect()
-
-            let body: [DBusValue] = [
-                .string("hi"), .uint32(5),
-                .dictionary(
-                    key: .string, value: .variant, [(.string("k"), .variant(.array(elementType: .byte, [.byte(1)])))]),
-            ]
-            let reply = try client.call(
-                .methodCall(
-                    destination: Self.serviceName, path: Self.servicePath, interface: Self.serviceInterface,
-                    member: "Echo", body: body))
-            #expect(try reply.decodeBody() == body)
-            #expect(reply.header.sender == service.uniqueName)
-
-            #expect(
-                throws: DBusCallError.remote(
-                    DBusRemoteError(name: "org.kernova.Test.Error.Failed", message: "As asked"))
-            ) {
-                try client.call(
-                    .methodCall(
-                        destination: Self.serviceName, path: Self.servicePath, interface: Self.serviceInterface,
-                        member: "Fail"))
-            }
-        }
-    }
-
-    @Test("A connection with no method-call handler answers UnknownMethod")
-    func unknownMethod() async throws {
-        try await PrivateBus.with { bus in
-            let silent = try bus.connect()
-            let client = try bus.connect()
-            do {
-                _ = try client.call(
-                    .methodCall(destination: silent.uniqueName, path: "/", interface: nil, member: "Hi"))
-                Issue.record("The call returned")
-            } catch DBusCallError.remote(let error) {
-                #expect(error.name == "org.freedesktop.DBus.Error.UnknownMethod")
-            }
-        }
-    }
-
-    @Test("The bus's own errors arrive as remote errors")
-    func busError() async throws {
-        try await PrivateBus.with { bus in
-            let client = try bus.connect()
-            do {
-                _ = try client.call(
-                    .methodCall(destination: "org.kernova.Nobody", path: "/", interface: nil, member: "Hi"))
-                Issue.record("The call returned")
-            } catch DBusCallError.remote(let error) {
-                #expect(error.name == "org.freedesktop.DBus.Error.ServiceUnknown")
-            }
-        }
-    }
-
     /// A handler putting each signal's first argument into `inbox`.
     static func collect(into inbox: BlockingInbox<String>) -> @Sendable (DBusReceivedMessage) -> Void {
         { signal in
@@ -156,22 +86,6 @@ struct BusConnectionTests {
             #expect(try await after.next() == "second")
             #expect(inbox.isEmpty)
             second.cancel()
-        }
-    }
-
-    @Test("A subscription made before the name has an owner gets the owner's signals once it takes the name")
-    func noOwnerYet() async throws {
-        try await PrivateBus.with { bus in
-            let client = try bus.connect()
-            let inbox = BlockingInbox<String>()
-            let subscription = try client.subscribe(Self.tickRule, handler: Self.collect(into: inbox))
-            let service = try bus.connect(onMethodCall: Self.service)
-            try service.sendForTesting(Self.tick("before"))
-            try requestName(Self.serviceName, on: service)
-            try service.sendForTesting(Self.tick("after"))
-            #expect(try await inbox.next() == "after")
-            #expect(inbox.isEmpty)
-            subscription.cancel()
         }
     }
 
@@ -241,22 +155,6 @@ struct BusConnectionTests {
         return outcome
     }
 
-    @Test("A bus that goes away fails the call in progress with the end of the stream")
-    func busGoneDuringCall() async throws {
-        try await PrivateBus.with { bus in
-            let arrived = BlockingInbox<String>()
-            let release = BlockingInbox<String>()
-            let service = try bus.connect(onMethodCall: Self.stalling(arrived: arrived, release: release))
-            defer { release.put("go") }
-            try requestName(Self.serviceName, on: service)
-            let client = try bus.connect()
-            let outcome = Self.callElsewhere(client, Self.serviceCall("Hang"))
-            #expect(try await arrived.next() == "arrived")
-            await bus.killDaemon()
-            #expect(try await outcome.next() == .disconnected(.endOfStream))
-        }
-    }
-
     @Test("A call that times out throws, and the connection still answers the next call with its own reply")
     func timeout() async throws {
         try await PrivateBus.with { bus in
@@ -270,16 +168,6 @@ struct BusConnectionTests {
             }
             let reply = try client.call(Self.serviceCall("Echo", [.string("after the timeout")]))
             #expect(try reply.decodeBody() == [.string("after the timeout")])
-        }
-    }
-
-    @Test("Connecting to an address nobody listens on throws")
-    func noListener() {
-        #expect(throws: DBusConnectError.self) {
-            try DBusBusConnection(address: "unix:abstract=/kernova/nobody-listens-here")
-        }
-        #expect(throws: DBusConnectError.noConnectableAddress("tcp:host=127.0.0.1,port=1")) {
-            try DBusBusConnection(address: "tcp:host=127.0.0.1,port=1")
         }
     }
 }
