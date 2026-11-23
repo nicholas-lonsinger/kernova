@@ -29,20 +29,6 @@ ubuntu_sdk_missing() {
     fi
 }
 
-# stale_kernova_sdks <swift version>: on macOS, the id of every installed SDK of
-# a kind these libraries install — the Static Linux SDK and the Ubuntu SDK —
-# that is not the one for that version, one per line. Another checkout may pin
-# another version and still build with its SDK, so they are listed, never removed.
-stale_kernova_sdks() {
-    local version=$1 bundle id
-    for bundle in "$(swift_sdks_dir)"/swift-*-RELEASE_static-linux-*.artifactbundle \
-        "$(swift_sdks_dir)"/*-RELEASE_ubuntu_noble_aarch64.artifactbundle; do
-        [ -d "$bundle" ] || continue
-        id="$(basename "$bundle" .artifactbundle)"
-        [ "$id" = "$(static_sdk_id "$version")" ] || [ "$id" = "$(ubuntu_sdk_id "$version")" ] || echo "$id"
-    done
-}
-
 # pinned_swift <argument>...: runs `swift <argument>...` with the toolchain
 # .swift-version pins. On macOS that is swiftly's, run with the environment
 # scrubbed so Xcode's SDKROOT, TOOLCHAINS and DEVELOPER_DIR cannot reach it,

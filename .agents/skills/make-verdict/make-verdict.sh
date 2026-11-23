@@ -136,7 +136,7 @@ if [ -n "$from_log" ]; then
     if grep -qE '^make(\[[0-9]+\])?: \*\*\* ' "$log"; then make_status=2; else make_status=0; fi
 else
     if [ "$target" != lint ] && ! command -v xcodebuild >/dev/null 2>&1; then
-        setup_error "xcodebuild not found — install Xcode and run \`make doctor\`" xcodebuild-missing
+        setup_error "xcodebuild not found — install Xcode" xcodebuild-missing
     fi
     # One directory per target — target names prefix-collide (test, test-suite,
     # test-without-building) — holding one log per run. No other process can

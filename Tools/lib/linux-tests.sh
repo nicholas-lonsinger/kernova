@@ -82,7 +82,7 @@ linux_tests_run() (
 # tests in Apple's container; nothing when it lacks nothing.
 linux_tests_container_missing() {
     if ! command -v container >/dev/null 2>&1; then
-        echo "Apple's container, which \`make setup\` installs with Homebrew"
+        echo "Apple's container: brew install container"
     elif [ "$(sysctl -n kern.hv_support 2>/dev/null)" != 1 ]; then
         echo 'a hypervisor for container to run Linux in: this Mac has none (sysctl kern.hv_support is not 1)'
     fi

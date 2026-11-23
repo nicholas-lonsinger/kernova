@@ -18,11 +18,9 @@
 # Periphery's own Package.resolved pins, so it reads the index format
 # Periphery reads.
 #
-# Usage: Tools/install-periphery.sh [--indexutil-export | --version | --path]
+# Usage: Tools/install-periphery.sh [--indexutil-export]
 #   (no flag)           install both when absent, then print Periphery's path
 #   --indexutil-export  install both when absent, then print indexutil-export's path
-#   --version           print the pinned version
-#   --path              print Periphery's path, installing nothing
 #
 # Status text goes to stderr: stdout carries the path alone, so callers can
 # read it with a command substitution.
@@ -82,18 +80,10 @@ verify_periphery() {
 
 binary=periphery
 case "${1:-}" in
-    --version)
-        printf '%s\n' "$PERIPHERY_VERSION"
-        exit 0
-        ;;
-    --path)
-        printf '%s/periphery\n' "$(tool_dir "${inputs[@]}")"
-        exit 0
-        ;;
     --indexutil-export) binary=indexutil-export ;;
     '') ;;
     *)
-        printf 'install-periphery.sh: unknown option %s — expected --indexutil-export, --version or --path\n' "$1" >&2
+        printf 'install-periphery.sh: unknown option %s — expected --indexutil-export\n' "$1" >&2
         exit 2
         ;;
 esac

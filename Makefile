@@ -45,7 +45,7 @@ SWIFT_FORMAT := xcrun swift-format
 SWIFT_SOURCE_DIRS := $(shell bash -c '. Tools/lib/swift-roots.sh && swift_roots')
 
 .DEFAULT_GOAL := help
-.PHONY: help build locked-build build-for-testing locked-build-for-testing test test-linux attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain ubuntu-sdk linux-build clean locked-clean format lint setup install-hooks check-hooks install-lsp index locked-index dead-code locked-dead-code dead-code-targets outdated-pins doctor ghosts clean-ghosts
+.PHONY: help build locked-build build-for-testing locked-build-for-testing test test-linux attest test-without-building test-suite test-unhosted test-unhosted-tsan swift-toolchain ubuntu-sdk linux-build clean locked-clean format lint install-hooks install-lsp index locked-index dead-code locked-dead-code dead-code-targets ghosts clean-ghosts
 
 # Generated from the `## ` annotation on each target line below — annotate new
 # targets there and this listing (and its ordering) follows automatically.
@@ -57,40 +57,8 @@ help:
 	@printf '  Append CONFIGURATION=Release to build or test-without-building in Release (default: Debug); make test runs Debug only\n'
 	@printf '  Prefix CI=1 to build/test with the CI-only settings (a result bundle in artifacts/; a compilation cache store of its own in DerivedData/, rolled over every build)\n'
 
-# Everything a fresh clone needs beyond Xcode itself, composed from the
-# targets below so each piece is also runnable on its own. Every step is
-# idempotent, so rerun it whenever the environment drifts. It ends with
-# `doctor`, which reports the state the run produced.
-setup: install-hooks ## Set up a clone: hooks, Homebrew tools, the swift.org toolchain, the Ubuntu SDK, LSP config, Periphery, then doctor
-	@Tools/brew-install.sh shellcheck gh xcode-build-server container
-	@Tools/install-swift-toolchain.sh >/dev/null
-	@Tools/install-ubuntu-sdk.sh >/dev/null
-	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
-	@Tools/install-periphery.sh >/dev/null
-	@Tools/doctor.sh
-
-# One-time per clone: point this repo's git at the checked-in hooks —
-# `.githooks/commit-msg` checks that an agent's co-author trailer names the
-# model and version, and `.githooks/post-checkout` sets up fresh worktrees: it
-# copies the gitignored files listed in .worktreeinclude from the main
-# checkout. Per-repo config (no `--global`); core.hooksPath is shared by all
-# worktrees of this repo.
-install-hooks: ## Point git at .githooks/ (commit-msg model trailer; post-checkout worktree setup)
+install-hooks: ## Point git at .githooks/, whose post-checkout sets up each new worktree (Tools/worktree-setup.sh)
 	git config core.hooksPath .githooks
-	@echo 'Hooks installed. Commit-msg checks that the co-author trailer names the model and version; post-checkout sets up new worktrees (.worktreeinclude copies).'
-
-# Silent when the hooks are wired up, or under CI (which has no hooks to
-# install); otherwise a one-line nudge. Runs as a prerequisite of the
-# build/test targets so contributors who skipped the install step see the
-# reminder on their first build instead of only when CI fails on their PR.
-# Detection delegates to Tools/hooks-installed.sh — shared with doctor.sh —
-# which verifies the configured path actually contains the hooks rather than
-# string-comparing against ".githooks" (an absolute path that resolves
-# correctly also counts as installed).
-check-hooks:
-	@if [ -z "$${CI:-}" ] && ! Tools/hooks-installed.sh >/dev/null; then \
-		printf 'Note: git hooks are not installed. Run `make install-hooks` (one-time per clone) to check co-author trailers and auto-set-up new worktrees.\n' >&2; \
-	fi
 
 # One-time per checkout: sourcekit-lsp reads compiler flags and the index from
 # a buildServer.json that xcode-build-server writes, naming the build `make
@@ -99,7 +67,7 @@ check-hooks:
 # root — every checkout writes its own, and .githooks/post-checkout writes a
 # new worktree's when the tool is already installed.
 install-lsp: ## Install xcode-build-server and write this checkout's buildServer.json
-	@Tools/brew-install.sh xcode-build-server
+	@command -v xcode-build-server >/dev/null || brew install xcode-build-server
 	@Tools/lsp-config.sh '$(PROJECT)' '$(SCHEME)'
 
 # The build the language server reads: uncached and unmapped, so every compile
@@ -117,14 +85,14 @@ locked-index:
 		CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=YES INDEX_ENABLE_DATA_STORE=YES \
 		COMPILATION_CACHE_ENABLE_CACHING=NO
 
-build: check-hooks ## Build the app for macOS
+build: ## Build the app for macOS
 	$(LOCKED_TWIN)
 
 locked-build:
 	$(XCODEBUILD) build
 	@Tools/built-app.sh '$(CONFIGURATION)'
 
-build-for-testing: check-hooks ## Compile the app and test bundles without running them, then check the built app's weak links
+build-for-testing: ## Compile the app and test bundles without running them, then check the built app's weak links
 	$(LOCKED_TWIN)
 
 locked-build-for-testing:
@@ -137,20 +105,20 @@ clean: ## Remove this checkout's builds: its DerivedData/
 locked-clean:
 	@Tools/build-arenas.sh clean
 
-test: check-hooks ## Run the full test suite (every test target in Kernova.xctestplan) in Debug, then check the built app's weak links; a passing run is recorded for `make attest`
+test: ## Run the full test suite (every test target in Kernova.xctestplan) in Debug, then check the built app's weak links; a passing run is recorded for `make attest`
 	@test '$(CONFIGURATION)' = Debug || { echo 'make test runs Debug only, the build its record covers; build-for-testing and test-without-building take CONFIGURATION=$(CONFIGURATION)' >&2; exit 2; }
 	Tools/attest.sh record test
 
 test-linux: ## Run KernovaKit's Linux tests in Apple's container, as CI's Linux job does; a passing run is recorded for `make attest`
 	@Tools/attest.sh record test-linux
 
-attest: check-hooks ## Post the `Commit Attestation` status on the pushed HEAD, reusing a passing `make lint`, `make test-linux` and `make test` of the same inputs or running them
+attest: ## Post the `Commit Attestation` status on the pushed HEAD, reusing a passing `make lint`, `make test-linux` and `make test` of the same inputs or running them
 	@Tools/attest.sh
 
 # The `rm -rf` fires only when RESULT_BUNDLE_FLAG is set (CI): xcodebuild
 # refuses a -resultBundlePath that already exists, and outside CI this target
 # passes no such flag and must not touch artifacts/.
-test-without-building: check-hooks ## Run the test plan against an existing build-for-testing product
+test-without-building: ## Run the test plan against an existing build-for-testing product
 	@test -z '$(RESULT_BUNDLE_FLAG)' || rm -rf '$(RESULT_BUNDLE)'
 	$(LOCKED) $(XCODEBUILD) test-without-building $(RESULT_BUNDLE_FLAG)
 
@@ -196,7 +164,7 @@ linux-build: ## Cross-build the portable KernovaKit targets for aarch64 Linux (s
 	@Tools/install-swift-toolchain.sh >/dev/null && \
 	bash -c '. Tools/lib/linux-swift.sh && linux_swift build --scratch-path KernovaKit/.build/swiftly --swift-sdk "$$(static_sdk_id "$$(pinned_swift_version)")" --triple aarch64-swift-linux-musl'
 
-test-suite: check-hooks ## Run a single test suite (SUITE=<Target/Suite>; see below)
+test-suite: ## Run a single test suite (SUITE=<Target/Suite>; see below)
 	@if [ -z "$(SUITE)" ]; then \
 		echo 'Usage: make test-suite SUITE=<Target/Suite>' >&2; \
 		echo 'Example: make test-suite SUITE=KernovaCoreTests/VMConfigurationTests' >&2; \
@@ -220,17 +188,6 @@ locked-dead-code:
 
 dead-code-targets: ## Print the targets only tests reach, which the dead-code scan's production view excludes
 	@dead_code=$$(Tools/install-dead-code-tool.sh dead-code) && "$$dead_code" test-only-targets --project $(PROJECT)
-
-outdated-pins: ## Report each pinned version behind its newest upstream release, with the edit that moves it (network)
-	@Tools/outdated-pins.sh
-
-# Environment sanity check: verifies the local toolchain (macOS, Xcode, Swift,
-# swift-format), signing, optional tooling, and repo setup (git hooks,
-# .worktreeinclude) match what Kernova needs to build, lint, and push. A
-# starting point — extend Tools/doctor.sh with more checks over time. Exits
-# non-zero if any required check fails, so it's CI-usable too.
-doctor: ## Check the local toolchain, signing, optional tooling, and repo setup
-	@Tools/doctor.sh
 
 ghosts: ## Report stale/competing Kernova Launch Services registrations, processes, worktrees, and build arenas
 	@Tools/ghosts.sh

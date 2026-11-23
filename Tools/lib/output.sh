@@ -3,9 +3,9 @@
 #     lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #     . "$lib_dir/lib/output.sh"
 #
-# Semantics stay with each script — a marker that also increments a
-# counter (doctor's `fail`, ghosts' `ghost`/`fixed`) is defined by its owner,
-# because the counter is what the script's summary reports on.
+# Semantics stay with each script — a marker that also increments a counter
+# (ghosts' `ghost`/`fixed`) is defined by its owner, because the counter is
+# what the script's summary reports on.
 #
 # The presentation rules, which are the part that has to stay consistent:
 #
