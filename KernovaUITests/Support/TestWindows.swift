@@ -207,26 +207,3 @@ func showTestWindow(
     window.orderFront(nil)
     return window
 }
-
-/// Hosts `view` as the content view of a window ordered in — beyond every
-/// display, as ``makeTestWindow(styleMask:contentSize:)`` places it — for
-/// behavior that only runs against one.
-///
-/// `ScrollMoreIndicator` holds its scroller flash until there is a visible
-/// window to animate the fade-in against, so a flash assertion made against a
-/// window never ordered in asserts the opposite of what the app does.
-///
-/// `view` becomes the content view rather than a bare subview: a pane root with
-/// `translatesAutoresizingMaskIntoConstraints` off and no pinning constraints
-/// hands its frame to the layout engine, which resolves it to something the test
-/// never asked for. `size` defaults to the frame `view` already carries; pass a
-/// measured `preferredContentSize` for a pane that sizes its own window.
-@MainActor
-@discardableResult
-func showInTestWindow(_ view: NSView, size: NSSize? = nil) -> NSWindow {
-    let window = makeTestWindow(styleMask: [.titled, .closable])
-    window.setContentSize(size ?? view.frame.size)
-    window.contentView = view
-    window.orderFront(nil)
-    return window
-}

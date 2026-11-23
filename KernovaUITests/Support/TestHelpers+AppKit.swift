@@ -75,21 +75,7 @@ func isVisible(_ view: NSView, within root: NSView) -> Bool {
 }
 
 extension NSColor {
-    /// This color resolved to sRGB as drawn under the named appearance.
-    func resolvedSRGB(in appearance: NSAppearance.Name) throws -> NSColor {
-        var resolved: NSColor?
-        try #require(NSAppearance(named: appearance)).performAsCurrentDrawingAppearance {
-            resolved = usingColorSpace(.sRGB)
-        }
-        return try #require(resolved)
-    }
 }
 
 extension NSView {
-    /// The accessibility elements VoiceOver reaches inside this view, in order.
-    @MainActor
-    var unignoredAccessibilityElements: [NSAccessibilityProtocol] {
-        NSAccessibility.unignoredChildren(from: accessibilityChildren() ?? [])
-            .compactMap { $0 as? NSAccessibilityProtocol }
-    }
 }

@@ -86,9 +86,4 @@ final class VMSettingsOverviewViewController: NSViewController {
             headerSummary: VMOverviewSummary.headerSummary(for: category, instance: instance),
             warning: resolved.warnings[category])
     }
-
-    #if DEBUG
-    /// The card for `category`, so tests can reach its controls.
-    func cardForTesting(_ category: VMSettingsCategory) -> VMOverviewCardView? { cards[category] }
-    #endif
 }

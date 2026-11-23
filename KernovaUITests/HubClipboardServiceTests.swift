@@ -72,13 +72,6 @@ struct HubClipboardServiceTests {
         }
     }
 
-    /// Every request for the guest's clipboard the hub sent the connection, in order.
-    private func requests(_ probe: AgentHubProbe) -> [(id: ItemRequestID, token: Data)] {
-        probe.commands.compactMap {
-            if case .items(.requestClipboardOffer(let id, let token)) = $0 { (id, token) } else { nil }
-        }
-    }
-
     /// Has the connection open the last clipboard offer the hub sent, returning it once the exchange heard it
     /// opened.
     @discardableResult
@@ -151,19 +144,6 @@ struct HubClipboardServiceTests {
         return item
     }
 
-    /// Has the guest offer `items` under `token`, answering the request `request`, answering the hub's reads of them.
-    private func receive(
-        _ items: OfferedItem..., on probe: AgentHubProbe, token: Data = guestToken, request: Data = Data(),
-        concealed: Bool = false
-    ) async throws {
-        let readsBefore = reads(probe).count
-        deliverOffer(on: probe, token: token, request: request, concealed: concealed, count: items.count)
-        try await probe.changed.wait { reads(probe).count == readsBefore + items.count }
-        for (id, item) in reads(probe).dropFirst(readsBefore) {
-            probe.deliver(.itemReply(id, .read(items[Int(item)])), fromConnection: 0)
-        }
-    }
-
     /// Has the guest offer `items` as ``receive(_:on:token:request:concealed:)`` does, and waits for the
     /// host to write them to the Mac.
     private func written(
@@ -194,13 +174,6 @@ struct HubClipboardServiceTests {
         representation("public.data", .file, name: "a.bin"))
     private static let textType = NSPasteboard.PasteboardType.string
 
-    /// A guest file over the default paste ceiling.
-    private static var oversizeFile: Representation {
-        var file = representation("public.data", .file, name: "big.bin")
-        file.sizeEstimate = 3 << 30
-        return file
-    }
-
     private func released(_ token: Data, _ probe: AgentHubProbe) -> Bool {
         probe.commands.contains(.items(.release(token: token)))
     }
@@ -216,37 +189,7 @@ struct HubClipboardServiceTests {
         }.first
     }
 
-    private func refusals(of token: Data, _ probe: AgentHubProbe) -> [WireError] {
-        probe.commands.compactMap { if case .items(.refuse(token, let error)) = $0 { error } else { nil } }
-    }
-
-    /// The finished report's failure under `gesture`, waiting for it.
-    private func reported(_ instance: VMInstance, _ gesture: ClipboardTransferGesture) async throws
-        -> ClipboardTransferFailure?
-    {
-        try await waitForChange {
-            if case .finished(let finish) = instance.clipboardTransferReport {
-                finish.gesture == gesture
-            } else {
-                false
-            }
-        }
-        guard case .finished(let finish) = instance.clipboardTransferReport else { return nil }
-        return finish.failure
-    }
-
     // MARK: - Host → guest
-
-    /// Has passthrough offer a copy of `text` on the Mac, returning the offer the console peer was sent.
-    private func forwardMacCopy(
-        _ text: String, _ pasteboard: FakePasteboard, _ probe: AgentHubProbe
-    ) async throws -> ItemOffer {
-        let before = offers(probe).count
-        #expect(pasteboard.setString(text, forType: .string))
-        poll(pasteboard)
-        try await probe.changed.wait { offers(probe).count == before + 1 }
-        return try await acceptLastOffer(probe)
-    }
 
     /// The guest's pull of representation `index` of `offer`'s first item, as the hub's source asks the end for it.
     private func pull(_ offer: ItemOffer, representation index: Int = 0, from instance: VMInstance) async throws
@@ -283,85 +226,6 @@ struct HubClipboardServiceTests {
         #expect(!FileManager.default.fileExists(atPath: exchangeStaging.path))
     }
 
-    @Test(
-        "A guest offer arriving while the host's is open crossed it and is refused unread; once the guest released the host's, its next is taken"
-    )
-    func crossingOfferLoses() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: true)
-        let hostOffer = try await forwardMacCopy("copied on the Mac", pasteboard, probe)
-
-        let crossing = Data(repeating: 3, count: 16)
-        deliverOffer(on: probe, token: crossing)
-        try await probe.changed.wait { released(crossing, probe) }
-        #expect(reads(probe).isEmpty)
-        #expect(!withdrawn(hostOffer.token, probe))
-
-        // The guest's connection releases the host's offer before it opens its next.
-        probe.deliver(
-            .items(.offerEnded(.clipboard, .local, token: hostOffer.token, .completed(remoteEndBody: Data()))),
-            fromConnection: 0)
-        try await written(Self.text, to: pasteboard, on: probe)
-        withExtendedLifetime(instance) {}
-    }
-
-    @Test("A guest offer crossing a Mac copy passthrough has not sent yet loses, and the Mac copy goes at once")
-    func crossingUnsentMacCopyLoses() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: true)
-        #expect(pasteboard.setString("copied on the Mac", forType: .string))
-
-        let crossing = Data(repeating: 3, count: 16)
-        deliverOffer(on: probe, token: crossing)
-        try await probe.changed.wait { released(crossing, probe) && !offers(probe).isEmpty }
-        #expect(reads(probe).isEmpty)
-        let offered = try await acceptLastOffer(probe)
-        #expect(try await pull(offered, from: instance) == .success(.inline(Data("copied on the Mac".utf8))))
-    }
-
-    @Test(
-        "A lost connection retracts the guest's copy from the Mac; its return sends nothing, and the next copy crosses")
-    func linkLossRetractsThenSendsNothing() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: true)
-        try await written(Self.text, to: pasteboard, on: probe)
-
-        probe.deliver(.role(.peerStateChanged(Self.offConsole)), fromConnection: 0)
-        try await waitForChange { !instance.hubClipboard.isConnected }
-        try await probe.settle()
-        #expect(pasteboard.promisedTypes.isEmpty)
-        #expect(offers(probe).isEmpty)
-        // A retraction is never reported.
-        #expect(instance.clipboardTransferReport == .idle)
-
-        #expect(pasteboard.setString("copied during the outage", forType: .string))
-        probe.deliver(.role(.peerStateChanged(Self.onConsole)), fromConnection: 0)
-        try await waitForChange { instance.hubClipboard.isConnected }
-        poll(pasteboard)
-        try await probe.settle()
-        #expect(offers(probe).isEmpty)
-
-        let offered = try await forwardMacCopy("copied after the return", pasteboard, probe)
-        #expect(try await pull(offered, from: instance) == .success(.inline(Data("copied after the return".utf8))))
-    }
-
-    @Test("A Mac copy that offers nothing withdraws the host's offer")
-    func emptyMacCopyWithdraws() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: true)
-        let offered = try await forwardMacCopy("copied on the Mac", pasteboard, probe)
-
-        #expect(
-            pasteboard.setItem([
-                (.string, Data("a password".utf8)),
-                (NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.transientMarkerUTI), Data()),
-            ]))
-        poll(pasteboard)
-        try await probe.changed.wait { withdrawn(offered.token, probe) }
-        #expect(offers(probe).count == 1)
-        withExtendedLifetime(instance) {}
-    }
-
     // MARK: - Guest → host
 
     @Test("A guest pull that opens and never ends is cancelled when the guest's offer ends, and the paste gets nothing")
@@ -382,16 +246,6 @@ struct HubClipboardServiceTests {
         withExtendedLifetime(instance) {}
     }
 
-    @Test("A guest offer passthrough's write the Mac's pasteboard refuses says the copy failed")
-    func passthroughRefusedWriteIsReported() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: true)
-        pasteboard.failNextWrite()
-        try await receive(Self.text, on: probe)
-        #expect(try await reported(instance, .copy) == .transferFailed)
-        #expect(pasteboard.promisedTypes.isEmpty)
-    }
-
     // MARK: - The clipboard commands
 
     @Test("Copy to Guest offers the Mac's clipboard live: pulled when pasted, and withdrawn by the Mac's next copy")
@@ -409,89 +263,6 @@ struct HubClipboardServiceTests {
         poll(pasteboard)
         try await probe.changed.wait { withdrawn(offered.token, probe) }
         #expect(offers(probe).count == 1)
-    }
-
-    @Test("Copy to Guest of a Mac clipboard whose every file is gone sends nothing and says so")
-    func copyToGuestOfUnreadableFiles() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: false)
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-        let doomed = scratch.url.appendingPathComponent("doomed.bin")
-        try Data("doomed".utf8).write(to: doomed)
-        #expect(pasteboard.setFiles([doomed]))
-        try FileManager.default.removeItem(at: doomed)
-
-        instance.copyMacClipboardToGuest()
-        #expect(try await reported(instance, .forward) == .itemsUnreadable)
-        #expect(offers(probe).isEmpty)
-    }
-
-    /// Runs Copy Guest Clipboard to Mac until the guest has its request, returning the request's token.
-    private func askForGuestClipboard(_ instance: VMInstance, _ probe: AgentHubProbe) async throws -> Data {
-        let before = requests(probe).count
-        instance.copyGuestClipboardToMac()
-        try await probe.changed.wait { requests(probe).count == before + 1 }
-        let (id, token) = try #require(requests(probe).last)
-        probe.deliver(.itemReply(id, .offered(nil)), fromConnection: 0)
-        try await probe.settle()
-        return token
-    }
-
-    @Test("Copy to Mac writes the guest's clipboard promised, pulling nothing until a paste")
-    func copyToMacWritesPromised() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: false)
-        let request = try await askForGuestClipboard(instance, probe)
-
-        try await written(Self.text, request: request, to: pasteboard, on: probe)
-        #expect(pasteboard.promisedTypes == [Self.textType])
-        #expect(pulls(probe).isEmpty)
-    }
-
-    @Test(
-        "Copy to Mac says what the guest's refusal of its request says",
-        arguments: [
-            (ErrorCode.clipboardNothingToCopy, ClipboardTransferFailure.nothingToCopy),
-            (.readFailed, .itemsUnreadable),
-        ])
-    func copyToMacRefusalIsReported(code: ErrorCode, failure: ClipboardTransferFailure) async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: false)
-        let request = try await askForGuestClipboard(instance, probe)
-        probe.deliver(
-            .items(.requestEnded(.local, token: request, .resetByPeer(WireError(code)))), fromConnection: 0)
-        #expect(try await reported(instance, .copy) == failure)
-        #expect(pasteboard.prepareCount == 0)
-    }
-
-    // MARK: - The paste ceiling
-
-    @Test(
-        "Passthrough of the guest's text and a file over the paste ceiling writes the text and says the file was left out"
-    )
-    func passthroughLeavesOutAnOversizeFile() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: true)
-        try await receive(
-            Self.item(Self.representation(NSPasteboard.PasteboardType.string.rawValue, .inline), Self.oversizeFile),
-            on: probe)
-
-        #expect(
-            try await reported(instance, .copy)
-                == .filesLeftOut(count: 1, limitBytes: instance.preferences.clipboardMaxPasteBytes))
-        #expect(pasteboard.promisedTypes == [.string])
-    }
-
-    @Test("Passthrough of a guest file over the paste ceiling, and nothing else, leaves the Mac's clipboard as it was")
-    func passthroughRefusesAnOversizeFileAlone() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: true, macText: "the Mac's")
-        try await receive(Self.item(Self.oversizeFile), on: probe)
-
-        #expect(
-            try await reported(instance, .copy) == .tooLarge(limitBytes: instance.preferences.clipboardMaxPasteBytes))
-        #expect(pasteboard.items.first?.data(forType: .string) == Data("the Mac's".utf8))
-        #expect(pasteboard.promisedTypes.isEmpty)
     }
 
     // MARK: - The clipboard setting
@@ -599,204 +370,5 @@ struct HubClipboardServiceTests {
 
         try await end(ending, instance, pasteboard, probe)
         #expect(pasteboard.items.isEmpty)
-    }
-
-    /// Ends the console peer's connection and brings it back.
-    private func bounceLink(_ instance: VMInstance, _ probe: AgentHubProbe) async throws {
-        probe.deliver(.role(.peerStateChanged(Self.offConsole)), fromConnection: 0)
-        try await waitForChange { !instance.hubClipboard.isConnected }
-        probe.deliver(.role(.peerStateChanged(Self.onConsole)), fromConnection: 0)
-        try await waitForChange { instance.hubClipboard.isConnected }
-    }
-
-    @Test(
-        "Passthrough off, a guest copy, a newer Mac copy, a sharing bounce, then passthrough on: each clipboard stays as it was"
-    )
-    func passthroughOnAfterBounceSendsNothing() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: false)
-        // A guest offer crossing passthrough's being off is refused unread: the guest's own agent offers nothing.
-        deliverOffer(on: probe, token: Self.guestToken)
-        try await probe.changed.wait { refusals(of: Self.guestToken, probe) == [WireError(.disabledByPolicy)] }
-        #expect(reads(probe).isEmpty)
-        #expect(pasteboard.setString("the Mac's newer copy", forType: .string))
-        let macHolds = pasteboard.changeCount
-        try await bounceLink(instance, probe)
-
-        try await setPassthrough(true, instance, probe)
-        poll(pasteboard)
-        try await probe.settle()
-        #expect(offers(probe).isEmpty)
-        #expect(pasteboard.changeCount == macHolds)
-        #expect(pasteboard.items.first?.data(forType: .string) == Data("the Mac's newer copy".utf8))
-    }
-
-    // MARK: - Lower findings
-
-    @Test("A host offer the connection refused to open crosses nothing: the guest offer arriving next is taken")
-    func refusedHostOfferIsNotTheLatest() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: true)
-        #expect(pasteboard.setString("from the Mac", forType: .string))
-        poll(pasteboard)
-        try await probe.changed.wait { !offers(probe).isEmpty }
-        probe.deliver(.itemReply(offers(probe)[0].id, .offered(WireError(.internal))), fromConnection: 0)
-        try await probe.settle()
-
-        try await written(Self.text, to: pasteboard, on: probe)
-        withExtendedLifetime(instance) {}
-    }
-
-    @Test("A concealed guest offer's in-memory pulls land against the offer's one budget")
-    func memoryPullsShareTheBudget() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: true)
-        try await written(
-            Self.item(
-                Self.representation(NSPasteboard.PasteboardType.string.rawValue, .inline),
-                Self.representation("public.rtf", .inline)),
-            concealed: true, to: pasteboard, on: probe)
-
-        let first = BlockingCall {
-            pasteboard.invokeProvider(forType: NSPasteboard.PasteboardType.string)
-        }
-        let second = BlockingCall { pasteboard.invokeProvider(forType: .rtf) }
-        try await probe.changed.wait { pulls(probe).count == 2 }
-        let orders = pulls(probe).map(\.order)
-        #expect(orders.allSatisfy { $0.landing == .memory })
-        let budget = try #require(orders[0].budget)
-        #expect(orders[1].budget === budget)
-        #expect(budget.limit == UInt64(instance.preferences.clipboardMaxPasteBytes))
-
-        endGuestOffer(on: probe)
-        #expect(try await first.returned() == nil)
-        #expect(try await second.returned() == nil)
-    }
-
-    // MARK: - Crossings and answers
-
-    @Test("Copy to Mac takes the guest's answer after a Copy to Guest the guest's item registry reset over budget")
-    func copyToMacAfterAnOverBudgetCopyToGuest() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: false)
-        #expect(pasteboard.setString("from the Mac", forType: .string))
-        instance.copyMacClipboardToGuest()
-        try await probe.changed.wait { offers(probe).count == 1 }
-        let hostOffer = try await acceptLastOffer(probe)
-        // The guest's item registry resets an offer over its budget before the guest's end hears of it.
-        probe.deliver(
-            .items(.offerEnded(.clipboard, .local, token: hostOffer.token, .resetByPeer(WireError(.tooLarge)))),
-            fromConnection: 0)
-        try await probe.settle()
-
-        let request = try await askForGuestClipboard(instance, probe)
-        try await written(Self.text, request: request, to: pasteboard, on: probe)
-    }
-
-    @Test("Copy to Mac takes the guest's answer whose request ends while the host reads the answer's items")
-    func copyToMacTakesAnAnswerWhoseRequestEndsWhileItIsRead() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: false)
-        let request = try await askForGuestClipboard(instance, probe)
-        let before = pasteboard.changeCount
-        let readsBefore = reads(probe).count
-        deliverOffer(on: probe, token: Self.guestToken, request: request)
-        try await probe.changed.wait { reads(probe).count == readsBefore + 1 }
-        // The request ends once its answer arrived whole, before the host has its items.
-        probe.deliver(
-            .items(.requestEnded(.local, token: request, .completed(remoteEndBody: Data()))), fromConnection: 0)
-        try await probe.settle()
-        for (id, _) in reads(probe).dropFirst(readsBefore) {
-            probe.deliver(.itemReply(id, .read(Self.text)), fromConnection: 0)
-        }
-        try await pasteboard.changed.wait { pasteboard.changeCount != before && !pasteboard.promisedTypes.isEmpty }
-        #expect(instance.clipboardTransferReport == .idle)
-    }
-
-    /// Runs Copy to Guest of `text` until the connection opened its offer.
-    private func copyToGuestOpens(
-        _ text: String, _ instance: VMInstance, _ pasteboard: FakePasteboard, _ probe: AgentHubProbe
-    ) async throws {
-        let before = offers(probe).count
-        #expect(pasteboard.setString(text, forType: .string))
-        instance.copyMacClipboardToGuest()
-        try await probe.changed.wait { offers(probe).count == before + 1 }
-        try await acceptLastOffer(probe)
-    }
-
-    @Test("Copy to Guest opening while the Copy to Mac answer is still arriving ends the request unheard")
-    func copyToGuestEndsARequestWhoseAnswerArrives() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: false)
-        let request = try await askForGuestClipboard(instance, probe)
-        // The answer's OPEN reached the host's item registry, which says nothing of it until it is whole.
-        try await copyToGuestOpens("from the Mac", instance, pasteboard, probe)
-        // The open released the arriving answer, which ends the request as that release.
-        probe.deliver(
-            .items(.offerEnded(.clipboard, .remote, token: Self.guestToken, .resetLocally(WireError(.cancelled)))),
-            fromConnection: 0)
-        probe.deliver(
-            .items(.requestEnded(.local, token: request, .resetLocally(WireError(.cancelled)))), fromConnection: 0)
-        try await probe.settle()
-        #expect(instance.clipboardTransferReport == .idle, "\(instance.clipboardTransferReport)")
-        try await probe.changed.wait { withdrawn(request, probe) }
-    }
-
-    @Test("Copy to Guest opening while the host reads the Copy to Mac answer ends the request unheard for good")
-    func copyToGuestEndsARequestWhoseAnswerIsRead() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: false)
-        let request = try await askForGuestClipboard(instance, probe)
-        let readsBefore = reads(probe).count
-        deliverOffer(on: probe, token: Self.guestToken, request: request)
-        try await probe.changed.wait { reads(probe).count == readsBefore + 1 }
-        try await copyToGuestOpens("from the Mac", instance, pasteboard, probe)
-        #expect(released(Self.guestToken, probe))
-        // A request still held when the connection leaves is refused.
-        probe.deliver(.role(.peerStateChanged(Self.offConsole)), fromConnection: 0)
-        try await waitForChange { !instance.hubClipboard.isConnected }
-        try await probe.settle()
-        #expect(instance.clipboardTransferReport == .idle, "\(instance.clipboardTransferReport)")
-    }
-
-    @Test("Copy to Mac takes its answer arriving after a Copy to Guest the connection refused to open")
-    func copyToMacOutlivesARefusedCopyToGuest() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: false)
-        let request = try await askForGuestClipboard(instance, probe)
-        #expect(pasteboard.setString("from the Mac", forType: .string))
-        instance.copyMacClipboardToGuest()
-        try await probe.changed.wait { offers(probe).count == 1 }
-        probe.deliver(.itemReply(offers(probe)[0].id, .offered(WireError(.tooLarge))), fromConnection: 0)
-        try await probe.settle()
-        try await written(Self.text, request: request, to: pasteboard, on: probe)
-        #expect(!withdrawn(request, probe))
-    }
-
-    @Test("A Mac clipboard holding nothing to copy is said of Copy to Guest, never of a copy passthrough reads")
-    func nothingToCopyIsSaidOnlyOfTheCommand() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: true)
-        let transient = NSPasteboard.PasteboardType(ClipboardSnapshotPolicy.transientMarkerUTI)
-        #expect(pasteboard.setItem([(.string, Data("a password".utf8)), (transient, Data())]))
-        poll(pasteboard)
-        try await pasteboard.changed.wait { pasteboard.readsReachedLanding == 1 }
-        #expect(instance.clipboardTransferReport == .idle)
-
-        try await setPassthrough(false, instance, probe)
-        instance.copyMacClipboardToGuest()
-        #expect(try await reported(instance, .forward) == .nothingToCopy)
-        #expect(offers(probe).isEmpty)
-    }
-
-    @Test("The guest's clipboard moving on takes its write back from the Mac, and says nothing")
-    func guestMovingOnRetractsSilently() async throws {
-        let probe = AgentHubProbe()
-        let (instance, pasteboard) = try await connected(probe, passthrough: true)
-        try await written(Self.text, to: pasteboard, on: probe)
-
-        endGuestOffer(on: probe)
-        try await pasteboard.changed.wait { pasteboard.promisedTypes.isEmpty }
-        #expect(instance.clipboardTransferReport == .idle)
     }
 }

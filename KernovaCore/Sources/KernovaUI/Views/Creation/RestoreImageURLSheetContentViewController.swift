@@ -32,11 +32,6 @@ final class RestoreImageURLSheetContentViewController: NSViewController {
     /// racing it.
     private var probeTask: Task<Void, Never>?
 
-    #if DEBUG
-    /// Awaited by tests instead of polling for the result to land.
-    var probeTaskForTesting: Task<Void, Never>? { probeTask }
-    #endif
-
     // MARK: - Layout constants
 
     private static let sheetWidth: CGFloat = 560

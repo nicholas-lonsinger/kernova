@@ -50,15 +50,6 @@ func makeSettingsViewModel(
     )
 }
 
-@MainActor
-func makeSettingsInstance(
-    guestOS: VMGuestOS, phase: VMLifecyclePhase = .stopped,
-    hostState: VMHostState = VMHostState(),
-    mutate: (inout VMConfiguration) -> Void = { _ in }
-) -> VMInstance {
-    VMInstanceFixture.make(guestOS: guestOS, phase: phase, hostState: hostState, mutate: mutate)
-}
-
 /// The test target's one construction site for the settings pane, which is what
 /// keeps every fixture off the app-wide activation center.
 ///
@@ -114,13 +105,6 @@ func makeSettingsController(
 // MARK: - View-tree lookups
 
 @MainActor
-func settingsNetworkModePopUp(in view: NSView) -> NSPopUpButton? {
-    firstSubview(NSPopUpButton.self, in: view) {
-        $0.action.map(NSStringFromSelector) == "networkModeChanged"
-    }
-}
-
-@MainActor
 func firstSwitch(action name: String, in view: NSView) -> NSSwitch? {
     firstSubview(NSSwitch.self, in: view) { $0.action.map(NSStringFromSelector) == name }
 }
@@ -130,19 +114,6 @@ func firstSwitch(action name: String, in view: NSView) -> NSSwitch? {
 @MainActor
 func firstPopUp(action name: String, in view: NSView) -> NSPopUpButton? {
     firstSubview(NSPopUpButton.self, in: view) { $0.action.map(NSStringFromSelector) == name }
-}
-
-@MainActor
-func settingsLockHints(in view: NSView) -> [NSView] {
-    allSubviews(NSStackView.self, in: view) { $0.toolTip == groupedFormLockHintText }
-}
-
-/// The lock hints on the pinned header, which is where a single-section
-/// category's hint lives while that category is open.
-@MainActor
-func panelHeaderLockHints(in vc: VMSettingsViewController) -> [NSView] {
-    guard let header = firstSubview(VMIdentityHeaderView.self, in: vc.view) else { return [] }
-    return settingsLockHints(in: header)
 }
 
 /// The grouped-form row whose leading label reads `label`: the
@@ -156,32 +127,12 @@ func settingsRow(labeled label: String, in view: NSView) -> NSView? {
         }
 }
 
-/// The grouped-form card `view` sits in: the nearest ancestor drawing the
-/// card fill.
-@MainActor
-func enclosingGroupedFormCard(of view: NSView) -> NSView? {
-    var candidate = view.superview
-    while let current = candidate {
-        let drawsCard = current.subviews.contains {
-            ($0 as? NSBox)?.fillColor == GroupedFormStyle.cardFill
-        }
-        if drawsCard { return current }
-        candidate = current.superview
-    }
-    return nil
-}
-
 /// `view`'s alignment rect in `ancestor`'s coordinates — the rect a stack
 /// spaces, which for a text field is inset from its frame.
 @MainActor
 func alignmentRect(of view: NSView, in ancestor: NSView) throws -> NSRect {
     let superview = try #require(view.superview)
     return superview.convert(view.alignmentRect(forFrame: view.frame), to: ancestor)
-}
-
-@MainActor
-func containsLabel(_ text: String, in view: NSView) -> Bool {
-    findLabel(withText: text, in: view) != nil
 }
 
 /// Like ``containsLabel(_:in:)``, but only counts a label that is actually
@@ -200,13 +151,6 @@ extension InfoPopoverParagraph {
         case .headline(let text), .body(let text), .code(let text): text
         }
     }
-}
-
-/// The info button whose popover is about `label` — a row's title, a section
-/// header, or a banner's subject.
-@MainActor
-func infoButton(about label: String, in view: NSView) -> InfoButtonView? {
-    firstSubview(InfoButtonView.self, in: view) { $0.button.toolTip == "About \(label)" }
 }
 
 /// The editable field in the grouped-form card row titled `label`, however
@@ -241,11 +185,4 @@ func typeText(_ text: String, into field: NSTextField) {
     }
     editor.selectAll(nil)
     editor.insertText(text, replacementRange: NSRange(location: NSNotFound, length: 0))
-}
-
-/// Ends editing through the field's own delegate, so the assertion covers the
-/// wiring as well as the commit.
-@MainActor
-func commitEdit(_ field: NSTextField) {
-    field.delegate?.controlTextDidEndEditing?(Notification(name: .init("test"), object: field))
 }

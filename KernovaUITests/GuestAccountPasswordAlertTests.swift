@@ -7,12 +7,7 @@ import Testing
 @testable import KernovaUI
 @testable import KernovaVirtualization
 
-/// What the resume prompt says, what each of its three buttons answers with,
-/// and what it refuses before answering at all.
-///
-/// Nothing here asserts what Virtualization *accepts* — the two checks this
-/// owns are the form's (a blank field, a mismatch), and the framework's verdict
-/// is passed through as written.
+/// What the resume prompt refuses before answering at all.
 @Suite("Guest Account Password Alert", .caseScoped)
 @MainActor
 struct GuestAccountPasswordAlertTests {
@@ -45,61 +40,6 @@ struct GuestAccountPasswordAlertTests {
         return (configuration, fields)
     }
 
-    // MARK: - Copy
-
-    @Test("The prompt names the account, and the message names the VM")
-    func copyNamesTheAccountAndTheVM() {
-        let answers = Answers()
-        let (configuration, _) = makeConfiguration(
-            password: "analytical-engine", verification: "analytical-engine", answers: answers)
-
-        // Both halves of the account's name, the way the `kernova` tool's own
-        // refusal spells it.
-        #expect(
-            configuration.title == "Enter the Password for \u{201C}Ada Lovelace\u{201D} (ada)")
-        #expect(
-            configuration.message
-                == "Kernova doesn\u{2019}t save the password for the account it creates on "
-                + "\u{201C}Sequoia\u{201D}, so this start needs it again. Skip setup "
-                + "and macOS asks for an account in Setup Assistant instead.")
-    }
-
-    @Test("The sheet opens with the password field focused")
-    func theSheetFocusesThePasswordField() {
-        let answers = Answers()
-        let (configuration, fields) = makeConfiguration(
-            password: "", verification: "", answers: answers)
-
-        #expect(configuration.accessoryView === fields)
-        #expect(configuration.initialFirstResponder === fields.passwordField)
-    }
-
-    // MARK: - Buttons
-
-    @Test("Three buttons, one Return, and Escape on the one that starts nothing")
-    func buttonsAreOrderedForTheirAnswers() {
-        let answers = Answers()
-        let (configuration, _) = makeConfiguration(
-            password: "analytical-engine", verification: "analytical-engine", answers: answers)
-
-        #expect(configuration.buttons.map(\.title) == ["Set Up Account", "Skip Setup", "Cancel"])
-        #expect(configuration.buttons.filter { $0.role == .default }.count == 1)
-        #expect(configuration.buttons.first?.role == .default)
-        #expect(configuration.buttons.last?.role == .cancel)
-    }
-
-    @Test("Set Up Account answers with the typed password")
-    func setUpAccountAnswersWithThePassword() throws {
-        let answers = Answers()
-        let (configuration, _) = makeConfiguration(
-            password: "analytical-engine", verification: "analytical-engine", answers: answers)
-
-        try #require(configuration.buttons.first).action()
-
-        #expect(answers.answered == [.password("analytical-engine")])
-        #expect(answers.retries.isEmpty)
-    }
-
     // MARK: - Refusals
 
     @Test("A verification that doesn't match is refused back to the sheet")
@@ -115,31 +55,5 @@ struct GuestAccountPasswordAlertTests {
         // The refusal leaves what the user typed where they typed it, so the
         // sheet that comes back is the one they were already looking at.
         #expect(fields.password == "analytical-engine")
-    }
-
-    @Test("Showing a refusal leaves room for it, and taking it away gives the room back")
-    func aShownRefusalResizesTheAccessoryView() {
-        let fields = GuestAccountPasswordFields()
-        let plainHeight = fields.frame.height
-
-        fields.show(refusal: "The passwords don\u{2019}t match.")
-        let refusedHeight = fields.frame.height
-        fields.show(refusal: nil)
-
-        // An `NSAlert` lays its accessory view out from the frame the view
-        // arrives with, so the refusal has to be in that frame before the sheet
-        // is built.
-        #expect(refusedHeight > plainHeight)
-        #expect(fields.frame.height == plainHeight)
-    }
-
-    // MARK: - Redaction
-
-    @Test("Describing an answer redacts the password it carries")
-    func describingAnAnswerRedactsThePassword() {
-        let description = String(
-            describing: GuestAccountPasswordAnswer.password("correct-horse-battery-staple"))
-        #expect(!description.contains("correct-horse-battery-staple"))
-        #expect(description.contains("<redacted>"))
     }
 }

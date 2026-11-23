@@ -341,13 +341,6 @@ final class SidebarVMRowCellView: NSTableCellView {
             description: "Kernova can\u{2019}t read a file of this virtual machine")
     }
 
-    #if DEBUG
-    /// The unreadable warning's tooltip, `nil` while it is hidden.
-    var unreadableWarningToolTipForTesting: String? {
-        unreadableWarning.isHidden ? nil : unreadableWarning.toolTip
-    }
-    #endif
-
     /// Passes a selected row's emphasized background on to the tag dots,
     /// which ring themselves against it; `NSTableCellView` passes it only to
     /// its own text field and image view.

@@ -344,13 +344,4 @@ package final class VMOverviewResolver {
             self.onCategoryResolved?(.snapshots)
         }
     }
-
-    #if DEBUG
-    /// The in-flight size read, so a test awaits it instead of polling the
-    /// sizes it fills in.
-    var snapshotSizeTaskForTesting: Task<Void, Never>? { snapshotSizeTask }
-
-    /// The in-flight attachment size read, for event-driven test waits.
-    var attachmentSizeTaskForTesting: Task<Void, Never>? { attachmentSizeTask }
-    #endif
 }

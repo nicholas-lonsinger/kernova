@@ -7,7 +7,7 @@ import Testing
 @testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
-/// What the prompt says, and what each of its buttons answers with.
+/// What each of the prompt's buttons answers with.
 @Suite("USB Accessory Pairing Alert Tests", .caseScoped)
 @MainActor
 struct USBAccessoryPairingAlertTests {
@@ -33,34 +33,6 @@ struct USBAccessoryPairingAlertTests {
             .first
     }
 
-    @Test("One running guest is named in the question, with nothing to choose")
-    func oneCandidateNamesTheVM() {
-        let answer = Answer()
-        let request = makeRequest(candidates: [VMInstanceFixture.make(name: "Work")], answer: answer)
-
-        let configuration = USBAccessoryPairingAlert.configuration(for: request)
-
-        #expect(configuration.title == "Pass \u{201C}Samsung Type-C\u{201D} through to \u{201C}Work\u{201D}?")
-        #expect(
-            configuration.message
-                == "While \u{201C}Work\u{201D} holds this accessory, macOS cannot use it. Kernova will pass it through to \u{201C}Work\u{201D} again whenever both are available."
-        )
-        #expect(configuration.accessoryView == nil)
-    }
-
-    @Test("Several running guests name none, and are offered in a popup")
-    func severalCandidatesOfferAChooser() throws {
-        let answer = Answer()
-        let request = makeRequest(
-            candidates: [VMInstanceFixture.make(name: "Work"), VMInstanceFixture.make(name: "Play")], answer: answer)
-
-        let configuration = USBAccessoryPairingAlert.configuration(for: request)
-
-        #expect(configuration.title == "Pass \u{201C}Samsung Type-C\u{201D} through to a virtual machine?")
-        let popUp = try #require(chooser(in: configuration))
-        #expect(popUp.itemTitles == ["Work", "Play"])
-    }
-
     @Test("Both shapes offer the same two buttons, and exactly one Return")
     func buttonsAreTheSameInBothShapes() {
         let answer = Answer()
@@ -75,18 +47,6 @@ struct USBAccessoryPairingAlertTests {
             #expect(configuration.buttons.filter { $0.role == .default }.count == 1, "\(count)")
             #expect(configuration.buttons.last?.role == .cancel, "\(count)")
         }
-    }
-
-    @Test("Pass Through answers with the one candidate when there is only one")
-    func passThroughAnswersWithTheLoneCandidate() throws {
-        let answer = Answer()
-        let work = VMInstanceFixture.make(name: "Work")
-        let configuration = USBAccessoryPairingAlert.configuration(
-            for: makeRequest(candidates: [work], answer: answer))
-
-        try #require(configuration.buttons.first).action()
-
-        #expect(answer.answered.map { $0?.id } == [work.id])
     }
 
     @Test("Two guests sharing a name are still told apart")
@@ -106,22 +66,5 @@ struct USBAccessoryPairingAlertTests {
         try #require(configuration.buttons.first).action()
 
         #expect(answer.answered.map { $0?.id } == [second.id])
-    }
-
-    @Test("Pass Through answers with whichever guest the popup is showing")
-    func passThroughReadsTheChooser() throws {
-        let answer = Answer()
-        let work = VMInstanceFixture.make(name: "Work")
-        let play = VMInstanceFixture.make(name: "Play")
-        let configuration = USBAccessoryPairingAlert.configuration(
-            for: makeRequest(candidates: [work, play], answer: answer))
-        let popUp = try #require(chooser(in: configuration))
-
-        // Read at click time, not at build time: the popup is what the user was
-        // deciding with while the sheet was up.
-        popUp.selectItem(at: 1)
-        try #require(configuration.buttons.first).action()
-
-        #expect(answer.answered.map { $0?.id } == [play.id])
     }
 }

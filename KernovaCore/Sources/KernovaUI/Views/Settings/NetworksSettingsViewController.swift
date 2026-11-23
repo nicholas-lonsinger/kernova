@@ -139,10 +139,6 @@ final class NetworksSettingsViewController: NSViewController, SettingsPaneConten
         editor.select(id)
     }
 
-    #if DEBUG
-    var selectedNetworkIDForTesting: UUID? { editor.selectedID }
-    #endif
-
     /// Asks for the new network's name and kind.
     private func presentNewNetworkSheet() {
         guard let window = view.window else { return }

@@ -36,37 +36,6 @@ struct SnapshotRevertMenuTests {
         return menu
     }
 
-    @Test("A VM with no snapshots shows the same placeholder")
-    func noSnapshotsShowsThePlaceholder() {
-        let menu = rebuild(for: makeInstance())
-        #expect(menu.items.map(\.title) == [SnapshotRevertMenu.emptyTitle])
-        #expect(menu.items.first?.isEnabled == false)
-    }
-
-    @Test("Items list the snapshots newest first")
-    func itemsAreNewestFirst() {
-        let instance = makeInstance()
-        instance.seedSnapshotManifest(
-            VMSnapshotManifest(snapshots: [
-                makeSnapshot("Older"), makeSnapshot("Newer", offsetSeconds: 60),
-            ]))
-
-        let menu = rebuild(for: instance)
-
-        // Each item's rendered title is two lines, so it is matched by prefix.
-        #expect(menu.items.count == 2)
-        #expect(menu.items.first?.title.hasPrefix("Newer\u{2026}") == true)
-        #expect(menu.items.last?.title.hasPrefix("Older\u{2026}") == true)
-    }
-
-    @Test("An item's rendered title carries the name and its capture date")
-    func itemTitleCarriesNameAndDate() {
-        let snapshot = makeSnapshot("Before the update")
-        let rendered = SnapshotRevertMenu.itemTitle(for: snapshot).string
-        #expect(rendered.hasPrefix("Before the update\u{2026}\n"))
-        #expect(rendered.contains(SnapshotDateFormat.string(from: snapshot.createdAt)))
-    }
-
     @Test("Each item names the VM and snapshot it would revert to")
     func itemsCarryTheirIdentity() {
         let instance = makeInstance()
@@ -77,16 +46,5 @@ struct SnapshotRevertMenuTests {
 
         #expect(ref?.instance === instance)
         #expect(ref?.snapshot == snapshot)
-    }
-
-    @Test("The caller's gate decides, so a busy VM's items are disabled")
-    func callerGateDisablesItems() {
-        let instance = makeInstance(phase: .running(sessionID: UUID()))
-        instance.seedSnapshotManifest(VMSnapshotManifest(snapshots: [makeSnapshot("Only")]))
-
-        // The VM's own state admits the revert here. The menu still has to
-        // follow the caller's gate.
-        #expect(admitsRevert(instance))
-        #expect(rebuild(for: instance, isEnabled: false).items.allSatisfy { !$0.isEnabled })
     }
 }

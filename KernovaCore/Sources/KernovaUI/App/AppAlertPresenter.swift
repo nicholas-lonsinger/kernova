@@ -224,21 +224,6 @@ final class AppAlertPresenter {
         observeWindowEvents()
     }
 
-    #if DEBUG
-    /// Number of requests waiting for a window.
-    var waitingCountForTesting: Int { queue.waiting.count }
-
-    /// Each delete in flight's disposition — `true` to delete immediately — by
-    /// its VM's id.
-    var deleteDispositionsForTesting: [UUID: Bool] { deletes.mapValues(\.permanently) }
-
-    /// The off-main resolution of the delete in flight for `vmID`, so tests can
-    /// `await` its `.value`.
-    func deleteResolutionForTesting(of vmID: UUID) -> Task<Void, Never>? {
-        deletes[vmID]?.resolution
-    }
-    #endif
-
     // MARK: - Events
 
     /// Re-runs the routing on every event that can let a waiting alert show:

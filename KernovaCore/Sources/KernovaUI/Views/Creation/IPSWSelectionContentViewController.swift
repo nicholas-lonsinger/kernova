@@ -45,12 +45,6 @@ final class IPSWSelectionContentViewController: NSViewController {
     #if DEBUG
     /// Awaited by tests instead of polling for the verdict to land.
     var adoptTaskForTesting: Task<Void, Never>? { adoptTask }
-
-    /// Awaited by tests instead of polling for the badge to be redrawn.
-    var latestImageTaskForTesting: Task<Void, Never>? { latestImageTask }
-
-    /// Awaited by tests instead of polling for a picked file's badge to upgrade.
-    var localFileInspectionTaskForTesting: Task<Void, Never>? { localFileInspectionWatchTask }
     #endif
     /// Shows the "more content below" cue while this step's content overflows the
     /// sheet; a hint only.

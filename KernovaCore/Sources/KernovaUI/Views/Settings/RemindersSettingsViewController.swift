@@ -68,11 +68,6 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     /// signaling there's more below.
     private var scrollMoreIndicator: ScrollMoreIndicator?
 
-    #if DEBUG
-    /// The more-below indicator, so a test can assert the flash re-arms when
-    /// the pane's content grows and stays latched when it doesn't.
-    var scrollMoreIndicatorForTesting: ScrollMoreIndicator? { scrollMoreIndicator }
-    #endif
     /// Keeps the per-VM rows in sync with the library while the pane is visible.
     private var vmObservation: ObservationLoop?
 

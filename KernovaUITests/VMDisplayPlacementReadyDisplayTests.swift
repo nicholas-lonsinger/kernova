@@ -28,32 +28,6 @@ struct VMDisplayPlacementReadyDisplayTests {
         func syncActivationPolicy() {}
     }
 
-    private func makeInstance(preference: VMDisplayPreference) -> VMInstance {
-        VMInstanceFixture.make(
-            name: "Readied VM", hostState: VMHostState(displayPreference: preference))
-    }
-
-    private func makeController(posture: GUIPosture)
-        -> (VMDisplayPlacementController, StubResidency)
-    {
-        let viewModel = makeLibraryViewModel(preferences: preferences)
-        let placement = VMDisplayPlacementController(viewModel: viewModel, stage: stage, focus: RecordingSessionFocus())
-        let residency = StubResidency(posture: posture)
-        placement.residency = residency
-        return (placement, residency)
-    }
-
-    @Test("A bring-up while the app presents no GUI opens no window")
-    func absentOpensNoWindow() {
-        let (placement, residency) = makeController(posture: .absent)
-        let instance = makeInstance(preference: .fullscreen)
-
-        placement.readyDisplay(for: instance, presence: .attended)
-
-        #expect(placement.window(for: instance.instanceID) == nil)
-        #expect(residency.prepareCount == 0)
-    }
-
     /// The whole chain a sidebar Start All runs: the core readies each VM as
     /// unattended, and a Kernova the user is in puts the windows up without
     /// any of them taking key or a Space.

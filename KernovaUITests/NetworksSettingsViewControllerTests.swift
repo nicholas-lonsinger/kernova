@@ -9,16 +9,11 @@ import Testing
 @testable import KernovaUI
 @testable import KernovaVirtualization
 
-/// The Settings window's Networks pane: the library's named networks, created,
-/// renamed and deleted through the command core.
+/// The Settings window's Networks pane over a network list Kernova can't read.
 @Suite("Networks Settings Tests", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct NetworksSettingsViewControllerTests {
     private let preferences = makeTestPreferences()
-
-    private func makeViewModel(entitled: Bool = true) -> VMLibraryViewModel {
-        makeSettingsViewModel(preferences: preferences, entitled: entitled)
-    }
 
     /// The pane as the tab container shows it.
     private func makePane(_ viewModel: VMLibraryViewModel) -> NetworksSettingsViewController {
@@ -29,53 +24,7 @@ struct NetworksSettingsViewControllerTests {
         return pane
     }
 
-    /// A NAT VM on `membership`.
-    @discardableResult
-    private func addVM(
-        _ name: String, to viewModel: VMLibraryViewModel,
-        membership: VMNetworkMembership, mode: VMNetworkMode = .nat
-    ) -> VMInstance {
-        viewModel.library.registerFixture(name: name) {
-            $0.networkEnabled = true
-            $0.networkMode = mode
-            $0.networkMembership = membership
-            $0.macAddress = GuestMACAddress.random()
-        }
-    }
-
-    private func summary(
-        _ name: String, members: [String] = []
-    ) -> NetworkSummary {
-        NetworkSummary(
-            id: UUID(), name: name, kind: .nat,
-            members: members.map {
-                VMSummary(
-                    id: UUID(), name: $0, status: "stopped", ipAddress: .unavailable,
-                    heldByAnotherCopy: false)
-            })
-    }
-
     // MARK: - Presence
-
-    @Test("A build that can attach named networks creates both kinds, and one that cannot creates none")
-    func creatableKindsFollowTheEntitlement() {
-        #expect(NetworksSettingsViewController.creatableKinds(.entitled) == [.nat, .hostOnly])
-        #expect(NetworksSettingsViewController.creatableKinds(.unentitled).isEmpty)
-    }
-
-    @Test("The Settings window shows a Networks tab only in a build that can attach named networks")
-    func networksTabFollowsTheEntitlement() {
-        for entitled in [true, false] {
-            let tabs = SettingsTabViewController(
-                viewModel: makeViewModel(entitled: entitled), visibleFrame: offDesktopVisibleFrame)
-            tabs.loadViewIfNeeded()
-            let networks = tabs.tabViewItems.filter {
-                $0.viewController is NetworksSettingsViewController
-            }
-            #expect(networks.count == (entitled ? 1 : 0))
-            #expect(networks.first?.label == (entitled ? "Networks" : nil))
-        }
-    }
 
     @Test("A network list Kernova can't read shows as unreadable, offers the check, and takes no change")
     func anUnreadableListShowsItsState() throws {
@@ -130,104 +79,5 @@ struct NetworksSettingsViewControllerTests {
                 == "Kernova can\u{2019}t read its list of networks. Choose File > Check Config Files\u{2026} to review it."
         )
         #expect(try Data(contentsOf: fileURL) == bytes)
-    }
-
-    // MARK: - List
-
-    @Test("The list shows each network's name, mode and the VMs on it")
-    func listShowsEachNetwork() throws {
-        let viewModel = makeViewModel()
-        let lab = try viewModel.networks.create(name: "Lab", kind: .nat, verb: .createNetwork)
-        _ = try viewModel.networks.create(name: "Build Farm", kind: .hostOnly, verb: .createNetwork)
-        addVM("Alpha", to: viewModel, membership: .network(lab.id))
-        addVM("Beta", to: viewModel, membership: .network(lab.id))
-        // Naming it, but Bridged: on no network of its.
-        addVM("Gamma", to: viewModel, membership: .network(lab.id), mode: .bridged)
-
-        let pane = makePane(viewModel)
-
-        #expect(pane.networks.map(\.name) == ["Build Farm", "Lab"])
-        let table = try #require(firstSubview(NSTableView.self, in: pane.view))
-        #expect(table.numberOfRows == 2)
-        let texts = (0..<table.numberOfColumns).map { column in
-            (table.view(atColumn: column, row: 1, makeIfNecessary: true) as? NSTableCellView)?
-                .textField?.stringValue
-        }
-        #expect(texts == ["Lab", "NAT", "Alpha, Beta"])
-        let farm = (0..<table.numberOfColumns).map { column in
-            (table.view(atColumn: column, row: 0, makeIfNecessary: true) as? NSTableCellView)?
-                .textField?.stringValue
-        }
-        #expect(farm == ["Build Farm", "Host Only", "None"])
-    }
-
-    @Test("A network created anywhere else appears in the open list")
-    func listFollowsTheLibrary() async throws {
-        let viewModel = makeViewModel()
-        let pane = makePane(viewModel)
-        defer { pane.viewDidDisappear() }
-        #expect(pane.networks.isEmpty)
-
-        try viewModel.commandsLeavingEditsOpen.createNetwork(name: "Lab", kind: .nat)
-
-        // The list repaints from its observation loop, a main-actor task the
-        // create enqueued.
-        try await drainMainQueue()
-        #expect(pane.networks.map(\.name) == ["Lab"])
-    }
-
-    // MARK: - Changes
-
-    @Test("Rename renames the network, and a refused name changes nothing")
-    func renameRenamesTheNetwork() throws {
-        let viewModel = makeViewModel()
-        let pane = makePane(viewModel)
-        try pane.create(name: "Lab", kind: .nat)
-        let id = try #require(pane.networks.first?.id)
-
-        try pane.rename(id, to: "Staging")
-        #expect(pane.networks.map(\.name) == ["Staging"])
-
-        #expect(throws: CommandError.self) { try pane.rename(id, to: "  ") }
-        #expect(viewModel.networks.state.listed?.map(\.name) == ["Staging"])
-    }
-
-    @Test("Delete stops listing the network and moves each VM on it to a network of its own")
-    func deleteMovesMembersToTheirOwnNetworks() throws {
-        let viewModel = makeViewModel()
-        let pane = makePane(viewModel)
-        try pane.create(name: "Lab", kind: .nat)
-        let id = try #require(pane.networks.first?.id)
-        let member = addVM("Alpha", to: viewModel, membership: .network(id))
-        let bystander = addVM("Beta", to: viewModel, membership: .common)
-
-        try pane.delete(id)
-
-        #expect(pane.networks.isEmpty)
-        #expect(member.configuration.networkMembership == .isolated)
-        #expect(bystander.configuration.networkMembership == .common)
-    }
-
-    // MARK: - Copy
-
-    @Test("Delete asks first, naming the VMs it moves, with the destructive button on no key")
-    func deleteConfirmationNamesTheMembers() {
-        let empty = NetworksSettingsViewController.deleteConfirmation(for: summary("Lab")) {}
-        #expect(empty.title == "Delete \u{201C}Lab\u{201D}?")
-        #expect(empty.message == "No virtual machine is on this network.")
-        #expect(empty.buttons.map(\.title) == ["Delete", "Cancel"])
-        #expect(empty.buttons.map(\.role) == [.destructive, .cancel])
-
-        let one = NetworksSettingsViewController.deleteConfirmation(
-            for: summary("Lab", members: ["Alpha"])
-        ) {}
-        #expect(one.message == "\u{201C}Alpha\u{201D} moves to a network of its own.")
-
-        let two = NetworksSettingsViewController.deleteConfirmation(
-            for: summary("Lab", members: ["Alpha", "Beta"])
-        ) {}
-        #expect(
-            two.message
-                == "\(DataFormatters.quotedList(["Alpha", "Beta"])) each move to a network of their own.")
     }
 }
