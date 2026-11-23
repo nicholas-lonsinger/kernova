@@ -200,8 +200,7 @@ final class ModelValueField: NSTextField {
     /// action — a stepper, a preset — whose value is the newer intent.
     ///
     /// At end-edit time the editor can still be attached, holding the text just
-    /// consumed; a value set beneath it does not read back
-    /// (`aTypedEditSurvivesTheStartsRefreshAndIsRefused`), so the editor is
+    /// consumed; a value set beneath it does not read back, so the editor is
     /// discarded first.
     func showDiscardingEdit(_ value: String) {
         abortEditing()

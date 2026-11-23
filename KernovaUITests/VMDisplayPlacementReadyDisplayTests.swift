@@ -8,8 +8,7 @@ import Testing
 
 /// Covers `VMDisplayPlacementController.readyDisplay(for:presence:)` — the
 /// window a bring-up opens, and how it goes on screen, as
-/// `VMDisplayPlacement.readying(preference:posture:presence:)` decides
-/// (`VMDisplayPlacementReadyingTests`).
+/// `VMDisplayPlacement.readying(preference:posture:presence:)` decides.
 @Suite("VMDisplayPlacementController readying", .serialized, .caseScoped, .scopedWindows)
 @MainActor
 struct VMDisplayPlacementReadyDisplayTests {

@@ -21,8 +21,7 @@ struct ExternalFileReferenceTests {
     /// carrying a distinct sentinel bookmark.
     ///
     /// Not a shape a real VM takes — a Linux kernel boot alongside a macOS
-    /// install context — which is the point: one pass exercises every field,
-    /// and ``fixtureCoversEveryKind()`` holds this to every kind.
+    /// install context — which is the point: one pass exercises every field.
     private func makeFullyPopulatedConfig() -> VMConfiguration {
         var config = VMConfiguration(
             name: "Externals", guestOS: .linux, bootMode: .linuxKernel, cpuCount: VMGuestOS.linux.hostCPUCount,
