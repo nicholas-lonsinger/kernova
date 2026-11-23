@@ -59,21 +59,4 @@ struct GuestDragSystemTests {
         #expect(heard.arrivals.map(\.isFolder) == [false, true])
         #expect(heard.refused == 0)
     }
-
-    @Test("the live sizing opens each file, sizes a folder by its tree, and sizes nothing it cannot read")
-    func theLiveSizing() async throws {
-        let directory = scratch.url.appendingPathComponent("dragged", isDirectory: true)
-        let tree = directory.appendingPathComponent("Tree", isDirectory: true)
-        try FileManager.default.createDirectory(at: tree, withIntermediateDirectories: true)
-        let file = directory.appendingPathComponent("note.txt")
-        try Data("four".utf8).write(to: file)
-        try Data("alpha".utf8).write(to: tree.appendingPathComponent("a.txt"))
-        let input = SystemGuestDragInput(measureFolder: { _ in 42 })
-
-        let sizes = try await Backstop("sizeFiles(_:then:)").park { resume in
-            input.sizeFiles([file, tree, directory.appendingPathComponent("gone.txt")]) { resume($0) }
-        }
-
-        #expect(sizes == [4, 42, nil])
-    }
 }

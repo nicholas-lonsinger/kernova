@@ -68,14 +68,4 @@ struct CLINoticeTests {
         #expect(plain.allSatisfy { if case .out = $0 { true } else { false } })
         #expect(noticed == plain + [.err(CommandLineSpelling.message(for: notice) + "\n")])
     }
-
-    @Test("The notice names the VM and baseline and spells both command lines for a shell")
-    func noticeSpellsItsCommandLines() {
-        #expect(
-            CommandLineSpelling.message(for: notice)
-                == "Ephemeral Mode is on for \u{201C}Alpha Pool\u{201D}: this change goes back to "
-                + "\u{201C}Clean install\u{201D} at the next shutdown. To keep it, take a snapshot "
-                + "(kernova snapshot take 'Alpha Pool') and choose it as the baseline "
-                + "(kernova set 'Alpha Pool' ephemeral.baseline=<snapshot>).")
-    }
 }

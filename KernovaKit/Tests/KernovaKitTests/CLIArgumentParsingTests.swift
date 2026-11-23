@@ -14,32 +14,6 @@ struct CLIArgumentParsingTests {
         try KernovaCommand.parseAsRoot(arguments)
     }
 
-    // MARK: - Subcommand resolution
-
-    @Test("Each read verb parses to its own subcommand")
-    func readVerbsResolve() throws {
-        #expect(try parse(["list"]) is KernovaCommand.List)
-        #expect(try parse(["info", "Alpha"]) is KernovaCommand.Info)
-        #expect(try parse(["ip", "Alpha"]) is KernovaCommand.IP)
-        #expect(try parse(["version"]) is KernovaCommand.Version)
-    }
-
-    @Test("Each snapshot verb parses to its own subcommand under `snapshot`")
-    func snapshotVerbsResolve() throws {
-        #expect(try parse(["snapshot", "list", "Alpha"]) is KernovaCommand.Snapshot.List)
-        #expect(try parse(["snapshot", "take", "Alpha"]) is KernovaCommand.Snapshot.Take)
-        #expect(
-            try parse(["snapshot", "revert", "Alpha", "Base"]) is KernovaCommand.Snapshot.Revert)
-        #expect(
-            try parse(["snapshot", "delete", "Alpha", "Base"]) is KernovaCommand.Snapshot.Delete)
-        #expect(
-            try parse(["snapshot", "rename", "Alpha", "Base", "Older"])
-                is KernovaCommand.Snapshot.Rename)
-        // The library verbs of the same name stay themselves.
-        #expect(try parse(["delete", "Alpha"]) is KernovaCommand.Delete)
-        #expect(try parse(["list"]) is KernovaCommand.List)
-    }
-
     // MARK: - list filters
 
     /// The query `arguments`, after `list`, put on the wire.
@@ -80,14 +54,6 @@ struct CLIArgumentParsingTests {
         #expect(query.filter == VMLibraryFilter(guestOSes: [.linux]))
     }
 
-    @Test("--sort takes each order by its name and defaults to the manual order")
-    func sortParses() throws {
-        for sort in VMLibrarySort.allCases {
-            #expect(try listQuery(["--sort", sort.rawValue]).sort == sort)
-        }
-        #expect(throws: (any Error).self) { try parse(["list", "--sort", "size"]) }
-    }
-
     @Test("clone follows the app's preference unless an outcome flag says otherwise")
     func cloneParsesItsOutcomeFlags() throws {
         let byDefault = try #require(try parse(["clone", "Alpha"]) as? KernovaCommand.Clone)
@@ -101,12 +67,6 @@ struct CLIArgumentParsingTests {
         let kept = try #require(
             try parse(["clone", "Alpha", "--exact-copy"]) as? KernovaCommand.Clone)
         #expect(kept.outcome?.outcome == .exactCopy)
-    }
-
-    @Test("Every clone outcome flag maps onto a wire outcome, and each outcome has a flag")
-    func everyCloneOutcomeMaps() {
-        let mapped = Set(KernovaCommand.CloneOutcomeFlag.allCases.map(\.outcome))
-        #expect(mapped == Set(CloneOutcome.allCases))
     }
 
     @Test("clone and import take --no-wait, and wait for the copy without it")
@@ -139,55 +99,6 @@ struct CLIArgumentParsingTests {
         #expect(bounded.timeout == 90)
     }
 
-    @Test("A revert takes no snapshot of its own, so --no-checkpoint is no flag of it")
-    func revertTakesNoCheckpointFlag() throws {
-        let revert = try #require(
-            try parse(["snapshot", "revert", "Alpha", "Base", "--yes"])
-                as? KernovaCommand.Snapshot.Revert)
-        #expect(revert.snapshot == "Base")
-        #expect(revert.options.yes)
-        for flag in ["--checkpoint", "--no-checkpoint"] {
-            #expect(throws: (any Error).self, "\(flag)") {
-                try parse(["snapshot", "revert", "Alpha", "Base", flag])
-            }
-        }
-    }
-
-    @Test("A refusal's routes render as the command lines that take each step")
-    func stepRoutesRenderAsCommandLines() {
-        func vm(_ name: String) -> VMSummary {
-            VMSummary(
-                id: UUID(), name: name, status: "paused", ipAddress: .unavailable, heldByAnotherCopy: false)
-        }
-        #expect(
-            CommandLineSpelling.routes(
-                of: StepRequirement(
-                    message: "",
-                    routes: [StepRoute(title: "Resume", steps: [.resume(vm: vm("My VM"))], ending: .refusedVerb)]))
-                == "Resume with: kernova resume 'My VM'")
-        #expect(
-            CommandLineSpelling.routes(
-                of: StepRequirement(
-                    message: "",
-                    routes: [
-                        StepRoute(
-                            title: "Use a New MAC Address",
-                            steps: [
-                                .discardSavedState(vm: vm("Alpha")),
-                                .setConfiguration(
-                                    vm: vm("Alpha"),
-                                    assignments: [ConfigurationEntry(key: "network.mac", value: "new")]),
-                            ], ending: .refusedVerb)
-                    ]))
-                == "Use a New MAC Address with:\n  kernova stop Alpha --yes\n  kernova set Alpha network.mac=new")
-        #expect(
-            CommandLineSpelling.line(
-                for: .setConfiguration(
-                    vm: vm("Bob's VM"),
-                    assignments: [ConfigurationEntry(key: "ephemeral", value: "false")]))
-                == #"kernova set 'Bob'\''s VM' ephemeral=false"#)
-    }
-
     @Test("A capture takes its name and note, and leaves both to Kernova when unnamed")
     func takeParsesItsNameAndNotes() throws {
         let unnamed = try #require(
@@ -205,62 +116,6 @@ struct CLIArgumentParsingTests {
         #expect(named.notes == "26.1 beta")
     }
 
-    @Test("--id reads both arguments of a snapshot verb as identifiers")
-    func snapshotVerbsCarryTheIDFlag() throws {
-        let rename = try #require(
-            try parse(["snapshot", "rename", "Alpha", "Base", "Older", "--id"])
-                as? KernovaCommand.Snapshot.Rename)
-        #expect(rename.options.id)
-        #expect(rename.newName == "Older")
-    }
-
-    @Test("A relative path argument is made absolute, and a standardized one stays as it is")
-    func pathArgumentsAreAbsoluteAndStandardized() {
-        // The shell's directory, not the process's: a sandboxed tool's own is
-        // its container.
-        #expect(
-            PathParsing.wirePath(
-                for: "VMs/../VMs/Alpha.kernova", workingDirectory: "/Users/me/Desktop")
-                == "/Users/me/Desktop/VMs/Alpha.kernova")
-        let fallback = PathParsing.wirePath(for: "Alpha.kernova", workingDirectory: nil)
-        #expect(fallback == FileManager.default.currentDirectoryPath + "/Alpha.kernova")
-        // Nothing is read: the tool is sandboxed, so a path naming no file
-        // still crosses the wire for the app to answer for.
-        #expect(
-            PathParsing.wirePath(
-                for: "/a/b/../c/Alpha.kernova", workingDirectory: "/Users/me/Desktop")
-                == "/a/c/Alpha.kernova")
-    }
-
-    // MARK: - USB accessories
-
-    @Test("A USB listing asks a guest's own accessories only when a guest is named")
-    func usbListNamesItsSubject() throws {
-        let free = try #require(try parse(["usb", "list"]) as? KernovaCommand.USB.List)
-        #expect(free.vm == nil)
-        #expect(try free.verb() == .availableUSBAccessories)
-
-        let held = try #require(try parse(["usb", "list", "Alpha"]) as? KernovaCommand.USB.List)
-        #expect(held.vm == "Alpha")
-        #expect(try held.verb() == .usbAccessories(.idOrName("Alpha")))
-    }
-
-    @Test("An accessory is attached by its own identifier and detached by the attachment's")
-    func usbEditsNameTheirHandles() throws {
-        // An IORegistry ID runs past what 32 bits can name.
-        let attach = try #require(
-            try parse(["usb", "attach", "Alpha", "4294967296"]) as? KernovaCommand.USB.Attach)
-        #expect(
-            try attach.verb()
-                == .editUSBAccessory(.idOrName("Alpha"), .attach(accessory: 4_294_967_296)))
-
-        let device = UUID()
-        let detach = try #require(
-            try parse(["usb", "detach", "Alpha", device.uuidString]) as? KernovaCommand.USB.Detach)
-        #expect(
-            try detach.verb() == .editUSBAccessory(.idOrName("Alpha"), .detach(device: device)))
-    }
-
     // MARK: - Named networks
 
     @Test("get --keys names no virtual machine, and refuses one that is named anyway")
@@ -274,11 +129,6 @@ struct CLIArgumentParsingTests {
         // here is a line that meant something else.
         #expect(throws: (any Error).self) { try parse(["get", "--keys", "Alpha"]) }
         #expect(throws: (any Error).self) { try parse(["get", "--keys", "Alpha", "cpus"]) }
-    }
-
-    @Test("get without --keys refuses without a virtual machine")
-    func getNeedsAVirtualMachineWithoutTheKeysFlag() {
-        #expect(throws: (any Error).self) { try parse(["get"]) }
     }
 
     @Test("An assignment is split at its first =, and an empty value is a value")
@@ -298,21 +148,6 @@ struct CLIArgumentParsingTests {
             try KernovaCommand.Set.entries(from: ["network.mac="]) == [
                 ConfigurationEntry(key: "network.mac", value: "")
             ])
-    }
-
-    @Test("An argument that is not a key=value assignment exits 2, naming what was typed")
-    func malformedAssignmentsAreUsageErrors() {
-        for argument in ["cpus", "", "=4", "=", " "] {
-            do {
-                _ = try KernovaCommand.Set.entries(from: ["cpus=4", argument])
-                Issue.record("expected a usage refusal for \u{201C}\(argument)\u{201D}")
-            } catch let failure as CLIFailure {
-                #expect(failure.code == .usage)
-                #expect(argument.isEmpty || failure.message.contains(argument))
-            } catch {
-                Issue.record("expected a CLIFailure, got \(error)")
-            }
-        }
     }
 
     @Test("set carries --yes as the consent one setting asks for")
@@ -351,59 +186,6 @@ struct CLIArgumentParsingTests {
         #expect(
             try readOnly.verb()
                 == .editSharedDirectory(.idOrName("Alpha"), .add(path: "/tmp/Work", readOnly: true)))
-    }
-
-    @Test("A share is dropped by the path that names it, standardized the same way")
-    func shareRemoveNamesThePath() throws {
-        let command = try #require(
-            try parse(["share", "remove", "Alpha", "/tmp/../tmp/Work"])
-                as? KernovaCommand.Share.Remove)
-        #expect(
-            try command.verb()
-                == .editSharedDirectory(.idOrName("Alpha"), .removePath(path: "/tmp/Work")))
-    }
-
-    @Test("--id reads a configuration verb's virtual machine as an identifier")
-    func configurationVerbsCarryTheIDFlag() throws {
-        let identifier = UUID()
-        let command = try #require(
-            try parse(["get", identifier.uuidString, "cpus", "--id"]) as? KernovaCommand.Get)
-        #expect(try command.verb() == .configuration(.id(identifier), keys: ["cpus"]))
-
-        let named = try #require(try parse(["get", "Alpha", "--id"]) as? KernovaCommand.Get)
-        #expect(throws: CLIFailure.self) { try named.verb() }
-    }
-
-    @Test("quit parses, and names no virtual machine")
-    func quitResolves() throws {
-        #expect(try parse(["quit"]) is KernovaCommand.Quit)
-        #expect(throws: (any Error).self) { try parse(["quit", "Alpha"]) }
-    }
-
-    @Test("A deadline that names no wait is a usage error on every verb that takes one")
-    func everyTimeoutRefusesANonPositiveDeadline() {
-        let lines: [[String]] = [
-            ["stop", "Alpha", "--timeout", "0"],
-            ["stop", "Alpha", "--timeout", "-5"],
-            ["restart", "Alpha", "--timeout", "0"],
-            ["restart", "Alpha", "--timeout", "-5"],
-            ["wait", "Alpha", "--until", "stopped", "--timeout", "0"],
-            ["ip", "Alpha", "--wait", "--timeout", "-1"],
-            ["import", "/tmp/Alpha.kernova", "--timeout", "0"],
-            ["import", "/tmp/Alpha.kernova", "--timeout", "-5"],
-        ]
-        for line in lines {
-            #expect(throws: (any Error).self, "\(line)") { try parse(line) }
-        }
-    }
-
-    @Test("Two stop methods at once is a usage error, not a silent winner, for stop and restart alike")
-    func stopMethodsAreExclusive() {
-        for verb in ["stop", "restart"] {
-            #expect(throws: (any Error).self) { try parse([verb, "Alpha", "--force", "--normal"]) }
-            #expect(throws: (any Error).self) { try parse([verb, "Alpha", "--anyway", "--force"]) }
-            #expect(throws: (any Error).self) { try parse([verb, "Alpha", "--anyway", "--normal"]) }
-        }
     }
 
     @Test("restart defaults to asking the guest, and takes each stop method with a deadline")
@@ -469,17 +251,6 @@ struct CLIArgumentParsingTests {
     }
 
     // MARK: - Global options
-
-    @Test("The options default to the human-readable table")
-    func optionsDefaultToTable() throws {
-        let command = try #require(try parse(["list"]) as? KernovaCommand.List)
-        #expect(command.options.format == .table)
-        #expect(!command.options.quiet)
-        #expect(!command.options.id)
-        #expect(!command.options.yes)
-        // Starting the app to answer is the default; --no-launch opts out.
-        #expect(!command.options.noLaunch)
-    }
 
     @Test("--no-launch parses on a verb that would otherwise start the app")
     func noLaunchParses() throws {

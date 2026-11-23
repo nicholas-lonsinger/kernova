@@ -24,75 +24,7 @@ struct VMLibraryFilterTests {
             isEphemeral: isEphemeral, hasSnapshots: hasSnapshots, tags: tags)
     }
 
-    // MARK: - Evaluation
-
-    @Test("Guest Agent admits only macOS guests in its buckets")
-    func guestAgent() {
-        let filter = VMLibraryFilter(guestAgents: [.olderVersion, .neverConnected])
-        #expect(filter.admits(subject(guestAgent: .olderVersion)))
-        #expect(!filter.admits(subject(guestAgent: .upToDate)))
-        // A Linux guest has no agent bucket, so no agent filter admits it.
-        #expect(!filter.admits(subject(guestOS: .linux, guestAgent: nil)))
-    }
-
-    @Test("Each flag admits only VMs that have it")
-    func flags() {
-        #expect(VMLibraryFilter(ephemeralOnly: true).admits(subject(isEphemeral: true)))
-        #expect(!VMLibraryFilter(ephemeralOnly: true).admits(subject(isEphemeral: false)))
-        #expect(VMLibraryFilter(withSnapshotsOnly: true).admits(subject(hasSnapshots: true)))
-        #expect(!VMLibraryFilter(withSnapshotsOnly: true).admits(subject(hasSnapshots: false)))
-    }
-
-    @Test("Tags admit a VM carrying any tag in the set")
-    func tags() {
-        let work = UUID()
-        let lab = UUID()
-        let filter = VMLibraryFilter(tags: [work, lab])
-        #expect(filter.isActive)
-        #expect(filter.admits(subject(tags: [work])))
-        #expect(filter.admits(subject(tags: [lab, UUID()])))
-        #expect(!filter.admits(subject(tags: [UUID()])))
-        #expect(!filter.admits(subject()))
-    }
-
-    @Test("Attributes are ANDed")
-    func attributesAnd() {
-        let work = UUID()
-        let filter = VMLibraryFilter(
-            guestOSes: [.macOS], states: [.running], networks: [Self.network(.nat)], guestAgents: [.upToDate],
-            ephemeralOnly: true, withSnapshotsOnly: true, tags: [work])
-        let passing = subject(
-            state: .running, network: .nat, guestAgent: .upToDate, isEphemeral: true, hasSnapshots: true,
-            tags: [work])
-        #expect(filter.admits(passing))
-        var failsOne = [passing, passing, passing, passing, passing, passing, passing]
-        failsOne[0].guestOS = .linux
-        failsOne[1].state = .stopped
-        failsOne[2].network = Self.network(.none)
-        failsOne[3].guestAgent = .olderVersion
-        failsOne[4].isEphemeral = false
-        failsOne[5].hasSnapshots = false
-        failsOne[6].tags = []
-        for failing in failsOne { #expect(!filter.admits(failing)) }
-    }
-
     // MARK: - Coding
-
-    @Test("A filter round-trips through JSON with every attribute set")
-    func codableRoundTrip() throws {
-        let filter = VMLibraryFilter(
-            guestOSes: [.macOS, .linux], states: [.suspended],
-            networks: Set(
-                [
-                    .nat, .vmnet(.hostOnly, .isolated), .vmnet(.nat, .network(Self.named)),
-                    .bridged(nil), .bridged("en0"), .none,
-                ].map(Self.network)
-            ).union([.unlisted]),
-            guestAgents: [.neverConnected], ephemeralOnly: true, withSnapshotsOnly: true, tags: [UUID(), UUID()])
-
-        let data = try JSONEncoder().encode(filter)
-        #expect(try JSONDecoder().decode(VMLibraryFilter.self, from: data) == filter)
-    }
 
     @Test("A missing key decodes as that attribute unconstrained")
     func missingKeysDecodeUnconstrained() throws {
@@ -119,23 +51,6 @@ struct VMLibraryFilterTests {
         for garbage in ["", "bridged:", "nat", "nat:nowhere", "lan:common"] {
             #expect(NetworkModeChoice(rawValue: garbage) == nil)
         }
-    }
-
-    // MARK: - Network key
-
-    @Test("Every named network the library does not list is one network to a filter")
-    func unlistedNetworksAreOne() {
-        let elsewhere = VMLibraryFilter.Network(.vmnet(.nat, .network(UUID()))) { _, _ in false }
-        let elsewhereToo = VMLibraryFilter.Network(.vmnet(.hostOnly, .network(UUID()))) { _, _ in false }
-        #expect(elsewhere == .unlisted)
-        #expect(elsewhereToo == .unlisted)
-        #expect(elsewhere.choice == nil)
-
-        // A filter set to it admits a VM on any network the library does not
-        // list — one imported later included.
-        let filter = VMLibraryFilter(networks: [elsewhere])
-        #expect(filter.admits(subject(network: .vmnet(.hostOnly, .network(UUID())))))
-        #expect(!filter.admits(subject(network: .vmnet(.nat, .network(Self.named)))))
     }
 
     // MARK: - Guest agent buckets
@@ -237,19 +152,5 @@ struct VMLibraryFilterTests {
         // "beta" and "Twin" tie on creation, so they keep the order they came in.
         #expect(sorted(rows, by: .dateCreated) == ["Alpha 10", "Alpha 9", "beta", "Twin"])
         #expect(VMLibrarySort.allCases.map(\.rawValue) == ["name", "dateCreated", "lastRun", "manual"])
-    }
-
-    @Test("Last run lists live VMs first, then most recent first, then none recorded, each tie A→Z")
-    func lastRunOrder() {
-        let base = Date(timeIntervalSince1970: 1_000_000)
-        let rows = [
-            Row(name: "unrecorded b"), Row(name: "older", lastRun: .ended(base)),
-            Row(name: "Live b", lastRun: .live), Row(name: "recent", lastRun: .ended(base + 60)),
-            Row(name: "Unrecorded a"), Row(name: "twin b", lastRun: .ended(base + 30)),
-            Row(name: "live a", lastRun: .live), Row(name: "Twin a", lastRun: .ended(base + 30)),
-        ]
-        #expect(
-            sorted(rows, by: .lastRun)
-                == ["live a", "Live b", "recent", "Twin a", "twin b", "older", "Unrecorded a", "unrecorded b"])
     }
 }

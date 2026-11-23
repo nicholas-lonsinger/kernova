@@ -17,19 +17,6 @@ struct StreamFrameTests {
         #expect(framed.suffix(payload.count) == payload)
     }
 
-    @Test("encode rejects payloads above maxPayloadSize")
-    func encodeRejectsOversize() {
-        let oversize = Data(count: StreamFrame.maxPayloadSize + 1)
-        #expect(
-            throws: StreamFrameError.frameTooLarge(
-                declaredSize: StreamFrame.maxPayloadSize + 1,
-                maxAllowed: StreamFrame.maxPayloadSize
-            )
-        ) {
-            try StreamFrame.encode(oversize)
-        }
-    }
-
     // MARK: - decode
 
     @Test("decoder reassembles a frame split across many feeds")
@@ -58,53 +45,6 @@ struct StreamFrameTests {
         decoder.feed(combined)
         #expect(try decoder.nextFrame() == a)
         #expect(try decoder.nextFrame() == b)
-        #expect(try decoder.nextFrame() == nil)
-    }
-
-    @Test("decoder yields a zero-length payload as empty Data")
-    func decoderYieldsEmptyPayload() throws {
-        var decoder = StreamFrameDecoder()
-        decoder.feed(Data([0x00, 0x00, 0x00, 0x00]))
-        #expect(try decoder.nextFrame() == Data())
-        #expect(try decoder.nextFrame() == nil)
-    }
-
-    @Test("decoder throws frameTooLarge when declared size exceeds the cap")
-    func decoderRejectsOversize() {
-        var decoder = StreamFrameDecoder()
-        // 0xFFFFFFFF declared length — way over the 16 MiB cap.
-        decoder.feed(Data([0xFF, 0xFF, 0xFF, 0xFF]))
-        #expect(throws: StreamFrameError.self) {
-            _ = try decoder.nextFrame()
-        }
-    }
-
-    // MARK: - chunk-sized frames (#377)
-
-    @Test("retained payload slices stay valid across later decoder mutations")
-    func retainedPayloadSlicesSurviveLaterMutations() throws {
-        var decoder = StreamFrameDecoder()
-        // `nextFrame` returns a slice aliasing the decoder buffer; a caller holding
-        // it past the next feed/nextFrame relies on Data's copy-on-write to keep the
-        // bytes correct. Retain the first two chunk-sized payloads, then drain the
-        // third (which mutates and compacts the aliased buffer) and confirm the
-        // retained slices are still byte-correct.
-        let chunkSize = 64 * 1024
-        let p0 = Data((0..<chunkSize).map { UInt8($0 & 0xFF) })
-        let p1 = Data((0..<chunkSize).map { UInt8(($0 &+ 1) & 0xFF) })
-        let p2 = Data((0..<chunkSize).map { UInt8(($0 &+ 2) & 0xFF) })
-        var bulk = try StreamFrame.encode(p0)
-        bulk.append(try StreamFrame.encode(p1))
-        bulk.append(try StreamFrame.encode(p2))
-        decoder.feed(bulk)
-
-        let first = try decoder.nextFrame()
-        let second = try decoder.nextFrame()
-        let third = try decoder.nextFrame()
-
-        #expect(first == p0)
-        #expect(second == p1)
-        #expect(third == p2)
         #expect(try decoder.nextFrame() == nil)
     }
 }

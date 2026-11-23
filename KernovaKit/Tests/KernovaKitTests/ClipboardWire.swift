@@ -97,8 +97,6 @@ final class ClipboardWire: Sendable {
         var opened: [Side: [ItemOffer]] = [.host: [], .guest: []]
         /// Every request the host opened, in order.
         var requests: [Data] = []
-        /// How many items of the far side's offers each side read.
-        var itemReads: [Side: Int] = [.host: 0, .guest: 0]
         /// How many pulls each side opened.
         var pulls: [Side: Int] = [.host: 0, .guest: 0]
         /// Each side's opens still to be answered, oldest first: the offer's token, the answer, and the events
@@ -157,9 +155,6 @@ final class ClipboardWire: Sendable {
 
     /// Every request the host opened, in order.
     var requests: [Data] { state.withLock(\.requests) }
-
-    /// How many items of the far side's offers `side` read.
-    func itemReads(_ side: Side) -> Int { state.withLock { $0.itemReads[side] ?? 0 } }
 
     /// How many pulls `side` opened.
     func pulls(_ side: Side) -> Int { state.withLock { $0.pulls[side] ?? 0 } }
@@ -385,7 +380,6 @@ final class ClipboardWire: Sendable {
 
     fileprivate func readItem(_ token: Data, item: UInt32, from side: Side) -> OfferedItem? {
         state.withLock { state in
-            state.itemReads[side, default: 0] += 1
             guard let items = state.remote[side]?[token], items.indices.contains(Int(item)) else { return nil }
             return items[Int(item)]
         }

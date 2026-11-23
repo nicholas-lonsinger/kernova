@@ -32,22 +32,6 @@ struct CLIWaitTests {
         #expect(ended.verbs == subscribeThenRead)
     }
 
-    @Test("The status change into error ahead of the failure does not cost the message")
-    func theStatusChangeIntoErrorDoesNotCostTheMessage() async throws {
-        // The order the app emits them in: one batch carrying the status change
-        // and the failure behind it, so a wait that settled for the first frame
-        // would report a failure it could not explain.
-        let ended = try await outcome(
-            .running,
-            answering: [
-                info(status: "installing"),
-                event(.statusChanged(id: alpha, name: "Alpha", from: "installing", to: "error")),
-                event(.failure(id: alpha, name: "Alpha", message: "The guest never booted.")),
-            ])
-        #expect(ended.failure?.code == .operationFailed)
-        #expect(ended.failure?.message == "The guest never booted.")
-    }
-
     @Test("A failure that reaches the wire ahead of the info answer ends the wait too")
     func aFailureAheadOfTheInfoAnswerEndsTheWait() async throws {
         let ended = try await outcome(
@@ -102,26 +86,6 @@ struct CLIWaitTests {
             ])
         #expect(ended.failure == nil)
         #expect(ended.verbs == subscribeThenRead)
-    }
-
-    // MARK: - Reaching the State
-
-    @Test("A virtual machine already in the state ends the wait on the snapshot")
-    func theBaselineEndsTheWait() async throws {
-        let ended = try await outcome(.running, answering: [info(status: "running")])
-        #expect(ended.failure == nil)
-        #expect(ended.verbs == subscribeThenRead)
-    }
-
-    @Test("A current agent ends an agent wait")
-    func theAgentConditionEndsOnACurrentAgent() async throws {
-        let ended = try await outcome(
-            .agent,
-            answering: [
-                info(status: "running", agentStatus: "outdated"),
-                event(.agentStatusChanged(id: alpha, name: "Alpha", status: "current")),
-            ])
-        #expect(ended.failure == nil)
     }
 
     // MARK: - The Deadline

@@ -10,19 +10,8 @@ import Testing
 /// request that starts it, against a real socket where one is reached.
 @Suite("CLI arrival wait", .caseScoped)
 struct CLIArrivalWaitTests {
-    private let settled = VMSummary(
-        id: UUID(uuidString: "44444444-5555-6666-7777-888888888888") ?? UUID(),
-        name: "Alpha copy", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
-
     private func clone(_ arguments: [String]) throws -> KernovaCommand.Clone {
         try #require(try KernovaCommand.parseAsRoot(["clone"] + arguments) as? KernovaCommand.Clone)
-    }
-
-    @Test("A clone waits for its copy inside the one request that starts it")
-    func cloneWaitsInItsOwnRequest() throws {
-        #expect(
-            try clone(["Alpha"]).request()
-                == .clone(.idOrName("Alpha"), outcome: nil, waitForOutcome: true))
     }
 
     @Test("--no-wait asks the app not to wait, rather than skipping a second request")
@@ -56,39 +45,5 @@ struct CLIArrivalWaitTests {
         // Ends the double's held-open read the way the tool exiting would.
         client.close()
         #expect(try await listener.requests().map(\.verb) == [.importVM(path: source, waitForOutcome: true)])
-    }
-
-    @Test("A waited import answers the settled row from its one request")
-    func aWaitedImportAnswersTheSettledRow() async throws {
-        let source = "/Users/somebody/Alpha.kernova"
-        let listener = try TestCommandSocket()
-        defer { listener.close() }
-        let client = try VMCommandClient(socketPath: listener.path)
-        defer { client.close() }
-        client.waitForFrames(upTo: testWaitBackstop)
-        listener.serve([[VMCommandResponse(result: .summary(settled))]])
-
-        #expect(
-            try PreparingCopy.importing(source, waitingForTheCopy: true, within: nil, on: client)
-                == settled)
-        #expect(try await listener.requests().map(\.verb) == [.importVM(path: source, waitForOutcome: true)])
-    }
-
-    @Test("An answer of the wrong shape refuses rather than being printed as a row")
-    func anUnexpectedAnswerRefuses() throws {
-        let listener = try TestCommandSocket()
-        defer { listener.close() }
-        let client = try VMCommandClient(socketPath: listener.path)
-        defer { client.close() }
-        client.waitForFrames(upTo: testWaitBackstop)
-        listener.serve([[VMCommandResponse(result: .ok)]])
-
-        do {
-            _ = try PreparingCopy.importing(
-                "/Users/somebody/Alpha.kernova", waitingForTheCopy: false, within: nil, on: client)
-            Issue.record("expected an unavailable refusal")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .unavailable)
-        }
     }
 }

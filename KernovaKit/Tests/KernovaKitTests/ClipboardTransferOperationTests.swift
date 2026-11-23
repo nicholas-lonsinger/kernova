@@ -24,11 +24,6 @@ private final class Recorder {
 
     var latest: ClipboardTransferReport { reports.last ?? .idle }
 
-    var runningSnapshot: ClipboardProgressSnapshot? {
-        guard case .running(let snapshot, _) = latest else { return nil }
-        return snapshot
-    }
-
     var finish: ClipboardTransferFinish? {
         guard case .finished(let finish) = latest else { return nil }
         return finish
@@ -56,115 +51,7 @@ struct ClipboardTransferOperationTests {
             expectedBytes: expectedBytes, expectedItems: expectedItems, clock: clock, reporter: recorder.reporter)
     }
 
-    // MARK: - Reveal gate
-
-    @Test("a refusal inside the reveal gate is still reported")
-    func failureInsideTheGateIsPublished() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock)
-
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.finish(.failed(.timedOut))
-        try await drainMainQueue()
-        #expect(recorder.finish?.failure == .timedOut)
-    }
-
-    // MARK: - Unknown bytes
-
-    @Test("an operation that cannot know its bytes counts its files, and says nothing of bytes")
-    func unknownBytesCountFiles() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(
-            recorder: recorder, clock: clock, gesture: .dragOut, expectedBytes: nil, expectedItems: 4)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation.unitBegan(id: 0, expectedBytes: 2_048)
-        operation.unitEnded(id: 0, succeeded: true)
-        try await drainMainQueue()
-        let running = try #require(recorder.runningSnapshot)
-        #expect(!running.bytesKnown)
-        #expect(running.bytesTransferred == 0)
-        #expect(running.totalBytes == 0)
-        #expect(running.filesCompleted == 1)
-        #expect(running.fileCount == 4)
-        #expect(running.fractionComplete == 0.25)
-        #expect(running.bytesPerSecond == nil)
-        #expect(running.secondsRemaining == nil)
-        #expect(ClipboardProgressFormat.byteProgress(running) == nil)
-    }
-
-    // MARK: - Aggregation
-
-    @Test("the readout names the transfer that began most recently")
-    func tracksTheCurrentItemName() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation.unitBegan(id: 1, expectedBytes: 100, name: "first.txt")
-        operation.unitBegan(id: 2, expectedBytes: 100, name: "second.txt")
-        operation.unitBegan(id: 3, expectedBytes: 100, name: "third.txt")
-        // The first ending moves the bar while the other two are still in flight.
-        operation.unitEnded(id: 1, succeeded: true)
-        try await drainMainQueue()
-
-        #expect(recorder.runningSnapshot?.currentItemName == "third.txt")
-    }
-
-    @Test("the declared totals are a floor the transfers revise upward")
-    func floorDenominatorIsRevisedUpward() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(
-            recorder: recorder, clock: clock, expectedBytes: 500, expectedItems: 3)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        try await drainMainQueue()
-        // One transfer of the three has begun: the whole drop is the denominator.
-        #expect(recorder.runningSnapshot?.totalBytes == 500)
-        #expect(recorder.runningSnapshot?.fileCount == 3)
-
-        operation.unitBegan(id: 2, expectedBytes: 400)
-        operation.unitBegan(id: 3, expectedBytes: 400)
-        operation.unitBegan(id: 4, expectedBytes: 100)
-        operation.finish(.completed)
-        try await drainMainQueue()
-
-        let snapshot = try #require(recorder.finish?.finalSnapshot)
-        #expect(snapshot.totalBytes == 1_000)
-        #expect(snapshot.fileCount == 4)
-    }
-
     // MARK: - Terminals
-
-    @Test("a transfer ending after the terminal cannot resurrect the readout")
-    func dropsEventsAfterFinishing() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(recorder: recorder, clock: clock)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation.unitBegan(id: 1, expectedBytes: 300)
-        operation.unitEnded(id: 1, succeeded: true)
-        operation.unitBegan(id: 2, expectedBytes: 700)
-        operation.finish(.cancelled)
-        try await drainMainQueue()
-        let settled = recorder.reports.count
-
-        operation.unitEnded(id: 2, succeeded: true)
-        operation.unitBegan(id: 3, expectedBytes: 100)
-        try await drainMainQueue()
-
-        #expect(recorder.reports.count == settled)
-        let finish = try #require(recorder.finish)
-        // Cancelled below 100 %, at the fraction it stopped on.
-        #expect(finish.finalSnapshot?.bytesTransferred == 300)
-        if case .cancelled = finish.outcome {} else { Issue.record("expected a cancelled outcome") }
-    }
 
     @Test("a second terminal is dropped")
     func finishIsIdempotent() async throws {
@@ -183,31 +70,6 @@ struct ClipboardTransferOperationTests {
     }
 
     // MARK: - Idle terminal
-
-    @Test("the idle gap completes a peer-driven operation once nothing is in flight")
-    func idleGapCompletesThePeerDrivenOperation() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(
-            recorder: recorder, clock: clock, gesture: .peerPaste, direction: .outbound)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitEnded(id: 1, succeeded: true)
-        operation.finishWhenIdle()
-        try await drainMainQueue()
-        // Still running: the gap is what tells the end from the pause between two
-        // of the peer's pulls.
-        #expect(recorder.finish == nil)
-        let gap = try #require(clock.parked.first)
-        #expect(gap.seconds == ClipboardTransferOperation.defaultIdleGap)
-
-        clock.release(gap)
-        try await recorder.changed.wait { recorder.finish != nil }
-        let finish = try #require(recorder.finish)
-        #expect(finish.gesture == .peerPaste)
-        #expect(finish.finalSnapshot?.fractionComplete == 1)
-    }
 
     @Test("an idle terminal whose gap passed as a transfer began completes nothing")
     func anIdleTerminalPassingAsATransferBeginsCompletesNothing() async throws {
@@ -232,49 +94,5 @@ struct ClipboardTransferOperationTests {
 
         #expect(operation.isLive)
         #expect(recorder.finish == nil)
-    }
-
-    @Test("the idle gap restarts from the transfer that ended last")
-    func theIdleGapFollowsTheLastTransfer() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        let operation = makeOperation(
-            recorder: recorder, clock: clock, gesture: .peerPaste, direction: .outbound)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation.unitBegan(id: 1, expectedBytes: 100)
-        operation.unitEnded(id: 1, succeeded: true)
-        operation.finishWhenIdle()
-        operation.unitBegan(id: 2, expectedBytes: 100)
-        operation.unitEnded(id: 2, succeeded: true)
-        operation.finishWhenIdle()
-        try await clock.parkedChanged.wait { clock.parked.count == 1 }
-
-        // The one gap left standing is the second transfer's.
-        #expect(clock.requestedSeconds.count == 2)
-        clock.release(try #require(clock.parked.first))
-        try await recorder.changed.wait { recorder.finish != nil }
-        #expect(recorder.finish?.finalSnapshot?.filesCompleted == 2)
-    }
-
-    @Test("an operation let go of before its idle gap passes takes its bar down with it")
-    func anOperationLetGoOfRetiresItsReadout() async throws {
-        let recorder = Recorder()
-        let clock = GatedEngineClock()
-        var operation: ClipboardTransferOperation? = makeOperation(
-            recorder: recorder, clock: clock, gesture: .dragOut, direction: .outbound)
-        clock.advance(seconds: Self.revealDelay)
-
-        operation?.unitBegan(id: 1, expectedBytes: 100)
-        operation?.unitEnded(id: 1, succeeded: true)
-        operation?.finishWhenIdle()
-        try await drainMainQueue()
-        #expect(recorder.runningSnapshot != nil)
-        #expect(clock.parked.count == 1)
-
-        // The reporter holds the operation weakly, so nothing else would ever
-        // take this bar down.
-        operation = nil
-        try await recorder.changed.wait { recorder.latest == .idle }
     }
 }

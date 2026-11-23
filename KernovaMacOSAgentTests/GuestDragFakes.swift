@@ -71,9 +71,6 @@ final class FakeGuestDragInput: GuestDragInput {
     /// Every entry whose coordinated read waits to be granted, in order asked.
     var coordinationsWaiting: [URL] { coordinating.map(\.url) }
 
-    var isObservingPresses: Bool { pressHandler != nil }
-    var isTicking: Bool { tick != nil }
-
     // MARK: Driving it
 
     /// The button goes down in another app, and the monitor reports it.
@@ -345,8 +342,6 @@ final class FakePromiseReceiver: FilePromiseReceiving {
         self.names = names
     }
 
-    var wasCalledIn: Bool { destination != nil }
-
     func receivePromisedFiles(
         atDestination destination: URL, options: [AnyHashable: Any],
         operationQueue: OperationQueue, reader: @escaping (URL, (any Error)?) -> Void
@@ -362,16 +357,6 @@ final class FakePromiseReceiver: FilePromiseReceiving {
     func write(_ name: String, contents: Data) throws -> URL {
         let url = try #require(destination).appendingPathComponent(name)
         try contents.write(to: url)
-        try report(url, nil)
-        return url
-    }
-
-    /// Writes its folder named `name`, holding one file, and reports it.
-    @discardableResult
-    func writeFolder(_ name: String) throws -> URL {
-        let url = try #require(destination).appendingPathComponent(name, isDirectory: true)
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
-        try Data("inside".utf8).write(to: url.appendingPathComponent("inside.txt"))
         try report(url, nil)
         return url
     }

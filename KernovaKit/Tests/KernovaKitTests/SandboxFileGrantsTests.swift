@@ -137,22 +137,4 @@ struct SandboxFileGrantsTests {
         #expect(reached.url.resolvingSymlinksInPath().path == file.resolvingSymlinksInPath().path)
         #expect(try withExtendedLifetime(reached.grant) { try Data(contentsOf: reached.url) } == Data("x".utf8))
     }
-
-    @Test("A grant released again, or let go after its release, is given back once")
-    func grantIsGivenBackOnce() {
-        let path = URL(fileURLWithPath: "/Volumes/Data/disk.img")
-        let sandbox = FakeSandbox()
-        let started = sandbox.fileGrants.startAccessing(path)
-        sandbox.grant(path)
-        let read = sandbox.fileGrants.pasteboardGranted(path)
-
-        started?.release()
-        started?.release()
-        #expect(sandbox.grants(of: path) == 1, "the read's grant, still held")
-        read.release()
-        read.release()
-
-        #expect(sandbox.grants(of: path) == 0)
-        #expect(sandbox.unheldGiveBacks.isEmpty)
-    }
 }

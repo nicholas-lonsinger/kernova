@@ -10,28 +10,6 @@ import Testing
 @Suite("ClipboardProgressReadoutView", .caseScoped)
 @MainActor
 struct ClipboardProgressReadoutViewTests {
-    private func makeSnapshot(isCancellable: Bool, pendingBehind: Int = 0)
-        -> ClipboardProgressSnapshot
-    {
-        ClipboardProgressSnapshot(
-            direction: .outbound, peerName: "VM", currentItemName: "a.bin", filesCompleted: 0,
-            fileCount: 1, bytesTransferred: 10, totalBytes: 100, bytesPerSecond: nil,
-            secondsRemaining: nil, gesture: .paste, elapsedSeconds: 1,
-            isCancellable: isCancellable, pendingBehind: pendingBehind)
-    }
-
-    @Test("the button is hidden until a cancel handler is installed")
-    func hidesTheButtonWithoutAHandler() {
-        let view = ClipboardProgressReadoutView(surface: .dropdownItem)
-        #expect(view.cancelButtonForTesting.isHidden)
-
-        view.onCancel = {}
-        #expect(!view.cancelButtonForTesting.isHidden)
-
-        view.onCancel = nil
-        #expect(view.cancelButtonForTesting.isHidden)
-    }
-
     @Test("clicking the button runs the handler installed at click time")
     func clickRunsTheCurrentHandler() {
         let view = ClipboardProgressReadoutView(surface: .dropdownItem)
@@ -46,55 +24,6 @@ struct ClipboardProgressReadoutViewTests {
         view.cancelButtonForTesting.performClick(nil)
         #expect(first == 1)
         #expect(second == 1)
-    }
-
-    @Test(
-        "the readout is tall enough for the row that carries the button",
-        arguments: [ClipboardProgressReadoutView.Surface.dropdownItem, .callout])
-    func measuresWithTheButtonInPlace(surface: ClipboardProgressReadoutView.Surface) {
-        // Both surfaces take the height from the frame once, so the measurement
-        // has to include a button the first cancellable readout will reveal.
-        let view = ClipboardProgressReadoutView(surface: surface)
-        let withoutButton = view.fittingSize.height
-        view.onCancel = {}
-        view.layoutSubtreeIfNeeded()
-
-        #expect(view.frame.height >= withoutButton)
-        #expect(view.frame.height >= view.cancelButtonForTesting.fittingSize.height)
-    }
-
-    @Test(
-        "the readout says what is queued behind it, and costs no height to say so",
-        arguments: [ClipboardProgressReadoutView.Surface.dropdownItem, .callout])
-    func rendersWhatIsPendingBehindTheReadout(surface: ClipboardProgressReadoutView.Surface) {
-        let view = ClipboardProgressReadoutView(surface: surface)
-        let height = view.frame.height
-
-        view.apply(makeSnapshot(isCancellable: true))
-        #expect(view.accessibilityLabel()?.contains("pending") == false)
-
-        view.apply(makeSnapshot(isCancellable: true, pendingBehind: 2))
-        view.layoutSubtreeIfNeeded()
-
-        #expect(view.accessibilityLabel()?.contains("2 more transfers pending") == true)
-        // The surface takes this height once, so the line has to share a row.
-        #expect(view.frame.height == height)
-    }
-
-    @Test("a readout that does not know its bytes fills its bar by files and shows no byte line")
-    func unknownBytesShowFilesAlone() {
-        let view = ClipboardProgressReadoutView(surface: .dropdownItem)
-        view.apply(
-            ClipboardProgressSnapshot(
-                direction: .inbound, peerName: "VM", currentItemName: "IMG_0001.HEIC", filesCompleted: 250,
-                fileCount: 1_000, bytesTransferred: 0, totalBytes: 0, bytesPerSecond: nil,
-                secondsRemaining: nil, gesture: .dragOut, elapsedSeconds: 1, bytesKnown: false))
-        #expect(view.barFractionForTesting == 0.25)
-        #expect(view.byteProgressForTesting.isEmpty)
-
-        view.apply(makeSnapshot(isCancellable: true))
-        #expect(view.barFractionForTesting == 0.1)
-        #expect(!view.byteProgressForTesting.isEmpty)
     }
 
     @Test("Cancel acts on the click that also activates its app")

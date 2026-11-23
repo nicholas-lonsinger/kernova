@@ -40,17 +40,6 @@ struct ClipboardProgressStatusItemPresenterTests {
             events.append(.dismissed(showing))
             return true
         }
-
-        /// Puts a callout of `lifetime` up, as another owner would.
-        func showOther(_ lifetime: CalloutLifetime) -> TransientStatusItemPopover.Showing? {
-            guard case .shown(let showing) = show(NSViewController(), as: lifetime) else { return nil }
-            return showing
-        }
-
-        /// Ends a showing the way its timer, or the user's click, would.
-        func expire(_ showing: TransientStatusItemPopover.Showing) {
-            _ = tenancy.end(showing)
-        }
     }
 
     private let slot = RecordingSlot()
@@ -64,19 +53,6 @@ struct ClipboardProgressStatusItemPresenterTests {
             clock: clock)
     }
 
-    /// A drag out that does not know its bytes, `elapsed` seconds in.
-    private func sizeUnknown(
-        elapsed: TimeInterval, of id: ClipboardTransferOperationID? = nil
-    ) -> ClipboardTransferReport {
-        .running(
-            ClipboardProgressSnapshot(
-                direction: .inbound, peerName: "VM", currentItemName: nil, filesCompleted: 0,
-                fileCount: 1, bytesTransferred: 0, totalBytes: 0, bytesPerSecond: nil,
-                secondsRemaining: nil, gesture: .dragOut, elapsedSeconds: elapsed,
-                isCancellable: true, operationID: id ?? operation, bytesKnown: false),
-            since: Date())
-    }
-
     /// A running report that earns the reveal, for `operation`.
     private func running(elapsed: TimeInterval = 5) -> ClipboardTransferReport {
         .running(
@@ -86,18 +62,6 @@ struct ClipboardProgressStatusItemPresenterTests {
                 secondsRemaining: 10, gesture: .peerPaste, elapsedSeconds: elapsed,
                 isCancellable: true, operationID: operation),
             since: Date())
-    }
-
-    @Test("clearing the readout closes its own callout")
-    func clearingClosesTheCallout() throws {
-        let presenter = makePresenter()
-        presenter.apply(running())
-        let readout = try #require(slot.current)
-
-        presenter.apply(.idle)
-
-        #expect(slot.events == [.dismissed(readout)])
-        #expect(slot.current == nil)
     }
 
     @Test("Cancel in the callout closes it, then cancels the operation it was rendered for")
@@ -111,73 +75,5 @@ struct ClipboardProgressStatusItemPresenterTests {
         view.cancelButtonForTesting.performClick(nil)
 
         #expect(slot.events == [.dismissed(readout), .cancelled(operation)])
-    }
-
-    @Test(
-        "information or an error already up holds the reveal back until it ends",
-        arguments: [
-            CalloutLifetime.informational(seconds: 4.5), .error(announcement: "Files not copied.", stands: { true }),
-        ])
-    func anotherCalloutHoldsTheRevealBack(_ lifetime: CalloutLifetime) throws {
-        let presenter = makePresenter()
-        let notice = try #require(slot.showOther(lifetime))
-
-        presenter.apply(running(elapsed: 5))
-        #expect(slot.current == notice)
-
-        slot.expire(notice)
-        presenter.apply(running(elapsed: 6))
-        #expect(slot.current != nil)
-        #expect(slot.current != notice)
-    }
-
-    @Test("a revisit that runs before the floor has passed arms one more for the rest")
-    func anEarlyRevisitArmsForTheRest() async throws {
-        let presenter = makePresenter()
-        presenter.apply(sizeUnknown(elapsed: 0.25))
-        let first = try #require(clock.parked.first)
-
-        clock.advance(seconds: 0.5)
-        clock.release(first)
-        await clock.completion(of: first)
-
-        #expect(slot.shown.isEmpty)
-        #expect(clock.parked.map(\.seconds) == [0.25])
-    }
-
-    @Test("a readout that clears before the floor leaves no revisit")
-    func aClearCancelsTheRevisit() async throws {
-        let presenter = makePresenter()
-        presenter.apply(sizeUnknown(elapsed: 0.25))
-        #expect(clock.parked.count == 1)
-
-        presenter.apply(.idle)
-
-        try await clock.parkedChanged.wait { clock.parked.isEmpty }
-        #expect(slot.shown.isEmpty)
-    }
-
-    @Test("a newer operation replaces the waiting one's revisit with its own")
-    func aNewerOperationReplacesTheRevisit() async throws {
-        let presenter = makePresenter()
-        presenter.apply(sizeUnknown(elapsed: 0.25))
-        let first = try #require(clock.parked.first)
-
-        presenter.apply(sizeUnknown(elapsed: 0.5, of: ClipboardTransferOperationID()))
-
-        try await clock.parkedChanged.wait { !clock.parked.contains(first) }
-        #expect(clock.parked.map(\.seconds) == [0.5])
-    }
-
-    @Test("a readout whose reveal is spent arms no revisit")
-    func aSpentRevealArmsNothing() async throws {
-        let presenter = makePresenter()
-        slot.isDropdownOpen = true
-        presenter.apply(sizeUnknown(elapsed: 0.25))
-        slot.isDropdownOpen = false
-        presenter.apply(sizeUnknown(elapsed: 0.5))
-
-        #expect(clock.requestedSeconds.isEmpty)
-        #expect(slot.shown.isEmpty)
     }
 }

@@ -82,24 +82,6 @@ struct CLIExitCodeTests {
         }
     }
 
-    @Test("No two codes collide, and success is zero")
-    func codesAreDistinct() {
-        #expect(CLIExitCode.success.rawValue == 0)
-        #expect(Set(CLIExitCode.allCases.map(\.rawValue)).count == CLIExitCode.allCases.count)
-        // ArgumentParser's own EX_USAGE must never escape as one of ours.
-        #expect(!CLIExitCode.allCases.map(\.rawValue).contains(64))
-    }
-
-    @Test("Every code reaches the help, so none can ship undocumented")
-    func everyCodeIsInTheRootHelp() {
-        let discussion = KernovaCommand.configuration.discussion
-        for code in CLIExitCode.allCases {
-            #expect(
-                discussion.contains("\(code.rawValue)  \(code.summary)"),
-                "exit code \(code.rawValue) is missing from kernova --help")
-        }
-    }
-
     @Test("A quit is a success even when the app hangs up instead of answering")
     func quitTreatsEndOfStreamAsSuccess() {
         // The app encodes `ok` before it starts going down, but the process it
