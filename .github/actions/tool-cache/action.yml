@@ -13,6 +13,11 @@ inputs:
       The installer and its arguments, run from the repository root; with
       `--path` appended it prints the tool's path and installs nothing.
     required: true
+  swift-toolchain:
+    description: >-
+      Whether the installer builds with the swift.org toolchain, which is then
+      installed when the entry is not restored.
+    default: 'false'
 
 runs:
   using: composite
@@ -33,6 +38,9 @@ runs:
       with:
         path: ${{ steps.locate.outputs.dir }}
         key: ${{ steps.locate.outputs.key }}
+
+    - if: steps.restore.outputs.cache-hit != 'true' && inputs.swift-toolchain == 'true'
+      uses: ./.github/actions/swift-toolchain
 
     # A restored entry is marked used here, before any other install in the
     # job could prune it.

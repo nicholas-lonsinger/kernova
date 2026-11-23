@@ -124,8 +124,8 @@ else
 fi
 
 # The "Build Linux Guest Agent" phase cross-builds with the swift.org
-# toolchain and Static Linux SDK, and fails on the same check when either is
-# missing.
+# toolchain and Static Linux SDK whenever the tool cache lacks the agent, and
+# then fails on the same check when either is missing.
 # shellcheck source=lib/static-linux-sdk.sh
 . Tools/lib/static-linux-sdk.sh
 pinned_swift="$(pinned_swift_version)"

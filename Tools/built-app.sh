@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-# Prints where a build in this configuration (Tools/xcodebuild.sh) puts the
-# Kernova app, read from xcodebuild's own build settings for it:
+# Prints where a build in this configuration (Tools/xcodebuild.sh) put the
+# Kernova app, under the derived data Tools/lib/xcodebuild-flags.sh names:
 #
 #     app=<path to Kernova.app>
 #     binary=<path to its executable>
 #
 # Usage: Tools/built-app.sh [--check-weak-links] <configuration>
 #   --check-weak-links   then runs Tools/check-weak-links.sh on that app
-#
-# Settings rather than a build's log: an up-to-date build need not log a link
-# or signing command from which a product path could be recovered.
 
 set -uo pipefail
 
@@ -21,17 +18,10 @@ fi
 [ $# -eq 1 ] || { echo 'usage: Tools/built-app.sh [--check-weak-links] <configuration>' >&2; exit 2; }
 
 tools="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-settings=$("$tools/xcodebuild.sh" "$1" -showBuildSettings) || exit 1
-paths=$(printf '%s\n' "$settings" | awk '
-    /^Build settings for action / { app = ($0 ~ / and target Kernova:$/) }
-    app && /^ *TARGET_BUILD_DIR = / { sub(/^ *TARGET_BUILD_DIR = /, ""); dir = $0 }
-    app && /^ *FULL_PRODUCT_NAME = / { sub(/^ *FULL_PRODUCT_NAME = /, ""); product = $0 }
-    app && /^ *EXECUTABLE_PATH = / { sub(/^ *EXECUTABLE_PATH = /, ""); executable = $0 }
-    END {
-        if (dir == "" || product == "" || executable == "") { print "error: could not resolve the Kernova app path" > "/dev/stderr"; exit 1 }
-        print "app=" dir "/" product
-        print "binary=" dir "/" executable
-    }') || exit 1
-printf '%s\n' "$paths"
+# shellcheck source=lib/xcodebuild-flags.sh
+. "$tools/lib/xcodebuild-flags.sh"
+app="$kernova_checkout/$kernova_derived_data/Build/Products/$1/Kernova.app"
+[ -d "$app" ] || { echo "error: no Kernova.app at $app" >&2; exit 1; }
+printf 'app=%s\nbinary=%s\n' "$app" "$app/Contents/MacOS/Kernova"
 [ "$check" -eq 1 ] || exit 0
-exec "$tools/check-weak-links.sh" "$(sed -n 's/^app=//p' <<<"$paths")"
+exec "$tools/check-weak-links.sh" "$app"
