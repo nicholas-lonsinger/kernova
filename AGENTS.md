@@ -68,25 +68,26 @@ A failing test that *What earns a guard* keeps is evidence about the design, nev
 
 ### What earns a guard
 
-A guard is anything that can turn a run red: a test, a lint check, a hook, a CI job. It is rated, not argued for, on the worst defect it alone would catch, written as one sentence — who does what, and what they lose — and placed on two closed lists.
+A guard is anything that can turn a run red: a test, a lint check, a hook, a CI job. It is rated, not argued for, on the worst defect any one of its assertions alone would catch, written as one sentence — who does what, and what they lose — and placed on two closed lists.
 
 | | What reaches a user without it |
 |---|---|
-| **S3** | Harm that can't be undone: a disk image, save file or user's file lost or corrupted; a consent or sandbox boundary crossed |
-| **S2** | A contract outside the code broken — wire bytes, an on-disk format, a scripting name, OS behavior Kernova relies on; a feature failing with no way around it; the app crashing or hanging; settings the user has to enter again |
+| **S3** | Harm that can't be undone: a disk image, save file or user's file lost, corrupted or changed against the user's choice; a guest's unsaved work lost unasked; data sent where the user did not send it; a consent or sandbox boundary crossed |
+| **S2** | A contract outside the code broken — wire bytes, an on-disk format, a scripting name, OS behavior Kernova relies on; a feature failing with no way around it, or only one the user would not find; the app crashing or hanging; settings the user has to enter again |
 | **S1** | A feature misbehaving that an obvious action recovers; a wrong state on screen |
 | **S0** | Nothing: wording, layout, how code is spelled or where it lives, the behavior of a tool, a fixture or a test helper, a red run |
 
-| | Who notices without it |
+| | Who notices before a user is harmed |
 |---|---|
-| **D3** | No one before the harm: the result is silently wrong, however rarely |
-| **D2** | Only a rare ordering, an OS or hardware the developer's Mac is not, or a path few take |
-| **D1** | Whoever first uses the feature, or a guard that stays |
+| **D3** | No one: the result is silently wrong, however rarely, or the app shows one state while the guest is in another |
+| **D2** | Only whoever meets a rare ordering or input, a state after an error or a relaunch, data an earlier build wrote, an OS or hardware the developer's Mac is not, or a path few take — however loud the failure is for them |
+| **D1** | The developer, on first use of the default path; or a guard that stays |
 | **D0** | The compiler, or the thing failing loudly when next run |
 
 **A guard stays when S + D is 4 or more and neither is 0**; one that rates out is deleted, new or old, passing or failing. A doubt between two ratings takes the lower. A tool that deletes or trashes files is rated as what ships.
 
-- **One guard per defect, the cheapest that catches it:** a type the compiler checks, then a property or simulation, then an example.
+- **One guard per defect, the cheapest that catches it:** a type the compiler checks, then a property or simulation, then an example. A second test is that guard's duplicate only when the first one's fixture reaches the same call site.
+- **A check is rated on the path where it is the only gate.** Being a backstop on other paths lowers nothing.
 - **Machinery goes with its last guard.** A guard at exactly 4 that is the only thing a host process, a fixture harness, a cache or a CI job still serves goes, and takes it along; machinery that other kept guards need counts against none of them.
 
 ### What makes a kept test able to fail
@@ -95,7 +96,7 @@ A test an agent writes for its own code carries that agent's assumptions, so it 
 
 - **The expected value comes from outside the code under test:** a published vector, bytes computed elsewhere, a hand-worked result, the real OS. A value copied from the implementation — a default, a display string, a factory's configuration, a formula, a synthesized conformance — fails only when someone changes it on purpose. What logic decides around such a value is worth asserting: a branch, an order, a role.
 - **A domain that can be enumerated is enumerated.** A property, an exhaustive sweep or a deterministic simulation reaches scenarios nobody listed; hand-picked cases reach the ones the author already handled.
-- **A fix whose defect rates in gets one test, seen failing against the unfixed code.** A fix that removes the failure by construction owes none. Any other new test is seen failing by breaking what it guards.
+- **A fix whose defect rates in gets one test, seen failing against the unfixed code.** The defect reached `main` once, so its D is at least 2. A fix that removes the failure by construction owes none. Any other new test is seen failing by breaking what it guards.
 - **A test drives the path production takes and asserts the outcome.** Fakes replace what Kernova doesn't own and gates order steps Kernova runs. A test that needs a `ForTesting` read to see a result is a sign the code should return that result as a value.
 - **The verdict rests on nothing outside the test's control:** not elapsed time, the host's displays or CPU count, or process-wide state. Those fail with no defect present.
 
