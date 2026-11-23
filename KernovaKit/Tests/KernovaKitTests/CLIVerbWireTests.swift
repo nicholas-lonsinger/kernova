@@ -207,4 +207,25 @@ struct CLIVerbWireTests {
                     .idOrName("Alpha"), permanently: true, alsoRemoving: [], consent: .none)
             ])
     }
+
+    // MARK: - Named networks
+
+    private var lab: NetworkSummary {
+        NetworkSummary(
+            id: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE") ?? UUID(), name: "Lab",
+            kind: .hostOnly, members: [alpha])
+    }
+
+    @Test("network create crosses with its name and kind, the kind nat unless --kind names one")
+    func networkCreateSendsItsKind() async throws {
+        let answered = VMCommandResponse(result: .network(lab))
+
+        let plain = try await CLIWire.exchange(["network", "create", "Lab"], answering: answered)
+        #expect(plain.sent == [.createNetwork(name: "Lab", kind: .nat)])
+        #expect(try plain.answer.payload() == .network(lab))
+
+        let hostOnly = try await CLIWire.exchange(
+            ["network", "create", "Lab", "--kind", "hostOnly"], answering: answered)
+        #expect(hostOnly.sent == [.createNetwork(name: "Lab", kind: .hostOnly)])
+    }
 }

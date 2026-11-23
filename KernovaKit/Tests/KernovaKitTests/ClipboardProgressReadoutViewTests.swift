@@ -25,4 +25,12 @@ struct ClipboardProgressReadoutViewTests {
         #expect(first == 1)
         #expect(second == 1)
     }
+
+    @Test("Cancel acts on the click that also activates its app")
+    func cancelTakesTheFirstClick() {
+        // The guest agent is never the active app, so a Cancel that only
+        // activated it would let the transfer run on.
+        let view = ClipboardProgressReadoutView(surface: .callout)
+        #expect(view.cancelButtonForTesting.acceptsFirstMouse(for: nil))
+    }
 }

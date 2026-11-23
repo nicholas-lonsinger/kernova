@@ -227,6 +227,29 @@ struct CLIArgumentParsingTests {
         #expect(waiting.timeout == 10)
     }
 
+    @Test("Each wait condition reads exactly one kind of state")
+    func waitConditionsReadOneKindOfState() {
+        #expect(WaitCondition.running.isSatisfied(byStatus: "running") == true)
+        #expect(WaitCondition.running.isSatisfied(byStatus: "stopped") == false)
+        #expect(WaitCondition.stopped.isSatisfied(byStatus: "stopped") == true)
+        #expect(WaitCondition.stopped.isSatisfied(byStatus: "running") == false)
+        // A status-shaped condition says nothing about the agent, and the
+        // agent condition says nothing about the status.
+        #expect(WaitCondition.running.isSatisfied(byAgentStatus: "current") == nil)
+        #expect(WaitCondition.stopped.isSatisfied(byAgentStatus: "current") == nil)
+        #expect(WaitCondition.agent.isSatisfied(byStatus: "running") == nil)
+        #expect(WaitCondition.agent.isSatisfied(byAgentStatus: "current") == true)
+        // Connected but out of date, or of unknown standing, is not what a
+        // script waited for.
+        for other in [
+            "waiting", "connecting", "connected", "outdated", "unresponsive", "expectedMissing", "disconnected",
+        ] {
+            #expect(WaitCondition.agent.isSatisfied(byAgentStatus: other) == false, "\(other)")
+        }
+        // No session, so no agent to have arrived.
+        #expect(WaitCondition.agent.isSatisfied(byAgentStatus: nil) == false)
+    }
+
     // MARK: - Global options
 
     @Test("--no-launch parses on a verb that would otherwise start the app")

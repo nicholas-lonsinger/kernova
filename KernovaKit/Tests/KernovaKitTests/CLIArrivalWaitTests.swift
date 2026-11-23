@@ -10,6 +10,17 @@ import Testing
 /// request that starts it, against a real socket where one is reached.
 @Suite("CLI arrival wait", .caseScoped)
 struct CLIArrivalWaitTests {
+    private func clone(_ arguments: [String]) throws -> KernovaCommand.Clone {
+        try #require(try KernovaCommand.parseAsRoot(["clone"] + arguments) as? KernovaCommand.Clone)
+    }
+
+    @Test("--no-wait asks the app not to wait, rather than skipping a second request")
+    func noWaitAsksForNoWait() throws {
+        #expect(
+            try clone(["Alpha", "--no-wait", "--exact-copy"]).request()
+                == .clone(.idOrName("Alpha"), outcome: .exactCopy, waitForOutcome: false))
+    }
+
     @Test("An import waits in its one request, and --timeout bounds that request end to end")
     func importDeadlineBoundsTheOneRequest() async throws {
         let source = "/Users/somebody/Alpha.kernova"

@@ -10,6 +10,10 @@ import Testing
 /// what crosses the wire, what is printed, and what the tool exits with.
 @Suite("CLI group actions", .caseScoped)
 struct CLIGroupActionTests {
+    private func parse(_ arguments: [String]) throws -> ParsableCommand {
+        try KernovaCommand.parseAsRoot(arguments)
+    }
+
     private func summary(_ name: String, status: String = "running") -> VMSummary {
         VMSummary(id: UUID(), name: name, status: status, ipAddress: .unavailable, heldByAnotherCopy: false)
     }
@@ -37,6 +41,28 @@ struct CLIGroupActionTests {
                         error: .operationFailed(
                             verb: .start, title: nil, message: "macOS allows at most two.", recovery: nil))),
             ])
+    }
+
+    // MARK: - Parsing
+
+    @Test("start, suspend, stop and restart take a group in place of a VM, and send one group action")
+    func groupTargetsParse() throws {
+        let cases: [([String], VMCommandRequest.Verb)] = [
+            (["start", "--folder", "Lab"], .groupAction(.start, group: VMGroupReference(.folder, named: "Lab"))),
+            (
+                ["suspend", "--smart-group", "Linux Lab"],
+                .groupAction(.suspend, group: VMGroupReference(.smartGroup, named: "Linux Lab"))
+            ),
+            (["stop", "--folder", "Lab"], .groupAction(.stop, group: VMGroupReference(.folder, named: "Lab"))),
+            (
+                ["restart", "--smart-group", "Linux Lab"],
+                .groupAction(.restart, group: VMGroupReference(.smartGroup, named: "Linux Lab"))
+            ),
+        ]
+        for (line, expected) in cases {
+            let command = try #require(try parse(line) as? any VerbCommand)
+            #expect(try command.verb() == expected, "\(line)")
+        }
     }
 
     // MARK: - Output

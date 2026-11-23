@@ -122,4 +122,19 @@ struct SandboxFileGrantsTests {
         take()?.release()
         #expect(stops.withLock { $0 } == [link, link])
     }
+
+    @Test("A file this process can only read takes a bookmark, which reaches it")
+    func readOnlyFileTakesABookmark() throws {
+        let scratch = TestScratchDirectory(prefix: "sandbox-file-grants")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let file = scratch.url.appendingPathComponent("read-only.txt")
+        try Data("x".utf8).write(to: file)
+        try FileManager.default.setAttributes([.posixPermissions: 0o444], ofItemAtPath: file.path)
+        let grants = SandboxFileGrants(.system)
+
+        let reached = try #require(grants.reach(try grants.bookmark(of: file)))
+
+        #expect(reached.url.resolvingSymlinksInPath().path == file.resolvingSymlinksInPath().path)
+        #expect(try withExtendedLifetime(reached.grant) { try Data(contentsOf: reached.url) } == Data("x".utf8))
+    }
 }

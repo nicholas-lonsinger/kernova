@@ -68,4 +68,31 @@ struct ClipboardTransferOperationTests {
         #expect(recorder.finish?.failure == .timedOut)
         #expect(!operation.isLive)
     }
+
+    // MARK: - Idle terminal
+
+    @Test("an idle terminal whose gap passed as a transfer began completes nothing")
+    func anIdleTerminalPassingAsATransferBeginsCompletesNothing() async throws {
+        let recorder = Recorder()
+        let clock = GatedEngineClock()
+        let operation = makeOperation(
+            recorder: recorder, clock: clock, gesture: .peerPaste, direction: .outbound)
+        clock.advance(seconds: Self.revealDelay)
+
+        operation.unitBegan(id: 1, expectedBytes: 100)
+        operation.unitEnded(id: 1, succeeded: true)
+        operation.finishWhenIdle()
+        let gap = try #require(clock.parked.first)
+
+        // The gap passes, and before the terminal takes the lock the peer's next
+        // pull begins.
+        clock.releaseHeld(gap)
+        operation.unitBegan(id: 2, expectedBytes: 100)
+        clock.resume(gap)
+        await clock.completion(of: gap)
+        try await drainMainQueue()
+
+        #expect(operation.isLive)
+        #expect(recorder.finish == nil)
+    }
 }

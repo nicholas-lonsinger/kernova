@@ -5,6 +5,17 @@ import KernovaTestSupport
 
 @Suite("StreamFrame", .caseScoped)
 struct StreamFrameTests {
+    // MARK: - encode
+
+    @Test("encode prepends a big-endian length prefix")
+    func encodePrependsLength() throws {
+        let payload = Data([0xAA, 0xBB, 0xCC])
+        let framed = try StreamFrame.encode(payload)
+
+        #expect(framed.count == 4 + payload.count)
+        #expect(framed.prefix(4) == Data([0x00, 0x00, 0x00, 0x03]))
+        #expect(framed.suffix(payload.count) == payload)
+    }
 
     // MARK: - decode
 
