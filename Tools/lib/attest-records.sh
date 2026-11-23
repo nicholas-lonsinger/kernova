@@ -1,6 +1,5 @@
-# The store of passing runs: Tools/attest.sh's lint, test and Linux test runs
-# and Tools/fixture-suites.sh's suites. Sourced, never run; run from inside the
-# checkout.
+# The store of Tools/attest.sh's passing lint, test and Linux test runs.
+# Sourced, never run; run from inside the checkout.
 #
 # A record is a file under <kind>/ named by the hash of the lines it holds,
 # which name everything the run's outcome depends on. The store is in the

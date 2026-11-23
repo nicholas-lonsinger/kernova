@@ -241,8 +241,7 @@ else
 fi
 
 # KERNOVA_DEBUG_APP_ENTITLEMENTS selects Debug's entitlement set; unset means
-# the Development variant, without the restricted keys check-entitlements.sh
-# names.
+# the Development variant, without the restricted keys.
 resolved_entitlements=$(sed -n 's/^[[:space:]]*KERNOVA_DEBUG_APP_ENTITLEMENTS[[:space:]]*=[[:space:]]*//p' "$local_xcconfig" 2>/dev/null | head -1 | sed 's/[[:space:]]*$//')
 if [ -n "$resolved_entitlements" ]; then
     pass "KERNOVA_DEBUG_APP_ENTITLEMENTS = $resolved_entitlements ($local_xcconfig)"

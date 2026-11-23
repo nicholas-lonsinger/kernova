@@ -210,7 +210,7 @@ Every `xcodebuild` build and test goes through the `Makefile` (`make help`). Bui
 > [!IMPORTANT]
 > **Debug needs no Apple account** — it signs ad-hoc, so a fresh clone builds and runs as-is, minus the features a provisioning profile authorizes and the `kernova` CLI, which reaches the app through an app group an ad-hoc signature doesn't get. With a development certificate, point Debug at it via a gitignored `Config/Local.xcconfig` (from `Config/Local.xcconfig.example`) so privacy grants survive rebuilds and the CLI works. **Distributing** a build needs a paid membership and a distribution identity.
 
-The app's entitlements are `Kernova/Resources/Kernova.entitlements` — the shipping set, each key's reason beside it — and `Kernova.Development.entitlements`, the default: the same set minus the restricted keys `Tools/check-entitlements.sh` names, which a signature without an authorizing profile cannot carry. Release, and so every archive, signs with the shipping set; `Config/Local.xcconfig.example` shows how to opt Debug into it.
+The app's entitlements are `Kernova/Resources/Kernova.entitlements` — the shipping set, each key's reason beside it — and `Kernova.Development.entitlements`, the default: the same set minus the restricted keys, which a signature without an authorizing profile cannot carry. Release, and so every archive, signs with the shipping set; `Config/Local.xcconfig.example` shows how to opt Debug into it.
 
 ### Testing
 

@@ -75,7 +75,7 @@ var targets: [Target] = [
             "CKernovaShims",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],
-        // The generated Swift beside it is checked in (Tools/check-generated-protos.sh).
+        // The generated Swift beside it is checked in (Tools/regen-protos.sh).
         exclude: ["Proto/kernova_v2.proto"],
         swiftSettings: sharedSwiftSettings
     ),
@@ -115,7 +115,7 @@ var targets: [Target] = [
         swiftSettings: sharedSwiftSettings
     ),
     // The scratch directory, test waits and interposed file system of the test targets that cannot
-    // reach `KernovaTestSupport` (Tools/check-test-seams.sh), which re-exports it.
+    // reach `KernovaTestSupport`, which re-exports it.
     .target(
         name: "KernovaPortableTestSupport",
         dependencies: ["KernovaFileTree", "KernovaSynchronization", "CKernovaShims"],
@@ -358,8 +358,7 @@ var targets: [Target] = [
         swiftSettings: sharedSwiftSettings
     ),
     // The portable targets' tests. It cannot reach `KernovaTestSupport`, which
-    // is Apple-only, so its suites carry no `.caseScoped` and mint no scratch
-    // (Tools/check-test-seams.sh).
+    // is Apple-only, so its suites carry no `.caseScoped` and mint no scratch.
     .testTarget(
         name: "KernovaPortableTests",
         dependencies: [
@@ -504,7 +503,7 @@ if declaresAppleTargets {
             swiftSettings: sharedSwiftSettings
         ),
         // Every exit test, and nothing else: a test target runs in a process
-        // of its own (Tools/swift-rules/exit-tests.pm).
+        // of its own.
         .testTarget(
             name: "KernovaKitExitTests",
             dependencies: ["KernovaLogging", "KernovaTestSupport"],

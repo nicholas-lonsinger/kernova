@@ -12,16 +12,6 @@ let usage = """
           production one less what only a Debug build compiles of the sources under <repo>, and the declaration
           sites and import lines the store holds under <repo>. With a package's description, as
           `swift package describe --type json` writes it, every Swift target it declares must be in the store.
-      dead-code-sources ungated-seams <file>...
-          Prints each declaration whose name contains ForTesting in <file>s that a Release build compiles, as
-          `<file>:<line> — <line's text>`.
-      dead-code-sources blank <file>...
-          Writes one record per <file>, in order: a line `<kind> <length> <length> <length>`, then three byte strings
-          of those lengths — the path as given, then, for kind `blanked`, the file's bytes and its blanked text, or,
-          for `unread` and `unparsed`, nothing and why. The blanked text is the code alone: each comment is a space,
-          each string or regex literal is `"…"` holding only its interpolations, each `\\(` with its code and `)`,
-          and every newline stays where it was, so a line number in it is one in the file. A file that does not
-          parse cleanly is `unparsed`, never blanked in part.
     """
 
 func bundle(_ options: Options) throws {
@@ -91,45 +81,8 @@ func presence(exporter: String, store: String, root: String) throws -> Presence 
     return filter.presence
 }
 
-func ungatedSeams(_ files: ArraySlice<String>) throws {
-    guard !files.isEmpty else { throw Failure("ungated-seams takes the files to read\n\n\(usage)") }
-    for file in files {
-        let source = try String(contentsOfFile: file, encoding: .utf8)
-        // A seam's name holds this text, so a file without it declares none and needs no parse.
-        guard source.contains("ForTesting") else { continue }
-        for seam in try DebugOnlyCode(path: file, source: source).ungatedSeams {
-            print("\(file):\(seam.line) — \(seam.text)")
-        }
-    }
-}
-
-func blank(_ files: ArraySlice<String>) throws {
-    guard !files.isEmpty else { throw Failure("blank takes the files to read\n\n\(usage)") }
-    for file in files {
-        let record: (kind: String, source: Data, text: String)
-        do {
-            let source = try readFile(file)
-            switch source.withUnsafeBytes({ BlankedSource.blank($0.bindMemory(to: UInt8.self)) }) {
-            case .success(let text): record = ("blanked", source, text)
-            case .failure(let failure):
-                record = ("unparsed", Data(), "\(file):\(failure.line):\(failure.column) does not parse as Swift")
-            }
-        } catch {
-            record = (
-                "unread", Data(), "cannot read \(file): \((error as NSError).localizedFailureReason ?? "\(error)")"
-            )
-        }
-        let fields = [Data(file.utf8), record.source, Data(record.text.utf8)]
-        var output = Data("\(record.kind) \(fields.map { String($0.count) }.joined(separator: " "))\n".utf8)
-        for field in fields { output.append(field) }
-        FileHandle.standardOutput.write(output)
-    }
-}
-
 runCommand(
     tool: "dead-code-sources", usage: usage,
     [
-        "blank": { try blank($0) },
-        "bundle": { try bundle(Options($0, usage: usage)) },
-        "ungated-seams": { try ungatedSeams($0) },
+        "bundle": { try bundle(Options($0, usage: usage)) }
     ])

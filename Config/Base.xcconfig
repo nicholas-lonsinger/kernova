@@ -114,8 +114,7 @@ CODE_SIGN_IDENTITY = -
 DEVELOPMENT_TEAM =
 
 // The app target's Debug CODE_SIGN_ENTITLEMENTS. The Development variant omits
-// the restricted keys an unauthorized signature cannot carry —
-// Tools/check-entitlements.sh names them.
+// the restricted keys an unauthorized signature cannot carry.
 KERNOVA_DEBUG_APP_ENTITLEMENTS = Kernova/Resources/Kernova.Development.entitlements
 
 // `#include?` (trailing `?`) is the optional form: it silently no-ops when

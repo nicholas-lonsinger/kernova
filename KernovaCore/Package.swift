@@ -7,7 +7,7 @@ import PackageDescription
 // MemberImportVisibility: KernovaKit imports AppKit, and without the feature
 // AppKit's extension members on Foundation types resolve in any file that
 // imports KernovaKit. With it, a member resolves only from a module the file
-// imports itself, which Tools/check-core-imports.sh holds to its allowlist.
+// imports itself.
 let sharedSwiftSettings: [SwiftSetting] = [
     .swiftLanguageMode(.v6),
     .treatAllWarnings(as: .error),
@@ -86,7 +86,7 @@ let package = Package(
         ),
         // The fakes and fixtures every bundle testing the core shares.
         // KernovaUITests links the product beside KernovaUI, into the one image
-        // that holds them (Tools/check-package-reference.sh).
+        // that holds them.
         .target(
             name: "KernovaCoreTestSupport",
             dependencies: [

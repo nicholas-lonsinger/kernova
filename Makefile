@@ -209,7 +209,7 @@ format: ## Rewrite Swift sources in place via swift-format
 	@test -n '$(strip $(SWIFT_SOURCE_DIRS))' || { echo 'No tracked Swift sources found — not a git checkout?' >&2; exit 1; }
 	$(SWIFT_FORMAT) format --in-place --recursive $(SWIFT_SOURCE_DIRS)
 
-lint: ## Run Tools/lint.sh: shell analysis, the Tools/check-*.sh checks, swift-format --strict and the fixture suites; a passing run is recorded for `make attest`
+lint: ## Run Tools/lint.sh: shellcheck, the checks, swift-format --strict and the worktree and ghost suites; a passing run is recorded for `make attest`
 	@Tools/attest.sh record lint
 
 # The scan and its arena are Tools/dead-code.sh's.

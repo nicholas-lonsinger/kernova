@@ -10,16 +10,8 @@
     "spacesBeforeEndOfLineComments": 2,
     "tabWidth": 4,
     "rules": {
-        "AllPublicDeclarationsHaveDocumentation": true,
-        "AlwaysUseLiteralForEmptyCollectionInit": true,
         "NeverForceUnwrap": true,
         "NeverUseForceTry": true,
-        "NeverUseImplicitlyUnwrappedOptionals": true,
-        "NoEmptyLinesOpeningClosingBraces": true,
-        "NoLeadingUnderscores": true,
-        "OmitExplicitReturns": true,
-        "UseEarlyExits": true,
-        "UseWhereClausesInForLoops": true,
-        "ValidateDocumentationComments": true
+        "NeverUseImplicitlyUnwrappedOptionals": true
     }
 }

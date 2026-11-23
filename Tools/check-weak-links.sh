@@ -14,8 +14,6 @@
 # A framework listed here that no image links at all is a failure rather than a
 # skip, for the same reason — "nothing to check" is what a broken check says.
 #
-# make lint: not run — it reads a built app; `make build-for-testing` and `make test` run it
-#
 # Usage:
 #   Tools/check-weak-links.sh <path-to-.app>
 #     Tools/built-app.sh --check-weak-links resolves the app a build made.

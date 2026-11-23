@@ -16,9 +16,7 @@
 #
 # A source this check cannot read fully — a `.package(` form it does not know,
 # a pin or remote reference without a location — is a finding, so a format
-# change cannot shrink what it checks. Given file arguments, it classifies each
-# by its name and reads those instead; its fixture test drives it that way.
-# Reports every finding before failing.
+# change cannot shrink what it checks. Reports every finding before failing.
 
 set -uo pipefail
 
@@ -28,15 +26,11 @@ lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
 
-if [ "$#" -gt 0 ]; then
-    files=("$@")
-else
-    cd "$(git rev-parse --show-toplevel)" || exit 1
-    files=()
-    while IFS= read -r file; do
-        files+=("$file")
-    done < <(git ls-files '*Package.swift' '*Package.resolved' '*.xcodeproj/project.pbxproj')
-fi
+cd "$(git rev-parse --show-toplevel)" || exit 1
+files=()
+while IFS= read -r file; do
+    files+=("$file")
+done < <(git ls-files '*Package.swift' '*Package.resolved' '*.xcodeproj/project.pbxproj')
 
 # One line per reference: <file>:<line><TAB><url or finding>, where a finding
 # starts with "!".

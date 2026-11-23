@@ -5,20 +5,10 @@
 # system — into the machine's tool cache (Tools/lib/tool-cache.sh), and prints
 # protoc's path; protoc-gen-swift is beside it.
 #
-# Usage: Tools/install-protoc.sh [--path]
-#   --path  print protoc's path, installing nothing
-#
 # Status text goes to stderr: stdout carries the path alone, so callers can
 # read it with a command substitution.
 
 set -euo pipefail
-
-# A git hook exports GIT_DIR and its companions to its children (githooks(5)),
-# and GIT_DIR outranks `-C` and the scratch checkout's own .git, so under
-# `pre-push` the git and SwiftPM calls below would act on the repository being
-# pushed.
-# shellcheck disable=SC2046 # one variable name per word
-unset $(git rev-parse --local-env-vars)
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 # shellcheck source=lib/tool-cache.sh
@@ -60,12 +50,5 @@ verify_protoc() {
     "$1/protoc" --version >/dev/null && "$1/protoc-gen-swift" --version >/dev/null
 }
 
-case "${1:-}" in
-    '') dir=$(tool_install build_protoc verify_protoc "${inputs[@]}") ;;
-    --path) dir=$(tool_dir "${inputs[@]}") ;;
-    *)
-        echo 'usage: Tools/install-protoc.sh [--path]' >&2
-        exit 2
-        ;;
-esac
+dir=$(tool_install build_protoc verify_protoc "${inputs[@]}")
 printf '%s\n' "$dir/protoc"

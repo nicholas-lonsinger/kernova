@@ -226,20 +226,6 @@ jobs:
       - name: Ensure shellcheck
         run: Tools/brew-install.sh shellcheck
 
-      # The protoc and protoc-gen-swift Tools/check-generated-protos.sh runs; a
-      # cold build takes minutes.
-      - name: Install the protobuf generators
-        uses: ./.github/actions/tool-cache
-        with:
-          installer: Tools/install-protoc.sh
-
-      # The release dead-code-sources the Swift source rules and the seam
-      # check run; a cold build takes minutes.
-      - name: Install dead-code-sources
-        uses: ./.github/actions/tool-cache
-        with:
-          installer: Tools/install-dead-code-tool.sh dead-code-sources
-
       - name: make lint
         timeout-minutes: 10
         run: make lint
