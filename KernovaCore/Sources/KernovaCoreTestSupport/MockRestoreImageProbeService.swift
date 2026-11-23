@@ -2,31 +2,18 @@ import Foundation
 
 @testable import KernovaCore
 
-/// Scripted stand-in for `RestoreImageProbing`.
+/// Scripted stand-in for `RestoreImageProbing`: every probe answers a
+/// well-formed Apple image.
 @MainActor
 final class MockRestoreImageProbeService: RestoreImageProbing {
     nonisolated init() {}
 
-    var lastProbedURL: URL?
-    var lastSizedURL: URL?
-
-    /// Thrown instead of returning, per the per-method `<method>Error` convention.
-    var probeError: (any Error)?
-    var sizeError: (any Error)?
-    /// Returned on success; defaults to a well-formed Apple image.
-    var probeResult: ProbedRestoreImage = makeProbedImage()
-    var sizeResult: UInt64 = 19_772_077_142
-
     func probe(_ url: URL) async throws -> ProbedRestoreImage {
-        lastProbedURL = url
-        if let error = probeError { throw error }
-        return probeResult
+        makeProbedImage()
     }
 
     func size(of url: URL) async throws -> UInt64 {
-        lastSizedURL = url
-        if let error = sizeError { throw error }
-        return sizeResult
+        19_772_077_142
     }
 }
 

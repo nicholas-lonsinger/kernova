@@ -102,11 +102,6 @@ enum ScriptEvent {
         return set
     }
 
-    /// `delete <reference>`.
-    static func delete(_ reference: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
-        event("core", "delo", reference)
-    }
-
     /// `make new <class> [at <location>] [with properties <properties>]`.
     static func make(
         new elementClass: String, at location: NSAppleEventDescriptor? = nil,
@@ -121,14 +116,6 @@ enum ScriptEvent {
             make.setParam(record, forKeyword: code("prdt"))
         }
         return make
-    }
-
-    /// `end of <container>`, as the location a `make` inserts at.
-    static func end(of container: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
-        let location = record(as: "insl")
-        location.setDescriptor(container, forKeyword: code("kobj"))
-        location.setDescriptor(NSAppleEventDescriptor(enumCode: code("end ")), forKeyword: code("kpos"))
-        return location
     }
 
     /// One of Kernova's own verbs, `<verb> <reference>`.

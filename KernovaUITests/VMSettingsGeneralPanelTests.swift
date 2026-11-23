@@ -21,19 +21,8 @@ struct VMSettingsGeneralPanelTests {
 
     // MARK: - Ephemeral Mode
 
-    /// Builds a settings pane over a VM carrying `snapshotCount` snapshots of
-    /// `kind`, the oldest of which is the Current one.
-    private func makeEphemeralController(
-        snapshotCount: Int, ephemeral: Bool, isReadOnly: Bool = false,
-        kind: VMSnapshotKind = .warm
-    ) -> (VMSettingsViewController, VMInstance) {
-        makeEphemeralController(
-            snapshots: (0..<snapshotCount).map { makeSnapshot(index: $0, kind: kind) },
-            ephemeral: ephemeral, isReadOnly: isReadOnly)
-    }
-
-    /// One snapshot of the series the count-based helper builds: named for its
-    /// index, and a minute newer than the one before it.
+    /// One snapshot of a series: named for its index, and a minute newer than
+    /// the one before it.
     private func makeSnapshot(
         index: Int, kind: VMSnapshotKind, name: String? = nil
     ) -> VMSnapshot {

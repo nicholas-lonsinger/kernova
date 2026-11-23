@@ -46,7 +46,7 @@ enum VMInstanceFixture {
             bundle: (bundleFactory ?? VMBundle.Factory(machineFiles: MockVMBundleMachineFiles(files: files)))
                 .make(read),
             phase: phase, preferences: preferences,
-            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts, logSink: nil,
+            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts,
             agentConnector: agentConnector, stagingRoot: stagingRoot)
         // A VM neither at rest nor removed holds its run lock.
         if !phase.isAtRest, phase != .removed { instance.activity.takeRunLockForTesting() }

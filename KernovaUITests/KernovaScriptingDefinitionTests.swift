@@ -40,15 +40,6 @@ struct KernovaScriptingDefinitionTests {
         }
     }
 
-    // MARK: - Well-formedness
-
-    /// Drops the `xml:base` XInclude stamps every substituted element carries,
-    /// which the sdef DTD declares on no element.
-    private func stripIncludeBases(_ node: XMLNode) {
-        (node as? XMLElement)?.removeAttribute(forName: "xml:base")
-        for child in node.children ?? [] { stripIncludeBases(child) }
-    }
-
     // MARK: - What the dictionary points at
 
     @Test("Every command the dictionary names is handled by a script command class")

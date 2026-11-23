@@ -7,14 +7,12 @@ import Foundation
 final class MockIPSWService: IPSWProviding {
     nonisolated init() {}
 
-    var fetchCallCount = 0
     var fetchError: (any Error)?
 
     /// Returned on success; defaults to a plausible newest release.
     var fetchResult = makeLatestImage()
 
     func fetchLatestRestoreImage() async throws -> LatestRestoreImage {
-        fetchCallCount += 1
         if let error = fetchError { throw error }
         return fetchResult
     }

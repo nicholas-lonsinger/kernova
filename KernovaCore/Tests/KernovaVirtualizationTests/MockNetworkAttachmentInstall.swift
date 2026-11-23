@@ -17,10 +17,7 @@ final class MockNetworkAttachmentInstall: NetworkAttachmentInstalling {
 
     private struct State {
         var applies: [Apply] = []
-        var detachCount = 0
     }
-
-    var detachCount: Int { state.withLock { $0.detachCount } }
 
     func applyNetworkAttachment(
         _ make: @escaping @Sendable () -> VZNetworkDeviceAttachment?,
@@ -29,9 +26,7 @@ final class MockNetworkAttachmentInstall: NetworkAttachmentInstalling {
         state.withLock { $0.applies.append(Apply(make: make, onBuildFailure: onBuildFailure)) }
     }
 
-    func detachNetworkAttachment() {
-        state.withLock { $0.detachCount += 1 }
-    }
+    func detachNetworkAttachment() {}
 
     /// Runs the build of the apply at `index` once, as the session's queue
     /// does — reporting a build failure when it finds nothing — then drops

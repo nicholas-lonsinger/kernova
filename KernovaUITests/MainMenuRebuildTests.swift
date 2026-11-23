@@ -14,30 +14,17 @@ import Testing
 struct MainMenuRebuildTests {
     private let preferences = makeTestPreferences()
 
-    /// The controller under test, over a library a test selects the VM in
-    /// (``makeMenuInstance(in:guestOS:name:phase:mutate:)``), which each check
-    /// takes as the VM the working window shows.
+    /// The controller under test, over an empty library, and the menu bar it
+    /// builds.
     private struct Fixture {
         let controller: MainMenuController
         let viewModel: VMLibraryViewModel
         let mainMenu: NSMenu
-
-        /// Updates `menu` with the VM ``makeMenuInstance(in:guestOS:name:phase:mutate:)``
-        /// selected as the one the working window shows.
-        @MainActor
-        func update(_ menu: NSMenu) {
-            controller.update(menu, workingInstance: viewModel.selectedInstance)
-        }
     }
 
-    /// `populate` runs before the menu bar is built, so a VM it selects is the
-    /// one the menus are first built for.
-    private func makeFixture(
-        keepInMenuBar: Bool = false, populate: (VMLibraryViewModel) -> Void = { _ in }
-    ) -> Fixture {
+    private func makeFixture() -> Fixture {
         let viewModel = makeLibraryViewModel(preferences: preferences)
-        viewModel.keepInMenuBarOnQuit = keepInMenuBar
-        populate(viewModel)
+        viewModel.keepInMenuBarOnQuit = false
         let controller = MainMenuController(
             viewModel: viewModel, windows: makeWindowRegistry(viewModel))
         return Fixture(

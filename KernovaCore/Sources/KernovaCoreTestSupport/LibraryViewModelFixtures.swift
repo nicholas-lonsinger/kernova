@@ -1,5 +1,4 @@
 import Foundation
-import KernovaCommandModel
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
@@ -43,19 +42,4 @@ func makeLibraryViewModel(
         hostPasteboard: FakePasteboard(),
         bundleProducts: bundleProducts
     )
-}
-
-/// A VM in `viewModel`'s library, selected in its sidebar — the VM the library
-/// window shows while it is the working window.
-@MainActor
-@discardableResult
-func makeMenuInstance(
-    in viewModel: VMLibraryViewModel,
-    guestOS: VMGuestOS = .macOS, name: String = "Menu VM",
-    phase: VMLifecyclePhase = .stopped, mutate: (inout VMConfiguration) -> Void = { _ in }
-) -> VMInstance {
-    let instance = viewModel.library.admitFixture(
-        name: name, guestOS: guestOS, phase: phase, mutate: mutate)
-    viewModel.library.selection = .library(instance.id)
-    return instance
 }

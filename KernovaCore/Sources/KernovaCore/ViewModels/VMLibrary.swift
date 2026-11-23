@@ -26,7 +26,7 @@ import KernovaLogging
 @Observable
 package final class VMLibrary: VMAdmissionPeers {
     /// What the library's own records go to.
-    let logger: KernovaLogger
+    let logger = KernovaLogger(subsystem: "app.kernova", category: "VMLibrary")
 
     // MARK: - Services
 
@@ -147,8 +147,7 @@ package final class VMLibrary: VMAdmissionPeers {
     ) -> VMInstance {
         let instance = VMInstance(
             bundle: bundleFactory.make(read), phase: phase, preferences: preferences,
-            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts, logSink: logSink,
-            agentConnector: agentConnector)
+            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts, agentConnector: agentConnector)
         // A VM neither at rest nor removed holds its run lock.
         if !phase.isAtRest, phase != .removed { instance.activity.takeRunLockForTesting() }
         entries.append(.vm(instance))
@@ -527,10 +526,6 @@ package final class VMLibrary: VMAdmissionPeers {
     /// The host pasteboard every VM's clipboard publishes to and polls.
     let hostPasteboard: any ClipboardPasteboard
 
-    /// Where the library's records, and those of every VM it builds, are
-    /// forwarded — `nil` forwards them to the process sink.
-    let logSink: KernovaLogger.ForwardingSink?
-
     /// What the app bundle ships, which every VM the library builds is
     /// handed.
     package let bundleProducts: AppBundleProducts
@@ -559,11 +554,8 @@ package final class VMLibrary: VMAdmissionPeers {
         bridgedInterfaces: any BridgedInterfaceProviding,
         appActivation: HostNotification,
         hostPasteboard: any ClipboardPasteboard,
-        bundleProducts: AppBundleProducts,
-        logSink: KernovaLogger.ForwardingSink?
+        bundleProducts: AppBundleProducts
     ) {
-        self.logSink = logSink
-        self.logger = KernovaLogger(subsystem: "app.kernova", category: "VMLibrary", sink: logSink)
         self.bundleProducts = bundleProducts
         self.storageService = storageService
         self.virtualizationHost = virtualizationHost
@@ -768,7 +760,7 @@ package final class VMLibrary: VMAdmissionPeers {
     private func makeInstance(_ scanned: ScannedBundle) -> VMInstance {
         let instance = VMInstance(
             bundle: bundleFactory.make(scanned.read), phase: scanned.phase, preferences: preferences,
-            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts, logSink: logSink)
+            hostPasteboard: hostPasteboard, bundleProducts: bundleProducts)
         wireHooks(for: instance)
         recordUnreadable(of: scanned.read)
         return instance

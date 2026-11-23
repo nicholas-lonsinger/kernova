@@ -17,8 +17,6 @@ import KernovaTestSupport
 final class SuspendingMockRemovableMediaDeviceService: RemovableMediaAttaching {
     var attachCallCount = 0
     var detachCallCount = 0
-    var lastAttachedPath: String?
-    var lastAttachedReadOnly: Bool?
 
     /// Thrown by `attach` after it resumes, so a test can fail an operation
     /// that was overtaken while suspended.
@@ -76,8 +74,6 @@ final class SuspendingMockRemovableMediaDeviceService: RemovableMediaAttaching {
         to instance: VMInstance
     ) async throws -> RemovableMediaDeviceInfo {
         attachCallCount += 1
-        lastAttachedPath = file?.path(percentEncoded: false) ?? diskImagePath
-        lastAttachedReadOnly = readOnly
         await suspendIfNeeded()
         if let attachError {
             noteCompletion()

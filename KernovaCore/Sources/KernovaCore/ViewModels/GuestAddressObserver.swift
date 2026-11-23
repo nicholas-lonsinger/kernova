@@ -185,9 +185,6 @@ final class GuestAddressObserver {
     }
 
     #if DEBUG
-    /// The running read loop, for event-driven test waits.
-    var readTaskForTesting: Task<Void, Never>? { readTask }
-
     /// Reads the table once now, outside the loop, for tests that assert on an
     /// answer rather than on the cadence.
     func readForTesting() async {

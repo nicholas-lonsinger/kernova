@@ -1,6 +1,5 @@
 import AppKit
 
-@testable import KernovaCore
 @testable import KernovaUI
 
 /// Whether the name in a sidebar row or header `cell` is open for renaming,

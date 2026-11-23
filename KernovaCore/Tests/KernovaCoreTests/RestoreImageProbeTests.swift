@@ -5,7 +5,6 @@ import Synchronization
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// Stub for the probe's requests.
 ///

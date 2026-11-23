@@ -40,17 +40,6 @@ struct SidebarFilterSortGroupTests {
         )
     }
 
-    // MARK: - Group
-
-    private func groups(
-        _ entries: [LibraryEntry], _ options: SidebarViewOptions,
-        context: SidebarLayout.Context = .testing()
-    ) -> [(title: String, names: [String])] {
-        let layout = SidebarLayout.project(entries: entries, options: options, context: context)
-        guard case .groups(let groups) = layout.sections.first?.content else { return [] }
-        return groups.groups.map { ($0.title, $0.rows.entries.map(\.name)) }
-    }
-
     // MARK: - Sidebar
 
     @Test("VMInfo reports the state bucket by liveness, and the Shortcuts entity reads it")

@@ -1,5 +1,4 @@
 import Foundation
-import KernovaCommandModel
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
@@ -30,16 +29,8 @@ final class MockVirtualizationService: VirtualizationProviding {
 
     /// Whether the most recent `start` ran a Recovery boot.
     var lastStartBootIntoRecovery = false
-    /// The account the last `start` was handed, so a test can read what the
-    /// boot would have carried into VZ.
-    private(set) var lastStartProvisioning: GuestProvisioningCredentials?
 
-    /// The route `start` answers with, in place of the one its bring-up
-    /// implies — for a test that wants a route without arranging the state that
-    /// produces it (a save file on disk, above all).
-    var startRoute: GuestStartRoute?
-
-    /// What the last `start` answered, derived or overridden.
+    /// What the last `start` answered.
     private(set) var lastStartRoute: GuestStartRoute?
 
     /// The configuration as it stood when `start` was called, so a caller that
@@ -50,16 +41,6 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// The host state as it stood when the guest last began executing — what
     /// a bring-up commits before the guest can write anything.
     private(set) var hostStateAtStart: VMHostState?
-    /// How many times a guest began executing: a boot, a restored session's
-    /// resume, a reverted session's resume.
-    private(set) var guestExecutionCount = 0
-    /// Whether the guest goes away while a suspend writes its state, as the
-    /// real one can: the session ends under the write.
-    var guestStopsDuringSave = false
-
-    /// The status the bring-up running `start` was admitted from — what a
-    /// caller that hands a VM off to a boot handed over.
-    var statusAtStart: VMStatus?
 
     /// Whether the guest ignores the ACPI shutdown `requestStop` sends, as a
     /// macOS guest resting at its login screen does: the request is delivered
@@ -69,38 +50,18 @@ final class MockVirtualizationService: VirtualizationProviding {
     // MARK: - Error Injection & Recovery
 
     var startError: (any Error)?
-    /// Thrown by one VM's `start`, by its identifier, ahead of ``startError`` —
-    /// so one VM in a batch can fail while the rest come up.
-    var startErrors: [UUID: any Error] = [:]
     /// Thrown by a `start` that restores a saved state, ahead of
     /// ``startError`` — so one VM's restore can fail while another boots.
     var restoreError: (any Error)?
-    var stopError: (any Error)?
-    /// Thrown by the send itself, as the real one throws for a VM with no
-    /// session.
-    var forceStopError: (any Error)?
     /// Whether a sent stop completes; off, it stays in flight — as when the
     /// VM process doesn't answer — until a test delivers its end.
     var forceStopCompletes = true
     /// Parks a start once its session is bound and before the guest is up, so
     /// a test can act while the bring-up still holds the VM.
     var startGate: GatedStep?
-    var pauseError: (any Error)?
-    /// Thrown by a hot resume, and by the restore a live warm revert ends in.
-    var resumeError: (any Error)?
     var saveError: (any Error)?
     var takeSnapshotError: (any Error)?
-
-    /// Runs once the capture operation holds the VM, so a test can reproduce
-    /// what the real capture does to the instance while it runs.
-    var onTakeSnapshot: (@MainActor (borrowing VMCaptureContext) async throws -> Void)?
-    /// Parks a capture after ``onTakeSnapshot`` and before it writes, so a
-    /// test can act while the capture holds the VM.
-    var takeSnapshotGate: GatedStep?
     var revertToSnapshotError: (any Error)?
-    /// Parks a revert before it reads the snapshot, so a test can act while
-    /// the revert holds the VM.
-    var revertGate: GatedStep?
 
     // MARK: - Snapshot call tracking
 
@@ -110,15 +71,11 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// over it. `nil` drives a fresh one, found as the clone found the guest,
     /// that writes a stand-in saved state.
     var liveCopySession: MockSnapshotSession?
-    private(set) var copyLiveCallCount = 0
 
     /// Snapshots passed to `revertToSnapshot`, in call order.
     private(set) var revertedSnapshots: [VMSnapshot] = []
     /// How many reverts reached the mock, failed ones included.
     private(set) var revertCallCount = 0
-    /// The host state as it stood when the last revert began installing its
-    /// files — what a revert commits before its first swap.
-    private(set) var hostStateAtInstall: VMHostState?
 
     // MARK: - VirtualizationProviding
 
@@ -127,22 +84,18 @@ final class MockVirtualizationService: VirtualizationProviding {
         provisioning: GuestProvisioningCredentials?
     ) async throws -> VMOperationEnding<GuestStartRoute> {
         startCallCount += 1
-        let derived = GuestStartRoute(context.kind)
-        lastStartBootIntoRecovery = derived == .recoveryBoot
-        lastStartProvisioning = provisioning
+        let route = GuestStartRoute(context.kind)
+        lastStartBootIntoRecovery = route == .recoveryBoot
         configurationAtStart = instance.configuration
-        statusAtStart = instance.phase.operation?.startedFrom.status
-        let route = startRoute ?? derived
         lastStartRoute = route
         // A restore reads the slot before anything is marked, as the real one
         // does, so a restore that fails leaves the marker as it found it.
-        if derived == .restoredSavedState, let error = restoreError { throw error }
+        if route == .restoredSavedState, let error = restoreError { throw error }
         // The boot's start, or the restored session's resume: the call VZ
         // fails, or the one the guest first executes in.
         try await context.bringUp.operation.executingGuest { _ in
-            if let error = startErrors[instance.id] ?? startError { throw error }
+            if let error = startError { throw error }
             hostStateAtStart = instance.hostState
-            guestExecutionCount += 1
             context.bringUp.bindSessionForTesting(UUID())
             try await startGate?.pass()
         }
@@ -154,7 +107,6 @@ final class MockVirtualizationService: VirtualizationProviding {
     func requestStop(_ instance: VMInstance) async throws {
         stopCallCount += 1
         stopRequested.notify()
-        if let error = stopError { throw error }
         guard !guestIgnoresShutdownRequest, let sessionID = instance.liveSessionID else { return }
         instance.activity.deliverSessionEvent(.guestDidStop, from: sessionID)
     }
@@ -163,7 +115,6 @@ final class MockVirtualizationService: VirtualizationProviding {
     /// once, as the session event the real stop's completion raises.
     func forceStop(_ instance: VMInstance) throws {
         forceStopCallCount += 1
-        if let error = forceStopError { throw error }
         guard forceStopCompletes, let sessionID = instance.liveSessionID else { return }
         instance.activity.deliverSessionEvent(.stopDidComplete, from: sessionID)
     }
@@ -172,7 +123,6 @@ final class MockVirtualizationService: VirtualizationProviding {
         _ instance: VMInstance, _ context: borrowing VMOperationContext
     ) async throws -> VMOperationEnding<Void> {
         pauseCallCount += 1
-        if let error = pauseError { throw error }
         return .rest(.live(.paused), ())
     }
 
@@ -180,7 +130,6 @@ final class MockVirtualizationService: VirtualizationProviding {
         _ instance: VMInstance, _ context: borrowing VMOperationContext
     ) async throws -> VMOperationEnding<Void> {
         resumeCallCount += 1
-        if let error = resumeError { throw error }
         return .rest(.live(.running), ())
     }
 
@@ -200,9 +149,6 @@ final class MockVirtualizationService: VirtualizationProviding {
         // The suspend slot is what makes the VM resumable, so the mock writes a
         // real one: every predicate a suspended VM is judged by reads the file.
         try VMInstanceFixture.writeSaveFile(for: instance)
-        if guestStopsDuringSave, let sessionID = context.sessionID {
-            instance.activity.deliverSessionEvent(.guestDidStop, from: sessionID)
-        }
         guard context.sessionEnd == nil else {
             // As the real one does: the slot is however far the write got.
             context.bundle.removeSaveFile()
@@ -221,16 +167,6 @@ final class MockVirtualizationService: VirtualizationProviding {
     ) async throws -> VMOperationEnding<VMSnapshot> {
         let mode = context.mode
         let snapshot = request.record(capturedIn: mode)
-        // Stands in for what a real warm capture does to the VM mid-flight —
-        // notably taking every passthrough accessory off before it writes the
-        // guest's state.
-        do {
-            try await onTakeSnapshot?(context)
-        } catch {
-            guard mode == .live else { throw error }
-            return .failed(.asStarted, error)
-        }
-        try await takeSnapshotGate?.pass()
         if let error = takeSnapshotError {
             guard mode == .live else { throw error }
             return .failed(.asStarted, error)
@@ -256,7 +192,6 @@ final class MockVirtualizationService: VirtualizationProviding {
         prepare: () async throws -> Void,
         copy: () async throws -> Void
     ) async throws -> VMOperationEnding<Void> {
-        copyLiveCallCount += 1
         guard let sessionID = context.operation.sessionID else {
             throw VirtualizationError.noVirtualMachine
         }
@@ -280,7 +215,6 @@ final class MockVirtualizationService: VirtualizationProviding {
     ) async throws -> VMOperationEnding<Void> {
         let snapshot = context.snapshot
         revertCallCount += 1
-        try await revertGate?.pass()
         let plan: VMSnapshotRestorePlan
         do {
             plan = try await context.bringUp.operation.bundle.planRestore(
@@ -299,7 +233,6 @@ final class MockVirtualizationService: VirtualizationProviding {
                 await context.bringUp.operation.bundle.discardRestoreStaging()
                 throw error
             }
-            hostStateAtInstall = instance.hostState
             try await context.bringUp.operation.bundle.installRestore(plan)
         } catch {
             return .failed(.atRest(.stopped), error)
@@ -319,9 +252,7 @@ final class MockVirtualizationService: VirtualizationProviding {
         context.bringUp.operation.filesLanded()
         do {
             try await context.bringUp.operation.executingGuest { _ in
-                if let error = resumeError { throw error }
                 hostStateAtStart = instance.hostState
-                guestExecutionCount += 1
                 context.bringUp.bindSessionForTesting(UUID())
             }
         } catch {

@@ -17,49 +17,13 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     /// Set to `false` to allow subsequent calls through immediately.
     var shouldSuspendOnStart = true
 
-    /// When `true`, `pause` will suspend.
-    ///
-    /// Set to `false` to allow subsequent calls through immediately.
-    var shouldSuspendOnPause = true
-
     /// When `true`, `revertToSnapshot` will suspend before ending the session,
     /// standing in for the window a real revert spends copying files.
-    ///
-    /// Defaults to `false` so existing callers keep the immediate behavior.
     var shouldSuspendOnRevert = false
-
-    /// When `true`, `revertToSnapshot` suspends before it reads the snapshot's
-    /// plan — the first thing its body does.
-    var shouldSuspendBeforePlanning = false
-
-    /// When `true`, `revertToSnapshot` suspends once the session is ended and
-    /// the files are staged, before `installRestore` copies them in.
-    var shouldSuspendBeforeInstall = false
-
-    /// Whether the guest ignores the ACPI shutdown `requestStop` sends, as a
-    /// macOS guest resting at its login screen does: the request is delivered
-    /// and the VM keeps running.
-    var guestIgnoresShutdownRequest = false
-
-    /// Number of `requestStop` and `forceStop` calls that reached the mock.
-    private(set) var requestStopCallCount = 0
-    private(set) var forceStopCallCount = 0
-
-    /// Error `start` throws once it is let through, resting the VM the way the
-    /// real service rests a failed start.
-    var startError: (any Error)?
 
     /// Number of `start` calls, so a test can prove a second start joined the
     /// first rather than issuing its own.
     private(set) var startCallCount = 0
-    /// The account the last `start` was handed.
-    private(set) var lastStartProvisioning: GuestProvisioningCredentials?
-
-    /// Error `pause` throws once it is let through.
-    var pauseError: (any Error)?
-
-    /// Number of hot `resume` calls that reached the mock.
-    private(set) var resumeCallCount = 0
 
     // MARK: - Suspension Mechanism
 
@@ -108,30 +72,26 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         provisioning: GuestProvisioningCredentials?
     ) async throws -> VMOperationEnding<GuestStartRoute> {
         startCallCount += 1
-        lastStartProvisioning = provisioning
         let route = GuestStartRoute(context.kind)
         if shouldSuspendOnStart {
             await suspendIfNeeded()
         }
         try await context.bringUp.operation.executingGuest { _ in
-            if let error = startError { throw error }
             context.bringUp.bindSessionForTesting(UUID())
         }
         return .rest(.live(.running), route)
     }
 
-    /// A guest that honors the request powers off, which reaches the VM as the
-    /// session event the real guest raises.
+    /// The guest honors the request and powers off, which reaches the VM as
+    /// the session event the real guest raises.
     func requestStop(_ instance: VMInstance) async throws {
-        requestStopCallCount += 1
-        guard !guestIgnoresShutdownRequest, let sessionID = instance.liveSessionID else { return }
+        guard let sessionID = instance.liveSessionID else { return }
         instance.activity.deliverSessionEvent(.guestDidStop, from: sessionID)
     }
 
     /// Sends the stop, which completes at once as the session event the real
     /// stop's completion raises.
     func forceStop(_ instance: VMInstance) throws {
-        forceStopCallCount += 1
         guard let sessionID = instance.liveSessionID else { return }
         instance.activity.deliverSessionEvent(.stopDidComplete, from: sessionID)
     }
@@ -139,18 +99,14 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     func pause(
         _ instance: VMInstance, _ context: borrowing VMOperationContext
     ) async throws -> VMOperationEnding<Void> {
-        if shouldSuspendOnPause {
-            await suspendIfNeeded()
-        }
-        if let pauseError { throw pauseError }
+        await suspendIfNeeded()
         return .rest(.live(.paused), ())
     }
 
     func resume(
         _ instance: VMInstance, _ context: borrowing VMOperationContext
     ) async throws -> VMOperationEnding<Void> {
-        resumeCallCount += 1
-        return .rest(.live(.running), ())
+        .rest(.live(.running), ())
     }
 
     func save(
@@ -189,9 +145,6 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         commitConfiguration: @MainActor (borrowing VMEditPermit, VMSnapshotRestorePlan) throws -> Void
     ) async throws -> VMOperationEnding<Void> {
         let snapshot = context.snapshot
-        if shouldSuspendBeforePlanning {
-            await suspendIfNeeded()
-        }
         let plan = try await context.bringUp.operation.bundle.planRestore(
             fromSnapshot: snapshot.id, kind: snapshot.kind)
         if shouldSuspendOnRevert {
@@ -200,9 +153,6 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         context.bringUp.operation.endSession()
         try await context.bringUp.operation.bundle.stageRestore(fromSnapshot: snapshot.id, plan: plan)
         try commitConfiguration(context.bringUp.operation.permit, plan)
-        if shouldSuspendBeforeInstall {
-            await suspendIfNeeded()
-        }
         try await context.bringUp.operation.bundle.installRestore(plan)
         // A warm snapshot's own saved state is what the VM comes back on, and
         // the machine-files mock copies no files, so the slot is written here.

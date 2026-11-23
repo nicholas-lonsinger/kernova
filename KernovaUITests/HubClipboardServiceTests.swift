@@ -4,7 +4,6 @@ import KernovaAgentCore
 import KernovaAgentHost
 import KernovaAgentRuntime
 import KernovaCommandModel
-import KernovaSynchronization
 import KernovaTestSupport
 import KernovaWire
 import Testing

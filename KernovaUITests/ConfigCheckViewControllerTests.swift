@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import KernovaCommandModel
 import KernovaTestSupport
 import Testing
 

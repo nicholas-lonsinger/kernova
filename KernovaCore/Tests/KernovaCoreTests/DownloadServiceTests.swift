@@ -718,12 +718,6 @@ final class StubURLProtocol: URLProtocol {
     struct StubResponse {
         let response: HTTPURLResponse
         let body: Data
-        /// When set, body is delivered fully but the response's
-        /// Content-Length declares a larger size, mimicking a truncated transfer.
-        let declaresLargerLength: Bool
-        /// When set, the stub delivers the response + (partial) body, then
-        /// signals `didFailWithError(_:)` to simulate a mid-stream network drop.
-        let failAfterBody: URLError?
 
         private static func makeResponse(
             url: URL, statusCode: Int, headers: [String: String]
@@ -751,7 +745,7 @@ final class StubURLProtocol: URLProtocol {
             if let lastModified { headers["Last-Modified"] = lastModified }
             return StubResponse(
                 response: makeResponse(url: url, statusCode: 200, headers: headers),
-                body: body, declaresLargerLength: false, failAfterBody: nil)
+                body: body)
         }
 
         static func partialResponse(
@@ -767,7 +761,7 @@ final class StubURLProtocol: URLProtocol {
             ]
             return StubResponse(
                 response: makeResponse(url: url, statusCode: 206, headers: headers),
-                body: body, declaresLargerLength: false, failAfterBody: nil)
+                body: body)
         }
 
         static func response(
@@ -782,7 +776,7 @@ final class StubURLProtocol: URLProtocol {
             }
             return StubResponse(
                 response: makeResponse(url: url, statusCode: statusCode, headers: allHeaders),
-                body: body, declaresLargerLength: false, failAfterBody: nil)
+                body: body)
         }
     }
 
@@ -822,11 +816,7 @@ final class StubURLProtocol: URLProtocol {
         if !stub.body.isEmpty {
             client?.urlProtocol(self, didLoad: stub.body)
         }
-        if let error = stub.failAfterBody {
-            client?.urlProtocol(self, didFailWithError: error)
-        } else {
-            client?.urlProtocolDidFinishLoading(self)
-        }
+        client?.urlProtocolDidFinishLoading(self)
     }
 
     override func stopLoading() {}

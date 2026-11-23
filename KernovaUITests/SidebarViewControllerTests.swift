@@ -1,5 +1,4 @@
 import AppKit
-import KernovaAgentCore
 import KernovaAgentHost
 import Foundation
 import KernovaCommandModel
@@ -23,17 +22,6 @@ struct SidebarViewControllerTests {
 
     init() {
         self.preferences = makeTestPreferences()
-    }
-
-    // MARK: - Row busy state
-
-    /// The text of every label on screen, in document order: none under a hidden view.
-    private func visibleTexts(in view: NSView) -> [String] {
-        guard !view.isHidden else { return [] }
-        var texts: [String] = []
-        if let field = view as? NSTextField, !field.isEditable { texts.append(field.stringValue) }
-        for subview in view.subviews { texts += visibleTexts(in: subview) }
-        return texts
     }
 
     // MARK: - Inline rename
@@ -82,39 +70,4 @@ struct SidebarViewControllerTests {
         #expect(isRenaming(cell) == false)
         #expect(!label.isEditable)
     }
-}
-
-/// A drag session the test drives through the outline view's own
-/// `NSDraggingDestination` methods, from a fixed point over it.
-@MainActor
-final class FakeDraggingInfo: NSObject, @preconcurrency NSDraggingInfo {
-    let draggingDestinationWindow: NSWindow?
-    let draggingSourceOperationMask: NSDragOperation = .move
-    let draggingLocation: NSPoint
-    var draggedImageLocation: NSPoint { draggingLocation }
-    var draggedImage: NSImage? { nil }
-    let draggingPasteboard: NSPasteboard
-    let draggingSource: Any?
-    var draggingSequenceNumber: Int { 1 }
-    var draggingFormation: NSDraggingFormation = .default
-    var animatesToDestination = false
-    var numberOfValidItemsForDrop = 1
-    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
-
-    init(window: NSWindow?, location: NSPoint, pasteboard: NSPasteboard, source: Any?) {
-        draggingDestinationWindow = window
-        draggingLocation = location
-        draggingPasteboard = pasteboard
-        draggingSource = source
-    }
-
-    func slideDraggedImage(to screenPoint: NSPoint) {}
-
-    func enumerateDraggingItems(
-        options enumOpts: NSDraggingItemEnumerationOptions = [], for view: NSView?,
-        classes classArray: [AnyClass], searchOptions: [NSPasteboard.ReadingOptionKey: Any] = [:],
-        using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void
-    ) {}
-
-    func resetSpringLoading() {}
 }

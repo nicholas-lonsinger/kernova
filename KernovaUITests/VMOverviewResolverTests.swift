@@ -5,7 +5,6 @@ import Synchronization
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
 @Suite("VM Overview Resolver Tests", .serialized, .caseScoped)

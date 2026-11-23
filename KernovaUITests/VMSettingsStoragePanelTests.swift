@@ -5,8 +5,6 @@ import KernovaTestSupport
 import Testing
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
-@testable import KernovaUI
 
 /// The Storage panel's own behavior, drilled into through the shell.
 @Suite("VM Settings Storage Panel Tests", .serialized, .caseScoped, .scopedWindows)

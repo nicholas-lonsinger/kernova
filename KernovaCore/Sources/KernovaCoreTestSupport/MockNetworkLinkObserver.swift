@@ -1,22 +1,9 @@
 @testable import KernovaCore
 
-/// Scripted stand-in for `NetworkLinkObserving`; tests fire link-change events
-/// with `fire()`.
+/// No-op stand-in for `NetworkLinkObserving`: no link change ever fires.
 @MainActor
 final class MockNetworkLinkObserver: NetworkLinkObserving {
-    private var onChange: (() -> Void)?
+    func start(onChange: @escaping @MainActor () -> Void) {}
 
-    var isObserving: Bool { onChange != nil }
-
-    func start(onChange: @escaping @MainActor () -> Void) {
-        self.onChange = onChange
-    }
-
-    func stop() {
-        onChange = nil
-    }
-
-    func fire() {
-        onChange?()
-    }
+    func stop() {}
 }

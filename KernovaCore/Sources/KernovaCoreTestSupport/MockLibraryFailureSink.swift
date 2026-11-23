@@ -1,9 +1,5 @@
 import Foundation
 
-#if SWIFT_PACKAGE
-import KernovaTestSupport
-#endif
-
 @testable import KernovaCore
 
 /// Records what `VMLibrary` hands to its `onFailure` hook, so tests can assert
@@ -27,22 +23,17 @@ final class MockLibraryFailureSink {
         checkRequests += 1
     }
 
-    /// Fired after each recorded failure.
-    let recorded = AsyncGate()
-
     /// Wire this to `VMLibrary.onFailure`.
     func record(title: String, message: String, subject: AlertSubject) {
         errors.append(message)
         errorTitles.append(title)
         errorSubjects.append(subject)
-        recorded.notify()
     }
 
     // MARK: - Mirror accessors
 
     var showError: Bool { !errors.isEmpty }
     var errorMessage: String? { errors.last }
-    var errorTitle: String? { errorTitles.last }
     var errorSubject: AlertSubject? { errorSubjects.last }
 
     func reset() {

@@ -6,30 +6,19 @@ import Synchronization
 /// Scripted stand-in for `ARPTableReading`, so a test states the table the host
 /// would hold instead of reading the real one. Empty until a test fills it.
 final class ScriptedARPTable: ARPTableReading {
-    private struct State {
-        var entries: [ARPEntry]
-        var reads = 0
-    }
-
-    private let state: Mutex<State>
+    private let state: Mutex<[ARPEntry]>
 
     init(_ entries: [ARPEntry] = []) {
-        state = Mutex(State(entries: entries))
+        state = Mutex(entries)
     }
 
     /// Sets the entries every later read returns.
     func setTable(_ entries: [ARPEntry]) {
-        state.withLock { $0.entries = entries }
+        state.withLock { $0 = entries }
     }
 
-    /// How many reads have run.
-    var readCount: Int { state.withLock { $0.reads } }
-
     func entries() throws -> [ARPEntry] {
-        state.withLock { state in
-            state.reads += 1
-            return state.entries
-        }
+        state.withLock { $0 }
     }
 }
 

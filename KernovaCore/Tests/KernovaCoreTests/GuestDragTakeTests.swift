@@ -9,7 +9,6 @@ import Testing
 import UniformTypeIdentifiers
 
 @testable import KernovaCore
-@testable import KernovaCoreTestSupport
 
 /// A take of a guest's drag over: the press it withholds until the guest's
 /// catcher is the drag's target, the guest's button held while a Mac session
@@ -150,11 +149,6 @@ struct GuestDragTakeTests {
             }
             events?(.ended(result))
         }
-
-        /// Ends pull `position` with `result`.
-        func end(_ position: Int, _ result: Result<Void, WireError>) {
-            pulls[position].ended(result)
-        }
     }
 
     /// The condition a take holds under, standing in for the VM's status.
@@ -181,8 +175,6 @@ struct GuestDragTakeTests {
     /// the deadline: a name ask on the main thread holds it at most this long.
     nonisolated private static let heldNaming = GuestDragDelivery.Deadline(
         seconds: mainThreadHoldCap, clock: makePlatformEngineClock())
-
-    private static let delivery = DragDelivery(names: [:], sizes: [:])
 
     private static let file = DraggedOutItem(
         name: Data("a.txt".utf8), type: .plainText, isDirectory: false, sizeEstimate: 4)
@@ -361,31 +353,5 @@ struct GuestDragTakeTests {
         #expect(take.phase == .released(at: guestAnswers ? .catcher : .exitPoint))
         #expect(transport.releases == 1)
         #expect(finished.count == 1)
-    }
-
-    // MARK: - Retiring
-
-    /// What `reporter` reports once the readout has finished.
-    private func finish(of reporter: ClipboardTransferReporter) async throws -> ClipboardTransferFinish {
-        try await transport.changed.wait { if case .finished = reporter.report { true } else { false } }
-        guard case .finished(let finish) = reporter.report else { throw CancellationError() }
-        return finish
-    }
-
-    /// The account of a drag of `items` items, with the counts given and every other count zero.
-    nonisolated private static func account(
-        _ items: Int, landed: Int = 0, refused: Int = 0, unreadable: Int = 0, unwritable: Int = 0,
-        unsupplied: Int = 0, failed: Int = 0, besideLanded: Bool = false, promise: Bool = false
-    ) -> DragOutAccount {
-        var account = DragOutAccount(items: items)
-        account.landed = landed
-        account.refused = refused
-        account.unreadable = unreadable
-        account.unwritable = unwritable
-        account.unsupplied = unsupplied
-        account.failed = failed
-        account.refusedBesideLanded = besideLanded
-        account.refusedPromise = promise
-        return account
     }
 }
