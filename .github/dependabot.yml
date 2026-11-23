@@ -11,27 +11,13 @@ updates:
     labels:
       - "Area: Build & CI"
       - "ci"
-    # One pull request, so upload-artifact and download-artifact move together.
     groups:
       actions:
         patterns:
           - "*"
 
-  # The Xcode workspace's Package.resolved stays out: for a package only a
-  # local package's manifest requires, Dependabot's Xcode mode takes the
+  # No swift entry covers the Xcode workspace's Package.resolved: for a package
+  # only a local package's manifest requires, Dependabot's Xcode mode takes the
   # newest tag whatever that manifest admits ("This may produce a pin that is
   # not resolvable", in dependabot-core's
   # swift/lib/dependabot/swift/update_checker/xcode_version_resolver.rb).
-  - package-ecosystem: swift
-    directories:
-      - /Tools/DeadCode
-    schedule:
-      interval: weekly
-    labels:
-      - "Area: Build & CI"
-      - "ci"
-    # Its major names the Swift release it parses, so it moves with
-    # .swift-version.
-    ignore:
-      - dependency-name: github.com/swiftlang/swift-syntax
-        update-types: ["version-update:semver-major"]

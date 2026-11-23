@@ -1,7 +1,6 @@
 # Running SwiftPM over KernovaKit for a Linux destination with the swift.org
-# toolchain .swift-version pins, and the Ubuntu SDK a Mac builds the dead-code
-# scan's Linux half with. Sourced, never run, by every script that builds
-# KernovaKit for Linux.
+# toolchain .swift-version pins. Sourced, never run, by every script that
+# builds KernovaKit for Linux.
 
 # shellcheck shell=bash
 
@@ -9,25 +8,6 @@
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/static-linux-sdk.sh"
 # shellcheck source=package-pins.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/package-pins.sh"
-
-# ubuntu_sdk_id <swift version>: the id of the glibc SDK for Ubuntu 24.04 on
-# aarch64 that Tools/install-ubuntu-sdk.sh generates, the system the Linux CI
-# jobs build in (the swift:<version>-noble image).
-ubuntu_sdk_id() {
-    printf '%s-RELEASE_ubuntu_noble_aarch64\n' "$1"
-}
-
-# ubuntu_sdk_missing <swift version>: on macOS, prints the first piece of what
-# the Ubuntu SDK builds with that is not installed, and nothing when all of it is.
-ubuntu_sdk_missing() {
-    local missing
-    missing="$(swiftly_toolchain_missing "$1")"
-    if [ -n "$missing" ]; then
-        echo "$missing"
-    elif [ ! -d "$(swift_sdks_dir)/$(ubuntu_sdk_id "$1").artifactbundle" ]; then
-        ubuntu_sdk_id "$1"
-    fi
-}
 
 # pinned_swift <argument>...: runs `swift <argument>...` with the toolchain
 # .swift-version pins. On macOS that is swiftly's, run with the environment

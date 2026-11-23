@@ -106,6 +106,7 @@ public final class ChildProcess: Sendable {
         return try exited()
     }
 
+    // periphery:ignore - used by the Linux-only test targets, which the dead-code scan does not build
     /// The first line it writes to standard output, without its line break,
     /// once written — or `nil` when its output ends first; kills it and throws
     /// `Backstop.failure(_:)` when neither has happened by the deadline.

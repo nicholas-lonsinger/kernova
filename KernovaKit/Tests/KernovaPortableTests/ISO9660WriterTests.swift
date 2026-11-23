@@ -1,9 +1,7 @@
-import KernovaPortableTestSupport
-import Testing
-
 #if os(Linux)
 import Foundation
-#endif
+import KernovaPortableTestSupport
+import Testing
 
 @testable import KernovaISO9660
 
@@ -37,7 +35,6 @@ struct ISO9660WriterTests {
         return image
     }
 
-    #if os(Linux)
     /// xorriso, the reference reader on Linux CI, lists the names and modes, and extracts the bytes.
     @Test("xorriso lists the names and modes, and osirrox extracts the same bytes and modes")
     func xorrisoAgrees() async throws {
@@ -86,5 +83,5 @@ struct ISO9660WriterTests {
         }
         return text
     }
-    #endif
 }
+#endif
