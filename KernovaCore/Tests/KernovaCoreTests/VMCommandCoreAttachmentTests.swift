@@ -155,6 +155,28 @@ struct VMCommandCoreAttachmentTests {
         #expect(harness.failures.isEmpty)
     }
 
+    @Test("A disk detached while sharing resolves is refused, and its file is left alone")
+    func removeStorageDiskRefusesADetachDuringTheResolve() async throws {
+        let harness = makeHarness()
+        let path = externalPath("external.img")
+        let disk = StorageDisk(path: path, label: "External", isInternal: false)
+        let other = StorageDisk(path: "AdditionalDisks/x.asif", label: "Extra", isInternal: true)
+        let instance = makeInstance(in: harness) { $0.storageDisks = [disk, other] }
+        // A second surface removing the same row while this one's resolve is in
+        // flight: the id this call decided to trash is no longer attached.
+        harness.core.afterSharingResolveForTesting = {
+            harness.library.editConfiguration(of: instance, as: .machineKeys) { $0.storageDisks = [other] }
+        }
+
+        let refusal = try await #require(throws: CommandError.self) {
+            try await harness.core.removeStorageDisk(
+                .id(instance.id), disk: disk.id, trashFile: true, consent: .all)
+        }
+
+        #expect(refusal.isOperationFailure)
+        #expect(harness.fileSystem.trashedURLs.isEmpty)
+    }
+
     // MARK: - Removable media
 
     /// Two running VMs, "A" listing `item` and "B" listing `bItems`.
@@ -431,6 +453,29 @@ struct VMCommandCoreAttachmentTests {
         )
         #expect(empty.configuration.sharedDirectories == nil)
         #expect(single.configuration.sharedDirectories == [only])
+    }
+
+    // MARK: - State gates
+
+    @Test("A medium ejected while sharing resolves is refused, and its file is left alone")
+    func removeRemovableMediaRefusesADetachDuringTheResolve() async throws {
+        let harness = makeHarness()
+        let path = externalPath("media.iso")
+        let item = RemovableMediaItem(path: path, readOnly: true)
+        let instance = makeInstance(in: harness) { $0.removableMedia = [item] }
+        // An Eject from the row's own menu, landing while this removal's
+        // resolve is in flight.
+        harness.core.afterSharingResolveForTesting = {
+            harness.library.editConfiguration(of: instance, as: .hotPlugMedia) { $0.removableMedia = nil }
+        }
+
+        let refusal = try await #require(throws: CommandError.self) {
+            try await harness.core.removeRemovableMedia(
+                .id(instance.id), item: item.id, trashFile: true, consent: .all)
+        }
+
+        #expect(refusal.isOperationFailure)
+        #expect(harness.fileSystem.trashedURLs.isEmpty)
     }
 
     // MARK: - Start-failure recovery

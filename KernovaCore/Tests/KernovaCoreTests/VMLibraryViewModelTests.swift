@@ -513,6 +513,74 @@ struct VMLibraryViewModelTests {
         #expect(storage.discardedStagedURLs == [staged])
     }
 
+    // MARK: - Cancel Installation
+
+    @Test(
+        "Install cancel that races a non-CancellationError still returns VM to .initialBoot"
+    )
+    func cancelRaceWithNonCancelErrorReturnsToInitialBoot() async throws {
+        // Production scenario from the same PR as the IPSW size-check fix:
+        // the user clicks Cancel during download, but a non-cancel error
+        // (e.g. network failure or `.downloadFailed`) reaches the catch
+        // before the cancellation propagates. Before this fix, the generic
+        // `catch {}` branch saw `Task.isCancelled == true` and silently
+        // suppressed the error — leaving the VM in `.error` with no dialog
+        // and no path back to `.initialBoot`. The fix normalizes that case
+        // to the cancel outcome.
+        let raceInstaller = SuspendingMockMacOSInstallService(
+            terminalError: DownloadError.downloadFailed(URLError(.badServerResponse)))
+        let storage = MockVMStorageService()
+        let viewModel = VMLibraryViewModel(
+            storageService: storage,
+            diskImageService: MockDiskImageService(),
+            machineFiles: VMBundleMachineFiles(fileSystem: MockFileSystem(), platform: FakePlatformFiles()),
+            virtualizationHost: FakeVirtualizationHost(),
+            virtualizationService: MockVirtualizationService(),
+            installService: raceInstaller,
+            ipswService: MockIPSWService(),
+            localImageInspector: MockLocalRestoreImageInspector(),
+            removableMediaDeviceService: MockRemovableMediaDeviceService(),
+            bridgedInterfaces: MockBridgedInterfaceProvider(),
+            fileSystem: MockFileSystem(),
+            downloadsDirectory: makeTestDownloadsDirectory(),
+            preferences: preferences,
+            vmnetNetworks: VmnetNetworkService.scripted(),
+            arpTable: ScriptedARPTable(),
+            entitlements: .entitled,
+            hostNotifications: .isolated(),
+            hostPasteboard: FakePasteboard(),
+            bundleProducts: .testing
+        )
+        viewModel.presenter = presenter
+        viewModel.libraryWindowPresenter = presenter
+        let instance = viewModel.library.registerFixture(name: "Race VM") {
+            $0.installContext = MacOSInstallContext(
+                source: .localFile, localIPSWPath: "/tmp/foo.ipsw"
+            )
+        }
+        instance.activity.placeForTesting(.initialBoot)
+
+        // Spawn the install + auto-boot pipeline; returns immediately after
+        // launching the setup operation.
+        await viewModel.start(instance)
+
+        // Wait until the mock install has parked, so the cancel below
+        // actually races a running install rather than a not-yet-started one.
+        _ = try await awaitFirst(raceInstaller.installStartedStream)
+
+        viewModel.cancelGuestSetup(instance)
+
+        // Drain the install task to completion so post-conditions are
+        // observable (the catch block runs synchronously after await).
+        try await instance.setupOperationTask?.joined()
+
+        // The fix routes this case through the cancel outcome: VM is back
+        // to .initialBoot, no error dialog, error message cleared.
+        #expect(instance.status == .initialBoot)
+        #expect(instance.errorMessage == nil)
+        #expect(presenter.showError == false)
+    }
+
     // MARK: - Agent Install Nudge
 
     @Test("dismissAgentInstallNudge still sets the flag to true")
@@ -714,6 +782,81 @@ struct VMLibraryViewModelTests {
         #expect(sandbox.unheldGiveBacks.isEmpty)
     }
 
+    // MARK: - Clone
+
+    @Test("An Exact Copy carries its source's snapshots and host state, but not start at launch")
+    func exactCopyCarriesSnapshotsAndHostState() async throws {
+        let (viewModel, storage, _, _, _) = makeViewModel()
+        let baseline = UUID()
+        let later = UUID()
+        var sourceHostState = VMHostState(
+            startsAutomaticallyOnLaunch: true, displayPreference: .fullscreen,
+            lastFullscreenDisplayID: 4_280_803_137, agentInstallNudgeDismissed: true)
+        sourceHostState.applyEphemeralMode(enabled: true, baseline: baseline)
+        let manifest = VMSnapshotManifest(
+            snapshots: [
+                VMSnapshot(id: baseline, name: "Baseline", macAddress: nil),
+                VMSnapshot(id: later, name: "Later", macAddress: nil),
+            ],
+            currentID: later)
+        let instance = viewModel.library.registerFixture(
+            name: "Original", hostState: sourceHostState, snapshots: manifest)
+        instance.activity.placeForTesting(.stopped)
+
+        // Each listed snapshot's directory, plus a revert's staging directory
+        // and a directory no manifest entry names — neither of which is a
+        // snapshot the copy holds.
+        let layout = instance.bundleLayout
+        let fm = FileManager.default
+        for id in [baseline, later] {
+            let directory = layout.snapshotDirectoryURL(id: id)
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+            try Data(id.uuidString.utf8).write(to: directory.appendingPathComponent("marker"))
+        }
+        let orphan = UUID()
+        try fm.createDirectory(
+            at: layout.snapshotDirectoryURL(id: orphan), withIntermediateDirectories: true)
+        try fm.createDirectory(at: layout.restoreStagingURL, withIntermediateDirectories: true)
+
+        viewModel.cloneVM(instance, as: .exactCopy)
+        try await viewModel.awaitArrivals()
+        let clone = try #require(viewModel.instances.first { $0.id != instance.id })
+
+        var expectedHostState = sourceHostState
+        expectedHostState.startsAutomaticallyOnLaunch = false
+        #expect(clone.hostState == expectedHostState)
+        #expect(clone.snapshotManifest.snapshots.map(\.id) == [baseline, later])
+        #expect(clone.snapshotManifest.currentID == later)
+        // The Ephemeral baseline names a snapshot the copy itself holds.
+        #expect(clone.snapshotManifest.snapshot(id: baseline) != nil)
+
+        let cloneLayout = clone.bundleLayout
+        for id in [baseline, later] {
+            let marker = cloneLayout.snapshotDirectoryURL(id: id).appendingPathComponent("marker")
+            #expect(try Data(contentsOf: marker) == Data(id.uuidString.utf8))
+        }
+        #expect(
+            !fm.fileExists(
+                atPath: cloneLayout.snapshotDirectoryURL(id: orphan).path(percentEncoded: false)))
+        #expect(!fm.fileExists(atPath: cloneLayout.restoreStagingURL.path(percentEncoded: false)))
+        #expect(storage.lastCloneRelativePaths?.contains(VMBundleLayout.usbPairingsRelativePath) == false)
+        #expect(instance.hostState == sourceHostState)
+    }
+
+    // MARK: - Force Stop Confirmation
+
+    @Test("requestForceStop sets instance and shows confirmation")
+    func requestForceStop() {
+        let (viewModel, _, _, _, _) = makeViewModel()
+        let instance = viewModel.library.admitFixture()
+        instance.activity.placeForTesting(.running(sessionID: UUID()))
+
+        viewModel.requestForceStop(instance)
+
+        #expect(presenter.instanceToForceStop?.id == instance.id)
+        #expect(presenter.showForceStopConfirmation == true)
+    }
+
     // MARK: - Reorder
 
     @Test("moveEntries reorders instances and persists order to UserDefaults")
@@ -792,14 +935,5 @@ struct VMLibraryViewModelTests {
         let rolled = try #require(instance.configuration.removableMedia)
         #expect(rolled.first?.label == "Installer")
         #expect(rolled.first?.notes == "from the Ubuntu mirror")
-    }
-}
-
-extension VMLibraryViewModel {
-    /// The launch pass over every VM the library holds marked to start
-    /// automatically — what a launch whose read found them so hands it.
-    fileprivate func startAutomaticVMsForLaunch() async {
-        await startAutomaticVMsForLaunch(
-            Set(instances.filter(\.hostState.startsAutomaticallyOnLaunch).map(\.id)))
     }
 }

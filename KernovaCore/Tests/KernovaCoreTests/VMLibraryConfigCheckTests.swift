@@ -142,6 +142,39 @@ struct VMLibraryConfigCheckTests {
         #expect(try harness.core.groups().map { $0.members.map(\.id) } == [[readable], [readable]])
     }
 
+    // MARK: - The check
+
+    @Test("A snapshot config's unrecognized network value is listed with no repair: it is what the snapshot had")
+    func aSnapshotsNetworkIsNotRepaired() async throws {
+        let harness = makeHarness()
+        let (url, _) = try addBundle("Dev", to: harness.storage)
+        let snapshotID = UUID()
+        let manifest = """
+            {"snapshots": [{"id": "\(snapshotID.uuidString)", "name": "Before update",
+              "createdAt": "2026-01-01T00:00:00Z", "notes": "", "kind": "cold"}]}
+            """
+        harness.storage.files.setData(
+            Data(manifest.utf8), atRelativePath: VMBundleLayout.snapshotManifestRelativePath, in: url)
+        let snapshotConfig = try Self.json(
+            of: VMConfiguration(
+                name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        ) {
+            $0["networkMode"] = Self.unrecognized
+            $0["displayHiDPI"] = Self.unrecognized
+        }
+        harness.storage.files.setData(
+            snapshotConfig, atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshotID), in: url)
+        await harness.library.loadVMs()
+
+        let file = try #require(try await harness.library.checkConfigFiles().first)
+
+        #expect(file.problems.map(\.path?.description) == ["$.displayHiDPI", "$.networkMode"])
+        #expect(file.problems.first { $0.path?.description == "$.networkMode" }?.repair == nil)
+        #expect(file.problems.first { $0.path?.description == "$.displayHiDPI" }?.repair != nil)
+        #expect(!file.isRepairable)
+    }
+
     // MARK: - Use Defaults
 
     @Test("Use Defaults rewrites only the repairable files, trashing each original, and the VM loads")
@@ -272,5 +305,86 @@ struct VMLibraryConfigCheckTests {
             try await harness.library.moveToTrash(row)
         }
         #expect(harness.storage.deleteVMBundleCallCount == 0)
+    }
+
+    // MARK: - A readable VM's unreadable files
+
+    /// A readable bundle named "Dev" listing one cold snapshot, "Snapshot",
+    /// whose `config.json` holds `snapshotConfig` — Ephemeral Mode on with
+    /// that snapshot as its baseline when `ephemeral`.
+    private func addBundleWithSnapshot(
+        to storage: MockVMStorageService, ephemeral: Bool = false,
+        snapshotConfig: (inout [String: Any]) -> Void = { $0["displayHiDPI"] = Self.unrecognized }
+    ) throws -> (url: URL, snapshotID: UUID) {
+        let (url, _) = try addBundle("Dev", to: storage)
+        let snapshotID = UUID()
+        let manifest = """
+            {"snapshots": [{"id": "\(snapshotID.uuidString)", "name": "Snapshot",
+              "createdAt": "2026-01-01T00:00:00Z", "notes": "", "kind": "cold"}]}
+            """
+        storage.files.setData(
+            Data(manifest.utf8), atRelativePath: VMBundleLayout.snapshotManifestRelativePath, in: url)
+        storage.files.setData(
+            try Self.json(
+                of: VMConfiguration(
+                    name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                    memorySizeInGB: VMGuestOS.linux.hostMemorySize), edit: snapshotConfig),
+            atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshotID), in: url)
+        if ephemeral {
+            var hostState = VMHostState()
+            hostState.applyEphemeralMode(enabled: true, baseline: snapshotID)
+            storage.files.setData(
+                try VMConfiguration.makeJSONEncoder().encode(hostState),
+                atRelativePath: VMBundleLayout.hostStateRelativePath, in: url)
+        }
+        return (url, snapshotID)
+    }
+
+    @Test("Starting an Ephemeral VM whose baseline can't be read is refused at every door, and starts once it reads")
+    func anUnreadableEphemeralBaselineRefusesEveryStart() async throws {
+        let harness = makeHarness()
+        let (url, snapshotID) = try addBundleWithSnapshot(to: harness.storage, ephemeral: true) {
+            $0 = ["not": "a configuration"]
+        }
+        await harness.library.loadVMs()
+        let instance = try #require(harness.library.instances.first)
+        #expect(instance.ephemeralBaselineIsUnreadable)
+        let refusal = CommandError.operationFailed(
+            verb: .start, title: "Couldn\u{2019}t Start \u{201C}Dev\u{201D}",
+            message:
+                "Kernova can\u{2019}t read the snapshot Ephemeral Mode returns this virtual machine to, "
+                + "so it can\u{2019}t undo this session\u{2019}s changes. "
+                + "Choose File > Check Config Files\u{2026} to review it.")
+        // The offer stands, so the click is what explains the refusal.
+        #expect(instance.activity.decide(.start(recovery: false), posture: .offer) == .admit)
+
+        await #expect(throws: refusal) {
+            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        }
+        let router = VMCommandEnvelopeRouter(commands: harness.core)
+        let response = await router.respond(
+            to: VMCommandRequest(
+                verb: .start(.id(instance.id), recovery: false, consent: .none)))
+        #expect(response.result == .failure(refusal.dto))
+        let intents = VMIntentGateway(
+            commands: harness.core, readiness: LibraryReadiness(awaitReady: {}),
+            index: MockVMEntityIndex(), record: makeTestIndexRecord())
+        await #expect(throws: refusal) {
+            try await intents.start(instance.id, recovery: false, consent: .none)
+        }
+        #expect(instance.status == .stopped)
+
+        // An outside edit that makes the baseline readable is read at the
+        // start's own admission.
+        harness.storage.files.setData(
+            try Self.json(
+                of: VMConfiguration(
+                    name: "Dev", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                    memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+            ) { _ in },
+            atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshotID), in: url)
+        try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        try await waitForChange { instance.status == .running }
+        #expect(instance.unreadableFiles.isEmpty)
     }
 }

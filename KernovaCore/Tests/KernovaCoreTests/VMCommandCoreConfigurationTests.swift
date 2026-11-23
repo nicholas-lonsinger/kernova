@@ -78,6 +78,27 @@ struct VMCommandCoreConfigurationTests {
         #expect(instance.hostState == harness.storage.hostStates[instance.bundleURL])
     }
 
+    @Test("A Retina display's odd size reads back as a set that changes nothing")
+    func anOddRetinaSizeRoundTrips() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness, guestOS: .macOS) {
+            $0.displayResolution = DisplayBootSizing.Resolution(
+                width: 1602, height: 1202, ppi: DisplayBootSizing.hiDPIPixelsPerInch)
+            $0.displaySizesToWindow = false
+            $0.displayHiDPI = true
+        }
+        let before = instance.configuration
+        let onDisk = harness.storage.bundles[instance.bundleURL]
+
+        let read = try harness.core.configuration(
+            .name("Alpha"), keys: ["display.width", "display.height"])
+        #expect(read.map(\.value) == ["801", "601"])
+        try harness.core.setConfiguration(.name("Alpha"), assignments: read, consent: .none)
+
+        #expect(instance.configuration == before)
+        #expect(harness.storage.bundles[instance.bundleURL] == onDisk)
+    }
+
     @Test("Every value a get answers is a value a set takes back")
     func readValuesAreWritableValues() throws {
         let harness = makeHarness()

@@ -825,6 +825,23 @@ struct VMCommandCoreTests {
         #expect(harness.failures.first?.message.contains("at most two") == true)
     }
 
+    @Test("A cancelled setup reports nothing — a cancel is somebody's decision, not a failure")
+    func cancelledSetupReportsNothing() async throws {
+        let install = MockMacOSInstallService()
+        install.installError = CancellationError()
+        let harness = makeHarness(install: install)
+        let instance = makeSetupPendingVM(in: harness)
+        let events = harness.core.events()
+
+        try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
+        try await instance.setupOperationTask?.joined()
+
+        #expect(instance.status == .initialBoot)
+        #expect(harness.failures.isEmpty)
+        let messages = try await harness.wired.failureMessages(of: instance, on: events)
+        #expect(messages.isEmpty)
+    }
+
     @Test("A transient failure on the boot chained after a setup reaches the stream too")
     func transientChainedBootFailureReachesTheEventStream() async throws {
         let harness = makeHarness()
@@ -905,6 +922,41 @@ struct VMCommandCoreTests {
     // MARK: - Restart
 
     @available(macOS 27.0, *)
+
+    // MARK: - Create
+
+    @Test("Two restarts owed to one shutdown bring the guest up once, and both succeed")
+    func twoRestartsShareOneBoot() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let clock = GatedEngineClock()
+        let harness = makeHarness(virtualization: virtualization, clock: clock)
+        let session = UUID()
+        let instance = makeInstance(
+            in: harness, name: "Twice", phase: .running(sessionID: session))
+
+        let first = Task { @MainActor in
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 60, consent: .none)
+        }
+        // The second asks once the first's shutdown request is sent, which a
+        // stop request in flight would refuse.
+        try await clock.sleepRequested.wait { clock.parked.count == 1 }
+        let second = Task { @MainActor in
+            try await harness.core.restart(.id(instance.id), disposition: .graceful, timeout: 60, consent: .none)
+        }
+        // Both power-off deadlines parked: both restarts owe a boot to the
+        // session's end.
+        try await clock.sleepRequested.wait { clock.parked.count == 2 }
+
+        instance.activity.deliverSessionEvent(.guestDidStop, from: session)
+        try await first.joined()
+        try await second.joined()
+
+        // The second boot joined the first rather than meeting the VM the
+        // first brought up.
+        #expect(virtualization.startCallCount == 1)
+        #expect(instance.status == .running)
+    }
 
     // MARK: - Deadlines on the power-off
 

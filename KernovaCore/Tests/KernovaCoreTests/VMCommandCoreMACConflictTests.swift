@@ -114,6 +114,28 @@ struct VMCommandCoreMACConflictTests {
         #expect(vm.configuration.macAddress != Self.sharedMAC)
     }
 
+    @Test("A warm-baseline Ephemeral VM with no network of its own to move to is told what stands in the way")
+    func warmBaselineHostOnlyNamesEphemeralMode() async throws {
+        let harness = makeHarness()
+        let baseline = VMSnapshot(name: "Baseline", kind: .warm, macAddress: Self.sharedMAC)
+        let (vm, _) = try makePair(
+            in: harness, mode: .hostOnly, phase: .suspended, savedState: true, snapshots: [baseline],
+            hostState: VMHostState(ephemeralModeEnabled: true, ephemeralBaselineSnapshotID: baseline.id))
+
+        let refused = try #require(
+            try await #require(throws: CommandError.self) {
+                try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
+            }.stepRequirement)
+
+        #expect(refused.routes.isEmpty)
+        #expect(
+            refused.message
+                == Self.shared
+                + " \u{201C}Clone\u{201D} is ephemeral, and discarding its saved state returns it to "
+                + "\u{201C}Baseline\u{201D}, which holds one too, so a new MAC address or no network "
+                + "device needs Ephemeral Mode turned off first. Stop \u{201C}Source\u{201D} first.")
+    }
+
     @Test("A cold-baseline Ephemeral VM's discarding routes say the session's changes go with its saved state")
     func coldBaselineDisclosesTheRevert() async throws {
         let harness = makeHarness()
