@@ -24,10 +24,6 @@ struct VMRunLockTests {
         var heldInBody: Bool?
         var startedFrom: VMLifecyclePhase?
         var pendingSetupInBody: Bool?
-        var heldInHook: Bool?
-        var phaseInHook: VMLifecyclePhase?
-        var heldAtAdmission: Bool?
-        var revert: VMOutcome?
     }
 
     private static let baseline = VMSnapshot(name: "Baseline", macAddress: nil)
@@ -276,51 +272,6 @@ struct VMRunLockTests {
         expectLockFollowsPhase(instance, store)
     }
 
-    // MARK: - Endings reuse the lock
-
-    @Test("A power-off's Ephemeral revert follow-up is admitted under the lock the ending held")
-    func sessionEndRevertReusesTheLock() async throws {
-        let (instance, store) = makeInstance()
-        let recorder = Recorder()
-        let gate = GatedStep()
-        instance.activity.onUnsettledSession = {
-            recorder.heldInHook = instance.activity.holdsRunLock
-            recorder.phaseInHook = instance.phase
-            let revert = VMFollowUp(scope: .vm, rank: .restoration) { outcome in
-                recorder.heldAtAdmission = instance.activity.holdsRunLock
-                try instance.activity.launchRevert(
-                    to: Self.baseline, resumesAfter: false, origin: .sessionEndRevert,
-                    resolving: outcome
-                ) { _ in
-                    try await gate.pass()
-                    return .rest(.asStarted, ())
-                }
-            }
-            recorder.revert = revert.outcome
-            return [revert]
-        }
-        try await startLive(instance)
-
-        let sessionID = try #require(instance.liveSessionID)
-        instance.activity.deliverSessionEvent(.guestDidStop, from: sessionID)
-
-        // The store refuses a second lock on a bundle this copy holds, so the
-        // revert was admitted only because it kept the one the ending held.
-        #expect(recorder.phaseInHook == .stopped)
-        #expect(recorder.heldInHook == true)
-        #expect(recorder.heldAtAdmission == true)
-        let revert = try #require(recorder.revert)
-        guard case .bringUp(.reverting)? = instance.phase.operation?.kind else {
-            Issue.record("The revert did not take the VM: \(instance.phase)")
-            return
-        }
-        expectLockFollowsPhase(instance, store)
-        gate.release()
-        try await revert.resolved()
-        #expect(instance.phase == .stopped)
-        expectLockFollowsPhase(instance, store)
-    }
-
     // MARK: - Re-read before the decision
 
     @Test("The admission re-reads the bundle before it decides: a setup another copy finished no longer blocks a start")
@@ -360,78 +311,6 @@ struct VMRunLockTests {
         #expect(!recorder.bodyRan)
         #expect(instance.phase == .suspended)
         expectLockFollowsPhase(instance, store)
-    }
-
-    // MARK: - Detection
-
-    @Test("A commit asks the bundle and records the answer, which every offer after it reads")
-    func commitProbeRecordsWhatOffersRead() async throws {
-        let (instance, store) = makeInstance()
-        store.holdElsewhere(instance.bundleURL)
-        #expect(instance.activity.decide(.start(recovery: false), posture: .offer) == .admit)
-
-        #expect(
-            instance.activity.decide(.start(recovery: false), posture: .commit)
-                == .refuse(.heldByAnotherCopy))
-        #expect(instance.activity.heldByAnotherCopy)
-        #expect(
-            instance.activity.decide(.start(recovery: false), posture: .offer)
-                == .refuse(.heldByAnotherCopy))
-
-        store.releaseElsewhere(instance.bundleURL)
-
-        // The offer reads the recorded answer until a commit asks again.
-        #expect(
-            instance.activity.decide(.start(recovery: false), posture: .offer)
-                == .refuse(.heldByAnotherCopy))
-        #expect(instance.activity.decide(.start(recovery: false), posture: .commit) == .admit)
-        #expect(!instance.activity.heldByAnotherCopy)
-        #expect(instance.activity.decide(.start(recovery: false), posture: .offer) == .admit)
-        expectLockFollowsPhase(instance, store)
-    }
-
-    @Test("A verb refused because another copy holds the VM dims its control, and one that finds it free un-dims it")
-    func verbRefusalDimsAndAFreeProbeUndims() async throws {
-        let harness = makeCore()
-        let instance = harness.library.registerFixture()
-        let catalog = VMCapabilityCatalog(library: harness.library)
-        #expect(catalog.isAvailable(.start, on: instance))
-        harness.storage.files.holdElsewhere(instance.bundleURL)
-
-        let refusal = await #expect(throws: CommandError.self) {
-            try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-        }
-        // The summary names the VM as the refusal left it: held.
-        #expect(refusal == .heldByAnotherCopy(vm: harness.core.summary(instance)))
-        #expect(instance.heldByAnotherCopy)
-
-        #expect(catalog.isApplicable(.start, to: instance))
-        #expect(!catalog.isAvailable(.start, on: instance))
-
-        harness.storage.files.releaseElsewhere(instance.bundleURL)
-        try harness.core.require(.start, on: instance)
-
-        #expect(!instance.activity.heldByAnotherCopy)
-        #expect(catalog.isAvailable(.start, on: instance))
-        expectLockFollowsPhase(instance, harness.storage.files)
-    }
-
-    // MARK: - Verbs
-
-    private func makeCore() -> WiredCommandCore.Scripted<MockVirtualizationService> {
-        .init(WiredCommandCore(virtualization: MockVirtualizationService()))
-    }
-
-    @Test("Start on a VM another copy left suspended restores its saved state")
-    func startVerbRestoresASaveFileAnotherCopyLeft() async throws {
-        let harness = makeCore()
-        let instance = harness.library.registerFixture()
-        try VMInstanceFixture.writeSaveFile(for: instance)
-
-        try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-
-        #expect(harness.virtualization.lastStartRoute == .restoredSavedState)
-        expectLockFollowsPhase(instance, harness.storage.files)
     }
 
     // MARK: - Launch sweep

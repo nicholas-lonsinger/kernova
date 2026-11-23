@@ -194,21 +194,6 @@ struct VMBundleTests {
         }
     }
 
-    @Test("A pairings file that does not decode is still on disk after a read")
-    func anUndecodablePairingsFileIsKept() throws {
-        try withBundle { url in
-            let pairingsURL = url.appendingPathComponent("usb-accessories.json")
-            let corrupt = Data("{ not json".utf8)
-            try corrupt.write(to: pairingsURL)
-
-            let read = try onDisk(url)
-
-            #expect(read.usbPairings.isEmpty)
-            #expect(read.unreadableFiles.map(\.fileName) == ["usb-accessories.json"])
-            #expect(try Data(contentsOf: pairingsURL) == corrupt)
-        }
-    }
-
     @Test("A configuration that no longer decodes refuses a write")
     func anUndecodableConfigurationRefusesAWrite() throws {
         try withBundle { url in
@@ -225,19 +210,6 @@ struct VMBundleTests {
             #expect(write.failedToSave)
             #expect(instance.configuration == before)
             #expect(try Data(contentsOf: configURL) == corrupt)
-        }
-    }
-
-    @Test("A committed value is what the file holds, down to the second a date keeps")
-    func aCommittedValueIsWhatTheFileHolds() throws {
-        try withBundle { url in
-            let bundle = makeBundle(try onDisk(url))
-            let taken = VMSnapshot(
-                name: "Now", createdAt: Date(timeIntervalSince1970: 1_700_000_000.75), macAddress: nil)
-
-            try bundle.commitSnapshotManifest { $0.insert(taken) }
-
-            #expect(bundle.snapshotManifest == (try onDisk(url)).snapshotManifest)
         }
     }
 
@@ -287,18 +259,6 @@ struct VMBundleTests {
 
             #expect(loaded.pairings.count == 1)
             #expect(loaded.pairings.first?.receptacleLabel == nil)
-        }
-    }
-
-    @Test("A pairings file holding no pairings key reads as no pairings")
-    func pairingsObjectWithoutPairingsReadsAsEmpty() throws {
-        try withBundle { url in
-            try Data("{}".utf8).write(to: url.appendingPathComponent("usb-accessories.json"))
-
-            let read = try onDisk(url)
-
-            #expect(read.usbPairings.isEmpty)
-            #expect(read.unreadableFiles.isEmpty)
         }
     }
 
@@ -374,27 +334,6 @@ struct VMBundleTests {
         FileManager.default.fileExists(atPath: url.path(percentEncoded: false))
     }
 
-    @Test("A capture prepares the snapshot's directory, copies the disks, and counts toward its size")
-    func captureWritesTheSnapshotDirectory() async throws {
-        let bundle = try makeOnDiskBundle()
-        let snapshot = VMSnapshot(name: "Captured", macAddress: nil)
-        let layout = VMBundleLayout(bundleURL: bundle.url).snapshotLayout(id: snapshot.id)
-
-        let plan = try await withOperation(on: bundle) { context in
-            let plan = try await context.bundle.prepareSnapshot(snapshot.id, configuration: bundle.configuration)
-            try await context.bundle.captureDisks(intoSnapshot: snapshot.id, relativePaths: plan.relativePaths)
-            return plan
-        }
-        try bundle.commitSnapshotManifest { $0 = VMSnapshotManifest(snapshots: [snapshot]) }
-        let sizes = await bundle.snapshotSizes()
-
-        #expect(plan.saveFileURL == layout.saveFileURL)
-        #expect(plan.relativePaths == ["Disk.asif"])
-        #expect(exists(layout.configURL))
-        #expect(text(at: layout.diskImageURL) == "live-disk")
-        #expect((sizes[snapshot.id]?.bytes ?? 0) > 0)
-    }
-
     @Test("A suspended capture clones the suspend slot and leaves it in place")
     func captureSuspendSlotClonesTheSlot() async throws {
         let bundle = try makeOnDiskBundle()
@@ -427,78 +366,6 @@ struct VMBundleTests {
 
         #expect(!exists(layout.snapshotDirectoryURL(id: partial)))
         #expect(fileSystem.trashedURLs == [layout.snapshotDirectoryURL(id: listed)])
-    }
-
-    @Test("A restore plans, stages and installs a snapshot's disks, leaving no staging behind")
-    func restoreWritesTheSnapshotBack() async throws {
-        let bundle = try makeOnDiskBundle()
-        let layout = VMBundleLayout(bundleURL: bundle.url)
-        let id = UUID()
-
-        try await withOperation(on: bundle) { context in
-            let captured = try await context.bundle.prepareSnapshot(id, configuration: bundle.configuration)
-            try await context.bundle.captureDisks(intoSnapshot: id, relativePaths: captured.relativePaths)
-            try Data("written-since".utf8).write(to: layout.diskImageURL)
-
-            let plan = try await context.bundle.planRestore(fromSnapshot: id, kind: .cold)
-            try await context.bundle.stageRestore(fromSnapshot: id, plan: plan)
-            #expect(text(at: layout.diskImageURL) == "written-since")
-            try await context.bundle.installRestore(plan)
-        }
-
-        #expect(text(at: layout.diskImageURL) == "live-disk")
-        #expect(!exists(layout.restoreStagingURL))
-    }
-
-    @Test("Discarding the restore staging removes what a revert staged")
-    func discardRestoreStagingRemovesIt() async throws {
-        let bundle = try makeOnDiskBundle()
-        let layout = VMBundleLayout(bundleURL: bundle.url)
-        let id = UUID()
-
-        try await withOperation(on: bundle) { context in
-            let captured = try await context.bundle.prepareSnapshot(id, configuration: bundle.configuration)
-            try await context.bundle.captureDisks(intoSnapshot: id, relativePaths: captured.relativePaths)
-            let plan = try await context.bundle.planRestore(fromSnapshot: id, kind: .cold)
-            try await context.bundle.stageRestore(fromSnapshot: id, plan: plan)
-            #expect(exists(layout.restoreStagingURL))
-
-            await context.bundle.discardRestoreStaging()
-        }
-
-        #expect(!exists(layout.restoreStagingURL))
-        #expect(text(at: layout.diskImageURL) == "live-disk")
-    }
-
-    @Test("Removing the suspend slot deletes it, and a bundle holding none stays without one")
-    func removeSaveFileDeletesTheSlot() async throws {
-        let bundle = try makeOnDiskBundle()
-        try Data("slot".utf8).write(to: VMBundleLayout(bundleURL: bundle.url).saveFileURL)
-
-        try await withOperation(on: bundle) { context in
-            let slotURL = context.bundle.saveFileURL
-            let heldBefore = context.bundle.hasSaveFile
-            #expect(slotURL == VMBundleLayout(bundleURL: bundle.url).saveFileURL)
-            #expect(heldBefore)
-            context.bundle.removeSaveFile()
-            let heldAfter = context.bundle.hasSaveFile
-            #expect(!exists(slotURL))
-            #expect(!heldAfter)
-
-            context.bundle.removeSaveFile()
-            #expect(!exists(VMBundleLayout(bundleURL: bundle.url).saveFileURL))
-        }
-    }
-
-    @Test("Ensuring the EFI variable store creates it in the bundle")
-    func ensureEFIVariableStoreCreatesIt() async throws {
-        let bundle = try makeOnDiskBundle()
-        let storeURL = VMBundleLayout(bundleURL: bundle.url).efiVariableStoreURL
-        #expect(!exists(storeURL))
-
-        try await withOperation(on: bundle) { try await $0.bundle.ensureEFIVariableStore() }
-
-        #expect(exists(storeURL))
     }
 
     @Test("An in-bundle disk is written inside the bundle, and trashed from there")

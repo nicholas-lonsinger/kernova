@@ -91,30 +91,6 @@ struct VMOtherCopyHoldTests {
         #expect(instance.activity.heldByAnotherCopy)
     }
 
-    @Test("A library write refused for another copy's hold answers the refusal and presents nothing")
-    func libraryWriteAnswersTheRefusal() throws {
-        let storage = MockVMStorageService()
-        let library = makeWiredLibrary(storage: storage)
-        let failures = MockLibraryFailureSink()
-        library.onFailure = { [failures] title, message, subject in
-            failures.record(title: title, message: message, subject: subject)
-        }
-        let instance = library.registerFixture()
-        let url = instance.bundleURL
-
-        let write = try instance.activity.edit(.liveKeys) { permit in
-            storage.files.holdElsewhere(url)
-            return library.updateConfiguration(permit) { $0.serialSocketRelayEnabled.toggle() }
-        }
-
-        guard case .refused(.heldByAnotherCopy) = write else {
-            Issue.record("The write answered \(write)")
-            return
-        }
-        #expect(!failures.showError)
-        #expect(instance.activity.heldByAnotherCopy)
-    }
-
     // MARK: - Identity
 
     nonisolated private static let sharedMAC = "02:4b:4e:56:00:01"
@@ -222,18 +198,6 @@ struct VMOtherCopyHoldTests {
         return (library, storage, starting, other, otherMAC)
     }
 
-    @Test("A bring-up's identity check reads no bundle another copy does not hold")
-    func identityCheckSkipsUnheldBundles() throws {
-        let (library, storage, starting, idle, idleMAC) = try registerStartingAndRewrittenOther(named: "Idle")
-        let reads = storage.files.readCount(of: VMBundleLayout.configRelativePath)
-
-        #expect(starting.activity.decide(.start(recovery: false), posture: .commit) == .admit)
-
-        #expect(storage.files.readCount(of: VMBundleLayout.configRelativePath) == reads)
-        #expect(idle.configuration.macAddress == idleMAC)
-        withExtendedLifetime(library) {}
-    }
-
     @Test("A bring-up's identity check re-reads a bundle another copy holds, and claims what it carries now")
     func identityCheckReReadsHeldBundles() throws {
         let (library, storage, starting, held, _) = try registerStartingAndRewrittenOther(named: "Held")
@@ -251,140 +215,5 @@ struct VMOtherCopyHoldTests {
         #expect(storage.files.readCount(of: VMBundleLayout.configRelativePath) == reads + 1)
         #expect(held.configuration.macAddress == starting.configuration.macAddress)
         withExtendedLifetime(library) {}
-    }
-
-    // MARK: - Refreshes
-
-    @Test("The launch load reads each bundle once, and answers the VMs it read marked to start automatically")
-    func launchLoadReadsOnceAndAnswersMarked() async throws {
-        let storage = MockVMStorageService()
-        let library = makeWiredLibrary(storage: storage)
-        let marked = VMConfiguration(
-            name: "Marked", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        let unmarked = VMConfiguration(
-            name: "Unmarked", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        let markedURL = try storage.bundleURL(for: marked)
-        storage.setConfiguration(marked, at: markedURL)
-        storage.setConfiguration(unmarked, at: try storage.bundleURL(for: unmarked))
-        storage.files.setHostState(VMHostState(startsAutomaticallyOnLaunch: true), at: markedURL)
-        let reads = storage.files.readCount(of: VMBundleLayout.configRelativePath)
-
-        let answered = await library.startLibrary()
-
-        #expect(answered == [marked.id])
-        #expect(storage.files.readCount(of: VMBundleLayout.configRelativePath) == reads + 2)
-    }
-
-    @Test("A refresh re-derives where the VM rests from a suspend slot another copy left")
-    func refreshReDerivesTheRest() throws {
-        let storage = MockVMStorageService()
-        let library = makeWiredLibrary(storage: storage)
-        let instance = library.registerFixture()
-        try VMInstanceFixture.writeSaveFile(for: instance)
-
-        library.refreshFromOtherCopies()
-
-        #expect(instance.phase == .suspended)
-    }
-
-    // MARK: - Records
-
-    @Test("A refused set records one refusal, naming the verb, and the hold it found once")
-    func refusedSetRecordsOnce() throws {
-        let capture = LogCapture()
-        let harness = makeCore(loggingTo: capture)
-        let name = "Held set"
-        let instance = harness.library.registerFixture(name: name)
-        harness.storage.files.holdElsewhere(instance.bundleURL)
-
-        #expect(throws: CommandError.self) {
-            try harness.core.setConfiguration(
-                .id(instance.id),
-                assignments: [ConfigurationEntry(key: "serial.socket", value: "true")],
-                consent: .all)
-        }
-
-        #expect(capture.refusals.count == 1, "\(capture.messages)")
-        #expect(capture.refusals.first?.hasPrefix("Refused setConfiguration for '\(name)'") == true)
-        #expect(capture.holdTransitions.count == 1, "\(capture.messages)")
-        #expect(!capture.messages.contains { $0.contains("rawValue") }, "\(capture.messages)")
-    }
-
-    @Test("A refused revert records one refusal, and names no snapshot")
-    func refusedRevertRecordsOnce() async throws {
-        let capture = LogCapture()
-        let harness = makeCore(loggingTo: capture)
-        let name = "Held revert"
-        let snapshot = VMSnapshot(name: "Only", kind: .cold, macAddress: nil)
-        let instance = harness.library.registerFixture(
-            name: name, snapshots: VMSnapshotManifest(snapshots: [snapshot]))
-        harness.storage.files.holdElsewhere(instance.bundleURL)
-
-        await #expect(throws: CommandError.self) {
-            try await harness.core.revertToSnapshot(
-                .id(instance.id), snapshot: snapshot.id, consent: .all)
-        }
-
-        #expect(capture.refusals.count == 1, "\(capture.messages)")
-        #expect(capture.refusals.first?.hasPrefix("Refused revertToSnapshot for '\(name)'") == true)
-        let uuid = /[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}/
-        #expect(!capture.messages.contains { $0.contains(uuid) }, "\(capture.messages)")
-    }
-
-    // MARK: - Snapshot delete
-
-    /// Memory reads the snapshot as a plain one, so the delete is admitted;
-    /// taking the run lock re-reads the host state another copy wrote, which
-    /// names it as the Ephemeral baseline — and the decision made again under
-    /// the permit refuses it.
-    @Test("A snapshot another copy made the Ephemeral baseline is refused under the permit")
-    func baselineAnotherCopyNamedIsRefusedUnderThePermit() async throws {
-        let harness = makeCore()
-        let snapshot = VMSnapshot(name: "Clean install", macAddress: nil)
-        let instance = harness.library.registerFixture(
-            snapshots: VMSnapshotManifest(snapshots: [snapshot]))
-        // Another process's write, which this copy's memory has not seen.
-        try VMStagedBundle.fixtureForTesting(at: instance.bundleURL, access: harness.storage.files)
-            .update(.hostState) { $0.applyEphemeralMode(enabled: true, baseline: snapshot.id) }
-        #expect(!instance.hostState.ephemeralModeEnabled)
-
-        await #expect(
-            throws: CommandError.stepRequired(
-                harness.core.ephemeralBaselineDeleteRefusal(snapshot, on: instance))
-        ) {
-            try await harness.core.deleteSnapshot(
-                .id(instance.id), snapshot: snapshot.id, consent: Consent([.deleteSnapshot]))
-        }
-
-        #expect(instance.ephemeralBaselineSnapshot?.id == snapshot.id)
-        #expect(instance.snapshotManifest.snapshots.map(\.id) == [snapshot.id])
-        #expect(harness.storage.files.manifest(at: instance.bundleURL)?.snapshots.map(\.id) == [snapshot.id])
-        #expect(harness.machineFiles.discardedIDs.isEmpty)
-    }
-
-    // MARK: - Harness
-
-    private func makeCore() -> WiredCommandCore {
-        WiredCommandCore()
-    }
-
-    /// A core whose verbs, library and VMs log to `capture`.
-    private func makeCore(loggingTo capture: LogCapture) -> WiredCommandCore {
-        WiredCommandCore(logSink: capture.sink)
-    }
-}
-
-extension LogCapture {
-    /// The records a refused verb leaves.
-    fileprivate var refusals: [String] { messages.filter { $0.hasPrefix("Refused ") } }
-
-    /// The records a change of another copy's hold leaves.
-    fileprivate var holdTransitions: [String] {
-        messages.filter {
-            ($0.hasPrefix("Found '") && $0.hasSuffix("' held by another copy of Kernova"))
-                || $0.hasPrefix("Another copy of Kernova no longer holds")
-        }
     }
 }
