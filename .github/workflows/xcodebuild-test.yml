@@ -72,7 +72,20 @@ jobs:
         id: paths
         run: |
           . Tools/lib/xcodebuild-flags.sh
+          echo "derived-data=$kernova_derived_data" >> "$GITHUB_OUTPUT"
           echo "compilation-cache=$kernova_compilation_cache" >> "$GITHUB_OUTPUT"
+
+      # Package.resolved pins each dependency to a commit, so the hash misses
+      # exactly when a dependency is bumped and hits otherwise. No
+      # restore-keys: a prefix fallback would restore an older checkout and
+      # then save the reconciled result under the new hash, so a saved entry
+      # would no longer match its key by construction. Checkouts are plain
+      # git clones, so the Xcode build is not part of the key.
+      - name: Cache SwiftPM checkouts
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.paths.outputs.derived-data }}/SourcePackages
+          key: ${{ runner.os }}-spm-${{ hashFiles('Kernova.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       # The store is content-addressed, so any earlier snapshot is a valid
       # seed: the prefix restores the newest one main saved, which a pull
