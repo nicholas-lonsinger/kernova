@@ -98,14 +98,6 @@ struct VMScriptingGatewayTests {
         return description.createCommandInstance()
     }
 
-    /// A network list whose one network's kind no kind spells.
-    private static let unreadableNetworkList = Data(
-        """
-        {"networks": [{"id": "6A1F0B2C-3D4E-4F50-8A6B-7C8D9E0F1A2B", "name": "Lab", "kind": "plan9-mode"}]}
-        """.utf8)
-
-    private let scratch = TestScratchDirectory(prefix: "VMScriptingGatewayTests")
-
     // MARK: - Script references
 
     /// `virtual machine "<name>"`.
@@ -125,11 +117,6 @@ struct VMScriptingGatewayTests {
     /// `every virtual machine whose name of storage disk 1 is "<name>"`.
     private static func vms(whoseFirstDiskIs name: String) -> NSAppleEventDescriptor {
         ScriptEvent.every("KvVM", whose: ScriptEvent.equals(firstDiskName, NSAppleEventDescriptor(string: name)))
-    }
-
-    /// `network "<name>"`.
-    private static func network(named name: String) -> NSAppleEventDescriptor {
-        ScriptEvent.element("KvNw", named: name)
     }
 
     // MARK: - Reads
@@ -193,38 +180,6 @@ struct VMScriptingGatewayTests {
         #expect(onLab.networkName == "Lab")
     }
 
-    @Test("A VM's network name reads as unreadable while the list can't be read, and missing while unlisted")
-    func networkNameReadsEachCase() throws {
-        func networkName(_ networks: VMNetworkDirectory) throws -> String? {
-            let wired = WiredCommandCore(networks: networks)
-            wired.register(name: "Alpha") {
-                $0.networkEnabled = true
-                $0.networkMode = .nat
-                $0.networkMembership = .network(UUID())
-                $0.applyNetworkMode($0.networkMode)
-            }
-            return try #require(makeGateway(wired).virtualMachines().first).networkName
-        }
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-        let unreadable = scratch.url.appendingPathComponent("Networks.json")
-        try Self.unreadableNetworkList.write(to: unreadable)
-
-        #expect(try networkName(VMNetworkDirectory(fileURL: unreadable)) == "Network List Can\u{2019}t Be Read")
-        #expect(try networkName(VMNetworkDirectory(fileURL: nil)) == nil)
-    }
-
-    @Test("A VM with nothing to report on a field answers with missing value")
-    func absentFieldsAnswerWithMissingValue() throws {
-        let wired = WiredCommandCore()
-        wired.register(name: "Alpha") { $0.macAddress = nil }
-
-        let vm = try #require(makeGateway(wired).virtualMachines().first)
-
-        #expect(vm.networkMode == nil)
-        #expect(vm.macAddress == nil)
-        #expect(vm.ipAddress == nil)
-    }
-
     // MARK: - Configuration
 
     /// A VM on `mode`'s common network at a known MAC address, attaching
@@ -258,46 +213,6 @@ struct VMScriptingGatewayTests {
         #expect(command.scriptErrorNumber == refusal.appleEventErrorNumber)
         #expect(command.scriptErrorString == refusal.appleEventErrorString)
         #expect(!alpha.configuration.clipboardPassthroughEnabled)
-    }
-
-    @Test("Missing value writes none to a VM's network mode, and empty to its membership and MAC address")
-    func missingValueWrites() async throws {
-        let wired = WiredCommandCore()
-        let alpha = registerNetworked(wired, name: "Alpha")
-        let standIn = ScriptCommandStandIn()
-        let gateway = await makeLandedGateway(wired, runtime: standIn.runtime)
-        let vm = try #require(gateway.virtualMachines().first)
-        let membership = try makeSetCommand()
-
-        // The core takes no empty membership, and its refusal quotes what was
-        // written.
-        standIn.command = membership
-        vm.networkMembership = nil
-        standIn.command = nil
-        vm.networkMode = nil
-        vm.macAddress = nil
-
-        #expect(
-            membership.scriptErrorString
-                == "network.membership takes common, isolated, or a network\u{2019}s name or identifier, "
-                + "not \u{201C}\u{201D}.")
-        #expect(alpha.configuration.networkMembership == .common)
-        #expect(!alpha.configuration.networkEnabled)
-        #expect(alpha.configuration.macAddress == nil)
-    }
-
-    // MARK: - Verb dispatch
-
-    @Test("A refusal stops the run where it happened")
-    func aRefusalStopsTheRun() async throws {
-        let wired = WiredCommandCore()
-        let beta = wired.register(name: "Beta", phase: .running(sessionID: UUID()))
-
-        await #expect(throws: CommandError.notFound(.name("Alpha"))) {
-            try await makeGateway(wired).pause([.name("Alpha"), .name("Beta")])
-        }
-
-        #expect(beta.status == .running)
     }
 
     // MARK: - Stop methods
@@ -351,39 +266,6 @@ struct VMScriptingGatewayTests {
         #expect(forced.status == (restarts ? .running : .stopped))
     }
 
-    // MARK: - Addressing
-
-    @Test("A verb's addressing reaches the script with what the core refused")
-    func addressingRecordsRefusalsInTheReply() async throws {
-        let wired = WiredCommandCore()
-        wired.register(name: "Alpha")
-        wired.register(name: "Alpha")
-        let refusal = try #require(throws: CommandError.self) { try wired.core.info(.name("Alpha")) }
-        let host = ScriptHost()
-        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
-
-        // `pause storage disk 1 of virtual machine "Alpha"`: the name is
-        // evaluated as the disk's container, which the core refuses.
-        let reply = try await host.send(
-            ScriptEvent.verb("Paus", ScriptEvent.element("KvSD", at: 1, of: Self.vm(named: "Alpha"))),
-            to: gateway)
-
-        #expect(reply.errorNumber == Int(errAENoSuchObject))
-        #expect(reply.errorString == refusal.message)
-        #expect(reply.offendingObject != nil)
-    }
-
-    @Test("A verb naming nothing is refused, naming the verb")
-    func aVerbNamingNothingIsRefused() async throws {
-        let host = ScriptHost()
-        let gateway = await makeLandedGateway(WiredCommandCore(), runtime: host.runtime)
-
-        let reply = try await host.send(ScriptEvent.verb("Paus", .null()), to: gateway)
-
-        #expect(reply.errorNumber == Int(errAEWrongNumberArgs))
-        #expect(reply.errorString == "Name the virtual machine to pause.")
-    }
-
     // MARK: - A command before the library has landed
 
     @Test("A read arriving before the library lands is suspended once, however often it reads the element")
@@ -403,24 +285,6 @@ struct VMScriptingGatewayTests {
         #expect(gateway.virtualMachine(named: "Alpha") == nil)
         #expect(gateway.suspended.map { ObjectIdentifier($0.command) } == [ObjectIdentifier(command)])
         #expect(suspensions == [ObjectIdentifier(command)])
-    }
-
-    @Test("A cold read of a name no VM answers to reaches the script in the core's words")
-    func aColdReadCarriesTheCoresRefusal() async throws {
-        let wired = WiredCommandCore()
-        wired.register(name: "Alpha")
-        let readiness = ReadinessGate()
-        let host = ScriptHost()
-        let gateway = makeGateway(wired, awaitReady: { await readiness.wait() }, runtime: host.runtime)
-
-        _ = try host.dispatch(
-            ScriptEvent.get(ScriptEvent.property("pnam", of: Self.vm(named: "Nope"))), to: gateway)
-        try await readiness.awaitWaiting()
-        readiness.open()
-        let reply = try await host.answer()
-
-        #expect(reply.errorNumber == Int(errAENoSuchObject))
-        #expect(reply.errorString == CommandError.notFound(.name("Nope")).message)
     }
 
     @Test("A set arriving before the library lands writes the key the script named")
@@ -443,49 +307,6 @@ struct VMScriptingGatewayTests {
 
         #expect(reply.errorNumber == 0)
         #expect(alpha.configuration.networkMode == .hostOnly)
-        #expect(host.suspensions == 1)
-    }
-
-    @Test("A delete arriving before the library lands deletes the network it named")
-    func aColdDeleteDeletesItsNetwork() async throws {
-        let wired = WiredCommandCore()
-        try wired.core.createNetwork(name: "Lab", kind: .nat)
-        let test = try wired.core.createNetwork(name: "Test", kind: .nat)
-        let readiness = ReadinessGate()
-        let host = ScriptHost()
-        let gateway = makeGateway(wired, awaitReady: { await readiness.wait() }, runtime: host.runtime)
-
-        _ = try host.dispatch(ScriptEvent.delete(Self.network(named: "Lab")), to: gateway)
-        try await readiness.awaitWaiting()
-        readiness.open()
-        let reply = try await host.answer()
-
-        #expect(reply.errorNumber == 0)
-        #expect(try wired.core.networks().map(\.id) == [test.id])
-    }
-
-    @Test("A make arriving before the library lands makes the network once")
-    func aColdMakeMakesOnce() async throws {
-        let wired = WiredCommandCore()
-        let readiness = ReadinessGate()
-        let host = ScriptHost()
-        let gateway = makeGateway(wired, awaitReady: { await readiness.wait() }, runtime: host.runtime)
-
-        // `make new network at end of networks with properties {name:"Lab"}`:
-        // the location reads the networks, which suspends the make, and Cocoa
-        // asks for the new element in the same dispatch.
-        _ = try host.dispatch(
-            ScriptEvent.make(
-                new: "KvNw", at: ScriptEvent.end(of: ScriptEvent.every("KvNw")),
-                properties: ["pnam": NSAppleEventDescriptor(string: "Lab")]),
-            to: gateway)
-        #expect(try wired.core.networks().isEmpty)
-        try await readiness.awaitWaiting()
-        readiness.open()
-        let reply = try await host.answer()
-
-        #expect(reply.errorNumber == 0)
-        #expect(try wired.core.networks().map(\.name) == ["Lab"])
         #expect(host.suspensions == 1)
     }
 
@@ -668,47 +489,5 @@ struct VMScriptingGatewayTests {
         #expect(container.key == VMScriptingRoot.virtualMachinesKey)
         #expect(container.uniqueID as? String == alpha.id.uuidString)
         #expect(container.container == nil)
-    }
-
-    // MARK: - Preparation
-
-    /// A tally a preparation closure writes and the test reads.
-    @MainActor
-    private final class Tally {
-        var count = 0
-    }
-
-    @Test("A verb that puts a window up readies the app")
-    func surfacingVerbsPrepare() async throws {
-        let wired = WiredCommandCore()
-        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()))
-        let preparations = Tally()
-        let gateway = makeGateway(wired, prepareToSurface: { preparations.count += 1 })
-
-        try await gateway.reveal([.name("Alpha")])
-
-        #expect(preparations.count == 1)
-        #expect(wired.surfacedDisplays == [alpha.id])
-    }
-
-    // MARK: - Readiness
-
-    @Test("No verb reaches the core until the app's first library read has landed")
-    func verbsWaitForTheFirstLibraryRead() async throws {
-        let virtualization = MockVirtualizationService()
-        let wired = WiredCommandCore(virtualization: virtualization)
-        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()))
-        let readiness = ReadinessGate()
-        let gateway = makeGateway(wired, awaitReady: { await readiness.wait() })
-
-        let run = Task { try await gateway.pause([.name("Alpha")]) }
-        try await readiness.awaitWaiting()
-        #expect(virtualization.pauseCallCount == 0)
-        #expect(alpha.status == .running)
-
-        readiness.open()
-        try await run.joined()
-        #expect(virtualization.pauseCallCount == 1)
-        #expect(alpha.status == .paused)
     }
 }

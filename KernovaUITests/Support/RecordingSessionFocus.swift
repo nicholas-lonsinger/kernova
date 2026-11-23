@@ -62,14 +62,6 @@ final class RecordingSessionFocus: SessionFocus {
         gate.notify()
     }
 
-    /// The windows presented key and in front, in the order they were.
-    var presentedKeyAndFront: [NSWindow] {
-        requests.compactMap { request in
-            guard case .present(let window, .keyAndFront) = request else { return nil }
-            return window
-        }
-    }
-
     func setActivationPolicy(_ policy: NSApplication.ActivationPolicy) {
         guard policy != activationPolicy else { return }
         activationPolicy = policy
@@ -113,14 +105,6 @@ final class RecordingSessionFocus: SessionFocus {
     }
 
     var focusChanged: [HostNotification] { [HostNotification(center: center, name: changed)] }
-
-    /// The user miniaturizing `window`: it leaves the screen and reads as
-    /// miniaturized until it is presented again.
-    func minimize(_ window: NSWindow) {
-        window.orderOut(nil)
-        miniaturized.add(window)
-        postFocusChanged()
-    }
 
     private func postFocusChanged() {
         center.post(name: changed, object: nil)

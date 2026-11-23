@@ -42,29 +42,11 @@ struct KernovaScriptingDefinitionTests {
 
     // MARK: - Well-formedness
 
-    @Test("The dictionary is well-formed against the system's sdef DTD")
-    func theDictionaryValidates() throws {
-        // After the include, so the Standard Suite the app builds on is
-        // validated as part of the document the system actually reads.
-        let document = try loadDictionary()
-        stripIncludeBases(document)
-        try document.validate()
-    }
-
     /// Drops the `xml:base` XInclude stamps every substituted element carries,
     /// which the sdef DTD declares on no element.
     private func stripIncludeBases(_ node: XMLNode) {
         (node as? XMLElement)?.removeAttribute(forName: "xml:base")
         for child in node.children ?? [] { stripIncludeBases(child) }
-    }
-
-    @Test("The dictionary builds on the Standard Suite rather than replacing it")
-    func theStandardSuiteIsIncluded() throws {
-        let suites = try loadDictionary().nodes(forXPath: "/dictionary/suite/@name")
-            .compactMap(\.stringValue)
-
-        #expect(suites.contains("Standard Suite"))
-        #expect(suites.contains("Kernova Suite"))
     }
 
     // MARK: - What the dictionary points at

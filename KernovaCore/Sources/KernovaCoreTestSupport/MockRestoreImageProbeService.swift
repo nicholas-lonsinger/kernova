@@ -7,7 +7,6 @@ import Foundation
 final class MockRestoreImageProbeService: RestoreImageProbing {
     nonisolated init() {}
 
-    var probeCallCount = 0
     var lastProbedURL: URL?
     var lastSizedURL: URL?
 
@@ -19,7 +18,6 @@ final class MockRestoreImageProbeService: RestoreImageProbing {
     var sizeResult: UInt64 = 19_772_077_142
 
     func probe(_ url: URL) async throws -> ProbedRestoreImage {
-        probeCallCount += 1
         lastProbedURL = url
         if let error = probeError { throw error }
         return probeResult

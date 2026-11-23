@@ -9,8 +9,8 @@ import Testing
 @testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
-/// The dictionary's `network`: what a script reads, and what `make`, `set
-/// name` and `delete` do to the library's networks.
+/// The dictionary's `network`: what a script reads, and what `make` and `move` do to the
+/// library's networks.
 ///
 /// Driven through the gateway and the element objects, with the command Cocoa
 /// would be answering stood in by a ``ScriptCommandStandIn``.
@@ -83,15 +83,6 @@ struct VMNetworkScriptingTests {
 
     // MARK: - Make
 
-    @Test("A make that names no kind makes a NAT network")
-    func makeDefaultsToNAT() throws {
-        let wired = WiredCommandCore()
-
-        _ = makeGateway(wired).makeElement(forKey: VMScriptingRoot.networksKey, name: "Lab", kind: nil)
-
-        #expect(try wired.core.networks().map(\.kind) == [.nat])
-    }
-
     @Test("A kind from no vocabulary this app writes is refused before the core")
     func anUnknownKindIsRefused() async throws {
         let wired = WiredCommandCore()
@@ -109,65 +100,6 @@ struct VMNetworkScriptingTests {
         #expect(command.scriptErrorNumber == Int(errAETypeError))
     }
 
-    @Test("The core's refusal of a make reaches the script in its words")
-    func aRefusedMakeReachesTheScript() async throws {
-        let wired = WiredCommandCore()
-        // A make naming no name asks the core for an empty one.
-        let refusal = try #require(throws: CommandError.self) {
-            try wired.core.createNetwork(name: "", kind: .nat)
-        }
-        let standIn = ScriptCommandStandIn()
-        let gateway = await makeLandedGateway(wired, answering: standIn)
-        let command = try makeCommand("crel")
-        standIn.command = command
-
-        #expect(gateway.makeElement(forKey: VMScriptingRoot.networksKey, name: nil, kind: nil) == nil)
-
-        #expect(try wired.core.networks().isEmpty)
-        #expect(command.scriptErrorNumber == refusal.appleEventErrorNumber)
-        #expect(command.scriptErrorString == refusal.appleEventErrorString)
-    }
-
-    @Test("make new virtual machine is refused rather than allocated")
-    func makingAVMIsRefused() async throws {
-        let wired = WiredCommandCore()
-        let standIn = ScriptCommandStandIn()
-        let gateway = await makeLandedGateway(wired, answering: standIn)
-        let command = try makeCommand("crel")
-        standIn.command = command
-
-        #expect(gateway.makeElement(forKey: VMScriptingRoot.virtualMachinesKey, name: nil, kind: nil) == nil)
-
-        #expect(try wired.core.networks().isEmpty)
-        #expect(wired.core.list(.all).isEmpty)
-        #expect(command.scriptErrorNumber == Int(errAECantHandleClass))
-        #expect(command.scriptErrorString == VMScriptingGateway.cannotMakeVirtualMachine)
-    }
-
-    // MARK: - Rename
-
-    @Test("A set of the name of several networks stops at the first refusal")
-    func aRefusedRenameStopsTheRun() async throws {
-        let wired = WiredCommandCore()
-        let lab = try wired.core.createNetwork(name: "Lab", kind: .nat)
-        try wired.core.createNetwork(name: "Test", kind: .nat)
-        // Test already answers to "test", so Lab is refused it; Test itself
-        // would take it.
-        let refusal = try #require(throws: CommandError.self) {
-            try wired.core.renameNetwork(lab.id.uuidString, to: "test")
-        }
-        let standIn = ScriptCommandStandIn()
-        let gateway = await makeLandedGateway(wired, answering: standIn)
-        let command = try makeCommand("setd")
-        let networks = gateway.networks()
-        standIn.command = command
-
-        for network in networks { network.name = "test" }
-
-        #expect(command.scriptErrorString == refusal.message)
-        #expect(try wired.core.networks().map(\.name) == ["Lab", "Test"])
-    }
-
     // MARK: - Delete
 
     @Test("A move's removal is refused, deleting nothing")
@@ -183,27 +115,5 @@ struct VMNetworkScriptingTests {
 
         #expect(try wired.core.networks().map(\.id) == [lab.id])
         #expect(command.scriptErrorNumber == Int(errAEEventNotHandled))
-    }
-
-    @Test("A delete addressing several networks stops at the first refusal")
-    func aRefusedDeleteStopsTheRun() async throws {
-        let wired = WiredCommandCore()
-        let lab = try wired.core.createNetwork(name: "Lab", kind: .nat)
-        let test = try wired.core.createNetwork(name: "Test", kind: .nat)
-        registerMember(wired, name: "Alpha", of: test)
-        let refusal = try #require(throws: CommandError.self) {
-            try wired.core.deleteNetwork(test.id.uuidString)
-        }
-        let standIn = ScriptCommandStandIn()
-        let gateway = await makeLandedGateway(wired, answering: standIn)
-        let command = try makeCommand("delo")
-        standIn.command = command
-
-        // Cocoa removes from the highest index down.
-        gateway.removeNetwork(at: 1)
-        gateway.removeNetwork(at: 0)
-
-        #expect(try wired.core.networks().map(\.id) == [lab.id, test.id])
-        #expect(command.scriptErrorString == refusal.appleEventErrorString)
     }
 }

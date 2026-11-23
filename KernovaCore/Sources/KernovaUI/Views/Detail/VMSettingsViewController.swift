@@ -332,32 +332,11 @@ extension VMSettingsViewController {
     }
 
     #if DEBUG
-    /// The open panel's view when `category` is the open one, so a test can
-    /// scope its search to that panel; `nil` for a category not drilled into.
-    func panelForTesting(_ category: VMSettingsCategory) -> NSView? {
-        guard installedPanel == category else { return nil }
-        return panelControllers[category]?.view
-    }
-
-    /// The overview's card for `category`.
-    func overviewCardForTesting(_ category: VMSettingsCategory) -> VMOverviewCardView? {
-        overviewVC.cardForTesting(category)
-    }
-
     /// The panel controller for `category`, for a test reaching a seam the
     /// panel owns.
     func settingsPanelForTesting(_ category: VMSettingsCategory) -> (any VMSettingsPanel)? {
         panelControllers[category]
     }
-
-    /// What the cards are currently painted from.
-    var resolvedForTesting: VMOverviewResolved { panelContext.overview.resolved }
-
-    /// The resolution the cards and panels read, so a test awaits its reads.
-    var overviewForTesting: VMOverviewResolver { panelContext.overview }
-
-    /// Whether the panels were last bound read-only.
-    var isReadOnlyForTesting: Bool { panelContext.isReadOnly }
     #endif
 
     private func addPanelContent(_ content: NSView) {

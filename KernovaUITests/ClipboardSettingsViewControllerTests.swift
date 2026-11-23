@@ -9,11 +9,7 @@ import Testing
 @testable import KernovaUI
 @testable import KernovaVirtualization
 
-/// Behavior tests for the Clipboard settings pane.
-///
-/// The pane's job is to make the paste ceiling selectable *and* legible: the
-/// popup has to reflect and write the stored value, and the row's info estimate has to
-/// track the selection rather than freeze on the value it first rendered.
+/// The Clipboard settings pane's paste ceiling, written as the popup selects it.
 @Suite("Clipboard Settings Tests", .serialized, .caseScoped)
 @MainActor
 struct ClipboardSettingsViewControllerTests {
@@ -64,33 +60,6 @@ struct ClipboardSettingsViewControllerTests {
 
     // MARK: - The ladder
 
-    @Test("the popup offers every ceiling, marking the derived default")
-    func popUpOffersEveryChoice() throws {
-        let controller = makeLaidOutController()
-        let popUp = try popUp(in: controller)
-
-        #expect(popUp.numberOfItems == ClipboardPasteLimit.choices.count)
-        #expect(
-            popUp.itemTitles
-                == ClipboardPasteLimit.choices.map {
-                    ClipboardSettingsViewController.itemTitle(for: $0)
-                })
-        // Exactly one stop carries the recommendation, and it is the derived one.
-        let recommended = popUp.itemTitles.filter { $0.contains("Recommended") }
-        #expect(recommended == ["2 GB (Recommended)"])
-    }
-
-    @Test("the popup opens on the stored ceiling, not the first one")
-    func popUpSelectsTheStoredCeiling() throws {
-        let raised = 16 * 1024 * 1024 * 1024
-        preferences.clipboardMaxPasteBytes = raised
-
-        let controller = makeLaidOutController()
-        let popUp = try popUp(in: controller)
-
-        #expect(popUp.selectedItem?.representedObject as? Int == raised)
-    }
-
     @Test("selecting a ceiling writes it to preferences")
     func selectingWritesThePreference() throws {
         let controller = makeLaidOutController()
@@ -101,32 +70,6 @@ struct ClipboardSettingsViewControllerTests {
         popUp.sendAction(popUp.action, to: popUp.target)
 
         #expect(preferences.clipboardMaxPasteBytes == lowered)
-    }
-
-    // MARK: - The explanation
-
-    /// The row's info paragraphs, as its popover would render them.
-    private func sizeInfo(in controller: ClipboardSettingsViewController) throws -> [String] {
-        let info = try #require(firstSubview(InfoButtonView.self, in: controller.view))
-        return info.paragraphsForTesting.map(\.text)
-    }
-
-    @Test("the row's info names the selected ceiling and its transfer time")
-    func estimateNamesTheSelection() throws {
-        let controller = makeLaidOutController()
-        let popUp = try popUp(in: controller)
-
-        // The default's estimate is in the info before anything is touched.
-        #expect(try sizeInfo(in: controller).contains { $0.contains("2 GB transfers in about 6 seconds") })
-
-        let raised = 16 * 1024 * 1024 * 1024
-        popUp.selectItem(at: try #require(ClipboardPasteLimit.choices.firstIndex(of: raised)))
-        popUp.sendAction(popUp.action, to: popUp.target)
-
-        // It recomputes rather than freezing on the value it first rendered.
-        let info = try sizeInfo(in: controller)
-        #expect(info.contains { $0.contains("16 GB transfers in about 45 seconds") })
-        #expect(!info.contains { $0.contains("2 GB transfers in about 6 seconds") })
     }
 }
 

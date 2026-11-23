@@ -582,12 +582,6 @@ final class VMSettingsSystemPanelViewController: NSViewController, VMSettingsPan
         }
     }
 
-    #if DEBUG
-    /// The in-flight serial.log probe, so a test awaits it instead of polling
-    /// the button it enables.
-    var serialLogProbeForTesting: Task<Void, Never>? { serialLogProbe }
-    #endif
-
     @objc private func cpuStepperChanged() {
         write(Keys.cpus.assigning(String(cpuStepper.integerValue)))
         cpuField.showDiscardingEdit(String(instance.configuration.cpuCount))

@@ -20,12 +20,6 @@ func makeWindowRegistry(
         stage: stage, focus: focus)
 }
 
-/// One menu item carrying `action`, as the menu bar builds it.
-@MainActor
-func makeMenuItem(_ action: Selector) -> NSMenuItem {
-    NSMenuItem(title: "placeholder", action: action, keyEquivalent: "")
-}
-
 /// The submenu of the top-level menu titled `title`.
 @MainActor
 func submenu(titled title: String, in mainMenu: NSMenu) -> NSMenu? {

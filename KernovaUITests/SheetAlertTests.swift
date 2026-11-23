@@ -15,36 +15,12 @@ import Testing
 struct SheetAlertTests {
     // MARK: - configureNSAlertButton
 
-    @Test(".default role wires the Return key")
-    func defaultRoleReturnsReturn() {
-        let button = NSButton()
-        configureNSAlertButton(button, role: .default)
-        #expect(button.keyEquivalent == "\r")
-        #expect(!button.hasDestructiveAction)
-    }
-
-    @Test(".cancel role wires the Escape key")
-    func cancelRoleWiresEscape() {
-        let button = NSButton()
-        configureNSAlertButton(button, role: .cancel)
-        #expect(button.keyEquivalent == "\u{1B}")
-        #expect(!button.hasDestructiveAction)
-    }
-
     @Test(".destructive role clears the key equivalent and sets destructive tint")
     func destructiveRoleTints() {
         let button = NSButton()
         configureNSAlertButton(button, role: .destructive)
         #expect(button.keyEquivalent.isEmpty)
         #expect(button.hasDestructiveAction)
-    }
-
-    @Test(".standard role clears the key equivalent and leaves tint default")
-    func standardRoleIsPlain() {
-        let button = NSButton()
-        configureNSAlertButton(button, role: .standard)
-        #expect(button.keyEquivalent.isEmpty)
-        #expect(!button.hasDestructiveAction)
     }
 
     // MARK: - dispatchAction

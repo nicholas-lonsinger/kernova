@@ -51,19 +51,6 @@ final class ScrollMoreIndicator {
     /// Whether the content currently overflows below the visible area.
     private(set) var hasMoreBelow = false
 
-    #if DEBUG
-    /// The overlays in z-order — `[fade, chevron]`, chevron on top — once inserted,
-    /// else empty.
-    var overlaysForTesting: [NSView] { didInsertOverlays ? [fade, chevron] : [] }
-
-    /// How many times the flash has fired.
-    ///
-    /// The only signal that separates a flash from a spent latch: `didFlash` also
-    /// reads spent for one held at birth by `flashOnFirstOverflow: false`, and a
-    /// re-arm over still-overflowing content re-latches before a test can look.
-    private(set) var flashCountForTesting = 0
-    #endif
-
     /// Creates an indicator for `scrollView`, showing the cues named by `cues`.
     ///
     /// `flashOnFirstOverflow` arms the one-time flash at birth, which suits a
@@ -189,9 +176,6 @@ final class ScrollMoreIndicator {
         // view has drawn.
         if cues.contains(.flash), overflows, !didFlash, canFlash {
             didFlash = true
-            #if DEBUG
-            flashCountForTesting += 1
-            #endif
             Self.logger.log(.debug, "Flashing scroller")
             Task { @MainActor [weak self] in
                 guard let scrollView = self?.scrollView else { return }

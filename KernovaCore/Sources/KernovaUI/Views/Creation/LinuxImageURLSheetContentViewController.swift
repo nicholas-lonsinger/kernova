@@ -37,11 +37,6 @@ final class LinuxImageURLSheetContentViewController: NSViewController {
     /// racing it.
     private var checkTask: Task<Void, Never>?
 
-    #if DEBUG
-    /// Awaited by tests instead of polling for the result to land.
-    var checkTaskForTesting: Task<Void, Never>? { checkTask }
-    #endif
-
     // MARK: - Layout constants
 
     private static let sheetWidth: CGFloat = 560

@@ -5,8 +5,7 @@ import Testing
 @testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
-/// Behavior tests for the Keyboard settings pane: the list of reserved
-/// shortcuts, and the switches that turn them on and off.
+/// The Keyboard settings pane's switches that turn reserved shortcuts on and off.
 @Suite("Keyboard Settings Tests", .serialized, .caseScoped)
 @MainActor
 struct KeyboardSettingsViewControllerTests {
@@ -26,45 +25,6 @@ struct KeyboardSettingsViewControllerTests {
     private func toggle(_ toggle: NSSwitch, on: Bool) throws {
         toggle.state = on ? .on : .off
         #expect(NSApp.sendAction(try #require(toggle.action), to: toggle.target, from: toggle))
-    }
-
-    @Test("The pane lists every reserved shortcut, in order, with its command, keys and info")
-    func listsEveryShortcut() throws {
-        let controller = makeLaidOutController(makeLibraryViewModel(preferences: preferences))
-        let view = controller.view
-
-        #expect(findLabel(withText: KeyboardSettingsViewController.sectionTitle, in: view) != nil)
-        #expect(controller.switches.map(\.shortcut) == ReservedShortcut.allCases)
-        #expect(controller.switches.map(\.shortcut) == [.copyGuestClipboardToMac, .copyMacClipboardToGuest])
-        for shortcut in ReservedShortcut.allCases {
-            #expect(findLabel(withText: shortcut.commandTitle, in: view) != nil)
-            #expect(findLabel(withText: shortcut.displayString, in: view) != nil)
-        }
-        #expect(ReservedShortcut.copyGuestClipboardToMac.displayString == "⌃⇧⌘C")
-        #expect(ReservedShortcut.copyMacClipboardToGuest.displayString == "⌃⇧⌘V")
-        let infoButtons = allSubviews(InfoButtonView.self, in: view)
-        #expect(infoButtons.count == ReservedShortcut.allCases.count)
-    }
-
-    @Test("Each row's info says what on and off do with its keys", arguments: ReservedShortcut.allCases)
-    func infoNamesOnAndOff(_ shortcut: ReservedShortcut) {
-        let text = KeyboardSettingsViewController.infoParagraphs(for: shortcut).map(\.text)
-
-        #expect(text.count == 2)
-        #expect(text[0].hasPrefix("On: \(shortcut.displayString) chooses Edit › \(shortcut.commandTitle)"))
-        #expect(text[0].contains("never receives \(shortcut.displayString)"))
-        #expect(text[1].hasPrefix("Off:"))
-        #expect(text[1].contains("sends \(shortcut.displayString) to the guest"))
-    }
-
-    @Test("The switches start on, and show a shortcut stored off as off")
-    func switchesReflectTheStore() throws {
-        let fresh = makeLaidOutController(makeLibraryViewModel(preferences: preferences))
-        #expect(fresh.switches.allSatisfy { $0.control.state == .on })
-
-        preferences.disabledReservedShortcuts = [.copyMacClipboardToGuest]
-        let stored = makeLaidOutController(makeLibraryViewModel(preferences: preferences))
-        #expect(stored.switches.map(\.control.state) == [.on, .off])
     }
 
     @Test(

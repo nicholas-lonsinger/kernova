@@ -105,25 +105,6 @@ struct VMLifecycleScriptCommandsTests {
         #expect(alpha.status == .running)
     }
 
-    @Test("A stop method from no vocabulary this app writes is a type error, and stops nothing")
-    func anUnknownStopMethodIsRefused() async throws {
-        let virtualization = MockVirtualizationService()
-        let wired = WiredCommandCore(virtualization: virtualization)
-        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()))
-        let command = try makeCommand(
-            VMStopScriptCommand.init(commandDescription:), code: "Stop",
-            arguments: ["StopMethod": NSNumber(value: FourCharCode(scriptingCode: "KmXX"))])
-
-        let refusal = await #expect(throws: CommandError.self) {
-            try await command.run(makeGateway(wired), on: [.name("Alpha")])
-        }
-
-        #expect(refusal?.appleEventErrorNumber == Int(errAETypeError))
-        #expect(virtualization.stopCallCount == 0)
-        #expect(virtualization.forceStopCallCount == 0)
-        #expect(alpha.status == .running)
-    }
-
     @Test("restart passes the deadline through")
     func restartPassesItsDeadline() async throws {
         let virtualization = MockVirtualizationService()

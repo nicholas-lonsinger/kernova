@@ -8,11 +8,3 @@ import AppKit
 func offDesktopVisibleFrame(_: NSWindow?) -> NSRect? {
     WindowStage.offDesktopVisibleFrame
 }
-
-/// Enough VMs that the Reminders pane outgrows the tallest window
-/// ``WindowStage/offDesktopVisibleFrame`` can hold, at well under one row per
-/// 20 points of that height.
-@MainActor
-func overflowingVMCount() -> Int {
-    Int(SettingsPaneMetrics.maxHeight(in: nil, visibleFrame: WindowStage.offDesktopVisibleFrame) / 20)
-}

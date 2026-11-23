@@ -30,8 +30,6 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     /// Whether each delete-sheet request asked for the immediate (bypass-Trash)
     /// variant.
     private(set) var deleteSheetPermanentlyFlags: [Bool] = []
-    private(set) var takeSnapshotSheetInstances: [VMInstance] = []
-    private(set) var takeSnapshotSheetPurposes: [TakeSnapshotPurpose] = []
     private(set) var revertSnapshots: [VMSnapshot] = []
     /// Parallel to `revertSnapshots`: the VM each request named.
     private(set) var revertSnapshotInstances: [VMInstance] = []
@@ -109,10 +107,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool) {
         deleteSheetPermanentlyFlags.append(permanently)
     }
-    func presentTakeSnapshotSheet(for instance: VMInstance, purpose: TakeSnapshotPurpose) {
-        takeSnapshotSheetInstances.append(instance)
-        takeSnapshotSheetPurposes.append(purpose)
-    }
+    func presentTakeSnapshotSheet(for instance: VMInstance, purpose: TakeSnapshotPurpose) {}
     func presentRevertSnapshot(_ snapshot: VMSnapshot, for instance: VMInstance) {
         revertSnapshots.append(snapshot)
         revertSnapshotInstances.append(instance)

@@ -118,10 +118,9 @@ func presentSheetAlert(
 func presentSheetAlert(
     _ config: AlertConfiguration,
     in window: NSWindow,
-    didDismiss: (() -> Void)? = nil,
     completion: (() -> Void)? = nil
 ) -> NSAlert {
-    presentSheetAlert(SheetAlert(config), in: window, didDismiss: didDismiss, completion: completion)
+    presentSheetAlert(SheetAlert(config), in: window, completion: completion)
 }
 
 /// Applies the key-equivalent and destructive tint for a role to an

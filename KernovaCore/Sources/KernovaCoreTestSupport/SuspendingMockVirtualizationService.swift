@@ -4,7 +4,7 @@ import KernovaTestSupport
 @testable import KernovaCore
 
 /// A mock virtualization service whose `start` and `pause` bodies — and, on
-/// request, a hot resume and points inside a revert — suspend until explicitly
+/// request, points inside a revert — suspend until explicitly
 /// resumed, while the operation that runs them holds the VM.
 ///
 /// - Important: Only **one** operation can be suspended at a time. The mock stores a
@@ -21,11 +21,6 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
     ///
     /// Set to `false` to allow subsequent calls through immediately.
     var shouldSuspendOnPause = true
-
-    /// When `true`, a hot `resume` will suspend.
-    ///
-    /// Defaults to `false` so existing callers keep the immediate behavior.
-    var shouldSuspendOnResume = false
 
     /// When `true`, `revertToSnapshot` will suspend before ending the session,
     /// standing in for the window a real revert spends copying files.
@@ -155,9 +150,6 @@ final class SuspendingMockVirtualizationService: VirtualizationProviding {
         _ instance: VMInstance, _ context: borrowing VMOperationContext
     ) async throws -> VMOperationEnding<Void> {
         resumeCallCount += 1
-        if shouldSuspendOnResume {
-            await suspendIfNeeded()
-        }
         return .rest(.live(.running), ())
     }
 
