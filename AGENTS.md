@@ -73,13 +73,13 @@ A guard is anything that can turn a run red: a test, a lint check, a hook, a CI 
 | | What reaches a user without it |
 |---|---|
 | **S3** | Harm that can't be undone: a disk image, save file or user's file lost or corrupted; a consent or sandbox boundary crossed |
-| **S2** | A contract outside the code broken — wire bytes, an on-disk format, a scripting name, OS behavior Kernova relies on — or a feature failing with no way around it |
+| **S2** | A contract outside the code broken — wire bytes, an on-disk format, a scripting name, OS behavior Kernova relies on; a feature failing with no way around it; the app crashing or hanging; settings the user has to enter again |
 | **S1** | A feature misbehaving that an obvious action recovers; a wrong state on screen |
 | **S0** | Nothing: wording, layout, how code is spelled or where it lives, the behavior of a tool, a fixture or a test helper, a red run |
 
 | | Who notices without it |
 |---|---|
-| **D3** | No one before the harm: the result is silently wrong |
+| **D3** | No one before the harm: the result is silently wrong, however rarely |
 | **D2** | Only a rare ordering, an OS or hardware the developer's Mac is not, or a path few take |
 | **D1** | Whoever first uses the feature, or a guard that stays |
 | **D0** | The compiler, or the thing failing loudly when next run |
@@ -87,7 +87,7 @@ A guard is anything that can turn a run red: a test, a lint check, a hook, a CI 
 **A guard stays when S + D is 4 or more and neither is 0**; one that rates out is deleted, new or old, passing or failing. A doubt between two ratings takes the lower. A tool that deletes or trashes files is rated as what ships.
 
 - **One guard per defect, the cheapest that catches it:** a type the compiler checks, then a property or simulation, then an example.
-- **Machinery counts against the guard it serves.** A guard at exactly 4 that needs a host process, a fixture harness, a cache or a CI job of its own goes, and takes the machinery with it.
+- **Machinery goes with its last guard.** A guard at exactly 4 that is the only thing a host process, a fixture harness, a cache or a CI job still serves goes, and takes it along; machinery that other kept guards need counts against none of them.
 
 ### What makes a kept test able to fail
 
