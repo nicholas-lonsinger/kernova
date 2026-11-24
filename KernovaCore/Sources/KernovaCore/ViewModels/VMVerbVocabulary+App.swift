@@ -3,9 +3,11 @@ import KernovaCommandModel
 
 extension VMVerbVocabulary {
     /// How the app's own windows and alerts name a verb: the base title of
-    /// the one Virtual Machine or File menu command that runs it
+    /// the Virtual Machine or File menu command that runs it
     /// (``AppCommandTitle``) — the base, because the menu retitles the start
-    /// and stop slots for a VM whose state calls for another word.
+    /// and stop slots for a VM whose state calls for another word. Clone,
+    /// which the menu offers as one command per outcome, is named by the word
+    /// both open with, the toolbar's title for it.
     ///
     /// A verb the app runs only through controls titled in context — a
     /// snapshot row's actions, a settings panel's buttons, the USB Device
