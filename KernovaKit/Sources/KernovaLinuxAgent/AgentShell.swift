@@ -116,7 +116,11 @@ enum AgentShell {
             """)
         let bus: DBusBusConnection
         do throws(DBusConnectError) {
-            bus = try DBusBusConnection(bus: .system)
+            // The session state is read over this connection alone, so once it ends the process exits and its
+            // unit's restart connects and reads again.
+            bus = try DBusBusConnection(bus: .system) { reason in
+                fail("The \(name) peer's system bus connection ended: \(String(describing: reason), privacy: .public)")
+            }
         } catch {
             fail("The \(name) peer cannot reach the system bus: \(String(describing: error), privacy: .public)")
         }
@@ -143,26 +147,15 @@ enum AgentShell {
 
         // Its own queue: a logind read can block for the bus's reply timeout, and SIGTERM must not wait on it.
         let watchQueue = DispatchQueue(label: "app.kernova.agent.logind")
-        let hasState = Locked(false)
         let apply: @Sendable (Result<PeerSessionState?, DBusServiceError>) -> Void = { result in
             switch result {
             case .success(let state):
-                hasState.withLock { $0 = true }
                 logState(state, role: role)
                 runtime.setPeerState(state)
-            case .failure(let error) where !hasState.withLock({ $0 }):
-                // Nothing to keep, and a change that would reread may never come — a headless guest's
-                // seat0 can stay as it is — so the process exits and its unit's restart reads again.
-                fail(
-                    "The \(name) peer cannot read its first session state: \(String(describing: error), privacy: .public)"
-                )
             case .failure(let error):
-                logger.log(
-                    .error,
-                    """
-                    The \(name, privacy: .public) peer cannot read its session state; it keeps the last one \
-                    until logind's next change: \(String(describing: error), privacy: .public)
-                    """)
+                // A change that would reread may never come — a headless guest's seat0 can stay as it is — so
+                // rather than report a state it could not read, the process exits and its unit's restart reads again.
+                fail("The \(name) peer cannot read its session state: \(String(describing: error), privacy: .public)")
             }
         }
         let watcher: LogindPeerStateWatcher

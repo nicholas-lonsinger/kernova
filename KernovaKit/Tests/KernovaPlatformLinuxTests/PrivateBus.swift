@@ -55,9 +55,9 @@ final class PrivateBus {
         }
     }
 
-    /// A connection to this bus.
+    /// A connection to this bus. Its end, at the latest when the daemon is killed, calls nothing.
     func connect(onMethodCall: (@Sendable (DBusReceivedMessage) -> DBusMessage?)? = nil) throws -> DBusBusConnection {
-        try DBusBusConnection(address: address, onMethodCall: onMethodCall)
+        try DBusBusConnection(address: address, onMethodCall: onMethodCall) { _ in }
     }
 }
 
