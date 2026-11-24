@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 
 /// The home directory the user sees, which under the App Sandbox is not the
 /// one the process has.
@@ -24,5 +25,21 @@ package enum UserHome {
     /// The real home directory.
     static var url: URL {
         URL(fileURLWithPath: path, isDirectory: true)
+    }
+
+    /// `path` as a full path, a leading `~` read as the real home directory,
+    /// for a door whose client names a path with no working directory to read
+    /// a relative one against: a shortcut, a script.
+    ///
+    /// - Throws: ``CommandError/invalidArgument(_:)`` for any other path that
+    ///   does not start at `/`, worded for `item`, what the path names.
+    package static func fullPath(_ path: String, of item: String) throws -> String {
+        if path == "~" { return Self.path }
+        if path.hasPrefix("~/") { return Self.path + path.dropFirst() }
+        guard path.hasPrefix("/") else {
+            throw CommandError.invalidArgument(
+                "\(item) is named by its full path, which starts with \u{201C}/\u{201D} or \u{201C}~/\u{201D}.")
+        }
+        return path
     }
 }

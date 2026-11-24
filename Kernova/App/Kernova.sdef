@@ -5,19 +5,45 @@
 
 	<suite name="Standard Suite" code="????" description="Common classes and commands for all applications.">
 
-		<xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef" xpointer="xpointer(/dictionary/suite/node()[not(self::command and (@name = 'delete' or @name = 'make'))])"/>
+		<xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef" xpointer="xpointer(/dictionary/suite/node()[not(self::command and (@name = 'delete' or @name = 'duplicate' or @name = 'make'))])"/>
 
-		<!-- The Standard Suite's delete, taking a list of references too and the consent a snapshot's delete refuses without, with the class that deletes a snapshot by what its reference evaluates to. -->
-		<command name="delete" code="coredelo" description="Delete an object.">
+		<!-- The Standard Suite's delete, taking a list of references too, the consent deleting a virtual machine or a snapshot refuses without, and a virtual machine's delete past the Trash, with the class that deletes both by what their references evaluate to. -->
+		<command name="delete" code="coredelo" description="Delete an object. A virtual machine&#8217;s bundle moves to the Trash, and files it uses outside its bundle stay where they are. A delete naming several stops at the first one refused, leaving those before it deleted.">
 			<cocoa class="VMDeleteScriptCommand"/>
 			<access-group identifier="*"/>
 			<direct-parameter description="The object(s) to delete.">
 				<type type="specifier"/>
 				<type type="specifier" list="yes"/>
 			</direct-parameter>
-			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent deleting a snapshot refuses without.">
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent deleting a virtual machine or a snapshot refuses without.">
 				<cocoa key="Confirmation"/>
 			</parameter>
+			<parameter name="immediate deletion" code="KpIm" type="boolean" optional="yes" description="Delete a virtual machine&#8217;s bundle immediately, bypassing the Trash.">
+				<cocoa key="ImmediateDeletion"/>
+			</parameter>
+		</command>
+
+		<!-- The Standard Suite's duplicate, taking what a clone is of its source and whether to wait for its copy, with the class that clones a virtual machine and answers the clone. -->
+		<command name="duplicate" code="coreclon" description="Copy an object. A virtual machine&#8217;s copy is a new virtual machine in the library, answered once its copy has finished; a reference to several answers a list, and stops at the first one refused. AppleScript stops waiting for an answer after two minutes unless a with timeout block gives it longer, and the copy goes on in Kernova.">
+			<cocoa class="VMDuplicateScriptCommand"/>
+			<access-group identifier="*"/>
+			<direct-parameter type="specifier" requires-access="r" description="The object(s) to copy."/>
+			<parameter name="to" code="insh" type="location specifier" description="The location for the new copy or copies." optional="yes">
+				<cocoa key="ToLocation"/>
+			</parameter>
+			<parameter name="with properties" code="prdt" type="record" description="Properties to set in the new copy or copies right away." optional="yes">
+				<cocoa key="WithProperties"/>
+			</parameter>
+			<parameter name="as" code="KpCo" type="clone outcome" optional="yes" description="What a virtual machine&#8217;s clone is of its source; without it, Clone as in Kernova&#8217;s Advanced settings decides.">
+				<cocoa key="CloneOutcome"/>
+			</parameter>
+			<parameter name="waiting" code="KpWt" type="boolean" optional="yes" description="Wait for a virtual machine&#8217;s copy to finish before answering, as by default; without waiting answers the new virtual machine while its copy is still being written.">
+				<cocoa key="Waiting"/>
+			</parameter>
+			<result description="The new virtual machine, or a list of them for a reference to several.">
+				<type type="specifier"/>
+				<type type="specifier" list="yes"/>
+			</result>
 		</command>
 
 		<!-- The Standard Suite's make, with the class that takes a snapshot for one made at a virtual machine. -->
@@ -79,6 +105,12 @@
 			<enumerator name="host only" code="KnHo" description="The guests reach this Mac and each other, nothing else."/>
 		</enumeration>
 
+		<enumeration name="VM network mode" code="KvNE" description="The mode of the network a virtual machine joins. A mode spelled like a network kind is that kind&#8217;s constant.">
+			<enumerator name="nat" code="KnSh" description="Outbound access through this Mac, on a private subnet other machines on your network can&#8217;t reach."/>
+			<enumerator name="bridged" code="KnBr" description="Attached to a network one of this Mac&#8217;s interfaces is on."/>
+			<enumerator name="host only" code="KnHo" description="A private network shared with this Mac and other host only guests, with no access to your network or the internet."/>
+		</enumeration>
+
 		<enumeration name="storage disk kind" code="KvDK" description="The bus the guest sees a storage disk on.">
 			<enumerator name="virtio" code="KdVi" description="A virtio block device."/>
 			<enumerator name="USB mass storage" code="KdUs" description="A USB mass storage device."/>
@@ -87,6 +119,11 @@
 		<enumeration name="snapshot kind" code="KvSK" description="What a snapshot captured.">
 			<enumerator name="warm" code="KkWa" description="Its disks and settings, and the guest&#8217;s memory."/>
 			<enumerator name="cold" code="KkCo" description="Its disks and settings, without the guest&#8217;s memory."/>
+		</enumeration>
+
+		<enumeration name="clone outcome" code="KvCO" description="What a virtual machine&#8217;s clone is of its source.">
+			<enumerator name="new machine" code="KcNm" description="A virtual machine of its own: a new machine identity and MAC address, so both can run at once, with no snapshots and Ephemeral Mode off. Not offered for a guest running macOS 12 or earlier."/>
+			<enumerator name="exact copy" code="KcEx" description="The source&#8217;s machine identity and MAC address, its snapshots, Ephemeral Mode and display preferences. The two run at once only when one is started anyway."/>
 		</enumeration>
 
 		<class-extension extends="application" description="Kernova’s top-level scripting object.">
@@ -114,7 +151,7 @@
 			<property name="id" code="ID  " type="text" access="r" description="Its stable identifier.">
 				<cocoa key="uniqueID"/>
 			</property>
-			<property name="name" code="pnam" type="text" access="r" description="Its display name, which is not unique.">
+			<property name="name" code="pnam" type="text" description="Its display name, which another virtual machine can share. Setting it renames it.">
 				<cocoa key="name"/>
 			</property>
 			<property name="state" code="KvSt" type="VM state" access="r" description="What it is doing right now.">
@@ -126,22 +163,22 @@
 			<property name="guest operating system" code="KvOS" type="text" access="r" description="Which guest it runs.">
 				<cocoa key="guestOperatingSystem"/>
 			</property>
-			<property name="processor count" code="KvCP" type="integer" access="r" description="Virtual CPU cores the guest is configured with.">
+			<property name="processor count" code="KvCP" type="integer" access="r" description="Virtual CPU cores the guest is configured with. Its setting &quot;cpus&quot; changes it.">
 				<cocoa key="processorCount"/>
 			</property>
-			<property name="memory" code="KvMm" type="real" access="r" description="Guest memory in gigabytes.">
+			<property name="memory" code="KvMm" type="real" access="r" description="Guest memory in gigabytes. Its setting &quot;memory&quot; changes it.">
 				<cocoa key="memory"/>
 			</property>
-			<property name="network mode" code="KvNm" type="text" description="The network it joins, or missing value when networking is off. Set it to nat, bridged or hostOnly, or to none to turn networking off. On a virtual machine in Ephemeral Mode, a change goes back to its baseline snapshot at the next shutdown.">
+			<property name="network mode" code="KvNm" type="VM network mode" access="r" description="The mode of the network it joins, or missing value when networking is off. Its setting &quot;network.mode&quot; changes it.">
 				<cocoa key="networkMode"/>
 			</property>
-			<property name="network membership" code="KvMb" type="text" description="Which network of its mode it joins: common, the one every other virtual machine in the mode joins, isolated, a network of its own, or the identifier of a named network; missing value when it joins no NAT or Host Only network. Set it to common, isolated, or a named network&#8217;s name or identifier. On a virtual machine in Ephemeral Mode, a change goes back to its baseline snapshot at the next shutdown.">
+			<property name="network membership" code="KvMb" type="text" access="r" description="Which network of its mode it joins: &quot;common&quot;, the one every other virtual machine in the mode joins, &quot;isolated&quot;, a network of its own, or the identifier of a named network; missing value when it joins no NAT or Host Only network. Its setting &quot;network.membership&quot; changes it.">
 				<cocoa key="networkMembership"/>
 			</property>
 			<property name="network name" code="KvNa" type="text" access="r" description="The name of the named network it joins, &#8220;Network List Can&#8217;t Be Read&#8221; while this library&#8217;s list of networks can&#8217;t be read, or missing value when it joins none or one this library does not list.">
 				<cocoa key="networkName"/>
 			</property>
-			<property name="MAC address" code="KvMA" type="text" description="The address the guest presents on that network. Set it to six colon-separated hex pairs, or to new for a fresh address. On a virtual machine in Ephemeral Mode, a change goes back to its baseline snapshot at the next shutdown.">
+			<property name="MAC address" code="KvMA" type="text" access="r" description="The address the guest presents on that network. Its setting &quot;network.mac&quot; changes it.">
 				<cocoa key="macAddress"/>
 			</property>
 			<property name="IP address" code="KvIP" type="text" access="r" description="The address Kernova last saw the guest use on its network, or missing value when it has seen none.">
@@ -159,7 +196,7 @@
 			<property name="saved state version" code="KvSb" type="text" access="r" description="The Kernova version and build that wrote its saved state, such as 0.10.0 (412), or missing value when the bundle holds none or one saved before Kernova recorded its version.">
 				<cocoa key="savedStateVersion"/>
 			</property>
-			<property name="ephemeral" code="KvEp" type="boolean" access="r" description="Whether it returns to a baseline snapshot every time it shuts down. A restart keeps its session.">
+			<property name="ephemeral" code="KvEp" type="boolean" access="r" description="Whether it returns to a baseline snapshot every time it shuts down. A restart keeps its session. Its settings &quot;ephemeral&quot; and &quot;ephemeral.baseline&quot; change it.">
 				<cocoa key="ephemeral"/>
 			</property>
 			<property name="snapshot count" code="KvSc" type="integer" access="r" description="How many named restore points the bundle holds.">
@@ -203,6 +240,26 @@
 				<accessor style="range"/>
 				<accessor style="test"/>
 			</element>
+			<element type="setting" access="r" description="Its settings, named by key: every setting its guest has, in one order for every virtual machine. A setting its guest doesn&#8217;t have isn&#8217;t listed, and naming one is refused.">
+				<cocoa key="settings"/>
+				<accessor style="index"/>
+				<accessor style="name"/>
+				<accessor style="range"/>
+				<accessor style="test"/>
+			</element>
+		</class>
+
+		<class name="setting" code="KvCf" plural="settings" description="One of a virtual machine&#8217;s settings, such as setting &quot;cpus&quot; or setting &quot;display.width&quot;. On a virtual machine in Ephemeral Mode, a change to most of them goes back to its baseline snapshot at the next shutdown.">
+			<cocoa class="VMSettingScriptObject"/>
+			<property name="name" code="pnam" type="text" access="r" description="Its key.">
+				<cocoa key="name"/>
+			</property>
+			<property name="value" code="valL" type="any" description="What it holds, of the type the setting takes: true or false; an integer; a real number of gigabytes, for &quot;memory&quot;; nat, bridged or host only, or missing value for no network, for &quot;network.mode&quot;; or text. It compares as that type does, in a whose test too, except that a whose test is false for two values of different types, which an if may first convert, and for true, false or a constant ordered, which an if stops at: value of setting &quot;cpus&quot; &lt; &quot;5&quot; is true in an if and false in a whose test. A whose test also ignores case in text within considering case. A value read and set back changes nothing, and any setting also takes text spelled as its summary spells its values. Setting it is refused for a change that asks for consent first, such as turning on Ephemeral Mode; change &#8230; with confirmation makes that change.">
+				<cocoa key="value"/>
+			</property>
+			<property name="summary" code="KvSy" type="text" access="r" description="What it holds and the values it takes, in one line.">
+				<cocoa key="summary"/>
+			</property>
 		</class>
 
 		<class name="snapshot" code="KvSn" plural="snapshots" description="A virtual machine&#8217;s named restore point. Take one with make new snapshot at a virtual machine, with properties {name:&#8230;, notes:&#8230;}; with no name, Kernova names it Snapshot, then Snapshot 2, and so on. Its sizes are measured from its files each time a script reads them.">
@@ -280,7 +337,7 @@
 			</property>
 		</class>
 
-		<class name="network" code="KvNw" plural="networks" description="A named network: the virtual machines on it reach each other, and no other guest. Make one with make new network with properties {name:…, kind:…}, a NAT network unless kind names another. Deleting one is refused while a virtual machine is set to join it; setting that machine's network membership to isolated moves it to a network of its own.">
+		<class name="network" code="KvNw" plural="networks" description="A named network: the virtual machines on it reach each other, and no other guest. Make one with make new network with properties {name:…, kind:…}, a NAT network unless kind names another. Deleting one is refused while a virtual machine is set to join it; changing that machine&#8217;s setting &quot;network.membership&quot; to &quot;isolated&quot; moves it to a network of its own.">
 			<cocoa class="VMNetworkScriptObject"/>
 			<property name="id" code="ID  " type="text" access="r" description="Its stable identifier, which a virtual machine's network membership names.">
 				<cocoa key="uniqueID"/>
@@ -386,6 +443,55 @@
 				<type type="snapshot" list="yes"/>
 			</direct-parameter>
 			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent a revert refuses without, running the virtual machine beside an active one with the same machine ID included, where Kernova&#8217;s Settings allow starting one anyway.">
+				<cocoa key="Confirmation"/>
+			</parameter>
+		</command>
+
+		<command name="change" code="KrnvChng" description="Change one or more settings, as set value of setting does, with the consent set can&#8217;t give: with confirmation. The settings of one virtual machine change together or not at all; those of several virtual machines change one virtual machine at a time, stopping at the first one refused and leaving those before it changed.">
+			<cocoa class="VMChangeScriptCommand"/>
+			<direct-parameter description="The setting to change, or a list of them.">
+				<type type="setting"/>
+				<type type="setting" list="yes"/>
+			</direct-parameter>
+			<parameter name="to" code="data" type="any" description="The value, as a setting&#8217;s value takes it, or a list of them, one for each setting in the order named.">
+				<cocoa key="Value"/>
+			</parameter>
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent a change refuses without: turning on Ephemeral Mode or changing its baseline, and turning on automatic clipboard passthrough.">
+				<cocoa key="Confirmation"/>
+			</parameter>
+			<result type="any" description="The value each setting holds afterwards, or a list of them for several, which can differ from the one given: network.mac set to &quot;new&quot; answers the address it got."/>
+		</command>
+
+		<command name="cancel guest setup" code="KrnvCnGs" description="Interrupt the download, verification or install a virtual machine&#8217;s first start is running. The virtual machine and its bundle are kept, and its next start begins its guest setup again.">
+			<cocoa class="VMCancelGuestSetupScriptCommand"/>
+			<direct-parameter description="The virtual machine whose guest setup to cancel, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent cancelling a guest setup refuses without.">
+				<cocoa key="Confirmation"/>
+			</parameter>
+		</command>
+
+		<command name="import" code="KrnvImpt" description="Copy a virtual machine bundle into the library, leaving the original where it is, and answer the imported virtual machine once its copy has finished; a bundle already in the library answers the virtual machine it is. Kernova asks for a bundle it can&#8217;t already read in an open panel, which comes in front once the script has told Kernova to activate. AppleScript stops waiting for an answer after two minutes unless a with timeout block gives it longer, and the import goes on in Kernova.">
+			<cocoa class="VMImportScriptCommand"/>
+			<direct-parameter description="The bundle, as a file or as its full path, starting with / or ~/.">
+				<type type="file"/>
+				<type type="text"/>
+			</direct-parameter>
+			<parameter name="waiting" code="KpWt" type="boolean" optional="yes" description="Wait for the copy to finish before answering, as by default; without waiting answers the new virtual machine while its copy is still being written.">
+				<cocoa key="Waiting"/>
+			</parameter>
+			<result type="specifier" description="The imported virtual machine."/>
+		</command>
+
+		<command name="cancel copy" code="KrnvCnCp" description="Stop a new virtual machine that a duplicate, import or create is still writing, one whose state is preparing, and remove what it has written. A virtual machine whose copy has finished refuses, as does the one a clone is copied from.">
+			<cocoa class="VMCancelCopyScriptCommand"/>
+			<direct-parameter description="The virtual machine still being written, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent cancelling a copy refuses without.">
 				<cocoa key="Confirmation"/>
 			</parameter>
 		</command>

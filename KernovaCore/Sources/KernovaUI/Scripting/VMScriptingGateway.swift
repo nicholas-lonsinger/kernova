@@ -16,9 +16,10 @@ import KernovaLogging
 /// disks or a snapshot's size, which are measured from their files off the
 /// main thread — is suspended, and answered from a later dispatch of the same
 /// event to this process, once what it read is in hand (``answer(_:)``). A
-/// verb whose core call awaits — a Kernova command, and a `make` or `delete`
-/// of a snapshot — runs on what such a dispatch addressed, once it returns;
-/// its own dispatch only suspends it.
+/// verb whose core call awaits — a Kernova command, a `make` of a snapshot, a
+/// `delete` of a virtual machine or a snapshot, and a `duplicate` of a virtual
+/// machine — runs on what such a dispatch addressed, once it returns; its own
+/// dispatch only suspends it.
 /// **Addressing:** a script names a VM the way a person does, so this addresses
 /// VMs by ``VMSelector/name(_:)`` as readily as by identifier and the ambiguity
 /// refusal can fire here — on a verb and on a read alike.
@@ -81,19 +82,26 @@ final class VMScriptingGateway {
         return commands.list(.all).compactMap { object(for: $0.id) }
     }
 
-    /// The one VM called `name`, resolved by the core — or nothing, with the
-    /// command asking deferred, until the library has landed.
+    /// The one VM called `name`, resolved by the core — among `network`'s
+    /// members when it is given — or nothing, with the command asking
+    /// deferred, until the library has landed.
     ///
     /// Cocoa's own name lookup answers with the first match, which for two VMs
-    /// sharing a display name is whichever the library happens to list first.
-    /// The core refuses that name instead, with the candidates, and a name no
-    /// VM answers to in its own words too — both recorded on the command being
-    /// answered, so the script reads the refusal every other door shows rather
-    /// than a bare "can't get".
-    func virtualMachine(named name: String) -> VMScriptObject? {
+    /// sharing a display name is whichever the container happens to list
+    /// first. The core refuses that name instead, with the candidates, and a
+    /// name no VM answers to in its own words too — both recorded on the
+    /// command being answered, so the script reads the refusal every other door
+    /// shows rather than a bare "can't get".
+    func virtualMachine(named name: String, on network: NetworkSummary? = nil) -> VMScriptObject? {
         guard !deferUntilLanded() else { return nil }
         do {
-            return VMScriptObject(try commands.info(.name(name)), gateway: self)
+            return VMScriptObject(
+                try commands.info(.name(name), among: network.map { Set($0.members.map(\.id)) }), gateway: self)
+        } catch CommandError.notFound where network != nil {
+            answering?.refuse(
+                CommandError.itemNotFoundOnHost(
+                    item: "virtual machine named \u{201C}\(name)\u{201D} on \u{201C}\(network?.name ?? "")\u{201D}"))
+            return nil
         } catch let refusal as CommandError {
             answering?.refuse(refusal)
             return nil
@@ -218,8 +226,9 @@ final class VMScriptingGateway {
     }
 
     /// A verb a dispatch reached whose core call awaits, run once the
-    /// dispatch returns; it answers what the command resumes with.
-    typealias Work = @MainActor () async throws -> NSScriptObjectSpecifier?
+    /// dispatch returns; it answers what the command resumes with — a
+    /// reference, a list of them, or nothing.
+    typealias Work = @MainActor () async throws -> Any?
 
     /// One suspended command's evaluation: the event every dispatch of it
     /// sends again, what was measured for it, what a dispatch reached
@@ -506,31 +515,20 @@ final class VMScriptingGateway {
         runtime.resume(command, result)
     }
 
-    /// Runs `body` once the dispatch reaching it returns — a verb Cocoa's own
-    /// command reached inside its specifier evaluation, where nothing can
-    /// await — logging a refusal of it with `verb` and `vm`.
+    /// Runs `work` once the dispatch reaching it returns — a verb Cocoa's own
+    /// command reached, `verb`, where nothing can await.
     ///
     /// Outside a dispatch of this gateway's own, suspends the command being
     /// answered instead, which such a dispatch then reaches it in. Records
     /// nothing once that command already carries a refusal, as
     /// ``run(_:on:_:)`` runs nothing.
-    private func afterDispatch(_ verb: VMVerb, on vm: UUID, _ body: @escaping Work) {
+    private func afterDispatch(_ verb: VMVerb, _ work: @escaping Work) {
         guard let evaluating else {
             if let command = answering { suspend(command, because: "reached \(verb.rawValue)") }
             return
         }
         if let answering, answering.scriptErrorNumber != 0 { return }
-        evaluating.work.append {
-            do {
-                return try await body()
-            } catch let refusal as CommandError {
-                Self.logger.log(
-                    .notice,
-                    "Script \(verb.rawValue, privacy: .public) refused for \(vm.uuidString, privacy: .public): \(refusal.message(in: .log), privacy: .public)"
-                )
-                throw refusal
-            }
-        }
+        evaluating.work.append(work)
     }
 
     // MARK: - Verbs
@@ -556,33 +554,50 @@ final class VMScriptingGateway {
     func virtualMachines(addressedBy verb: VMScriptCommand) -> [VMSelector]? {
         addressed(
             by: verb, unnamed: "Name the virtual machine to \(verb.commandDescription.commandName).",
-            VMScriptSelector.selectors(addressing:))
+            { try VMScriptSelector.selectors(addressing: $0) })
     }
 
     /// The snapshots `verb` addresses, as ``virtualMachines(addressedBy:)``
     /// reads VMs — each evaluated, so a reference names the snapshot its VM
     /// lists under it as the dispatch reads it.
     func snapshots(addressedBy verb: VMScriptCommand, unnamed: String) -> [VMSnapshotAddress]? {
-        addressed(by: verb, unnamed: unnamed, VMScriptSelector.snapshots(addressing:))
+        addressed(by: verb, unnamed: unnamed, { try VMScriptSelector.snapshots(addressing: $0) })
+    }
+
+    /// The settings `verb` addresses, each evaluated, and whether it
+    /// addresses them as a list (``VMScriptSelector/settings(addressing:)``),
+    /// or `nil` with the refusal recorded on it.
+    func settings(addressedBy verb: VMScriptCommand) -> (settings: [VMSettingAddress], isList: Bool)? {
+        addressed(
+            by: verb, unnamed: "Name the setting to \(verb.commandDescription.commandName).",
+            { try VMScriptSelector.settings(addressing: $0) })
     }
 
     /// What `read` makes of what `verb` addresses, or `nil` with the refusal
     /// recorded on it — `unnamed` for one that addresses nothing.
     private func addressed<Addressed>(
-        by verb: VMScriptCommand, unnamed: String, _ read: (Any) throws -> [Addressed]
-    ) -> [Addressed]? {
+        by verb: VMScriptCommand, unnamed: String, _ read: (Any) throws -> Addressed
+    ) -> Addressed? {
         guard let addressed = verb.directParameter ?? verb.receiversSpecifier else {
             verb.refuse(Int(errAEWrongNumberArgs), unnamed)
             return nil
         }
+        return reading(addressed, for: verb) { try read(addressed) }
+    }
+
+    /// What `read` makes of `addressed`, what `command` addresses, or `nil`
+    /// with the reason it names nothing recorded on `command`.
+    private func reading<Read>(
+        _ addressed: Any, for command: NSScriptCommand, _ read: () throws -> Read
+    ) -> Read? {
         do {
-            return try read(addressed)
+            return try read()
         } catch let failure as VMScriptEvaluationFailure {
-            failure.record(on: verb, addressing: addressed)
+            failure.record(on: command, addressing: addressed)
         } catch let refusal as CommandError {
-            verb.refuse(refusal)
+            command.refuse(refusal)
         } catch {
-            verb.refuse(Int(errAEEventFailed), error.localizedDescription)
+            command.refuse(Int(errAEEventFailed), error.localizedDescription)
         }
         return nil
     }
@@ -650,17 +665,234 @@ final class VMScriptingGateway {
         }
     }
 
-    // MARK: - Configuration
-
-    /// Sets `key` of the VM `id` identifies to `value` — a script's `set` of a
-    /// writable `virtual machine` property.
-    ///
-    /// A script's `set` carries no `with confirmation`, so nothing it writes
-    /// is given consent.
-    func setConfiguration(_ id: UUID, key: VMConfigurationKey, value: String) {
-        run(.setConfiguration, on: id) {
-            try commands.setConfiguration(.id(id), assignments: [key.assigning(value)], consent: .none)
+    /// Interrupts the guest setup each VM is running, with `confirmation` as
+    /// the consent the cancel refuses without.
+    func cancelGuestSetup(_ selectors: [VMSelector], confirmation: Bool) async throws {
+        try await perform(.cancelGuestSetup, on: selectors) { selector in
+            try self.commands.cancelGuestSetup(selector, consent: Self.consent(confirmation))
         }
+    }
+
+    // MARK: - Library
+
+    /// Stops the copy writing each VM, with `confirmation` as the consent the
+    /// cancel refuses without.
+    func cancelCopy(_ selectors: [VMSelector], confirmation: Bool) async throws {
+        try await perform(.cancelPreparing, on: selectors) { selector in
+            try self.commands.cancelPreparing(selector, consent: Self.consent(confirmation))
+        }
+    }
+
+    /// Copies the bundle at `path` into the library — a script's `import` —
+    /// answering the VM it became, settled when `waiting`.
+    func importVM(atPath path: String, waiting: Bool) async throws -> NSScriptObjectSpecifier? {
+        try await perform(.importVM, on: [path], naming: { $0 }) { path in
+            VMScriptObject.specifier(for: try await self.commands.importVM(atPath: path, waitForOutcome: waiting).id)
+        }.first ?? nil
+    }
+
+    /// Renames the VM `id` identifies — a script's `set name of virtual
+    /// machine`.
+    func rename(_ id: UUID, to newName: String) {
+        run(.rename, on: id) { try commands.rename(.id(id), to: newName) }
+    }
+
+    /// Clones each VM `specifier` names — a script's `duplicate` of it,
+    /// evaluated against `containers`, which Cocoa evaluated apart from it —
+    /// once the dispatch returns, as `outcome`, settled when `waiting`; or
+    /// records on `duplicate` why `specifier` names none.
+    ///
+    /// The `duplicate` answers a reference to the clone, or a list of them
+    /// for a specifier Cocoa evaluates to a list
+    /// (``VMScriptSelector/virtualMachines(addressing:in:)``), as Cocoa's own
+    /// duplicate answers.
+    func duplicate(
+        _ specifier: NSScriptObjectSpecifier, in containers: Any?, for duplicate: NSScriptCommand,
+        outcome: CloneOutcome?, waiting: Bool
+    ) {
+        guard
+            let vms = reading(
+                specifier, for: duplicate,
+                { try VMScriptSelector.virtualMachines(addressing: specifier, in: containers) })
+        else { return }
+        afterDispatch(.clone) {
+            let clones = try await self.perform(.clone, on: vms.selectors) { selector in
+                VMScriptObject.specifier(
+                    for: try await self.commands.clone(selector, outcome: outcome, waitForOutcome: waiting).id)
+            }.compactMap(\.self)
+            return vms.isList ? clones : clones.first
+        }
+    }
+
+    /// Deletes what `addressed` names — a script's `delete` of one reference,
+    /// evaluated against `containers` where Cocoa evaluated them apart from
+    /// it, or of a list of them — once the dispatch returns, with `delete`'s
+    /// `with confirmation` as the consent it refuses without; or records on
+    /// `delete` why `addressed` names nothing it deletes.
+    ///
+    /// What the reference names, or the list's first item, decides whether it
+    /// deletes virtual machines or snapshots, and a list naming anything else
+    /// is refused whole (``VMScriptSelector``). Each is evaluated as every
+    /// other verb on it is, never by the index Cocoa's own delete computes,
+    /// which named the first of two snapshots sharing a name (observed on
+    /// macOS 27).
+    func delete(_ addressed: Any, in containers: Any?, for delete: NSScriptCommand) {
+        let confirmation = delete.arguments?[VMScriptCommand.confirmationKey] as? Bool ?? false
+        let immediately = delete.arguments?[VMDeleteScriptCommand.immediateDeletionKey] as? Bool ?? false
+        guard (addressed as? [Any])?.isEmpty != true else { return }
+        switch VMScriptSelector.key(addressedBy: addressed) {
+        case VMScriptingRoot.virtualMachinesKey:
+            guard
+                let vms = reading(
+                    addressed, for: delete, { try VMScriptSelector.selectors(addressing: addressed, in: containers) })
+            else { return }
+            afterDispatch(.delete) {
+                // The files a VM uses outside its bundle are the app's own
+                // sheet's to offer: it is the one surface that shows the user
+                // which they are.
+                try await self.perform(.delete, on: vms) { selector in
+                    try await self.commands.delete(
+                        selector, permanently: immediately, alsoRemoving: [], consent: Self.consent(confirmation))
+                }
+                return nil
+            }
+        case VMScriptObject.snapshotsKey:
+            guard
+                let snapshots = reading(
+                    addressed, for: delete, { try VMScriptSelector.snapshots(addressing: addressed, in: containers) })
+            else { return }
+            guard !immediately else {
+                delete.refuse(
+                    CommandError.invalidArgument(
+                        "A snapshot\u{2019}s files move to the Trash; immediate deletion deletes a virtual machine."))
+                return
+            }
+            afterDispatch(.deleteSnapshot) {
+                try await self.perform(.deleteSnapshot, on: snapshots, naming: \.snapshot.uuidString) { snapshot in
+                    try await self.commands.deleteSnapshot(
+                        .id(snapshot.vm), snapshot: snapshot.snapshot, consent: Self.consent(confirmation))
+                }
+                return nil
+            }
+        default:
+            delete.refuse(
+                CommandError.invalidArgument(
+                    "A list here names virtual machines, or snapshots; item 1 is neither."))
+        }
+    }
+
+    // MARK: - Settings
+
+    /// The settings of the VM `vm` identifies that its guest has, as
+    /// ``VMCommandCore/configuration(_:keys:)`` reads them — none, with the
+    /// refusal recorded on the command being answered, when the VM can't be
+    /// read.
+    func settings(of vm: UUID) -> [VMSettingScriptObject] {
+        guard let entries = answeringRefusal({ try commands.configuration(.id(vm), keys: nil) }) else { return [] }
+        let descriptors = settingDescriptors()
+        return entries.compactMap { setting($0, of: vm, descriptors: descriptors) }
+    }
+
+    /// The setting `key` names among the VM's — or `nil`, with the core's
+    /// refusal recorded on the command being answered, for a key the keyspace
+    /// doesn't hold or the VM's guest doesn't have.
+    func setting(named key: String, of vm: UUID) -> VMSettingScriptObject? {
+        guard let entry = answeringRefusal({ try commands.configuration(.id(vm), key: key) }) else { return nil }
+        return setting(entry, of: vm, descriptors: settingDescriptors())
+    }
+
+    /// `entry`, one of the settings of the VM `vm` identifies, as its key's
+    /// descriptor in `descriptors` describes it.
+    ///
+    /// The core reads only keys of its keyspace, so a key without a
+    /// descriptor is a programming error, and is left out.
+    private func setting(
+        _ entry: ConfigurationEntry, of vm: UUID, descriptors: [String: ConfigurationKeyDescriptor]
+    ) -> VMSettingScriptObject? {
+        guard let descriptor = descriptors[entry.key] else {
+            Self.logger.log(.fault, "Setting \(entry.key, privacy: .public) is not in the keyspace")
+            assertionFailure("Setting \(entry.key) is not in the keyspace")
+            return nil
+        }
+        return VMSettingScriptObject(entry, describedBy: descriptor, of: vm, gateway: self)
+    }
+
+    /// The keyspace's descriptors, by key.
+    private func settingDescriptors() -> [String: ConfigurationKeyDescriptor] {
+        Dictionary(uniqueKeysWithValues: commands.configurationKeys().map { ($0.name, $0) })
+    }
+
+    /// Sets the setting `address` names to `value` — a script's `set value
+    /// of setting`, read as ``VMScriptSettingValue/text(of:for:)`` reads it.
+    ///
+    /// A `set` carries its value and nothing else, so it gives no consent: a
+    /// change that asks for it is refused, naming `change` as the way to give
+    /// it.
+    func setSetting(_ address: VMSettingAddress, to value: Any?) {
+        run(.setConfiguration, on: address.vm, consenting: Self.changeGivesConsent) {
+            let text = try VMScriptSettingValue.text(of: value, for: address)
+            try commands.setConfiguration(
+                .id(address.vm), assignments: [ConfigurationEntry(key: address.key, value: text)], consent: .none)
+        }
+    }
+
+    /// How a script gives the consent a `set` of a setting's value was
+    /// refused for.
+    ///
+    /// AppleScript compiles no parameter after a `set`'s value ("A
+    /// confirmation:true can't go after this …", observed on macOS 27).
+    nonisolated static let changeGivesConsent =
+        "`set` can\u{2019}t give consent; `change \u{2026} with confirmation` does it anyway."
+
+    /// Changes each of `settings` to the value at its place in `values`, in
+    /// the text the core takes — a script's `change` — with `confirmation` as
+    /// the consent a change refuses without, answering the value each holds
+    /// afterwards, typed as its kind is, in the order given.
+    ///
+    /// The settings of one VM are one write, all or none
+    /// (``VMCommandCore/setConfiguration(_:assignments:consent:)``); the VMs
+    /// are written in the order first named, and a refusal stops the rest.
+    func change(
+        _ settings: [VMSettingAddress], to values: [String], confirmation: Bool
+    ) async throws -> [VMScriptSettingValue] {
+        var writes: [SettingsWrite] = []
+        var places: [(write: Int, assignment: Int)] = []
+        for (setting, value) in zip(settings, values) {
+            let write =
+                writes.firstIndex { $0.vm == setting.vm }
+                ?? {
+                    writes.append(SettingsWrite(vm: setting.vm, assignments: []))
+                    return writes.count - 1
+                }()
+            places.append((write, writes[write].assignments.count))
+            writes[write].assignments.append(ConfigurationEntry(key: setting.key, value: value))
+        }
+        let held = try await perform(.setConfiguration, on: writes, naming: \.vm.uuidString) { write in
+            try self.commands.setConfiguration(
+                .id(write.vm), assignments: write.assignments, consent: Self.consent(confirmation))
+        }
+        return zip(settings, places).map { setting, place in
+            VMScriptSettingValue(VMSettingScriptObject.value(held[place.write][place.assignment], as: setting.kind))
+        }
+    }
+
+    /// The assignments one `change` makes to one VM.
+    private struct SettingsWrite: Sendable {
+        let vm: UUID
+        var assignments: [ConfigurationEntry]
+    }
+
+    /// What `read` answers, or `nil` with its refusal recorded on the command
+    /// being answered.
+    private func answeringRefusal<Read>(_ read: () throws -> Read) -> Read? {
+        do {
+            return try read()
+        } catch let refusal as CommandError {
+            answering?.refuse(refusal)
+        } catch {
+            answering?.refuse(Int(errAEEventFailed), error.localizedDescription)
+        }
+        return nil
     }
 
     // MARK: - Snapshots
@@ -700,64 +932,23 @@ final class VMScriptingGateway {
     /// The core's listing of the VM `vm` identifies, or `nil` with the refusal
     /// recorded on the command being answered.
     private func listedSnapshots(of vm: UUID) -> [SnapshotSummary]? {
-        do {
-            return try commands.snapshots(of: .id(vm))
-        } catch let refusal as CommandError {
-            answering?.refuse(refusal)
-        } catch {
-            answering?.refuse(Int(errAEEventFailed), error.localizedDescription)
-        }
-        return nil
+        answeringRefusal { try commands.snapshots(of: .id(vm)) }
     }
 
     /// Takes a snapshot of the VM `vm` identifies, called `name` and noted
     /// `notes` — a script's `make new snapshot at` it
     /// (``VMCreateScriptCommand``) — once the dispatch returns
-    /// (``afterDispatch(_:on:_:)``), answering the `make` with the snapshot
+    /// (``afterDispatch(_:_:)``), answering the `make` with the snapshot
     /// taken.
     ///
     /// No name is the name the app's own sheet proposes.
     func makeSnapshot(of vm: UUID, name: String?, notes: String?) {
-        afterDispatch(.takeSnapshot, on: vm) {
-            let taken = try await self.commands.takeSnapshot(
-                .id(vm), name: name ?? "", notes: notes ?? "", asEphemeralBaseline: false)
-            return VMSnapshotScriptObject.specifier(for: VMSnapshotAddress(vm: vm, snapshot: taken.id))
-        }
-    }
-
-    /// Deletes each snapshot `read` finds in `addressed` — a script's `delete`
-    /// of one snapshot reference, or of a list of them — once the dispatch
-    /// returns (``afterDispatch(_:on:_:)``), with `delete`'s
-    /// `with confirmation` as the consent it refuses without; or records on
-    /// `delete` why `addressed` names none.
-    ///
-    /// `read` evaluates as every other snapshot verb's reference is
-    /// (``VMScriptSelector/snapshots(addressing:)``), never by the index
-    /// Cocoa's own delete computes: that one names the first snapshot whose
-    /// name matches, of however many do (observed on macOS 27).
-    func deleteSnapshots(
-        _ addressed: Any, for delete: NSScriptCommand, reading read: () throws -> [VMSnapshotAddress]
-    ) {
-        let snapshots: [VMSnapshotAddress]
-        do {
-            snapshots = try read()
-        } catch let failure as VMScriptEvaluationFailure {
-            failure.record(on: delete, addressing: addressed)
-            return
-        } catch let refusal as CommandError {
-            delete.refuse(refusal)
-            return
-        } catch {
-            delete.refuse(Int(errAEEventFailed), error.localizedDescription)
-            return
-        }
-        let consent = Self.consent(delete.arguments?[VMScriptCommand.confirmationKey] as? Bool ?? false)
-        for snapshot in snapshots {
-            afterDispatch(.deleteSnapshot, on: snapshot.vm) {
-                try await self.commands.deleteSnapshot(
-                    .id(snapshot.vm), snapshot: snapshot.snapshot, consent: consent)
-                return nil
-            }
+        afterDispatch(.takeSnapshot) {
+            try await self.perform(.takeSnapshot, on: [vm], naming: \.uuidString) { vm in
+                let taken = try await self.commands.takeSnapshot(
+                    .id(vm), name: name ?? "", notes: notes ?? "", asEphemeralBaseline: false)
+                return VMSnapshotScriptObject.specifier(for: VMSnapshotAddress(vm: vm, snapshot: taken.id))
+            }.first ?? nil
         }
     }
 
@@ -797,13 +988,17 @@ final class VMScriptingGateway {
     // MARK: - Networks
 
     /// What a script that asks to make a virtual machine reads back.
-    nonisolated static let cannotMakeVirtualMachine = "A script can\u{2019}t make a virtual machine."
+    nonisolated static let cannotMakeVirtualMachine =
+        "A script can\u{2019}t make a virtual machine; duplicate one, or import a bundle."
 
     /// What a script that asks to make a storage disk reads back.
     nonisolated static let cannotMakeStorageDisk = "A script can\u{2019}t make a storage disk."
 
     /// What a script that asks to make a guest agent reads back.
     nonisolated static let cannotMakeGuestAgent = "A script can\u{2019}t make a guest agent."
+
+    /// What a script that asks to make a setting reads back.
+    nonisolated static let cannotMakeSetting = "A script can\u{2019}t make a setting."
 
     /// Every named network, ordered by name — or nothing, with the command
     /// asking deferred, until the library has landed, and with the command
@@ -896,9 +1091,13 @@ final class VMScriptingGateway {
     /// does: Cocoa carries on setting or removing the rest, a later refusal
     /// would overwrite the first, and a script could not tell how far it got.
     ///
-    /// `id` names the network or VM the verb addresses, `nil` for a create.
+    /// `id` names the network or VM the verb addresses, `nil` for a create;
+    /// `consenting`, how a script gives a consent the verb refuses without,
+    /// where the command being answered can't take `with confirmation`.
     @discardableResult
-    private func run<T>(_ verb: VMVerb, on id: UUID?, _ body: () throws -> T) -> T? {
+    private func run<T>(
+        _ verb: VMVerb, on id: UUID?, consenting: String? = nil, _ body: () throws -> T
+    ) -> T? {
         if let answering, answering.scriptErrorNumber != 0 { return nil }
         do {
             return try body()
@@ -908,7 +1107,11 @@ final class VMScriptingGateway {
                 .notice,
                 "Script \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(refusal.message(in: .log), privacy: .public)"
             )
-            answering?.refuse(refusal)
+            if let consenting {
+                answering?.refuse(refusal, consenting: consenting)
+            } else {
+                answering?.refuse(refusal)
+            }
             return nil
         } catch {
             answering?.refuse(Int(errAEEventFailed), error.localizedDescription)
@@ -920,15 +1123,17 @@ final class VMScriptingGateway {
 
     /// Runs `verb` on each VM, as ``perform(_:on:naming:_:)`` runs it on each
     /// subject.
-    private func perform(
+    @discardableResult
+    private func perform<Answer>(
         _ verb: VMVerb, on selectors: [VMSelector],
-        _ body: (VMSelector) async throws -> Void
-    ) async throws {
+        _ body: (VMSelector) async throws -> Answer
+    ) async throws -> [Answer] {
         try await perform(verb, on: selectors, naming: \.displayText, body)
     }
 
     /// Runs `verb` on each subject once the library read has landed, logging
-    /// the first refusal under the subject's `name` and rethrowing it.
+    /// the first refusal under the subject's `name` and rethrowing it, and
+    /// answers what it answered for each, in order.
     ///
     /// The verbs run under an ``ActivationRequester`` that only readies the
     /// app, so a verb that surfaces readies it at that moment — a window put up
@@ -936,15 +1141,17 @@ final class VMScriptingGateway {
     /// as it was. A refusal stops the run where it happened: an event
     /// addressing several VMs carries back one error, and finishing the rest
     /// would leave a script unable to tell how far the verb got.
-    private func perform<Subject: Sendable>(
+    @discardableResult
+    private func perform<Subject: Sendable, Answer>(
         _ verb: VMVerb, on subjects: [Subject], naming name: (Subject) -> String,
-        _ body: (Subject) async throws -> Void
-    ) async throws {
+        _ body: (Subject) async throws -> Answer
+    ) async throws -> [Answer] {
         await readiness.ready()
-        try await ActivationRequester.$current.withValue(ActivationRequester(prepareToSurface)) {
+        return try await ActivationRequester.$current.withValue(ActivationRequester(prepareToSurface)) {
+            var answers: [Answer] = []
             for subject in subjects {
                 do {
-                    try await body(subject)
+                    answers.append(try await body(subject))
                 } catch let failure as CommandError {
                     Self.logger.log(
                         .notice,
@@ -953,6 +1160,7 @@ final class VMScriptingGateway {
                     throw failure
                 }
             }
+            return answers
         }
     }
 }
