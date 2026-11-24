@@ -313,10 +313,10 @@ struct CLIRenderingTests {
         USBAccessorySummary(
             registryID: 4_294_967_296, name: "0403:6001 \u{00B7} Vendor-specific",
             vendorID: 0x0403, productID: 0x6001,
-            deviceID: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")),
+            deviceID: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"), key: nil),
         USBAccessorySummary(
             registryID: 12, name: "05ac:12a8 \u{00B7} Composite", vendorID: 0x05AC,
-            productID: 0x12A8),
+            productID: 0x12A8, deviceID: nil, key: "05ac:12a8:0100:0373"),
     ]
 
     @Test("A USB listing carries both handles, and quiet prints the one each row is acted on by")

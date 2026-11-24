@@ -403,40 +403,54 @@ extension VMCommandCore {
     /// behind it. Nothing on disk is opened, so a folder that has moved is
     /// answered the way the VM carries it rather than left out.
     func sharedDirectories(of selector: VMSelector) throws -> [SharedDirectorySummary] {
-        try (resolve(selector).configuration.sharedDirectories ?? [])
-            .map { SharedDirectorySummary(path: $0.path, readOnly: $0.readOnly) }
+        try (resolve(selector).configuration.sharedDirectories ?? []).map(SharedDirectorySummary.init)
     }
 
     /// Shares the folder at `path` with the guest, leaving a folder the VM
-    /// already shares as it is — on the wire where
-    /// ``addSharedDirectories(_:paths:)`` is not, so named by path rather than
-    /// by pick.
+    /// already shares as it is, and answers the share that folder fills — on
+    /// the wire where ``addSharedDirectories(_:paths:)`` is not, so named by
+    /// path rather than by pick.
     ///
     /// Resolve, gate, then grant: the VM and its state decide the answer before
     /// the authority is consulted, so a selector no VM answers to and a VM that
     /// takes no added share are both refused without a panel ever going up. The
     /// grant is asked for last because only the app can obtain one for a path a
     /// sandboxed client named, and the bookmark is minted from whatever URL it
-    /// answers with — a share is reopened at every boot.
+    /// answers with — a share is reopened at every boot. That URL is the folder
+    /// shared and answered, whichever folder the user picked.
+    ///
+    /// `path` is taken in ``comparablePath(_:)``'s spelling, so a `.` or `..`
+    /// hop never reaches the stored path or the name a macOS guest mounts the
+    /// folder by, whichever door named it.
     ///
     /// The gate is asked again once the panel answers: it stands for as long as
     /// the user leaves it up, and the VM the caller named can have started in
     /// the meantime.
-    func addSharedDirectory(_ selector: VMSelector, path: String, readOnly: Bool) async throws {
+    @discardableResult
+    func addSharedDirectory(
+        _ selector: VMSelector, path: String, readOnly: Bool
+    ) async throws -> SharedDirectorySummary {
         let instance = try resolve(selector)
         _ = try requireSharedDirectories(.add, on: instance)
-        guard !shares(instance, path) else { return }
+        let named = Self.comparablePath(path)
+        if let shared = sharedDirectory(at: named, on: instance) { return SharedDirectorySummary(shared) }
 
         let folder = try await requireSourceAuthority(.editSharedDirectory)
-            .readableURL(for: URL(fileURLWithPath: path), as: .sharedDirectory)
+            .readableURL(for: URL(fileURLWithPath: named), as: .sharedDirectory)
         try Self.requireDirectory(folder)
-        try addSharedDirectories([PickedFile(picking: folder)], readOnly: readOnly, to: instance)
+        let picked = PickedFile(picking: folder)
+        try addSharedDirectories([picked], readOnly: readOnly, to: instance)
+        guard let shared = sharedDirectory(at: picked.path, on: instance) else {
+            throw itemNotFound(instance, item: "shared directory \u{201C}\(picked.path)\u{201D}")
+        }
+        return SharedDirectorySummary(shared)
     }
 
-    /// Whether the VM already shares the folder at `path`.
-    private func shares(_ instance: VMInstance, _ path: String) -> Bool {
+    /// The share the folder at `path` fills on the VM, `nil` when it shares
+    /// none.
+    private func sharedDirectory(at path: String, on instance: VMInstance) -> SharedDirectory? {
         let wanted = Self.comparablePath(path)
-        return (instance.configuration.sharedDirectories ?? []).contains {
+        return (instance.configuration.sharedDirectories ?? []).first {
             Self.comparablePath($0.path) == wanted
         }
     }
@@ -461,12 +475,7 @@ extension VMCommandCore {
     func removeSharedDirectory(_ selector: VMSelector, path: String) throws {
         let instance = try resolve(selector)
         _ = try requireSharedDirectories(.remove, on: instance)
-        let wanted = Self.comparablePath(path)
-        guard
-            let directory = (instance.configuration.sharedDirectories ?? []).first(where: {
-                Self.comparablePath($0.path) == wanted
-            })
-        else {
+        guard let directory = sharedDirectory(at: path, on: instance) else {
             throw CommandError.invalidArgument(
                 "\u{201C}\(instance.name)\u{201D} does not share \u{201C}\(path)\u{201D}.")
         }
@@ -483,5 +492,12 @@ extension VMCommandCore {
             .path(percentEncoded: false)
         guard standardized.count > 1, standardized.hasSuffix("/") else { return standardized }
         return String(standardized.dropLast())
+    }
+}
+
+extension SharedDirectorySummary {
+    /// `share` without the bookmark behind it.
+    init(_ share: SharedDirectory) {
+        self.init(path: share.path, readOnly: share.readOnly)
     }
 }

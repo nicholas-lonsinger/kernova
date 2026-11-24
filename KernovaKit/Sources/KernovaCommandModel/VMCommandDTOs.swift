@@ -338,6 +338,14 @@ public struct SharedDirectorySummary: Codable, Sendable, Hashable {
     /// Whether the guest may read the folder but not write to it.
     public let readOnly: Bool
 
+    /// Every field, by the key the JSON names it with, as ``VMInfo/Field``
+    /// is for a ``VMInfo``.
+    public enum Field: String, CodingKey, CaseIterable, Sendable {
+        case path, readOnly
+    }
+
+    private typealias CodingKeys = Field
+
     /// Describes one share.
     public init(path: String, readOnly: Bool) {
         self.path = path
@@ -407,17 +415,30 @@ public struct USBAccessorySummary: Codable, Sendable, Hashable {
     /// The attachment's device UUID while a guest holds this accessory, and
     /// what a detach names it by; `nil` when it is available to attach.
     public let deviceID: UUID?
+    /// The durable key the accessory answers to across a replug and a
+    /// restart — the one ``USBPairingSummary/key`` remembers it by — `nil`
+    /// when nothing durable identifies it.
+    public let key: String?
+
+    /// Every field, by the key the JSON names it with, as ``VMInfo/Field``
+    /// is for a ``VMInfo``.
+    public enum Field: String, CodingKey, CaseIterable, Sendable {
+        case registryID, name, vendorID, productID, deviceID, key
+    }
+
+    private typealias CodingKeys = Field
 
     /// Describes one accessory.
     public init(
-        registryID: UInt64, name: String, vendorID: UInt16, productID: UInt16,
-        deviceID: UUID? = nil
+        registryID: UInt64, name: String, vendorID: UInt16, productID: UInt16, deviceID: UUID?,
+        key: String?
     ) {
         self.registryID = registryID
         self.name = name
         self.vendorID = vendorID
         self.productID = productID
         self.deviceID = deviceID
+        self.key = key
     }
 }
 
@@ -435,8 +456,18 @@ public struct USBPairingSummary: Codable, Sendable, Hashable {
     /// What a surface calls this accessory, qualified by the port when the rule
     /// names one port in particular.
     public let name: String
-    /// When the accessory was last passed through to that virtual machine.
+    /// When an attach someone asked for last remembered the accessory for that
+    /// virtual machine; passing it through again automatically leaves this as
+    /// it is.
     public let pairedAt: Date
+
+    /// Every field, by the key the JSON names it with, as ``VMInfo/Field``
+    /// is for a ``VMInfo``.
+    public enum Field: String, CodingKey, CaseIterable, Sendable {
+        case vm, key, name, pairedAt
+    }
+
+    private typealias CodingKeys = Field
 
     /// Describes one remembered accessory.
     public init(vm: String, key: String, name: String, pairedAt: Date) {

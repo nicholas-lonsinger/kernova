@@ -29,6 +29,9 @@ package final class VMIntentGateway {
     /// Fills the library's search with a term and puts the library window in
     /// front of the user.
     private let showSearchResults: @MainActor (String) -> Void
+    /// Readies the app to put up a surface, once Shortcuts has brought it
+    /// forward.
+    private let prepareToSurface: @MainActor @Sendable () -> Void
     private let logger = KernovaLogger(subsystem: "app.kernova", category: "VMIntentGateway")
 
     /// The library subscription that keeps the Spotlight index current.
@@ -49,13 +52,15 @@ package final class VMIntentGateway {
         readiness: LibraryReadiness,
         index: any VMEntityIndexing = SpotlightVMEntityIndex(),
         record: VMIndexRecord = VMIndexRecord(),
-        showSearchResults: @escaping @MainActor (String) -> Void = { _ in }
+        showSearchResults: @escaping @MainActor (String) -> Void = { _ in },
+        prepareToSurface: @escaping @MainActor @Sendable () -> Void = {}
     ) {
         self.commands = commands
         self.readiness = readiness
         self.index = index
         self.record = record
         self.showSearchResults = showSearchResults
+        self.prepareToSurface = prepareToSurface
         // Weakly, one main-actor call at a time: an owner that goes away
         // between two batches is what ends the subscription.
         libraryEvents = Task { [weak self] in
@@ -334,31 +339,165 @@ package final class VMIntentGateway {
         }
     }
 
-    /// The snapshot `picked` names, refusing one the VM does not list under
+    /// The snapshot `picked` names, refusing a pick from another VM
+    /// (``requirePicked(from:on:kind:)``) and one the VM does not list under
     /// that identifier.
     ///
-    /// A pick is only as current as the run that made it — the Shortcut can
-    /// have been re-pointed at another VM since, and the snapshot itself can
-    /// have been deleted or dropped by a revert — so the identifier resolves
-    /// against the named VM's own listing, for every snapshot verb rather than
-    /// only the ones the core happens to catch. A revert or delete would be
-    /// refused there anyway; a rename or a note edit would not, because both
-    /// are documented no-ops for an identifier the manifest does not list, so
-    /// the miss would report success having changed nothing.
+    /// The snapshot itself can have been deleted or dropped by a revert since
+    /// the pick was made, so the identifier resolves against the named VM's own
+    /// listing, for every snapshot verb rather than only the ones the core
+    /// happens to catch. A revert or delete would be refused there anyway; a
+    /// rename or a note edit would not, because both are documented no-ops for
+    /// an identifier the manifest does not list, so the miss would report
+    /// success having changed nothing.
     ///
-    /// Both halves of the pick are checked, because a clone carries its
+    /// The VM is checked as well as the listing because a clone carries its
     /// source's snapshot identifiers: one the named VM lists can still be a
     /// pick made in the VM it was copied from.
     private func listedSnapshot(_ picked: SnapshotEntityID, on vm: UUID) throws -> UUID {
-        guard let summary = commands.list(.all).first(where: { $0.id == vm }) else {
-            throw CommandError.notFound(.id(vm))
-        }
-        let listed = try commands.snapshots(of: .id(vm))
-        guard picked.vm == vm, listed.contains(where: { $0.id == picked.snapshot }) else {
+        try requirePicked(from: picked.vm, on: vm, kind: "snapshot")
+        guard try commands.snapshots(of: .id(vm)).contains(where: { $0.id == picked.snapshot }) else {
             throw CommandError.itemNotFound(
-                vm: summary, item: "snapshot with the identifier \(picked.snapshot.uuidString)")
+                vm: try summary(of: vm), item: "snapshot with the identifier \(picked.snapshot.uuidString)")
         }
         return picked.snapshot
+    }
+
+    // MARK: - Shared Directories
+
+    /// The folders the VM shares with its guest, in the order it shares them.
+    func sharedDirectories(ofVM id: UUID) async throws -> [SharedDirectoryEntity] {
+        try await perform(.sharedDirectories, on: id) {
+            try self.commands.sharedDirectories(of: .id(id)).map { SharedDirectoryEntity($0, vm: id) }
+        }
+    }
+
+    /// ``VMCommandCore/addSharedDirectory(_:path:readOnly:)`` of the folder at
+    /// `path` (``requireFullPath(_:)``), answering the share the folder chosen
+    /// fills.
+    ///
+    /// `bringForward` asks Shortcuts to bring Kernova forward. It is this
+    /// verb's ``ActivationRequester``, so it runs only when the core is about
+    /// to put up the open panel for a folder Kernova can't read, before the
+    /// panel; a throw from it fails the verb with no panel shown.
+    func addSharedDirectory(
+        _ id: UUID, path: String, readOnly: Bool,
+        bringingForward bringForward: @escaping @MainActor @Sendable () async throws -> Void
+    ) async throws -> SharedDirectoryEntity {
+        try await perform(.editSharedDirectory, on: id) {
+            let folder = try Self.requireFullPath(path)
+            let requester = ActivationRequester(awaiting: { [prepareToSurface] in
+                try await bringForward()
+                prepareToSurface()
+            })
+            let shared = try await ActivationRequester.$current.withValue(requester) {
+                try await self.commands.addSharedDirectory(.id(id), path: folder, readOnly: readOnly)
+            }
+            return SharedDirectoryEntity(shared, vm: id)
+        }
+    }
+
+    /// Stops sharing the folder `picked` names, refusing a pick from another
+    /// VM (``requirePicked(from:on:kind:)``).
+    func removeSharedDirectory(_ id: UUID, directory picked: SharedDirectoryEntityID) async throws {
+        try await perform(.editSharedDirectory, on: id) {
+            try self.requirePicked(from: picked.vm, on: id, kind: "shared directory")
+            try self.commands.removeSharedDirectory(.id(id), path: picked.path)
+        }
+    }
+
+    // MARK: - USB Accessories
+
+    /// The accessories the VM's guest holds.
+    func usbAccessories(attachedTo id: UUID) async throws -> [USBAccessoryEntity] {
+        try await perform(.usbAccessories, on: id) {
+            try self.commands.usbAccessories(of: .id(id)).map(USBAccessoryEntity.init)
+        }
+    }
+
+    /// The accessories macOS has assigned to Kernova that no guest holds.
+    func availableUSBAccessories() async throws -> [USBAccessoryEntity] {
+        try await perform(.availableUSBAccessories, on: nil) {
+            try self.commands.availableUSBAccessories().map(USBAccessoryEntity.init)
+        }
+    }
+
+    /// The accessories `ids` names, among every one Kernova holds now
+    /// (``VMCommandCore/everyUSBAccessory()``).
+    func usbAccessories(withIDs ids: [USBAccessoryEntityID]) async throws -> [USBAccessoryEntity] {
+        let wanted = Set(ids)
+        return try await perform(.availableUSBAccessories, on: nil) {
+            try self.commands.everyUSBAccessory().map(USBAccessoryEntity.init).filter {
+                wanted.contains($0.id)
+            }
+        }
+    }
+
+    /// Passes the accessory `picked` names through to the VM's guest, refusing
+    /// one that is not among the accessories no guest holds — `name` is what
+    /// that refusal calls it.
+    func attachUSBAccessory(
+        _ id: UUID, accessory picked: USBAccessoryEntityID, named name: String
+    ) async throws {
+        try await perform(.editUSBAccessory, on: id) {
+            guard
+                let listed = try self.accessory(
+                    picked, keyed: { try self.commands.availableUSBAccessory(withKey: $0) },
+                    listed: { try self.commands.availableUSBAccessories() })
+            else {
+                throw CommandError.itemNotFoundOnHost(
+                    item: "USB accessory \u{201C}\(name)\u{201D} available to attach")
+            }
+            try await self.commands.attachUSBAccessory(.id(id), accessory: listed.registryID)
+        }
+    }
+
+    /// Takes the accessory `picked` names back off the VM's guest, refusing
+    /// one the guest does not hold — `name` is what that refusal calls it.
+    func detachUSBAccessory(
+        _ id: UUID, accessory picked: USBAccessoryEntityID, named name: String
+    ) async throws {
+        try await perform(.editUSBAccessory, on: id) {
+            guard
+                let held = try self.accessory(
+                    picked, keyed: { try self.commands.usbAccessory(withKey: $0, heldBy: .id(id)) },
+                    listed: { try self.commands.usbAccessories(of: .id(id)) }),
+                let device = held.deviceID
+            else {
+                throw CommandError.itemNotFound(
+                    vm: try self.summary(of: id), item: "USB accessory \u{201C}\(name)\u{201D} attached")
+            }
+            try await self.commands.detachUSBAccessory(.id(id), device: device)
+        }
+    }
+
+    /// The accessory `picked` names: by its durable key through `keyed`, which
+    /// refuses a key that may name another unit, or — for one with none — by
+    /// this run's registry ID among `listed`.
+    private func accessory(
+        _ picked: USBAccessoryEntityID, keyed: (String) throws -> USBAccessorySummary?,
+        listed: () throws -> [USBAccessorySummary]
+    ) throws -> USBAccessorySummary? {
+        switch picked {
+        case .key(let key): try keyed(key)
+        case .registryID: try listed().first { USBAccessoryEntityID($0) == picked }
+        }
+    }
+
+    /// The accessories the VM takes back automatically.
+    func rememberedUSBAccessories(ofVM id: UUID) async throws -> [RememberedUSBAccessoryEntity] {
+        try await perform(.usbPairings, on: id) {
+            try self.commands.usbPairings(of: .id(id)).map { RememberedUSBAccessoryEntity($0, vm: id) }
+        }
+    }
+
+    /// Stops the VM taking the accessory `picked` names back, refusing a pick
+    /// from another VM (``requirePicked(from:on:kind:)``).
+    func forgetUSBAccessory(_ id: UUID, accessory picked: RememberedUSBAccessoryEntityID) async throws {
+        try await perform(.forgetUSBPairing, on: id) {
+            try self.requirePicked(from: picked.vm, on: id, kind: "remembered USB accessory")
+            try self.commands.forgetUSBPairing(.id(id), key: picked.key)
+        }
     }
 
     // MARK: - Library
@@ -553,31 +692,77 @@ package final class VMIntentGateway {
         return trimmed
     }
 
+    /// Refuses an item picked from the list of the VM `pickedVM` when the
+    /// action names the VM `vm`.
+    ///
+    /// A pick is only as current as the run that made it: the Shortcut can have
+    /// been re-pointed at another VM since, which can list an item the pick
+    /// would match — a folder both VMs share — and the pick does not name that
+    /// item.
+    private func requirePicked(from pickedVM: UUID, on vm: UUID, kind: String) throws {
+        guard pickedVM != vm else { return }
+        let named = try summary(of: vm)
+        throw CommandError.invalidArgument(
+            "That \(kind) was picked from another virtual machine, not \u{201C}\(named.name)\u{201D}.")
+    }
+
+    /// The VM `id` names, as a refusal names it.
+    private func summary(of id: UUID) throws -> VMSummary {
+        guard let summary = commands.list(.all).first(where: { $0.id == id }) else {
+            throw CommandError.notFound(.id(id))
+        }
+        return summary
+    }
+
+    /// `path` as a full path, a leading `~` read as the user's home folder
+    /// (``UserHome``), refusing any other path that does not start at `/`.
+    ///
+    /// The `kernova` tool reads a relative path against the directory it is
+    /// typed in; an action has none to read it against.
+    private static func requireFullPath(_ path: String) throws -> String {
+        if path == "~" { return UserHome.path }
+        if path.hasPrefix("~/") { return UserHome.path + path.dropFirst() }
+        guard path.hasPrefix("/") else {
+            throw CommandError.invalidArgument(
+                "A folder is named by its full path, which starts with \u{201C}/\u{201D} or \u{201C}~/\u{201D}.")
+        }
+        return path
+    }
+
     // MARK: - Dispatch
 
-    /// Runs `verb` once the library read has landed, logging any refusal.
+    /// Runs `verb` once the library read has landed, logging any refusal, and
+    /// any other failure — Shortcuts declining to bring Kernova forward among
+    /// them.
     ///
     /// The log line is the only trace an App Intents failure leaves: the
     /// framework shows it to whoever ran the intent and reports it nowhere
     /// else — no alert, no window, nothing a later session can read back.
     ///
     /// `id` names the VM the verb addresses — the network, for a network
-    /// verb — and is `nil` for one that addresses neither yet: an import names
-    /// a file, and neither the row it fills nor the network a create lists has
-    /// an identifier until the core has made it.
+    /// verb — and is `nil` for one that addresses neither, as a listing of the
+    /// library or of the Mac's USB accessories does, or neither yet: an import
+    /// names a file, and neither the row it fills nor the network a create
+    /// lists has an identifier until the core has made it.
     private func perform<T>(
         _ verb: VMVerb, on id: UUID?, _ body: () async throws -> T
     ) async throws -> T {
         await ready()
+        let subject = id.map { " for \($0.uuidString)" } ?? ""
         do {
             return try await body()
         } catch let failure as CommandError {
-            let subject = id.map { " for \($0.uuidString)" } ?? ""
             logger.log(
                 .notice,
                 "Intent \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(failure.message(in: .log), privacy: .public)"
             )
             throw failure
+        } catch {
+            logger.log(
+                .notice,
+                "Intent \(verb.rawValue, privacy: .public) failed\(subject, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            throw error
         }
     }
 

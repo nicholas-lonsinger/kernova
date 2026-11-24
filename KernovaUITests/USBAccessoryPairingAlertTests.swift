@@ -21,7 +21,8 @@ struct USBAccessoryPairingAlertTests {
         USBAccessoryPairingRequest(
             id: UUID(),
             accessory: USBAccessorySummary(
-                registryID: 7, name: "Samsung Type-C", vendorID: 0x04E8, productID: 0x6300),
+                registryID: 7, name: "Samsung Type-C", vendorID: 0x04E8, productID: 0x6300,
+                deviceID: nil, key: nil),
             candidates: candidates,
             answer: { answer.answered.append($0) })
     }

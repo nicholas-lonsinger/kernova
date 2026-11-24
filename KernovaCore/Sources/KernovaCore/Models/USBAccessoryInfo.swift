@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 
 /// A host USB accessory macOS has assigned to Kernova.
 ///
@@ -71,6 +72,25 @@ package struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
             })
     }
 
+    /// Whether the durable key this accessory carries names it and no other
+    /// unit among `known`, every accessory Kernova knows about — what decides
+    /// whether a key may stand for this unit, for an automatic attach and for
+    /// an accessory a shortcut picked alike.
+    ///
+    /// A key built on the serial number follows the unit. One built on a
+    /// receptacle names whatever is in that port, so while another unit of the
+    /// same model is connected, the one in the port may be either of them. An
+    /// accessory with no key is named by nothing durable. An accessory `known`
+    /// lists twice — captured by a guest, and not yet withdrawn by macOS — is
+    /// one unit.
+    func keyNamesItAlone(among known: [USBAccessoryInfo]) -> Bool {
+        guard let identity else { return false }
+        return identity.form == .serialNumber
+            || !known.contains {
+                $0.registryID != registryID && $0.descriptor.modelKey == descriptor.modelKey
+            }
+    }
+
     /// What to call this accessory.
     ///
     /// The device's own vendor and product strings first — "Samsung Type-C" is
@@ -97,14 +117,27 @@ package struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
         return "\(descriptor.vendorProductID) · \(className)"
     }
 
-    /// The name each of `accessories` is listed under, qualified by its
-    /// receptacle where two of them would otherwise read identically.
+    /// The name each accessory Kernova knows about is listed under — the
+    /// `attached` ones guests hold and the `assigned` ones macOS has handed
+    /// Kernova — qualified by its receptacle where two of them would otherwise
+    /// read identically.
     ///
     /// Two units of one model are an ordinary thing to own, and a menu
     /// offering the same words twice says nothing about which is which. The
     /// qualifier is not part of ``displayName``: it is a fact about the
-    /// list, not about the device.
-    static func listingNames(for accessories: [USBAccessoryInfo]) -> [UInt64: String] {
+    /// list, not about the device. Computed across both sets at once, because
+    /// a guest's accessories and the free ones are read side by side, and two
+    /// identical devices have to be told apart across that boundary as
+    /// readily as within it.
+    ///
+    /// Each accessory counts once. macOS withdraws an accessory a guest has
+    /// captured, but not always before the guest's own record is read, and one
+    /// counted twice would look like two of a kind and qualify itself.
+    static func listingNames(
+        attached: [USBAccessoryInfo], assigned: [USBAccessoryInfo]
+    ) -> [UInt64: String] {
+        let attachedIDs = Set(attached.map(\.registryID))
+        let accessories = attached + assigned.filter { !attachedIDs.contains($0.registryID) }
         let counts = accessories.reduce(into: [String: Int]()) { $0[$1.displayName, default: 0] += 1 }
         return accessories.reduce(into: [UInt64: String]()) { names, accessory in
             guard counts[accessory.displayName, default: 0] > 1,
@@ -115,6 +148,21 @@ package struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
             }
             names[accessory.registryID] = "\(accessory.displayName) (\(label))"
         }
+    }
+}
+
+extension USBAccessorySummary {
+    /// `accessory` under its name in `names`
+    /// (``USBAccessoryInfo/listingNames(attached:assigned:)``), carrying the
+    /// attachment `deviceID` while a guest holds it.
+    init(_ accessory: USBAccessoryInfo, named names: [UInt64: String], deviceID: UUID? = nil) {
+        self.init(
+            registryID: accessory.registryID,
+            name: names[accessory.registryID] ?? accessory.displayName,
+            vendorID: accessory.descriptor.vendorID,
+            productID: accessory.descriptor.productID,
+            deviceID: deviceID,
+            key: accessory.identity?.key)
     }
 }
 
