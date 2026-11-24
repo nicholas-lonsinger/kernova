@@ -37,9 +37,10 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
         Self.logger.log(
             .notice,
             "Asking for permission to read '\(url.lastPathComponent, privacy: .public)'")
-        // A request arriving from a terminal has no window of its own, and a
-        // panel ordered in behind the app that asked has asked nobody anything.
-        ActivationRequester.requestActivation()
+        // A request arriving from a terminal or a shortcut has no window of its
+        // own, and a panel ordered in behind the app that asked has asked
+        // nobody anything.
+        try await ActivationRequester.requestActivation()
 
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false

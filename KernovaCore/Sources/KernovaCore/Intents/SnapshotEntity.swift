@@ -2,29 +2,25 @@ import AppIntents
 import Foundation
 import KernovaCommandModel
 
-/// How Shortcuts names one snapshot: the VM that owns it, and the snapshot.
+/// How Shortcuts names one snapshot: the VM that owns it, and the snapshot,
+/// persisted as ``VMListedItemIdentifier`` writes it.
 ///
-/// Snapshot identifiers are unique only within a bundle's manifest, and the
-/// composite is what makes a saved Shortcut re-resolvable. Shortcuts persists a
-/// chosen entity's identifier and hands it back to ``SnapshotEntityQuery``'s
-/// `entities(for:)` later, which can run with no intent parameter bound — so
-/// the identifier has to carry the VM to read the manifest from.
+/// Snapshot identifiers are unique only within a bundle's manifest.
 struct SnapshotEntityID: Hashable, Sendable, EntityIdentifierConvertible {
     /// The VM whose manifest lists the snapshot.
     let vm: UUID
     /// The snapshot's own identifier.
     let snapshot: UUID
 
-    var entityIdentifierString: String { "\(vm.uuidString)/\(snapshot.uuidString)" }
+    var entityIdentifierString: String {
+        VMListedItemIdentifier.string(vm: vm, item: snapshot.uuidString)
+    }
 
     static func entityIdentifier(for entityIdentifierString: String) -> SnapshotEntityID? {
-        let halves = entityIdentifierString.split(
-            separator: "/", omittingEmptySubsequences: false)
-        guard halves.count == 2,
-            let vm = UUID(uuidString: String(halves[0])),
-            let snapshot = UUID(uuidString: String(halves[1]))
+        guard let parts = VMListedItemIdentifier.parts(of: entityIdentifierString),
+            let snapshot = UUID(uuidString: parts.item)
         else { return nil }
-        return SnapshotEntityID(vm: vm, snapshot: snapshot)
+        return SnapshotEntityID(vm: parts.vm, snapshot: snapshot)
     }
 }
 
@@ -147,19 +143,9 @@ struct SnapshotEntityQuery: EntityQuery {
         return try await gateway.snapshots(ofVM: scope.id)
     }
 
-    /// Re-resolves saved identifiers, which needs no parameter bound: each one
-    /// carries the VM whose manifest lists it.
-    ///
-    /// A VM that has since left the library drops its identifiers rather than
-    /// failing the whole resolution — the same way a saved VM reference does.
-    /// The gateway has already logged that refusal.
     func entities(for identifiers: [SnapshotEntityID]) async throws -> [SnapshotEntity] {
-        var found: [SnapshotEntityID: SnapshotEntity] = [:]
-        for vm in Set(identifiers.map(\.vm)) {
-            for entity in (try? await gateway.snapshots(ofVM: vm)) ?? [] {
-                found[entity.id] = entity
-            }
+        await VMListedItemIdentifier.entities(identifiers, vm: \.vm) {
+            try await gateway.snapshots(ofVM: $0)
         }
-        return identifiers.compactMap { found[$0] }
     }
 }

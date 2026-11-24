@@ -72,8 +72,8 @@ package final class VMURLGateway {
                 "Kernova link asks \(route.verb.rawValue, privacy: .public) of '\(route.selector.displayText, privacy: .private)'"
             )
             await readiness.ready()
-            ActivationRequester.$current.withValue(ActivationRequester(prepareToSurface)) {
-                run(route)
+            await ActivationRequester.$current.withValue(ActivationRequester(prepareToSurface)) {
+                await run(route)
             }
         }
     }
@@ -83,11 +83,11 @@ package final class VMURLGateway {
     /// Nothing is summoned when the verb runs: it puts on screen exactly the
     /// surface the link asked for, and a library window behind that is one
     /// nobody asked for.
-    private func run(_ route: VMURLRoute) {
+    private func run(_ route: VMURLRoute) async {
         do {
             switch route {
-            case .open(let selector): try commands.open(selector)
-            case .reveal(let selector): try commands.reveal(selector)
+            case .open(let selector): try await commands.open(selector)
+            case .reveal(let selector): try await commands.reveal(selector)
             }
         } catch let refusal as CommandError {
             surface(refusal)

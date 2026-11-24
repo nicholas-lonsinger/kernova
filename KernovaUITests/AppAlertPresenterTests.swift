@@ -89,7 +89,8 @@ struct AppAlertPresenterTests {
         USBAccessoryPairingRequest(
             id: UUID(),
             accessory: USBAccessorySummary(
-                registryID: registryID, name: name, vendorID: 0x04E8, productID: 0x6300),
+                registryID: registryID, name: name, vendorID: 0x04E8, productID: 0x6300,
+                deviceID: nil, key: nil),
             candidates: candidates,
             answer: answer)
     }

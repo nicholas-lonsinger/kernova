@@ -1380,10 +1380,10 @@ extension VMCommandCore {
 
     /// Brings the VM's display to the front — the detached window for a
     /// pop-out or fullscreen VM, else keyboard focus in the inline display.
-    func open(_ selector: VMSelector) throws {
+    func open(_ selector: VMSelector) async throws {
         let instance = try resolve(selector)
         try require(.open, on: instance)
-        ActivationRequester.requestActivation()
+        try await ActivationRequester.requestActivation()
         surfaceDisplay?(instance)
     }
 
@@ -1400,18 +1400,18 @@ extension VMCommandCore {
     /// of its own, so a VM whose display is not the right thing to surface
     /// lands on its library row instead, by the same predicate that refuses it
     /// an ``open(_:)``. An arrival has no display, so it always lands there.
-    package func reveal(_ selector: VMSelector) throws {
+    package func reveal(_ selector: VMSelector) async throws {
         let instance: VMInstance
         switch try resolveEntry(selector) {
         case .arriving(let arrival):
-            ActivationRequester.requestActivation()
+            try await ActivationRequester.requestActivation()
             revealInLibrary?(arrival.id)
             return
         case .vm(let found):
             instance = found
         }
         try require(.reveal, on: instance)
-        ActivationRequester.requestActivation()
+        try await ActivationRequester.requestActivation()
         if capabilities.accepts(.open, on: instance) {
             surfaceDisplay?(instance)
         } else {

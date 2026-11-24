@@ -21,7 +21,7 @@ extension VMCommandCore {
         try requireUSBAccessoryService()
         let names = listingNames()
         return try resolve(selector).liveUSBAccessories.map {
-            summary(of: $0.accessory, named: names, deviceID: $0.deviceID)
+            USBAccessorySummary($0.accessory, named: names, deviceID: $0.deviceID)
         }
     }
 
@@ -36,7 +36,20 @@ extension VMCommandCore {
         let names = listingNames()
         return service.accessories
             .filter { !held.contains($0.registryID) }
-            .map { summary(of: $0, named: names) }
+            .map { USBAccessorySummary($0, named: names) }
+    }
+
+    /// What every guest's ``usbAccessories(of:)`` and
+    /// ``availableUSBAccessories()`` answer between them: the accessories the
+    /// guests are holding, in the order they were attached, then the ones no
+    /// guest is.
+    func everyUSBAccessory() throws -> [USBAccessorySummary] {
+        try requireUSBAccessoryService()
+        let names = listingNames()
+        let held = library.accessoryHolders.attachedEntries.map {
+            USBAccessorySummary($0.attached.accessory, named: names, deviceID: $0.attached.deviceID)
+        }
+        return held + (try availableUSBAccessories())
     }
 
     /// The accessories one VM takes back automatically, or every VM's when
@@ -235,36 +248,12 @@ extension VMCommandCore {
         }
     }
 
-    /// What to call each accessory Kernova knows about, over every one of them
-    /// at once.
-    ///
-    /// Computed across the whole set rather than per listing, because the two
-    /// listings are read side by side — a guest's accessories above the free
-    /// ones in one menu — and two identical devices have to be told apart
-    /// across that boundary as readily as within it.
-    ///
-    /// Each accessory appears once. macOS withdraws an accessory a guest has
-    /// captured, but not always before the guest's own listing is read, and one
-    /// counted twice would look like two of a kind and qualify itself.
+    /// What to call each accessory Kernova knows about
+    /// (``USBAccessoryInfo/listingNames(attached:assigned:)``).
     private func listingNames() -> [UInt64: String] {
-        let attached = library.accessoryHolders.attachedEntries.map(\.attached.accessory)
-        let attachedIDs = Set(attached.map(\.registryID))
-        let assigned = (lifecycle.usbAccessoryService?.accessories ?? [])
-            .filter { !attachedIDs.contains($0.registryID) }
-        return USBAccessoryInfo.listingNames(for: attached + assigned)
-    }
-
-    /// One accessory as a caller names it, carrying the attachment identifier a
-    /// detach takes back when a guest is holding it.
-    private func summary(
-        of accessory: USBAccessoryInfo, named names: [UInt64: String], deviceID: UUID? = nil
-    ) -> USBAccessorySummary {
-        USBAccessorySummary(
-            registryID: accessory.registryID,
-            name: names[accessory.registryID] ?? accessory.displayName,
-            vendorID: accessory.descriptor.vendorID,
-            productID: accessory.descriptor.productID,
-            deviceID: deviceID)
+        USBAccessoryInfo.listingNames(
+            attached: library.accessoryHolders.attachedEntries.map(\.attached.accessory),
+            assigned: lifecycle.usbAccessoryService?.accessories ?? [])
     }
 
     /// The command refusal an attach or detach failure stands for.

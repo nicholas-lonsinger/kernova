@@ -383,13 +383,10 @@ final class USBAccessoryCoordinator {
     /// One accessory as a prompt names it — qualified by its receptacle where
     /// another accessory Kernova holds would read identically.
     private func summary(of info: USBAccessoryInfo) -> USBAccessorySummary {
-        let names = USBAccessoryInfo.listingNames(
-            for: service.accessories + accessoriesHeldByGuests())
-        return USBAccessorySummary(
-            registryID: info.registryID,
-            name: names[info.registryID] ?? info.displayName,
-            vendorID: info.descriptor.vendorID,
-            productID: info.descriptor.productID)
+        USBAccessorySummary(
+            info,
+            named: USBAccessoryInfo.listingNames(
+                attached: accessoriesHeldByGuests(), assigned: service.accessories))
     }
 
     /// Releases the prompt slot, ignoring an answer to a prompt that is no

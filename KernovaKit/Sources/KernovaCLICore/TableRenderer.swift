@@ -200,9 +200,18 @@ enum TableRenderer {
     static func render(_ rows: [SharedDirectorySummary], quiet: Bool) -> String {
         guard !quiet else { return rows.map(\.path).joined(separator: "\n") }
         guard !rows.isEmpty else { return "" }
-        return columns(
-            headings: ["PATH", "READ-ONLY"],
-            rows: rows.map { [$0.path, $0.readOnly ? "Yes" : "No"] })
+        return table(rows, of: SharedDirectorySummary.Field.self) { field, share in
+            switch field {
+            case .path: (ShareColumn.path, share.path)
+            case .readOnly: (.readOnly, share.readOnly ? "Yes" : "No")
+            }
+        }
+    }
+
+    /// The columns of a share listing, headed, in the order they print.
+    private enum ShareColumn: String, CaseIterable {
+        case path = "PATH"
+        case readOnly = "READ-ONLY"
     }
 
     /// USB accessories, in the order Kernova was handed them.
@@ -215,14 +224,26 @@ enum TableRenderer {
     static func render(_ rows: [USBAccessorySummary], quiet: Bool) -> String {
         guard !quiet else { return rows.map(handle).joined(separator: "\n") }
         guard !rows.isEmpty else { return "" }
-        guard rows.contains(where: { $0.deviceID != nil }) else {
-            return columns(
-                headings: ["NAME", "ACCESSORY"],
-                rows: rows.map { [$0.name, String($0.registryID)] })
+        let shown: [USBAccessoryColumn] =
+            rows.contains { $0.deviceID != nil } ? USBAccessoryColumn.allCases : [.name, .accessory]
+        return table(rows, of: USBAccessorySummary.Field.self, columns: shown) { field, accessory in
+            switch field {
+            case .name: (USBAccessoryColumn.name, accessory.name)
+            case .registryID: (.accessory, String(accessory.registryID))
+            case .deviceID: accessory.deviceID.map { (.device, $0.uuidString) }
+            // The name is made of them for an accessory that reports no name of its own.
+            case .vendorID, .productID: nil
+            // `usb rules` prints it, for an accessory a virtual machine takes back.
+            case .key: nil
+            }
         }
-        return columns(
-            headings: ["NAME", "ACCESSORY", "DEVICE"],
-            rows: rows.map { [$0.name, String($0.registryID), $0.deviceID?.uuidString ?? ""] })
+    }
+
+    /// The columns of an accessory listing, headed, in the order they print.
+    private enum USBAccessoryColumn: String, CaseIterable {
+        case name = "NAME"
+        case accessory = "ACCESSORY"
+        case device = "DEVICE"
     }
 
     /// The USB accessories virtual machines take back automatically.
@@ -234,8 +255,24 @@ enum TableRenderer {
     static func render(_ rows: [USBPairingSummary], quiet: Bool) -> String {
         guard !quiet else { return rows.map(\.key).joined(separator: "\n") }
         guard !rows.isEmpty else { return "" }
-        return columns(
-            headings: ["VM", "NAME", "KEY"], rows: rows.map { [$0.vm, $0.name, $0.key] })
+        return table(rows, of: USBPairingSummary.Field.self) { field, pairing in
+            switch field {
+            case .vm: (PairingColumn.vm, pairing.vm)
+            case .name: (.name, pairing.name)
+            case .key: (.key, pairing.key)
+            // The listing is read for which virtual machine a key names; the
+            // JSON gives when the accessory was remembered.
+            case .pairedAt: nil
+            }
+        }
+    }
+
+    /// The columns of a remembered-accessory listing, headed, in the order
+    /// they print.
+    private enum PairingColumn: String, CaseIterable {
+        case vm = "VM"
+        case name = "NAME"
+        case key = "KEY"
     }
 
     /// The library's named networks, in the order the app listed them (by
@@ -424,17 +461,18 @@ enum TableRenderer {
         return slots
     }
 
-    /// `rows` under `Column`'s cases as headings, each cell what `cell` puts
-    /// in that column for one of `Field`'s cases, or what `extra` does.
+    /// `rows` under `shown` as headings — every case of `Column` unless
+    /// narrowed — each cell what `cell` puts in that column for one of
+    /// `Field`'s cases, or what `extra` does.
     private static func table<Row, Field: CaseIterable, Column: CaseIterable & Hashable & RawRepresentable>(
-        _ rows: [Row], of field: Field.Type, extra: (Row) -> [Column: String] = { _ in [:] },
-        _ cell: (Field, Row) -> (Column, String)?
+        _ rows: [Row], of field: Field.Type, columns shown: [Column] = Array(Column.allCases),
+        extra: (Row) -> [Column: String] = { _ in [:] }, _ cell: (Field, Row) -> (Column, String)?
     ) -> String where Column.RawValue == String {
         columns(
-            headings: Column.allCases.map(\.rawValue),
+            headings: shown.map(\.rawValue),
             rows: rows.map { row in
                 let cells = slots(of: field) { cell($0, row) }.merging(extra(row)) { accounted, _ in accounted }
-                return Column.allCases.map { cells[$0] ?? "" }
+                return shown.map { cells[$0] ?? "" }
             })
     }
 

@@ -5,10 +5,14 @@
 /// process by pid is honored. A front door installs one as ``current`` around
 /// the verbs it runs — the command socket's readies the app and asks the tool
 /// to activate it; a door whose requester activates by other means installs
-/// one that only readies. Code a verb reaches calls ``requestActivation()`` at
-/// the moment it actually puts something up — a surface, a permission panel —
-/// so a refused verb asks nothing, and under a door that installed none
-/// nothing happens.
+/// one that only readies; Shortcuts', around the action that can put up a
+/// panel, asks the system to continue that action in the foreground, and
+/// answers once it has. Code a verb reaches awaits
+/// ``requestActivation()`` at the moment it actually puts something up — a
+/// surface, a permission panel — so a refused verb asks nothing, and under a
+/// door that installed none nothing happens. A requester that throws has not
+/// brought the process forward, and the verb fails with what it threw rather
+/// than putting up a surface nobody is in front of.
 ///
 /// Task-local, so it reaches a `Task {}` the verb starts but not a
 /// `Task.detached`: work that needs it stays structured.
@@ -16,24 +20,24 @@ package struct ActivationRequester: Sendable {
     /// The requester of the request the current task is answering.
     @TaskLocal package static var current: ActivationRequester?
 
-    private let request: @MainActor @Sendable () -> Void
+    private let request: @MainActor @Sendable () async throws -> Void
 
     /// Wraps what makes the process presentable and asks the requester to
     /// activate it.
-    package init(_ request: @escaping @MainActor @Sendable () -> Void) {
+    package init(_ request: @escaping @MainActor @Sendable () async throws -> Void) {
         self.request = request
     }
 
     /// Asks this requester to bring the process forward.
     @MainActor
-    func requestActivation() {
-        request()
+    func requestActivation() async throws {
+        try await request()
     }
 
     /// Asks the current request's requester, if its door installed one, to
     /// bring the process forward.
     @MainActor
-    package static func requestActivation() {
-        current?.requestActivation()
+    package static func requestActivation() async throws {
+        try await current?.requestActivation()
     }
 }
