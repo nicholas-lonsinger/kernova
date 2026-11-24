@@ -73,7 +73,7 @@ public enum ContainerError: Error, Equatable, Sendable {
     case xattrNotAllowed(Data)
     /// Two of an entry's extended attributes share a name.
     case duplicateXattrName(Data)
-    /// A header or end record holds a field the current schema does not define.
+    /// A header or end record, or a message inside one, holds a field the current schema does not define.
     case unknownFields
     /// An entry other than a regular file declares a resource fork.
     case resourceForkNotAllowed(EntryHeader.TypeEnum)

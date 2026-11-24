@@ -27,7 +27,7 @@ package struct ConnectionConfiguration: Sendable {
     package var policy: ReceiverPolicy
     /// The kinds this connection serves.
     package var kinds: [StreamKindDescriptor]
-    package var protocolVersion: UInt32 = Limits.protocolVersion
+    package var protocolVersion = SessionProtocol.version
     #if DEBUG
     package var assertsOnMisuseForTesting = true
     package var recordsTraceForTesting = false
@@ -94,7 +94,7 @@ package enum ConnectionEvent: Sendable, Equatable {
     /// A liveness verdict.
     case liveness(LivenessChange)
     /// The far side opened a stream this side accepted.
-    case opened(StreamID, StreamKind, body: Data)
+    case opened(StreamID, StreamKind, body: OpenBody)
     /// A message arrived on a stream.
     case message(StreamID, Data)
     /// Raw bytes arrived on a stream; they hold credit until `consumed`.

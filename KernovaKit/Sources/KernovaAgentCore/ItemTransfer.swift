@@ -300,10 +300,10 @@ struct ItemTransfer: Sendable {
     /// Handles an event on a pull stream.
     mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
-        case .opened(let stream, let body):
+        case .opened(let stream, .pullRequest(let request)):
             server.opened(
-                ItemPullID(generation: generation, stream: stream), body: body, offers: offers,
-                connection: &connection, outbox: &outbox)
+                ItemPullID(generation: generation, stream: stream), request, offers: offers, connection: &connection,
+                outbox: &outbox)
         case .data(let stream, let bytes):
             client.data(stream, bytes, outbox: &outbox)
         case .remoteEnded(let stream, _):
@@ -316,7 +316,7 @@ struct ItemTransfer: Sendable {
             client.closed(stream, closure, outbox: &outbox)
         case .slotFreed, .usabilityChanged, .policyChanged:
             client.admitWaiting(offers: offers, generation: generation, connection: &connection, outbox: &outbox)
-        case .sessionEstablished, .message, .deadline:
+        case .sessionEstablished, .opened, .message, .deadline:
             break
         }
     }

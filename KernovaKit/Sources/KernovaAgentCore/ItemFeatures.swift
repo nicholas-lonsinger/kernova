@@ -718,9 +718,8 @@ struct DragOffers: Sendable {
         if let body = waiting.end, connection.canQueue(on: stream) { connection.end(stream, body: body) }
     }
 
-    /// Peer: the host opened a take of `body`'s token.
-    mutating func opened(_ stream: StreamID, body: Data, items: ItemTransfer, connection: inout Connection) {
-        let token = (try? Kernova_V2_DragTake(serializedBytes: body))?.token ?? Data()
+    /// Peer: the host opened a take of the drag offer of `token`.
+    mutating func opened(_ stream: StreamID, token: Data, items: ItemTransfer, connection: inout Connection) {
         let id = DragTakeID(generation: generation, stream: stream)
         guard items.offers.localFeature(token) == .drag, !taken.contains(token),
             !asked.contains(where: { $0.token == token })

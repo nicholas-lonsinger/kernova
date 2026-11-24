@@ -39,14 +39,6 @@ package enum SimItems {
         return representation
     }
 
-    /// A promised representation of `storage`, under a stand-in name, `size` bytes when pulled.
-    package static func promise(_ storage: Representation.Storage, size: Int) -> Representation {
-        var representation = representation(storage, size: size)
-        representation.name = Data("Untitled".utf8)
-        representation.promised = true
-        return representation
-    }
-
     /// An offer of `items`, each its representations.
     package static func offer(_ tag: UInt8, _ items: [[Representation]]) -> ItemOffer {
         ItemOffer(

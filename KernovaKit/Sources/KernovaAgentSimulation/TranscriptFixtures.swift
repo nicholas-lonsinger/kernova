@@ -25,13 +25,9 @@ package enum TranscriptFixture {
 
     package static func host(_ name: String) -> HostConfiguration? {
         var bundles: [BundledPayload] = []
-        var protocolVersion: UInt32 = 1
-        var items = false
         switch name {
         case "host-default":
             break
-        case "host-items":
-            items = true
         case "host-pax-system":
             bundles = [
                 BundledPayload(
@@ -44,38 +40,14 @@ package enum TranscriptFixture {
             bundles = [SimHub.bundle(size: executableSize, tag: executableTag)]
         case "host-stale":
             bundles = [SimHub.bundle(size: 100_000, tag: staleTag)]
-        case "host-proto2":
-            protocolVersion = 2
         default:
             return nil
         }
-        let policy = PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)])
         var configuration = HostConfiguration(
             claim: PeerClaim(role: .host, versionLabel: "Kernova"), sessionToken: token,
-            policy: items ? SimItems.policy(policy) : policy, bundles: bundles)
-        let version = protocolVersion
-        configuration.tweakForTesting = { connection in
-            connection.recordsTraceForTesting = true
-            connection.protocolVersion = version
-        }
-        if items { configuration.items = SimItems.served }
+            policy: PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]), bundles: bundles)
+        configuration.tweakForTesting = { connection in connection.recordsTraceForTesting = true }
         return configuration
-    }
-
-    /// The offer an `offer fixture=<name>` input makes.
-    package static func offer(_ name: String) -> ItemOffer? {
-        switch name {
-        case "file-2k":
-            SimItems.offer(
-                1, [[SimItems.representation(.file, size: 2048), SimItems.representation(.inline, size: 64)]])
-        case "text-64": SimItems.offer(2, [[SimItems.representation(.inline, size: 64)]])
-        case "folder-4k": SimItems.offer(3, [[SimItems.representation(.folder, size: 4096)]])
-        case "drag-1": SimItems.offer(1, [])
-        case "drag-4": SimItems.offer(4, [])
-        case "promise-folder":
-            SimItems.offer(4, [[SimItems.promise(.file, size: 2048)], [SimItems.representation(.folder, size: 0)]])
-        default: nil
-        }
     }
 
     /// The bundles a `setBundles fixture=<name>` input installs.
@@ -88,13 +60,9 @@ package enum TranscriptFixture {
     }
 
     package static func peer(_ name: String) -> PeerConfiguration? {
-        var protocolVersion: UInt32 = 1
-        var items = false
         let configuration: PeerConfiguration
         switch name {
-        case "linux-session-v1", "linux-session-proto2", "linux-session-items":
-            items = name == "linux-session-items"
-            protocolVersion = name == "linux-session-proto2" ? 2 : 1
+        case "linux-session-v1":
             configuration = PeerConfiguration(
                 claim: PeerClaim(
                     role: .sessionPeer, scope: .user, os: .linux, osVersion: "24.04", osBuild: "6.8.0",
@@ -126,12 +94,7 @@ package enum TranscriptFixture {
             return nil
         }
         var tweaked = configuration
-        let version = protocolVersion
-        tweaked.tweakForTesting = { connection in
-            connection.recordsTraceForTesting = true
-            connection.protocolVersion = version
-        }
-        if items { tweaked.items = SimItems.served }
+        tweaked.tweakForTesting = { connection in connection.recordsTraceForTesting = true }
         return tweaked
     }
 }

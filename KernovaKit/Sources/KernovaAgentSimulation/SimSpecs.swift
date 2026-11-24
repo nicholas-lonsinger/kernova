@@ -73,7 +73,7 @@ package struct PeerSpec: Sendable {
     package var power = PowerScript()
     package var logs = true
     package var installer: InstallerSpec?
-    package var protocolVersion: UInt32 = 1
+    package var protocolVersion = SessionProtocol.version
     /// A fixed instance id; otherwise each process start draws one.
     package var instanceID: Data?
     package var startAt: SimTime = 0

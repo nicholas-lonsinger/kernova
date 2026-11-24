@@ -302,8 +302,7 @@ package struct UpdateServer: FeatureMachine {
     /// Handles a connection event.
     package mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
-        case .opened(let stream, let body):
-            let request = (try? Kernova_V2_UpdatePull(serializedBytes: body)) ?? Kernova_V2_UpdatePull()
+        case .opened(let stream, .updatePull(let request)):
             guard let offer = connection.offeredUpdate else {
                 return connection.reset(stream, WireError(.updateUnavailable))
             }
@@ -329,7 +328,8 @@ package struct UpdateServer: FeatureMachine {
             guard let current = pull, current.id.stream == stream else { return }
             if !current.resultDelivered { outbox.append(.update(.closed(current.id, closure))) }
             pull = nil
-        case .sessionEstablished, .usabilityChanged, .policyChanged, .message, .data, .writable, .deadline, .slotFreed:
+        case .sessionEstablished, .usabilityChanged, .policyChanged, .opened, .message, .data, .writable, .deadline,
+            .slotFreed:
             break
         }
     }

@@ -303,7 +303,7 @@ var targets: [Target] = [
     .testTarget(
         name: "KernovaAgentCoreTests",
         dependencies: [
-            "KernovaAgentCore", "KernovaAgentSimulation", "KernovaContainer", "KernovaWire",
+            "KernovaAgentCore", "KernovaAgentSimulation", "KernovaContainer", "KernovaWire", "KernovaDigest",
             "KernovaPortableTestSupport",
             .product(name: "SwiftProtobuf", package: "swift-protobuf"),
         ],

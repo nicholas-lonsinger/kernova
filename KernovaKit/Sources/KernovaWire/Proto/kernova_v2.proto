@@ -36,12 +36,14 @@
 //   - no `map` fields anywhere in this file: golden transcripts need
 //     byte-deterministic encoding.
 //
-// Everything not marked FROZEN is current-only: it changes freely with the
-// FeatureAdvert.version or Hello.protocol_version that owns it, with no
-// compatibility path. A frozen envelope never embeds a non-frozen message as a
-// typed field: non-frozen content travels as `bytes`, decoded only once the
-// owning version is known to match, so a shape change in a current-only
-// feature can never make a frozen message fail to decode.
+// Everything not marked FROZEN is current-only: it changes freely, with no
+// compatibility path. Hello.protocol_version is the digest of this file's
+// schema, so two builds whose schemas differ in anything exchange the frozen
+// subset alone; a change to a non-frozen feature's behavior that its messages
+// do not show bumps its FeatureAdvert.version. A frozen envelope never embeds a
+// non-frozen message as a typed field: non-frozen content travels as `bytes`,
+// decoded only once the owning version is known to match, so a shape change in
+// a current-only feature can never make a frozen message fail to decode.
 //
 // THE UPDATE PROFILE
 //
@@ -317,9 +319,10 @@ message SessionMessage {
 // FROZEN. The first session message each way. Both sides send theirs at once,
 // without waiting for the other's.
 message Hello {
-  // The session layer's version: what `SessionMessage.extension` and every
-  // non-frozen session rule mean. Equal: full session. Different: frozen
-  // subset only. Currently 1.
+  // The digest of this file's schema in the sender's build
+  // (`kernova_v2.digest.swift`): what `SessionMessage.extension` and every
+  // non-frozen message mean. Equal: full session. Different: frozen subset
+  // only.
   uint32 protocol_version = 1;
   PeerIdentity identity = 2;
   // Every feature this side knows, available or absent, at most one entry per
@@ -413,13 +416,15 @@ message PeerState {
 // ABSENCE_REASON_UNSPECIFIED.
 message FeatureAdvert {
   FeatureId feature = 1;
-  // Exact-match version of the feature's messages and behavior. Frozen
-  // features are version 1 forever.
+  // Exact-match version of the feature's behavior; a non-frozen feature's
+  // messages match where Hello.protocol_version does. Frozen features are
+  // version 1 forever.
   uint32 version = 2;
   oneof availability {
     // Available; the feature's capability message (PowerCapability,
-    // UpdateCapability, LogCapability, ...), encoded. Decoded only when both
-    // sides' versions are equal.
+    // UpdateCapability, LogCapability, ...), encoded. A non-frozen feature's
+    // is decoded only when both Hellos carry the same protocol_version, and any
+    // is used only when both sides' versions of the feature are equal.
     bytes params = 3;
     Absence absent = 4;
   }
@@ -449,16 +454,16 @@ message PolicyUpdate {
 message FeaturePolicy {
   FeatureId feature = 1;
   // The version `params` is encoded for; params are decoded only when it
-  // equals the receiver's version of the feature.
+  // equals the receiver's version of the feature, and for a non-frozen
+  // feature only when both Hellos carry the same protocol_version.
   uint32 version = 2;
   bool enabled = 3;
   // The feature's policy message (LogPolicy, ...), encoded.
   bytes params = 4;
 }
 
-// Non-frozen session-layer content, gated by Hello.protocol_version. Empty at
-// protocol_version 1; the home for session-wide additions such as trace
-// context (#1696).
+// Non-frozen session-layer content, gated by Hello.protocol_version. Empty;
+// the home for session-wide additions such as trace context (#1696).
 message SessionExtension {
 }
 

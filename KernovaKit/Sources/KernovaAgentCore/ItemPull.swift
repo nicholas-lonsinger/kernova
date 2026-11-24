@@ -28,10 +28,9 @@ struct ItemPullServer: Sendable {
 
     /// The far side opened a pull: serve it when it names a representation of an open offer, RESET otherwise.
     mutating func opened(
-        _ id: ItemPullID, body: Data, offers: ItemOfferRegistry, connection: inout Connection,
+        _ id: ItemPullID, _ request: PullRequest, offers: ItemOfferRegistry, connection: inout Connection,
         outbox: inout [ItemTransferOutput]
     ) {
-        let request = (try? PullRequest(serializedBytes: body)) ?? PullRequest()
         switch offers.localRepresentation(request) {
         case .failure(let error):
             connection.reset(id.stream, error)

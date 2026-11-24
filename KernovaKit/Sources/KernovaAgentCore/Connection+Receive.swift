@@ -155,10 +155,9 @@ extension Connection {
         }
     }
 
-    /// The far side's adverts, normalized, each one's params decoded once; for a
-    /// feature that is frozen or whose protocol version both sides share, and that
-    /// this side advertises at the same version, params that do not decode make
-    /// the advert absent.
+    /// The far side's adverts, normalized, the params of a feature that is frozen or whose protocol version both
+    /// sides share decoded once; for a feature this side advertises at the same version, params that do not decode
+    /// make the advert absent.
     mutating func receivedAdverts(_ features: [Kernova_V2_FeatureAdvert], remoteVersion: UInt32)
         -> [ReceivedAdvert]
     {
@@ -180,9 +179,11 @@ extension Connection {
                 availability = .absent(.unspecified, debugDetail: "")
             }
             var paramsDecode = true
-            if case .available(let params) = availability {
+            if case .available(let params) = availability,
+                descriptor.frozen || remoteVersion == configuration.protocolVersion
+            {
                 paramsDecode = descriptor.paramsDecode(params)
-                if !paramsDecode, descriptor.frozen || remoteVersion == configuration.protocolVersion,
+                if !paramsDecode,
                     localAdverts.first(where: { $0.feature == advert.feature })?.advert.version == advert.version
                 {
                     availability = .absent(.unspecified, debugDetail: "params do not decode")
@@ -242,11 +243,14 @@ extension Connection {
             emit(.remoteAdvertsChanged)
         case .policy(let update):
             guard role != .host else { return fatal(.protocolError, "PolicyUpdate sent by a peer") }
+            let sharesSchema = remoteHello.protocolVersion == configuration.protocolVersion
             let snapshot = PolicySnapshot(
                 update.features.compactMap { entry in
-                    guard FeatureDescriptor.lookup(entry.feature) != nil else { return nil }
+                    guard let descriptor = FeatureDescriptor.lookup(entry.feature) else { return nil }
+                    // A non-frozen feature's params are a message of the far side's schema.
+                    let params = descriptor.frozen || sharesSchema ? entry.params : Data()
                     return FeaturePolicyValue(
-                        feature: entry.feature, version: entry.version, enabled: entry.enabled, params: entry.params)
+                        feature: entry.feature, version: entry.version, enabled: entry.enabled, params: params)
                 })
             currentPolicy = snapshot
             emit(.policyChanged(snapshot))
@@ -358,7 +362,7 @@ extension Connection {
         if let feature = descriptor.feature, case .absent(let reason, _) = usability(feature) {
             return refuse(id, descriptor, WireError(.featureUnavailable, absence: reason))
         }
-        guard descriptor.isValidOpenBody(open.body) else {
+        guard let body = descriptor.owner?.openBody(open.body) else {
             return refuse(id, descriptor, WireError(.malformedMessage))
         }
         if let max = descriptor.maxPerConnection {
@@ -372,7 +376,7 @@ extension Connection {
         raiseToBulkTarget(&record, viaQueue: false)
         record.wasWritable = sendPredicate(record)
         insert(record)
-        emit(.opened(id, descriptor.kind, body: open.body), owner: descriptor.owner)
+        emit(.opened(id, descriptor.kind, body: body), owner: descriptor.owner)
     }
 
     /// Answers a refused OPEN with RESET; the stream counts as closed at once and
@@ -388,7 +392,7 @@ extension Connection {
 
     static let refusedDescriptor = StreamKindDescriptor(
         kind: .unspecified, feature: nil, owner: nil, openerRole: .host, openerToAcceptor: .nothing,
-        acceptorToOpener: .nothing, maxPerConnection: nil, isValidOpenBody: { _ in false })
+        acceptorToOpener: .nothing, maxPerConnection: nil)
 
     /// Raises a raw-DATA receive direction to the bulk target with one WINDOW.
     func raiseToBulkTarget(_ record: inout StreamRecord, viaQueue: Bool) {

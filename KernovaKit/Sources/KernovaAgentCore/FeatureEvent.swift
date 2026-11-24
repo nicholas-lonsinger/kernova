@@ -15,7 +15,7 @@ package enum FeatureEvent: Sendable, Equatable {
     /// The policy changed (a `PolicyUpdate` on a peer, a command on the host).
     case policyChanged
     /// The far side opened one of the machine's kinds.
-    case opened(StreamID, body: Data)
+    case opened(StreamID, body: OpenBody)
     /// A message arrived on one of its streams.
     case message(StreamID, Data)
     /// Raw bytes arrived on one of its streams.

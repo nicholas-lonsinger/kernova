@@ -46,12 +46,14 @@
 //   - no `map` fields anywhere in this file: golden transcripts need
 //     byte-deterministic encoding.
 //
-// Everything not marked FROZEN is current-only: it changes freely with the
-// FeatureAdvert.version or Hello.protocol_version that owns it, with no
-// compatibility path. A frozen envelope never embeds a non-frozen message as a
-// typed field: non-frozen content travels as `bytes`, decoded only once the
-// owning version is known to match, so a shape change in a current-only
-// feature can never make a frozen message fail to decode.
+// Everything not marked FROZEN is current-only: it changes freely, with no
+// compatibility path. Hello.protocol_version is the digest of this file's
+// schema, so two builds whose schemas differ in anything exchange the frozen
+// subset alone; a change to a non-frozen feature's behavior that its messages
+// do not show bumps its FeatureAdvert.version. A frozen envelope never embeds a
+// non-frozen message as a typed field: non-frozen content travels as `bytes`,
+// decoded only once the owning version is known to match, so a shape change in
+// a current-only feature can never make a frozen message fail to decode.
 //
 // THE UPDATE PROFILE
 //
@@ -1019,9 +1021,10 @@ public nonisolated struct Kernova_V2_Hello: @unchecked Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// The session layer's version: what `SessionMessage.extension` and every
-  /// non-frozen session rule mean. Equal: full session. Different: frozen
-  /// subset only. Currently 1.
+  /// The digest of this file's schema in the sender's build
+  /// (`kernova_v2.digest.swift`): what `SessionMessage.extension` and every
+  /// non-frozen message mean. Equal: full session. Different: frozen subset
+  /// only.
   public var protocolVersion: UInt32 {
     get {_storage._protocolVersion}
     set {_uniqueStorage()._protocolVersion = newValue}
@@ -1361,15 +1364,17 @@ public nonisolated struct Kernova_V2_FeatureAdvert: Sendable {
 
   public var feature: Kernova_V2_FeatureId = .unspecified
 
-  /// Exact-match version of the feature's messages and behavior. Frozen
-  /// features are version 1 forever.
+  /// Exact-match version of the feature's behavior; a non-frozen feature's
+  /// messages match where Hello.protocol_version does. Frozen features are
+  /// version 1 forever.
   public var version: UInt32 = 0
 
   public var availability: Kernova_V2_FeatureAdvert.OneOf_Availability? = nil
 
   /// Available; the feature's capability message (PowerCapability,
-  /// UpdateCapability, LogCapability, ...), encoded. Decoded only when both
-  /// sides' versions are equal.
+  /// UpdateCapability, LogCapability, ...), encoded. A non-frozen feature's
+  /// is decoded only when both Hellos carry the same protocol_version, and any
+  /// is used only when both sides' versions of the feature are equal.
   public var params: Data {
     get {
       if case .params(let v)? = availability {return v}
@@ -1390,8 +1395,9 @@ public nonisolated struct Kernova_V2_FeatureAdvert: Sendable {
 
   public nonisolated enum OneOf_Availability: Equatable, Sendable {
     /// Available; the feature's capability message (PowerCapability,
-    /// UpdateCapability, LogCapability, ...), encoded. Decoded only when both
-    /// sides' versions are equal.
+    /// UpdateCapability, LogCapability, ...), encoded. A non-frozen feature's
+    /// is decoded only when both Hellos carry the same protocol_version, and any
+    /// is used only when both sides' versions of the feature are equal.
     case params(Data)
     case absent(Kernova_V2_Absence)
 
@@ -1456,7 +1462,8 @@ public nonisolated struct Kernova_V2_FeaturePolicy: Sendable {
   public var feature: Kernova_V2_FeatureId = .unspecified
 
   /// The version `params` is encoded for; params are decoded only when it
-  /// equals the receiver's version of the feature.
+  /// equals the receiver's version of the feature, and for a non-frozen
+  /// feature only when both Hellos carry the same protocol_version.
   public var version: UInt32 = 0
 
   public var enabled: Bool = false
@@ -1469,9 +1476,8 @@ public nonisolated struct Kernova_V2_FeaturePolicy: Sendable {
   public init() {}
 }
 
-/// Non-frozen session-layer content, gated by Hello.protocol_version. Empty at
-/// protocol_version 1; the home for session-wide additions such as trace
-/// context (#1696).
+/// Non-frozen session-layer content, gated by Hello.protocol_version. Empty;
+/// the home for session-wide additions such as trace context (#1696).
 public nonisolated struct Kernova_V2_SessionExtension: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for

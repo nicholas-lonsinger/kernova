@@ -173,8 +173,8 @@ package struct PowerResponder: FeatureMachine {
     /// Handles a stream event for POWER_REQUEST.
     package mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
-        case .opened(let stream, let body):
-            opened(stream, body: body, connection: &connection)
+        case .opened(let stream, .powerRequest(let powerRequest)):
+            opened(stream, powerRequest, connection: &connection)
         case .writable(let stream):
             if request?.stream == stream { flushPending(&connection) }
         case .streamClosed(let stream, _):
@@ -189,7 +189,8 @@ package struct PowerResponder: FeatureMachine {
                 outbox.append(.power(.cancel(current.id)))
             }
             request = current
-        case .sessionEstablished, .usabilityChanged, .policyChanged, .message, .data, .remoteEnded, .slotFreed:
+        case .sessionEstablished, .usabilityChanged, .policyChanged, .opened, .message, .data, .remoteEnded,
+            .slotFreed:
             break
         }
     }
@@ -256,8 +257,9 @@ package struct PowerResponder: FeatureMachine {
         }
     }
 
-    private mutating func opened(_ stream: StreamID, body: Data, connection: inout Connection) {
-        let powerRequest = (try? Kernova_V2_PowerRequest(serializedBytes: body)) ?? Kernova_V2_PowerRequest()
+    private mutating func opened(
+        _ stream: StreamID, _ powerRequest: Kernova_V2_PowerRequest, connection: inout Connection
+    ) {
         let offered = availability.params?.actions(ignoringApps: powerRequest.ignoreApps) ?? []
         guard offered.contains(powerRequest.action), powerRequest.action != .unspecified else {
             return refuse(stream, .powerActionUnsupported, connection: &connection)
