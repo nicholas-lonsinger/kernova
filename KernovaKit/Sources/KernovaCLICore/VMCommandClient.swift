@@ -233,13 +233,14 @@ extension VMCommandResponse {
     /// way to answer for the account, so the core's own message — naming
     /// Kernova's sheet as the route — is the whole of what this tool can offer.
     private static func message(for error: CommandErrorDTO) -> String {
+        let message = error.message(in: .commandLine)
         switch error {
         case .confirmationRequired:
-            error.message + "\n\nPass --yes to do it anyway."
+            return message + "\n\nPass --yes to do it anyway."
         case .stepRequired(let requirement) where !requirement.routes.isEmpty:
-            error.message + "\n\n" + CommandLineSpelling.routes(of: requirement)
+            return message + "\n\n" + CommandLineSpelling.routes(of: requirement)
         default:
-            error.message
+            return message
         }
     }
 

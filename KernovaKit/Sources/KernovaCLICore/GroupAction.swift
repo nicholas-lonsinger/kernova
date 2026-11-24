@@ -45,7 +45,8 @@ enum GroupActionOutput {
                     if case .done = $0.outcome { true } else { false }
                 }.map(\.vm.name).joined(separator: "\n")
             }
-            return report.results.map { $0.line(for: report.action) }.joined(separator: "\n")
+            return report.results.map { $0.line(for: report.action, in: .commandLine) }
+                .joined(separator: "\n")
         }
     }
 

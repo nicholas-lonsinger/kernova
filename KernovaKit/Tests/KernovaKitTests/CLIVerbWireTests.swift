@@ -45,8 +45,8 @@ struct CLIVerbWireTests {
             filter: VMLibraryFilter(
                 guestOSes: [.linux], states: [.running, .heldByAnotherCopy],
                 guestAgents: [.olderVersion], ephemeralOnly: true, withSnapshotsOnly: true),
-            networks: ["nat", "unlisted", "Lab"], groups: [VMGroupReference(.smartGroup, named: "Linux Lab")],
-            sort: .dateCreated)
+            networks: ["nat", "unlisted", "Lab"], tags: [],
+            groups: [VMGroupReference(.smartGroup, named: "Linux Lab")], sort: .dateCreated)
         #expect(exchanged.sent == [.list(expected)])
         #expect(try exchanged.answer.payload() == .summaries([alpha]))
     }

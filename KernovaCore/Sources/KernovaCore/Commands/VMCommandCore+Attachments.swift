@@ -584,7 +584,7 @@ extension VMCommandCore {
                 change: .firstOrLastSharedDirectory)
             logger.log(
                 .notice,
-                "Refused \(VMVerb.editSharedDirectory.rawValue, privacy: .public) for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
+                "Refused \(VMVerb.editSharedDirectory.rawValue, privacy: .public) for '\(instance.name, privacy: .public)': \(error.message(in: .log), privacy: .public)"
             )
             throw error
         case .unavailable(let capability):
@@ -1182,7 +1182,7 @@ extension VMCommandCore {
     private func staleAttachment(_ id: UUID, on instance: VMInstance, verb: VMVerb) -> CommandError {
         logger.log(
             .debug,
-            "\(verb.displayName, privacy: .public) named \(id.uuidString, privacy: .public), which is no longer attached to '\(instance.name, privacy: .public)'"
+            "\(verb.rawValue, privacy: .public) named \(id.uuidString, privacy: .public), which is no longer attached to '\(instance.name, privacy: .public)'"
         )
         return .operationFailed(
             verb: verb,

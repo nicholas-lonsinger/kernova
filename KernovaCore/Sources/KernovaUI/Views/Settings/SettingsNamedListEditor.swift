@@ -350,7 +350,7 @@ final class SettingsNamedListEditor: NSObject {
         do {
             try change()
         } catch {
-            let message = (error as? CommandError)?.message ?? error.localizedDescription
+            let message = (error as? CommandError)?.message(in: .app) ?? error.localizedDescription
             logger.log(.notice, "\(title, privacy: .public): \(message, privacy: .public)")
             guard let window = tableView.window else { return }
             presentSheetAlert(.acknowledgement(title: title, message: message), in: window, completion: retry)

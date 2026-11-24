@@ -429,7 +429,7 @@ final class AppAlertPresenter {
                 onWindowClose: .requeue(entry))
         case .startSummary(let title, let undone):
             showAlert(
-                .acknowledgement(title: title, message: listed(undone).undoneMessage(for: .start)),
+                .acknowledgement(title: title, message: listed(undone).undoneMessage(for: .start, in: .app)),
                 on: window, onWindowClose: .requeue(entry))
         case .installerMounted(let instance, let purpose, let delivery, _):
             let shown = showAlert(

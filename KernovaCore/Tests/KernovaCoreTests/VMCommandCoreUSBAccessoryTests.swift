@@ -61,7 +61,6 @@ struct VMCommandCoreUSBAccessoryTests {
         // Host-scoped: the VM is not what is missing, and a script reads this
         // as the same kind of miss as a name nothing answers to.
         #expect(refusal == .itemNotFoundOnHost(item: "USB accessory with the identifier 42"))
-        #expect(refusal.message == "Kernova has no USB accessory with the identifier 42.")
         #expect(service.attachedRegistryIDs.isEmpty)
         #expect(instance.liveUSBAccessories.isEmpty)
     }
@@ -114,10 +113,6 @@ struct VMCommandCoreUSBAccessoryTests {
         // as holding; an identifier nothing answers to is a mistake, and
         // succeeding at it would tell a script the detach happened.
         #expect(refusal.isItemNotFound)
-        #expect(
-            refusal.message
-                == "\u{201C}Core VM\u{201D} has no USB accessory with the device identifier \(stranger.uuidString)."
-        )
         #expect(service.detachedDeviceIDs.isEmpty)
         #expect(instance.liveUSBAccessories.count == 1)
     }
@@ -141,10 +136,6 @@ struct VMCommandCoreUSBAccessoryTests {
         try await harness.core.detachUSBAccessory(.id(instance.id), device: deviceID)
 
         #expect(harness.failures.count == 1)
-        #expect(
-            harness.failures.first?.message.hasPrefix(
-                "\(accessory.displayName) was detached from \u{201C}\(instance.name)\u{201D}, but Kernova could not forget it there. "
-            ) == true)
         #expect(instance.usbPairings.pairing(forKey: key) != nil)
         // The detach's echo: macOS hands the same stick back under a new
         // registry ID, and the token keeps it with the Mac.

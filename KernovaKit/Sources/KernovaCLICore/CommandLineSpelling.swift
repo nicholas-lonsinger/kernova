@@ -1,3 +1,4 @@
+import ArgumentParser
 import Foundation
 import KernovaCommandModel
 
@@ -17,13 +18,18 @@ enum CommandLineSpelling {
         "kernova " + words.map(word).joined(separator: " ")
     }
 
+    /// The `kernova` command line running `command` with `arguments`.
+    static func line(_ command: any ParsableCommand.Type, _ arguments: [String]) -> String {
+        line(KernovaCommand.words(of: command) + arguments)
+    }
+
     /// The command line that takes `step`.
     static func line(for step: CommandStep) -> String {
         switch step {
-        case .resume(let vm): line(["resume", vm.name])
-        case .discardSavedState(let vm): line(["stop", vm.name, "--yes"])
+        case .resume(let vm): line(KernovaCommand.Resume.self, [vm.name])
+        case .discardSavedState(let vm): line(KernovaCommand.Stop.self, [vm.name, "--yes"])
         case .setConfiguration(let vm, let assignments):
-            line(["set", vm.name] + assignments.map { "\($0.key)=\($0.value)" })
+            line(KernovaCommand.Set.self, [vm.name] + assignments.map { "\($0.key)=\($0.value)" })
         }
     }
 
@@ -32,7 +38,7 @@ enum CommandLineSpelling {
     static func line(for ending: StepRoute.Ending) -> String? {
         switch ending {
         case .refusedVerb: nil
-        case .start(let vm): line(["start", vm.name])
+        case .start(let vm): line(KernovaCommand.Start.self, [vm.name])
         }
     }
 
@@ -46,8 +52,8 @@ enum CommandLineSpelling {
         case .ephemeralRevert(let vm, let baseline):
             "Ephemeral Mode is on for \u{201C}\(vm.name)\u{201D}: this change goes back to "
                 + "\u{201C}\(baseline.name)\u{201D} at the next shutdown. To keep it, take a "
-                + "snapshot (\(line(["snapshot", "take", vm.name]))) and choose it as the baseline "
-                + "(\(line(["set", vm.name])) ephemeral.baseline=<snapshot>)."
+                + "snapshot (\(line(KernovaCommand.Snapshot.Take.self, [vm.name]))) and choose it as the "
+                + "baseline (\(line(KernovaCommand.Set.self, [vm.name])) ephemeral.baseline=<snapshot>)."
         }
     }
 

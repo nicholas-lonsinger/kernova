@@ -15,7 +15,7 @@ extension VMInstance {
 
         package var label: String {
             switch self {
-            case .start: "Start"
+            case .start: AppCommandTitle.start
             case .install: "Install"
             case .resumeInstall: "Resume Install"
             case .download: "Download"

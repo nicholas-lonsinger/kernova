@@ -1,5 +1,6 @@
 import CoreServices
 import Foundation
+import KernovaCommandModel
 
 extension CommandError {
     /// The Apple event error number a script reads this refusal as.
@@ -25,11 +26,13 @@ extension CommandError {
         }
     }
 
-    /// What the script reads back, in the same words every other door shows.
+    /// What the script reads back: the words every other door shows, naming
+    /// verbs as the dictionary does.
     ///
     /// A consent refusal gains the one thing a script can do about it, as the
     /// `kernova` tool's own refusal names `--yes`.
     var appleEventErrorString: String {
+        let message = message(in: .appleScript)
         switch self {
         case .confirmationRequired:
             return message + "\n\nAdd `with confirmation` to do it anyway."

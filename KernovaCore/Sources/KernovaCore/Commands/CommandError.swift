@@ -131,8 +131,9 @@ extension CommandError {
     /// same refusal differently.
     var alertTitle: String { dto.title }
 
-    /// What a surface tells the user, in one sentence per fact.
-    package var message: String { dto.message }
+    /// What a surface tells the user, in one sentence per fact, naming verbs
+    /// in `vocabulary` — the surface's own.
+    package func message(in vocabulary: VMVerbVocabulary) -> String { dto.message(in: vocabulary) }
 
     /// Whether the verb ran and did not complete, as opposed to being refused
     /// before it started.
@@ -141,6 +142,13 @@ extension CommandError {
         case .operationFailed, .shutdownNotCarriedOut, .restartCancelledByStop: true
         default: false
         }
+    }
+
+    /// What a verb that ran and did not complete says about it, in the words
+    /// the failure carries, which name no verb; `nil` for a refusal.
+    var operationFailureMessage: String? {
+        guard case .operationFailed(_, _, let message, _) = dto else { return nil }
+        return message
     }
 
     /// The confirmation this refusal is asking for, or `nil` when it is not a
@@ -221,6 +229,9 @@ extension CommandError {
     }
 }
 
+/// What Foundation's `localizedDescription` reads, in the app's own words: it
+/// takes no parameter to say which surface is speaking, and every other
+/// surface words a refusal through ``CommandError/message(in:)``.
 extension CommandError: LocalizedError {
-    package var errorDescription: String? { message }
+    package var errorDescription: String? { message(in: .app) }
 }

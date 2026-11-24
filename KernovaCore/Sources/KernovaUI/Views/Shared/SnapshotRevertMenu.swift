@@ -18,7 +18,7 @@ final class SnapshotMenuRef: NSObject {
 /// sidebar's context menu.
 @MainActor
 enum SnapshotRevertMenu {
-    static let title = "Revert to Snapshot"
+    static let title = AppCommandTitle.revertToSnapshot
 
     /// Shown in place of the list when the VM has no snapshots, so the submenu
     /// is never empty and its parent reads as unavailable rather than broken.

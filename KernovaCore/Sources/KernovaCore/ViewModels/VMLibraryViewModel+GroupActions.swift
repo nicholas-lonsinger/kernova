@@ -36,6 +36,6 @@ extension VMLibraryViewModel {
             return
         }
         guard !report.undone.isEmpty else { return }
-        surfaceError(report.undoneMessage, title: report.undoneTitle, about: .library)
+        surfaceError(report.undoneMessage(in: .app), title: report.undoneTitle, about: .library)
     }
 }

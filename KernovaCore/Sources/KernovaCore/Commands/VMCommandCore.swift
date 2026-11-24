@@ -361,7 +361,7 @@ package final class VMCommandCore {
         let error = commandError(for: reason, on: instance, verb: verb)
         logger.log(
             .notice,
-            "Refused \(verb?.rawValue ?? "an affordance", privacy: .public) for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
+            "Refused \(verb?.rawValue ?? "an affordance", privacy: .public) for '\(instance.name, privacy: .public)': \(error.message(in: .log), privacy: .public)"
         )
         return error
     }
@@ -653,7 +653,8 @@ package final class VMCommandCore {
         case .resume(let vm):
             try await resume(.id(vm.id), consent: .none)
         case .discardSavedState(let vm):
-            try await stop(.id(vm.id), disposition: .graceful, consent: Consent([.forceStop]))
+            try await stop(
+                .id(vm.id), disposition: .graceful, consent: Consent([.forceStop]), timeout: nil)
         case .setConfiguration(let vm, let assignments):
             _ = try setConfiguration(.id(vm.id), assignments: assignments, consent: .none)
         }
@@ -901,7 +902,7 @@ package final class VMCommandCore {
                     verb == .suspend
                     ? failure(error, verb: verb, on: instance) : ranAndFailed(error, verb: verb, on: instance)
             }
-            return reported.isOperationFailure ? reported.message : nil
+            return reported.operationFailureMessage
         }
     }
 
@@ -910,9 +911,14 @@ package final class VMCommandCore {
     /// ever sees the row vanish, and reports that after this. A failure nobody
     /// awaits is reported here too, in the same step, unless the config check
     /// is its report (``VMArrival/isReportedByTheCheck(_:)``).
+    ///
+    /// The stream carries the failure's own words, as it does a VM's
+    /// (``reportedMessage(of:on:)``), and a refusal none.
     private func arrivalFailed(_ arrival: VMArrival, with error: any Error) {
         guard let failure = arrival.failure(for: error) else { return }
-        broadcaster.emit([.failure(id: arrival.id, name: arrival.name, message: failure.message)])
+        if let message = failure.operationFailureMessage {
+            broadcaster.emit([.failure(id: arrival.id, name: arrival.name, message: message)])
+        }
         if !arrival.isAwaited, !VMArrival.isReportedByTheCheck(error) { report(failure, on: nil) }
     }
 }

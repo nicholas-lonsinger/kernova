@@ -74,3 +74,30 @@ public struct KernovaCommand: ParsableCommand {
         Darwin.exit(CLIExitCode.success.rawValue)
     }
 }
+
+extension KernovaCommand {
+    /// The words that run `command` under `kernova` — `["snapshot", "take"]`
+    /// for ``Snapshot/Take``.
+    static func words(of command: any ParsableCommand.Type) -> [String] {
+        if let path = path(to: command, among: configuration.subcommands) { return path }
+        assertionFailure("\(command) is not a subcommand of kernova")
+        return [command.configuration.commandName].compactMap(\.self)
+    }
+
+    /// The names leading from `subcommands` to `command`, depth first.
+    private static func path(
+        to command: any ParsableCommand.Type, among subcommands: [any ParsableCommand.Type]
+    ) -> [String]? {
+        for subcommand in subcommands {
+            guard let name = subcommand.configuration.commandName else {
+                assertionFailure("\(subcommand) names no command")
+                continue
+            }
+            if ObjectIdentifier(subcommand) == ObjectIdentifier(command) { return [name] }
+            if let rest = path(to: command, among: subcommand.configuration.subcommands) {
+                return [name] + rest
+            }
+        }
+        return nil
+    }
+}

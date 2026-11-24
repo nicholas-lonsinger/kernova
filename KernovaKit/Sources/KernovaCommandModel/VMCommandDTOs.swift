@@ -908,8 +908,9 @@ extension CommandErrorDTO {
         }
     }
 
-    /// What a surface tells the user, in one sentence per fact.
-    public var message: String {
+    /// What a surface tells the user, in one sentence per fact, naming verbs
+    /// as `vocabulary` — the surface's own — names them.
+    public func message(in vocabulary: VMVerbVocabulary) -> String {
         switch self {
         case .notFound(let selector):
             "No virtual machine named \u{201C}\(selector.displayText)\u{201D}."
@@ -923,29 +924,32 @@ extension CommandErrorDTO {
                 + candidates.map { "\($0.name) (\($0.id.uuidString))" }.joined(separator: ", ")
                 + "."
         case .invalidState(let vm, let current, let allowed, let settings, let processEnd):
-            // The status and the verbs in a person's words, never their raw values:
-            // those are the wire's vocabulary, and this sentence goes in front
-            // of a person. A refused setting is named by its key and the value
-            // asked for, the spelling `set` takes. A verb every state admits is
-            // left out, since naming it says nothing.
+            // A refused setting is named by its key and the value asked for,
+            // the spelling `set` takes. A verb every state admits is left out,
+            // since naming it says nothing, and so is one the surface cannot
+            // run: when that leaves none of the admitted verbs, neither
+            // sentence about them is true.
             {
-                let offered = allowed.filter { !$0.isAdmittedInEveryState }.map(\.displayName)
                 let state = VMStatus.phrase(forWireName: current, heldByAnotherCopy: false)
                 let refused = settings.enumerated().map { index, entry in
                     index == 0
                         ? "\(entry.key) cannot be set to \u{201C}\(entry.value)\u{201D}"
                         : "\(entry.key) to \u{201C}\(entry.value)\u{201D}"
                 }
-                return "\u{201C}\(vm.name)\u{201D} is \(state)"
+                let opening =
+                    "\u{201C}\(vm.name)\u{201D} is \(state)"
                     + (refused.isEmpty
-                        ? ". "
+                        ? "."
                         : refused.count == 1
-                            ? ", so \(refused[0]) while it is. "
-                            : ", so \(refused.joined(separator: ", or ")), while it is. ")
-                    + (offered.isEmpty
-                        ? "Nothing can be done with it in that state."
-                        : "What it accepts now: \(offered.joined(separator: ", ")).")
-                    + (processEnd.map { " " + $0.text } ?? "")
+                            ? ", so \(refused[0]) while it is."
+                            : ", so \(refused.joined(separator: ", or ")), while it is.")
+                let admitted = allowed.filter { !$0.isAdmittedInEveryState }
+                let offered = admitted.compactMap(vocabulary.name(of:))
+                let accepted: String? =
+                    admitted.isEmpty
+                    ? "Nothing can be done with it in that state."
+                    : offered.isEmpty ? nil : "What it accepts now: \(offered.joined(separator: ", "))."
+                return [opening, accepted, processEnd?.text].compactMap(\.self).joined(separator: " ")
             }()
         case .changeTakesStoppedVM(let vm, let current, let change):
             "\u{201C}\(vm.name)\u{201D} is "

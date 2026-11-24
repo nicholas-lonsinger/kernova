@@ -194,7 +194,7 @@ extension VMInstance {
         /// Menu title; the two confirming variants take the ellipsis.
         package var menuTitle: String {
             switch self {
-            case .stop: "Stop"
+            case .stop: AppCommandTitle.stop
             case .discardSavedState: "Discard Saved State…"
             case .revertToBaseline: "Revert to Baseline…"
             }
@@ -204,7 +204,7 @@ extension VMInstance {
         /// is a menu-only convention.
         package var toolbarLabel: String {
             switch self {
-            case .stop: "Stop"
+            case .stop: AppCommandTitle.stop
             case .discardSavedState: "Discard Saved State"
             case .revertToBaseline: "Revert to Baseline"
             }

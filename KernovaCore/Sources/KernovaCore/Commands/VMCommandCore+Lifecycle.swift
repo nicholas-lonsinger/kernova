@@ -98,7 +98,7 @@ extension VMCommandCore {
     /// which never boots what the revert was to discard.
     @discardableResult
     func startNow(
-        _ instance: VMInstance, recovery: Bool = false, policy: StartPolicy,
+        _ instance: VMInstance, recovery: Bool, policy: StartPolicy,
         resolving outcome: VMOutcome = VMOutcome()
     ) throws -> VMOutcome {
         try instance.activity.attemptWaitingOutRestorations(
@@ -177,7 +177,7 @@ extension VMCommandCore {
         VMFollowUp(scope: .vm, rank: .ordinary, request: .start(recovery: false)) {
             [weak self, weak instance] outcome in
             guard let self, let instance else { throw CancellationError() }
-            try self.startNow(instance, policy: .command(identity), resolving: outcome)
+            try self.startNow(instance, recovery: false, policy: .command(identity), resolving: outcome)
         }
         .reportingFailure { [weak self, weak instance] error in
             guard let self, let instance else { return }
@@ -741,7 +741,7 @@ extension VMCommandCore {
     /// and stop it themselves.
     package func stop(
         _ selector: VMSelector, disposition: StopDisposition, consent: Consent,
-        timeout: TimeInterval? = nil
+        timeout: TimeInterval?
     ) async throws {
         try Self.requireUsable(timeout)
         try await stop(
@@ -762,7 +762,7 @@ extension VMCommandCore {
     /// when given.
     func stop(
         _ instance: VMInstance, disposition: StopDisposition, consent: Consent,
-        timeout: TimeInterval? = nil
+        timeout: TimeInterval?
     ) async throws {
         if let forceStop = try await requestStop(instance, disposition: disposition, consent: consent) {
             try await awaitForceStop(forceStop, of: instance, within: timeout, verb: .stop)
@@ -1126,7 +1126,7 @@ extension VMCommandCore {
     ) throws -> VMOutcome {
         switch VMAdmission.resumeWork(phase: instance.phase) {
         case .restore:
-            return try startNow(instance, policy: policy, resolving: outcome)
+            return try startNow(instance, recovery: false, policy: policy, resolving: outcome)
         case .hot:
             try lifecycle.launchResume(instance, resolving: outcome)
             return outcome
@@ -1238,7 +1238,8 @@ extension VMCommandCore {
             guard let self, let instance else { throw CancellationError() }
             // Asks nobody: the boot runs once the guest is down, after the
             // call that asked has moved on.
-            try self.startNow(instance, policy: .command(identity.unattended), resolving: outcome)
+            try self.startNow(
+                instance, recovery: false, policy: .command(identity.unattended), resolving: outcome)
         }
         do {
             try await endSession(instance, disposition: disposition, continuingWith: boot, within: timeout)

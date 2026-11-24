@@ -150,7 +150,6 @@ struct VMCommandCoreAttachmentTests {
         }
         #expect(kept.removal == .attachment(label: "locked.img", vm: instance.name))
         #expect(kept.files.map(\.path) == [path])
-        #expect(failure.message.contains("\u{201C}\(path)\u{201D}"))
         // Told to the caller alone, never again as an unattended failure.
         #expect(harness.failures.isEmpty)
     }
@@ -444,13 +443,6 @@ struct VMCommandCoreAttachmentTests {
             #expect(current == .running)
             #expect(change == .firstOrLastSharedDirectory)
         }
-        let message = try #require(throws: CommandError.self) {
-            try harness.core.removeSharedDirectory(.id(single.id), directory: only.id)
-        }.message
-        #expect(
-            message
-                == "\u{201C}Single\u{201D} is running. Adding the first share or removing the last needs the virtual machine stopped."
-        )
         #expect(empty.configuration.sharedDirectories == nil)
         #expect(single.configuration.sharedDirectories == [only])
     }

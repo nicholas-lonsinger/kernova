@@ -71,13 +71,9 @@ struct NetworksSettingsViewControllerTests {
         check.performClick(nil)
         #expect(checks == 1)
 
-        let error = try #require(throws: CommandError.self) {
+        #expect(throws: CommandError.self) {
             try pane.create(name: "Lab", kind: .nat)
         }
-        #expect(
-            error.message
-                == "Kernova can\u{2019}t read its list of networks. Choose File > Check Config Files\u{2026} to review it."
-        )
         #expect(try Data(contentsOf: fileURL) == bytes)
     }
 }

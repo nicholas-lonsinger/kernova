@@ -23,7 +23,7 @@ extension VMCommandCore {
     /// with it as the baseline, written inside the capture.
     @discardableResult
     func takeSnapshot(
-        _ selector: VMSelector, name: String, notes: String, asEphemeralBaseline: Bool = false
+        _ selector: VMSelector, name: String, notes: String, asEphemeralBaseline: Bool
     ) async throws -> SnapshotSummary {
         try await takeSnapshot(
             try resolve(selector), name: name, notes: notes,
@@ -37,7 +37,7 @@ extension VMCommandCore {
     /// stop, or suspend while it is up.
     @discardableResult
     func takeSnapshot(
-        _ instance: VMInstance, name: String, notes: String, asEphemeralBaseline: Bool = false
+        _ instance: VMInstance, name: String, notes: String, asEphemeralBaseline: Bool
     ) async throws -> SnapshotSummary {
         try require(.takeSnapshot, on: instance)
         var baselineFailure: (any Error)?

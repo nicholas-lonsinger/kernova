@@ -27,6 +27,11 @@ struct VMCommandCoreListingTests {
             preferences: preferences, hostState: hostState, mutate: mutate)
     }
 
+    /// The query naming `networks`, and nothing else.
+    private func query(networks: [String]) -> VMListQuery {
+        VMListQuery(filter: VMLibraryFilter(), networks: networks, tags: [], groups: [], sort: .manual)
+    }
+
     private func listed(_ harness: WiredCommandCore, _ query: VMListQuery) throws -> [String] {
         try harness.core.list(harness.core.selection(for: query, verb: .list)).map(\.name)
     }
@@ -47,11 +52,11 @@ struct VMCommandCoreListingTests {
             $0.networkMembership = .network(shadow.id)
         }
 
-        guard case .invalidArgument(let message)? = refusal(harness, VMListQuery(networks: ["nat"])) else {
+        guard case .invalidArgument(let message)? = refusal(harness, query(networks: ["nat"])) else {
             Issue.record("expected an invalid-argument refusal")
             return
         }
         #expect(message.contains(shadow.id.uuidString))
-        #expect(try listed(harness, VMListQuery(networks: [shadow.id.uuidString])) == ["Member"])
+        #expect(try listed(harness, query(networks: [shadow.id.uuidString])) == ["Member"])
     }
 }
