@@ -43,7 +43,7 @@ struct VMIntentGatewayTests {
         var asked: [ConfirmationPrompt] = []
 
         try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
-            try await gateway.stop(vm.id, disposition: .force, consent: consent)
+            try await gateway.stop(vm.id, disposition: .force, consent: consent, givingUpAfter: nil)
         }
 
         #expect(asked.map(\.kind) == [.forceStop])

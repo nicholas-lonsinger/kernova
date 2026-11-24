@@ -737,8 +737,8 @@ extension VMCommandCore {
     /// nothing when it expires; `nil` returns as soon as the guest has been
     /// asked to go down. Only a door whose caller is sitting there waiting
     /// supplies one — the `kernova` tool's `--timeout`, a script's `giving up
-    /// after`: a user watching a window can see the guest is taking its time
-    /// and stop it themselves.
+    /// after`, a shortcut's Give Up After: a user watching a window can see
+    /// the guest is taking its time and stop it themselves.
     package func stop(
         _ selector: VMSelector, disposition: StopDisposition, consent: Consent,
         timeout: TimeInterval?

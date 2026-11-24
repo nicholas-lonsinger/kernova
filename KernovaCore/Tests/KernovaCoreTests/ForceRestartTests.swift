@@ -28,12 +28,13 @@ struct ForceRestartTests {
             record: makeTestIndexRecord())
 
         let declined = try await #require(throws: CommandError.self) {
-            try await gateway.restart(instance.id, disposition: .force, consent: .none)
+            try await gateway.restart(instance.id, disposition: .force, consent: .none, givingUpAfter: nil)
         }
         #expect(declined.confirmationPrompt?.kind == .forceRestart)
         #expect(harness.virtualization.forceStopCallCount == 0)
 
-        try await gateway.restart(instance.id, disposition: .force, consent: Consent([.forceRestart]))
+        try await gateway.restart(
+            instance.id, disposition: .force, consent: Consent([.forceRestart]), givingUpAfter: nil)
         #expect(harness.virtualization.forceStopCallCount == 1)
         #expect(harness.virtualization.startCallCount == 1)
     }
