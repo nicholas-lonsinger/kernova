@@ -53,4 +53,35 @@ struct VMIntentGatewayTests {
         #expect(virtualization.stopCallCount == 0)
         #expect(vm.status == .stopped)
     }
+
+    // MARK: - Deadlines
+
+    /// Without the deadline a stop returns as soon as the guest is asked, so
+    /// the shortcut's next action — a snapshot or a clone, which a running VM
+    /// takes — would capture a guest mid-shutdown.
+    @Test("A stop's Give Up After reaches the core as the wait for power-off")
+    func stopPassesItsDeadline() async throws {
+        let virtualization = MockVirtualizationService()
+        virtualization.guestIgnoresShutdownRequest = true
+        let clock = GatedEngineClock()
+        let harness = WiredCommandCore(virtualization: virtualization, clock: clock)
+        let vm = harness.register(name: "Stubborn", phase: .running(sessionID: UUID()))
+        let gateway = makeGateway(over: harness)
+
+        let stop = Task {
+            try await gateway.stop(vm.id, disposition: .graceful, consent: .none, givingUpAfter: 45)
+        }
+        // The parked sleep is the deadline; a stop with none returns without
+        // ever arming one, and this wait runs out.
+        try await clock.sleepRequested.wait { !clock.parked.isEmpty }
+        clock.release(try #require(clock.parked.first))
+
+        let error = try await #require(throws: CommandError.self) { try await stop.joined() }
+        guard case .timedOut(_, let verb, let seconds, _) = error else {
+            Issue.record("Expected a timeout refusal, got \(error)")
+            return
+        }
+        #expect(verb == .stop)
+        #expect(seconds == 45)
+    }
 }

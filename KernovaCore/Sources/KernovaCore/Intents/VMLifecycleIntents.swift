@@ -152,7 +152,7 @@ struct SuspendVMIntent: AppIntent {
 struct RestartVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Restart Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Takes the guest down and starts it again once it has powered off. Give Up After limits how long the action waits for the power-off: a guest still running then is left running and not started again. Confirm Before Restarting asks before a method that loses anything in the guest that isn’t saved to disk, and before starting it again beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.",
+        "Takes the guest down and starts it again once it has powered off. Give Up After limits how long the action waits for the power-off: a guest that hasn’t powered off by then is not started again. Confirm Before Restarting asks before a method that loses anything in the guest that isn’t saved to disk, and before starting it again beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
