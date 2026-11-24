@@ -85,6 +85,42 @@ struct VMSnapshotIntentTests {
         #expect(twin.snapshotManifest.currentID == nil)
     }
 
+    @Test("Take Snapshot answers the snapshot it took, which a revert returns the VM to")
+    func takenSnapshotIsTheRevertTarget() async throws {
+        let virtualization = MockVirtualizationService()
+        let wired = WiredCommandCore(virtualization: virtualization)
+        let earlier = VMSnapshot(name: "Earlier", kind: .cold, macAddress: nil)
+        let vm = register(in: wired, snapshots: [earlier])
+        let gateway = makeGateway(wired)
+
+        let taken = try await gateway.takeSnapshot(vm.id, name: "Before the run", notes: "")
+        let added = try #require(vm.snapshotManifest.snapshots.first { $0.id != earlier.id })
+        try await gateway.revertToSnapshot(vm.id, snapshot: taken.id, consent: .all)
+
+        #expect(virtualization.revertedSnapshots.map(\.id) == [added.id])
+    }
+
+    // MARK: - Sizes
+
+    @Test("Each snapshot's sizes are its own measurement")
+    func sizesAreEachSnapshotsOwn() async throws {
+        let wired = WiredCommandCore()
+        let cloned = VMSnapshot(name: "Cloned", kind: .cold, macAddress: nil)
+        let copied = VMSnapshot(name: "Copied", kind: .cold, macAddress: nil)
+        let unreadable = VMSnapshot(name: "Unreadable", kind: .cold, macAddress: nil)
+        let vm = register(in: wired, snapshots: [cloned, copied, unreadable])
+        wired.machineFiles.setSnapshotSize(SnapshotSize(bytes: 8_192, privateBytes: 4_096), for: cloned.id)
+        wired.machineFiles.setSnapshotSize(SnapshotSize(bytes: 12_288, privateBytes: nil), for: copied.id)
+        let gateway = makeGateway(wired)
+
+        var read: [UUID: [Int?]] = [:]
+        for entity in try await gateway.snapshots(ofVM: vm.id) {
+            read[entity.id.snapshot] = [try await entity.sizeBytes, try await entity.privateBytes]
+        }
+
+        #expect(read == [cloned.id: [8_192, 4_096], copied.id: [12_288, nil], unreadable.id: [nil, nil]])
+    }
+
     // MARK: - Consent
 
     @Test("A revert asks once, then re-issues with the consent")

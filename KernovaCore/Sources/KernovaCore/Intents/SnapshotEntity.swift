@@ -32,6 +32,10 @@ struct SnapshotEntityID: Hashable, Sendable, EntityIdentifierConvertible {
 ///
 /// Built from a ``SnapshotSummary`` and the owning VM's identifier, so what
 /// this surface shows can never drift from what the command core reads.
+///
+/// The sizes are deferred, read only when asked for: the read walks the
+/// snapshot's files, and the query builds an entity for every snapshot a
+/// picker offers or a run resolves.
 struct SnapshotEntity: AppEntity {
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Snapshot")
 
@@ -59,7 +63,24 @@ struct SnapshotEntity: AppEntity {
     @Property(title: "Is Ephemeral Baseline")
     var isEphemeralBaseline: Bool
 
-    init(_ summary: SnapshotSummary, vm: UUID) {
+    /// ``SnapshotSize/bytes``, `nil` when it can't be read. Narrowed from the
+    /// core's `UInt64`, which is not a value Shortcuts carries.
+    @DeferredProperty(title: "Size in Bytes")
+    var sizeBytes: Int? {
+        get async throws { try await sizes.snapshotSize(id).map { Int(clamping: $0.bytes) } }
+    }
+
+    /// ``SnapshotSize/privateBytes``, narrowed as ``sizeBytes`` is.
+    @DeferredProperty(title: "Private Bytes")
+    var privateBytes: Int? {
+        get async throws { try await sizes.snapshotSize(id)?.privateBytes.map { Int(clamping: $0) } }
+    }
+
+    /// What the sizes are read through.
+    private let sizes: VMIntentGateway
+
+    init(_ summary: SnapshotSummary, vm: UUID, sizes: VMIntentGateway) {
+        self.sizes = sizes
         self.id = SnapshotEntityID(vm: vm, snapshot: summary.id)
         self.name = summary.name
         self.notes = summary.notes

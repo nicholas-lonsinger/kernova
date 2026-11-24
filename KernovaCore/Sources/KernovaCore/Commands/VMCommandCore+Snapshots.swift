@@ -9,12 +9,17 @@ extension VMCommandCore {
     /// The size of each of this VM's snapshots, read off the main
     /// actor — the read walks every file each snapshot holds.
     func snapshotSizes(of selector: VMSelector) async throws -> [UUID: SnapshotSize] {
-        await snapshotSizes(for: try resolve(selector))
+        let instance = try resolve(selector)
+        return await instance.bundle.snapshotSizes(of: instance.snapshotManifest.snapshots.map(\.id))
     }
 
-    /// The size of each of this VM's snapshots.
-    func snapshotSizes(for instance: VMInstance) async -> [UUID: SnapshotSize] {
-        await instance.bundle.snapshotSizes()
+    /// The size of the snapshot `id` names, read as ``snapshotSizes(of:)``
+    /// reads each, refusing one the VM does not list; `nil` when it can't be
+    /// read.
+    func snapshotSize(of selector: VMSelector, snapshot id: UUID) async throws -> SnapshotSize? {
+        let instance = try resolve(selector)
+        let snapshot = try requireSnapshot(id, on: instance)
+        return await instance.bundle.snapshotSizes(of: [snapshot.id])[snapshot.id]
     }
 
     // MARK: - Take
