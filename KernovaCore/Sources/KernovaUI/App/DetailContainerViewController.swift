@@ -363,7 +363,7 @@ extension DetailContainerViewController {
             wizardPresenter.close()
         } catch {
             vc.presentCreationFailure(
-                message: (error as? CommandError)?.message ?? error.localizedDescription)
+                message: (error as? CommandError)?.message(in: .app) ?? error.localizedDescription)
         }
     }
 }

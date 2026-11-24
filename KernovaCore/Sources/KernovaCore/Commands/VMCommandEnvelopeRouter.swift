@@ -196,7 +196,9 @@ package struct VMCommandEnvelopeRouter {
             return .ok
 
         case .takeSnapshot(let selector, let name, let notes):
-            return .snapshot(try await commands.takeSnapshot(selector, name: name, notes: notes))
+            return .snapshot(
+                try await commands.takeSnapshot(
+                    selector, name: name, notes: notes, asEphemeralBaseline: false))
         case .revertToSnapshot(let selector, let snapshot, let consent):
             try await commands.revertToSnapshot(selector, snapshot: snapshot, consent: consent)
             return .ok

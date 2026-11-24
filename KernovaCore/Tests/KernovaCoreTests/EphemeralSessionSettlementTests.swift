@@ -327,7 +327,8 @@ struct EphemeralSessionSettlementTests {
             stop = nil
         case .stoppingSuspended:
             stop = Task { @MainActor in
-                try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
+                try await harness.core.stop(
+                    .id(instance.id), disposition: .force, consent: .all, timeout: nil)
             }
         }
         try await virtualization.waitUntilSuspended()
@@ -342,7 +343,8 @@ struct EphemeralSessionSettlementTests {
             case .resume:
                 try await harness.core.resume(.id(instance.id), consent: .none)
             case .takeSnapshot:
-                _ = try await harness.core.takeSnapshot(.id(instance.id), name: "After", notes: "")
+                _ = try await harness.core.takeSnapshot(
+                    .id(instance.id), name: "After", notes: "", asEphemeralBaseline: false)
             }
         }
         // Waiting behind the revert: queued, and nothing run.

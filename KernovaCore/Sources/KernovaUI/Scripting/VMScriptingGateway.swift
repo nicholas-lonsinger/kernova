@@ -659,7 +659,7 @@ final class VMScriptingGateway {
             let subject = id.map { " for \($0.uuidString)" } ?? ""
             Self.logger.log(
                 .notice,
-                "Script \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(refusal.message, privacy: .public)"
+                "Script \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(refusal.message(in: .log), privacy: .public)"
             )
             answering?.refuse(refusal)
             return nil
@@ -692,7 +692,7 @@ final class VMScriptingGateway {
                 } catch let failure as CommandError {
                     Self.logger.log(
                         .notice,
-                        "Script \(verb.rawValue, privacy: .public) refused for '\(selector.displayText, privacy: .private)': \(failure.message, privacy: .public)"
+                        "Script \(verb.rawValue, privacy: .public) refused for '\(selector.displayText, privacy: .private)': \(failure.message(in: .log), privacy: .public)"
                     )
                     throw failure
                 }

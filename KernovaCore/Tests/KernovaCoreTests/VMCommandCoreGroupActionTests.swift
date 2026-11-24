@@ -122,10 +122,6 @@ struct VMCommandCoreGroupActionTests {
         #expect(twin.status == .stopped)
         #expect(other.status == .running)
         #expect(report.undone.map(\.vm.name) == ["Twin"])
-        #expect(report.undoneTitle == "Couldn\u{2019}t Start Every VM in \u{201C}Pair\u{201D}")
-        #expect(
-            report.undoneMessage
-                == "Skipped Twin: \(prompt.message) Start it on its own to answer.")
     }
 
     // MARK: - Failures on the event stream

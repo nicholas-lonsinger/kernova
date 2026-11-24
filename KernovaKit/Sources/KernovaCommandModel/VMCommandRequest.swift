@@ -26,7 +26,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// One call on the command core, with its arguments.
     public enum Verb: Codable, Sendable, Hashable {
         /// The VMs `query` admits, in its order.
-        case list(VMListQuery = VMListQuery())
+        case list(VMListQuery)
         /// The library's groups — its smart groups, then its folders, in the
         /// order the sidebar lists them — each with its members. Addresses no
         /// VM.
@@ -131,7 +131,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// running and paused VMs on the way out.
         case quit
 
-        /// Which verb this is, for a transport mapping onto its own naming.
+        /// Which verb this is.
         public var verb: VMVerb {
             switch self {
             case .list: .list

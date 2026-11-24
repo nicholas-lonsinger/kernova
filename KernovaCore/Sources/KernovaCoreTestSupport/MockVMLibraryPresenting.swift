@@ -61,7 +61,7 @@ final class MockVMLibraryPresenting: VMLibraryPresenting, LibraryWindowPresentin
     }
     /// Recorded as the error alert it is drawn as.
     func presentStartSummary(title: String, undone: [VMGroupActionResult]) {
-        presentError(undone.undoneMessage(for: .start), title: title, about: .library)
+        presentError(undone.undoneMessage(for: .start, in: .app), title: title, about: .library)
     }
     func presentDeleteSheet(for instance: VMInstance, permanently: Bool) {}
     func presentTakeSnapshotSheet(for instance: VMInstance, purpose: TakeSnapshotPurpose) {}

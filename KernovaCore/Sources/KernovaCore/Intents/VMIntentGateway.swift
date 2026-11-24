@@ -169,7 +169,7 @@ package final class VMIntentGateway {
     func stop(_ id: UUID, disposition: StopDisposition, consent: Consent) async throws {
         try await perform(.stop, on: id) {
             try await self.commands.stop(
-                .id(id), disposition: disposition, consent: consent)
+                .id(id), disposition: disposition, consent: consent, timeout: nil)
         }
     }
 
@@ -232,7 +232,8 @@ package final class VMIntentGateway {
     @discardableResult
     func takeSnapshot(_ id: UUID, name: String, notes: String) async throws -> SnapshotSummary {
         try await perform(.takeSnapshot, on: id) {
-            try await self.commands.takeSnapshot(.id(id), name: name, notes: notes)
+            try await self.commands.takeSnapshot(
+                .id(id), name: name, notes: notes, asEphemeralBaseline: false)
         }
     }
 
@@ -457,7 +458,8 @@ package final class VMIntentGateway {
             let report = try await self.commands.groupAction(action, on: group)
             guard report.undone.isEmpty else {
                 throw CommandError.operationFailed(
-                    verb: action.verb, title: report.undoneTitle, message: report.undoneMessage)
+                    verb: action.verb, title: report.undoneTitle,
+                    message: report.undoneMessage(in: .shortcuts))
             }
             return report.results.compactMap { result in
                 guard case .done = result.outcome else { return nil }
@@ -508,7 +510,7 @@ package final class VMIntentGateway {
             let subject = id.map { " for \($0.uuidString)" } ?? ""
             logger.log(
                 .notice,
-                "Intent \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(failure.message, privacy: .public)"
+                "Intent \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(failure.message(in: .log), privacy: .public)"
             )
             throw failure
         }

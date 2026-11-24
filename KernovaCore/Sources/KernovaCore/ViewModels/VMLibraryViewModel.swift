@@ -468,7 +468,7 @@ package final class VMLibraryViewModel {
             // normal race, not something to alert the user about.
             Self.logger.log(
                 .notice,
-                "Nothing to cancel for '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
+                "Nothing to cancel for '\(instance.name, privacy: .public)': \(error.message(in: .log), privacy: .public)"
             )
         } catch {
             present(error, about: .vm(instance))
@@ -1035,7 +1035,7 @@ package final class VMLibraryViewModel {
     /// anywhere else goes through ``VMCommandCore`` and moves nothing.
     package func start(_ instance: VMInstance, bootIntoRecovery: Bool = false) async {
         focusInlineDisplay(for: instance)
-        await runAsking(on: instance, then: "Start") { consent in
+        await runAsking(on: instance, then: .start) { consent in
             try await self.verbs().start(
                 .id(instance.id), recovery: bootIntoRecovery, consent: consent)
         }
@@ -1080,7 +1080,7 @@ package final class VMLibraryViewModel {
     /// ``VMConsentPolicy/run(prompting:choosingRoute:taking:_:)`` and, inside
     /// it, ``VMConsentPolicy/runGatheringGuestAccount(prompting:_:)``, asking
     /// on screen for each consent, the route through a step refusal — each
-    /// button naming the route and then `verbTitle`, or the start a route ends
+    /// button naming the route and then `refused`, or the start a route ends
     /// with — and the account it refuses without. A route ending in a start
     /// runs that start in place of `verb`.
     ///
@@ -1097,13 +1097,13 @@ package final class VMLibraryViewModel {
     /// Answers whether the verb ran.
     @discardableResult
     private func runAsking(
-        on instance: VMInstance, then verbTitle: String?,
+        on instance: VMInstance, then refused: VMVerb?,
         _ verb: (Consent) async throws -> Void
     ) async -> Bool {
         do {
             try await VMConsentPolicy.run(
                 prompting: { try await self.askToConfirm($0, about: instance) },
-                choosingRoute: { try await self.askForRoute(through: $0, then: verbTitle, about: instance) },
+                choosingRoute: { try await self.askForRoute(through: $0, then: refused, about: instance) },
                 taking: { try await self.verbs().take($0) }
             ) { consent, ending in
                 try await VMConsentPolicy.runGatheringGuestAccount(
@@ -1164,13 +1164,14 @@ package final class VMLibraryViewModel {
     /// - Throws: ``ConfirmationDeclined`` when the user walked away, and the
     ///   refusal itself when it could not be asked.
     private func askForRoute(
-        through requirement: StepRequirement, then verbTitle: String?, about instance: VMInstance
+        through requirement: StepRequirement, then refused: VMVerb?, about instance: VMInstance
     ) async throws -> StepRoute {
         guard let presenter else { throw CommandError.stepRequired(requirement) }
         let answer = await withCheckedContinuation { continuation in
             presenter.presentStepRoutes(
                 StepRouteRequest(
-                    instance: instance, requirement: requirement, verbTitle: verbTitle,
+                    instance: instance, requirement: requirement,
+                    verbTitle: refused.flatMap(VMVerbVocabulary.app.name(of:)),
                     answer: { continuation.resume(returning: $0) }))
         }
         switch answer {
@@ -1216,7 +1217,7 @@ package final class VMLibraryViewModel {
         }
         await run(on: instance) {
             try await self.verbs().stop(
-                .id(instance.id), disposition: .graceful, consent: .none)
+                .id(instance.id), disposition: .graceful, consent: .none, timeout: nil)
         }
     }
 
@@ -1224,13 +1225,13 @@ package final class VMLibraryViewModel {
     /// sheet's default action, as two verbs. The resume asks what any resume
     /// asks, and a resume that does not happen stops nothing.
     package func resumeAndStop(_ instance: VMInstance) async {
-        let resumed = await runAsking(on: instance, then: "Resume") { consent in
+        let resumed = await runAsking(on: instance, then: .resume) { consent in
             try await self.verbs().resume(.id(instance.id), consent: consent)
         }
         guard resumed else { return }
         await run(on: instance) {
             try await self.verbs().stop(
-                .id(instance.id), disposition: .graceful, consent: .none)
+                .id(instance.id), disposition: .graceful, consent: .none, timeout: nil)
         }
     }
 
@@ -1257,7 +1258,7 @@ package final class VMLibraryViewModel {
     /// stop after this restart, so the VM is where they last asked it to be,
     /// and the cancellation is in the log (``VMActivity``'s withdrawal).
     private func restart(_ instance: VMInstance, disposition: StopDisposition) async {
-        await runAsking(on: instance, then: "Restart") { consent in
+        await runAsking(on: instance, then: .restart) { consent in
             do {
                 try await self.verbs().restart(
                     .id(instance.id), disposition: disposition, timeout: nil, consent: consent)
@@ -1270,7 +1271,7 @@ package final class VMLibraryViewModel {
     package func forceStop(_ instance: VMInstance) async {
         await run(on: instance) {
             try await self.verbs().stop(
-                .id(instance.id), disposition: .force, consent: Consent([.forceStop]))
+                .id(instance.id), disposition: .force, consent: Consent([.forceStop]), timeout: nil)
         }
     }
 
@@ -1278,7 +1279,8 @@ package final class VMLibraryViewModel {
     /// the verb asks on every use on screen first.
     package func stopAnyway(_ instance: VMInstance) async {
         await runAsking(on: instance, then: nil) { consent in
-            try await self.verbs().stop(.id(instance.id), disposition: .anyway, consent: consent)
+            try await self.verbs().stop(
+                .id(instance.id), disposition: .anyway, consent: consent, timeout: nil)
         }
     }
 
@@ -1301,7 +1303,7 @@ package final class VMLibraryViewModel {
     /// surfaces for the same reason.
     package func resume(_ instance: VMInstance) async {
         focusInlineDisplay(for: instance)
-        await runAsking(on: instance, then: "Resume") { consent in
+        await runAsking(on: instance, then: .resume) { consent in
             try await self.verbs().resume(.id(instance.id), consent: consent)
         }
     }
@@ -1319,7 +1321,7 @@ package final class VMLibraryViewModel {
     /// fallback for a save that failed and left the guest live.
     package func tryForceStop(_ instance: VMInstance) async throws {
         try await commandsLeavingEditsOpen.stop(
-            .id(instance.id), disposition: .force, consent: Consent([.forceStop]))
+            .id(instance.id), disposition: .force, consent: Consent([.forceStop]), timeout: nil)
     }
 
     // MARK: - Snapshots
@@ -1393,7 +1395,8 @@ package final class VMLibraryViewModel {
         if takingSnapshotFirst {
             do {
                 try await verbs().takeSnapshot(
-                    .id(instance.id), name: instance.snapshotManifest.defaultNewName, notes: "")
+                    .id(instance.id), name: instance.snapshotManifest.defaultNewName, notes: "",
+                    asEphemeralBaseline: false)
             } catch {
                 present(error, about: .vm(instance))
                 return
@@ -1498,7 +1501,7 @@ package final class VMLibraryViewModel {
             case .notFound, .invalidState, .busy:
                 Self.logger.log(
                     .notice,
-                    "Refusing delete of '\(instance.name, privacy: .public)': \(error.message, privacy: .public)"
+                    "Refusing delete of '\(instance.name, privacy: .public)': \(error.message(in: .log), privacy: .public)"
                 )
             default:
                 present(error, about: .vm(instance))
@@ -1591,7 +1594,7 @@ package final class VMLibraryViewModel {
             // left no row, and an adopted one is a VM the cancel refuses.
             Self.logger.log(
                 .notice,
-                "Nothing to cancel for '\(arrival.name, privacy: .public)': \(error.message, privacy: .public)"
+                "Nothing to cancel for '\(arrival.name, privacy: .public)': \(error.message(in: .log), privacy: .public)"
             )
         } catch {
             present(error, about: .library)
@@ -1689,7 +1692,7 @@ package final class VMLibraryViewModel {
             // alert saying the same thing is not what the user needs.
             Self.logger.log(
                 .error,
-                "Rename of '\(instance.name, privacy: .public)' did not persist: \(error.message, privacy: .public)"
+                "Rename of '\(instance.name, privacy: .public)' did not persist: \(error.message(in: .log), privacy: .public)"
             )
         } catch {
             present(error, about: .vm(instance))
@@ -1901,7 +1904,7 @@ package final class VMLibraryViewModel {
             if command.isOperationFailure {
                 Self.logger.log(
                     .debug,
-                    "Edit on '\(instance.name, privacy: .public)' did not apply: \(command.message, privacy: .public)"
+                    "Edit on '\(instance.name, privacy: .public)' did not apply: \(command.message(in: .log), privacy: .public)"
                 )
                 return .refused
             }
@@ -1948,15 +1951,17 @@ package final class VMLibraryViewModel {
         case (.operationFailed(.start, _, let message, _), .vm(let instance)):
             presenter?.presentStartFailure(message, title: command.alertTitle, for: instance)
         case (.shutdownNotCarriedOut(let failure), .vm(let instance)):
-            surfaceError(command.message, title: command.alertTitle, about: .session(instance, failure.session))
+            surfaceError(
+                command.message(in: .app), title: command.alertTitle,
+                about: .session(instance, failure.session))
         case (.operationFailed(_, _, let message, _), _):
             surfaceError(message, title: command.alertTitle, about: subject)
         case (.conflict(_, _, .machineIdentity(overrideSettingOn: false)), _):
             presenter?.presentError(
-                command.message, title: command.alertTitle, about: subject,
+                command.message(in: .app), title: command.alertTitle, about: subject,
                 openingSettingsAt: .pane(.advanced))
         default:
-            surfaceError(command.message, title: command.alertTitle, about: subject)
+            surfaceError(command.message(in: .app), title: command.alertTitle, about: subject)
         }
     }
 

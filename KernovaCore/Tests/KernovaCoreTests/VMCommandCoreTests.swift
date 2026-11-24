@@ -175,7 +175,7 @@ struct VMCommandCoreTests {
 
         let error = try await #require(throws: CommandError.self) {
             try await harness.core.stop(
-                .id(instance.id), disposition: .force, consent: .none)
+                .id(instance.id), disposition: .force, consent: .none, timeout: nil)
         }
 
         switch (expected, error) {
@@ -351,7 +351,7 @@ struct VMCommandCoreTests {
 
         let error = try await #require(throws: CommandError.self) {
             try await harness.core.stop(
-                .id(instance.id), disposition: .force, consent: .none)
+                .id(instance.id), disposition: .force, consent: .none, timeout: nil)
         }
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .forceStop)
@@ -367,7 +367,7 @@ struct VMCommandCoreTests {
         #expect(prompt.alternatives.map(\.isDestructive) == [false])
         #expect(harness.virtualization.forceStopCallCount == 0)
 
-        try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all)
+        try await harness.core.stop(.id(instance.id), disposition: .force, consent: .all, timeout: nil)
         #expect(harness.virtualization.forceStopCallCount == 1)
     }
 
@@ -381,7 +381,7 @@ struct VMCommandCoreTests {
         // can ask for one.
         let error = try await #require(throws: CommandError.self) {
             try await harness.core.stop(
-                .id(instance.id), disposition: .graceful, consent: .all)
+                .id(instance.id), disposition: .graceful, consent: .all, timeout: nil)
         }
         #expect(
             error.stepRequirement
@@ -409,7 +409,7 @@ struct VMCommandCoreTests {
         // save file of any VM holding one, ephemeral or not.
         let error = try await #require(throws: CommandError.self) {
             try await harness.core.stop(
-                .id(instance.id), disposition: .graceful, consent: .none)
+                .id(instance.id), disposition: .graceful, consent: .none, timeout: nil)
         }
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .forceStop)
@@ -417,7 +417,7 @@ struct VMCommandCoreTests {
         #expect(prompt.confirmTitle == "Discard")
         #expect(harness.virtualization.stopCallCount == 0)
 
-        try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .all)
+        try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .all, timeout: nil)
         // A discard sends the guest nothing: there is no guest.
         #expect(harness.virtualization.stopCallCount == 0)
         #expect(!instance.hasSaveFile)
@@ -438,7 +438,7 @@ struct VMCommandCoreTests {
         // rolls the disks back, which is what the force path refuses unconfirmed.
         let error = try await #require(throws: CommandError.self) {
             try await harness.core.stop(
-                .id(instance.id), disposition: .graceful, consent: .none)
+                .id(instance.id), disposition: .graceful, consent: .none, timeout: nil)
         }
         let prompt = try #require(error.confirmationPrompt)
         #expect(prompt.kind == .forceStop)
@@ -449,7 +449,7 @@ struct VMCommandCoreTests {
         #expect(prompt.message.contains("is ephemeral, so it returns to"))
         #expect(harness.virtualization.revertedSnapshots.isEmpty)
 
-        try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .all)
+        try await harness.core.stop(.id(instance.id), disposition: .graceful, consent: .all, timeout: nil)
         #expect(harness.virtualization.revertedSnapshots.map(\.id) == [baseline.id])
     }
 
@@ -738,7 +738,7 @@ struct VMCommandCoreTests {
         }
 
         let failures = try await harness.wired.failureMessages(of: instance, on: events)
-        #expect(failures == [thrown.message])
+        #expect(failures == [thrown.message(in: .app)])
     }
 
     @Test("A clone whose copy fails reports the failure directly, then the arrival's removal")
@@ -821,8 +821,7 @@ struct VMCommandCoreTests {
         #expect(messages.count == 1)
         // The sentence the alert gets, not the raw error — one failure, worded
         // once.
-        #expect(messages.first == harness.failures.first?.message)
-        #expect(harness.failures.first?.message.contains("at most two") == true)
+        #expect(messages.first == harness.failures.first?.message(in: .app))
     }
 
     @Test("A cancelled setup reports nothing — a cancel is somebody's decision, not a failure")
@@ -857,8 +856,7 @@ struct VMCommandCoreTests {
 
         // Transient again, and a boot rests where a plain start would.
         #expect(instance.status == .stopped)
-        let reportedMessage = try #require(harness.failures.first?.message)
-        #expect(reportedMessage.contains("at most two"))
+        let reportedMessage = try #require(harness.failures.first?.message(in: .app))
         let messages = try await harness.wired.failureMessages(of: instance, on: events)
         #expect(messages == [reportedMessage])
     }

@@ -118,7 +118,7 @@ enum CompletionSource {
     /// Every virtual machine in the library, by name or — under `--id` — by
     /// identifier.
     static func vmNames(byIdentifier: Bool, in context: CompletionContext = .live) -> [String] {
-        guard case .summaries(let rows)? = answer(to: .list(), in: context) else { return [] }
+        guard case .summaries(let rows)? = answer(to: .list(VMListQuery()), in: context) else { return [] }
         return rows.map {
             byIdentifier
                 ? candidate($0.id.uuidString, describedBy: $0.name, for: context.shell)

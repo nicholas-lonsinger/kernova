@@ -69,17 +69,21 @@ public struct VMGroupActionReport: Codable, Sendable, Hashable {
         return "Couldn\u{2019}t \(verb) Every VM in \u{201C}\(groupName)\u{201D}"
     }
 
-    /// One line per VM in ``undone``, saying why.
-    public var undoneMessage: String { results.undoneMessage(for: action) }
+    /// One line per VM in ``undone``, saying why, naming verbs in
+    /// `vocabulary`.
+    public func undoneMessage(in vocabulary: VMVerbVocabulary) -> String {
+        results.undoneMessage(for: action, in: vocabulary)
+    }
 }
 
 extension Collection<VMGroupActionResult> {
     /// The VMs the action concerned and left undone, in order.
     public var undone: [VMGroupActionResult] { filter(\.outcome.isUndone) }
 
-    /// One line per VM in ``undone``, saying why `action` left it undone.
-    public func undoneMessage(for action: VMGroupAction) -> String {
-        undone.map { $0.line(for: action) }.joined(separator: "\n")
+    /// One line per VM in ``undone``, saying why `action` left it undone,
+    /// naming verbs in `vocabulary`.
+    public func undoneMessage(for action: VMGroupAction, in vocabulary: VMVerbVocabulary) -> String {
+        undone.map { $0.line(for: action, in: vocabulary) }.joined(separator: "\n")
     }
 }
 
@@ -97,8 +101,8 @@ public struct VMGroupActionResult: Codable, Sendable, Hashable {
     }
 
     /// What the group's `action` did to this VM, or why it did not, in one
-    /// line.
-    public func line(for action: VMGroupAction) -> String {
+    /// line naming verbs in `vocabulary`.
+    public func line(for action: VMGroupAction, in vocabulary: VMVerbVocabulary) -> String {
         let name = vm.name
         switch outcome {
         case .done(.resume):
@@ -115,9 +119,10 @@ public struct VMGroupActionResult: Codable, Sendable, Hashable {
             let state = VMStatus.phrase(forWireName: vm.status, heldByAnotherCopy: vm.heldByAnotherCopy)
             return "Skipped \(name): it is \(state)."
         case .passedOver(.refused(let error)):
-            return "Skipped \(name): \(error.message)"
+            return "Skipped \(name): \(error.message(in: vocabulary))"
         case .passedOver(.guestSetup):
-            return "Skipped \(name): its first start sets up its guest, which only its own Start begins."
+            return "Skipped \(name): its first start sets up its guest, which a group never begins."
+                + (vocabulary.name(of: .start).map { " To begin it, use \($0) on \(name) alone." } ?? "")
         case .passedOver(.cancelled):
             return "Skipped \(name): the \(action.rawValue) was cancelled before its turn."
         case .passedOver(.removed):
@@ -127,14 +132,14 @@ public struct VMGroupActionResult: Codable, Sendable, Hashable {
         case .needsAnswer(let verb, let question):
             // Every other question's own words already say where it is answered.
             let answer =
-                if case .confirmationRequired = question {
-                    " \(verb.displayName) it on its own to answer."
+                if case .confirmationRequired = question, let named = vocabulary.name(of: verb) {
+                    " To answer, use \(named) on \(name) alone."
                 } else {
                     ""
                 }
-            return "Skipped \(name): \(question.message)\(answer)"
+            return "Skipped \(name): \(question.message(in: vocabulary))\(answer)"
         case .failed(let error):
-            return "Couldn\u{2019}t \(action.rawValue) \(name): \(error.message)"
+            return "Couldn\u{2019}t \(action.rawValue) \(name): \(error.message(in: vocabulary))"
         }
     }
 }

@@ -240,7 +240,7 @@ extension VMCommandCore {
             outcome = await settle(.suspend, on: instance, in: set) { try await self.suspend(instance) }
         case .stop:
             outcome = await settle(.stop, on: instance, in: set) {
-                try await self.stop(instance, disposition: .graceful, consent: .none)
+                try await self.stop(instance, disposition: .graceful, consent: .none, timeout: nil)
             }
         case .restart:
             // The single-VM verb, asking nothing: a question it raises is

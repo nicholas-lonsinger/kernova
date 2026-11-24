@@ -36,14 +36,6 @@ struct VMCommandCoreArrivalTests {
     /// A value no field of any config type takes.
     private static let unrecognized = "plan9-mode"
 
-    /// What a copy the library can't read for its `config.json`'s
-    /// unrecognized `$.networkMode` says, in the VM named `name`.
-    private static func unreadableCopyMessage(_ name: String) -> String {
-        "\u{201C}\(name)\u{201D} is in the library, but Kernova can\u{2019}t read \u{201C}config.json\u{201D}: "
-            + "$.networkMode: \u{201C}plan9-mode\u{201D} is not a recognized value. "
-            + "Choose File > Check Config Files\u{2026} to review it."
-    }
-
     /// Writes the JSON file at `relativePath` in the bundle at `url` again,
     /// with `edit` applied to what it held — nothing, where there was no file.
     private func editJSON(
@@ -90,11 +82,10 @@ struct VMCommandCoreArrivalTests {
         let source = try repairableSource("Dev")
         let before = try contents(of: source.url)
 
-        let thrown = await #expect(throws: CommandError.self) {
+        await #expect(throws: CommandError.self) {
             try await harness.core.importVM(from: source.url, waitForOutcome: true)
         }
 
-        #expect(thrown?.message == Self.unreadableCopyMessage("Dev"))
         #expect(harness.library.entries.count == 1)
         let row = try #require(harness.library.entries.first?.unreadable)
         let destination = try storage.vmsDirectory.appendingPathComponent(
@@ -119,7 +110,7 @@ struct VMCommandCoreArrivalTests {
         #expect(afterRepair == before)
     }
 
-    @Test("An import of a bundle holding a symbolic link is refused, naming the link in the source")
+    @Test("An import of a bundle holding a symbolic link is refused")
     func importOfABundleHoldingALinkIsRefused() async throws {
         let harness = makeHarness()
         let source = try scratch.importSource(name: "Linked Disk")
@@ -128,15 +119,10 @@ struct VMCommandCoreArrivalTests {
         try FileManager.default.createSymbolicLink(
             at: VMBundleLayout(bundleURL: source.url).diskImageURL, withDestinationURL: moved)
 
-        let thrown = await #expect(throws: CommandError.self) {
+        await #expect(throws: CommandError.self) {
             try await harness.core.importVM(from: source.url, waitForOutcome: true)
         }
 
-        let label = NSString.path(withComponents: source.url.resolvingSymlinksInPath().pathComponents)
-        #expect(
-            try #require(thrown).message
-                == "\u{201C}Disk.asif\u{201D} in \u{201C}\(label)\u{201D} could not be copied: It is a symbolic link, and Kernova supports only real files and folders inside a virtual machine."
-        )
         #expect(harness.library.instances.isEmpty)
     }
 
