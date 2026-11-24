@@ -27,7 +27,7 @@ extension VMVerbVocabulary {
         // The standard suite's `quit` is a quit Apple event, which the app
         // classifies by its sender rather than running this verb.
         case .quit, .groups, .ipAddress, .snapshots, .snapshotSizes, .sharedDirectories, .usbAccessories,
-            .availableUSBAccessories, .usbPairings, .forgetUSBPairing, .events, .cancelGuestSetup,
+            .availableUSBAccessories, .usbPairings, .forgetUSBPairing, .wait, .cancelGuestSetup,
             .open, .showInFinder, .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot,
             .setSnapshotNotes, .create, .clone, .rename, .delete, .importVM, .cancelPreparing,
             .editStorageDisk, .editRemovableMedia, .editSharedDirectory, .editUSBAccessory,

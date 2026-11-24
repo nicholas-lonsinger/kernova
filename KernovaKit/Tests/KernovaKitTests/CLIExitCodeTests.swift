@@ -62,6 +62,15 @@ struct CLIExitCodeTests {
             (.busy(vm: vm, operation: "starting"), .busy),
             (.heldByAnotherCopy(vm: vm), .busy),
             (.timedOut(vm: vm, verb: .stop, seconds: 60), .timedOut),
+            // A wait is told apart by how it ended: its deadline is a timeout,
+            // its VM leaving is a miss, and an address no wait can see is
+            // refused by the VM's state.
+            (.waitEnded(vm: vm, condition: .running, ending: .timedOut(seconds: 300)), .timedOut),
+            (.waitEnded(vm: vm, condition: .stopped, ending: .removed), .notFound),
+            (
+                .waitEnded(vm: vm, condition: .address, ending: .noAddressToWaitFor(.externallyAssigned)),
+                .refusedByState
+            ),
             (
                 .operationFailed(verb: .start, title: nil, message: "no disk", recovery: nil),
                 .operationFailed

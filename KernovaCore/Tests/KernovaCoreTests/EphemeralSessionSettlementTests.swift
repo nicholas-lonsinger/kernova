@@ -103,17 +103,21 @@ struct EphemeralSessionSettlementTests {
     }
 
     @Test(
-        "A session Virtualization stops with an error raises one alert and one stream failure, wherever the VM rests",
+        "A session Virtualization stops with an error raises one alert and ends a wait with its message, wherever the VM rests",
         arguments: CrashedVM.allCases)
     func sessionStoppedWithErrorIsToldOnce(vm: CrashedVM) async throws {
         let virtualization = MockVirtualizationService()
-        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences)
+        let clock = GatedEngineClock()
+        let harness = WiredCommandCore(virtualization: virtualization, preferences: preferences, clock: clock)
         let alerts = recordingAlerts(of: harness)
         let session = UUID()
         let (instance, baseline, _) = try makeVM(
             in: harness, baseline: vm == .warmBaseline ? .warm : .cold, ephemeral: vm != .notEphemeral,
             phase: .running(sessionID: session))
-        let events = harness.core.events()
+        // Waiting for the stop a cold baseline rests at, armed once its
+        // deadline is parked.
+        let wait = Task { try await harness.core.wait(.id(instance.id), until: .stopped, timeout: 60) }
+        try await clock.sleepRequested.wait { !clock.parked.isEmpty }
 
         instance.activity.deliverSessionEvent(.didStopWithError(Self.stopError), from: session)
         try await harness.library.waitForRevertsToSettle()
@@ -138,18 +142,10 @@ struct EphemeralSessionSettlementTests {
             Issue.record("The alert was about \(String(describing: alerts.errorSubject))")
         }
 
-        let reported = try await harness.eventsReadPastRename(of: instance, on: events)
-        let failures = reported.compactMap { event -> String? in
-            guard case .failure(_, _, let message) = event else { return nil }
-            return message
-        }
-        #expect(failures == [message])
-        // An Ephemeral VM is told its failure without ever reading Error.
-        let statuses = reported.compactMap { event -> String? in
-            guard case .statusChanged(_, _, _, let to) = event else { return nil }
-            return to
-        }
-        #expect(statuses.contains(VMStatus.error.rawValue) == (vm == .notEphemeral))
+        // A crash is not the stop being waited for, even where the VM rests
+        // stopped.
+        let ended = try await #require(throws: CommandError.self) { try await wait.joined() }
+        #expect(ended == .operationFailed(verb: .wait, message: message))
     }
 
     // MARK: - Restart

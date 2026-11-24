@@ -31,7 +31,7 @@ extension VMVerbVocabulary {
         case .delete: AppCommandTitle.moveToTrash
         case .list, .groups, .info, .ipAddress, .snapshots, .snapshotSizes, .sharedDirectories,
             .storageDisks, .usbAccessories, .availableUSBAccessories, .usbPairings, .forgetUSBPairing,
-            .events, .cancelGuestSetup, .open, .reveal, .deleteSnapshot, .renameSnapshot,
+            .wait, .cancelGuestSetup, .open, .reveal, .deleteSnapshot, .renameSnapshot,
             .setSnapshotNotes, .importVM, .cancelPreparing, .editStorageDisk, .editRemovableMedia,
             .editSharedDirectory, .editUSBAccessory, .configurationKeys, .configuration,
             .setConfiguration, .guestAgentDisk, .networks, .createNetwork, .renameNetwork,

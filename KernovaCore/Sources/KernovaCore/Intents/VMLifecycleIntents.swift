@@ -188,6 +188,39 @@ struct RestartVMIntent: ConsentingIntent {
     }
 }
 
+struct WaitForVMIntent: AppIntent {
+    static let title: LocalizedStringResource = "Wait for Virtual Machine"
+    static let description: IntentDescription? = IntentDescription(
+        "Waits until a virtual machine is running, is stopped, or has its guest agent connected and up to date, or until Kernova has seen its guest use an IP address, and returns the virtual machine as it is then. Fails if the virtual machine fails or leaves the library first and, waiting for an IP address, when Kernova can see none for it, as for one that is bridged or not running. With Give Up After, fails once that time passes; without it, waits with no limit.",
+        categoryName: "Virtual Machines",
+        resultValueName: "Virtual Machine")
+
+    @Parameter(title: "Virtual Machine")
+    var vm: VMEntity
+
+    @Parameter(title: "Condition", default: .running)
+    var condition: VMWaitCondition
+
+    @Parameter(title: "Give Up After", defaultUnit: .seconds, supportsNegativeNumbers: false)
+    var giveUpAfter: Measurement<UnitDuration>?
+
+    @Dependency private var gateway: VMIntentGateway
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Wait until \(\.$vm) \(\.$condition)") {
+            \.$giveUpAfter
+        }
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<VMEntity> {
+        .result(
+            value: try await gateway.wait(
+                vm.id, until: condition.condition,
+                givingUpAfter: giveUpAfter?.converted(to: .seconds).value))
+    }
+}
+
 /// Brings a VM in front of the user: its display when it has one, else its
 /// place in the library.
 ///

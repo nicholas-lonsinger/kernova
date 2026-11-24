@@ -67,8 +67,6 @@ public struct VMCommandResponse: Codable, Sendable, Hashable {
         case groups([GroupSummary])
         /// What a group action did to each VM in the group.
         case groupAction(VMGroupActionReport)
-        /// One library change, for a transport streaming them.
-        case event(VMLibraryEvent)
         /// The verb was refused, or ran and did not complete.
         case failure(CommandErrorDTO)
         /// The request was refused by the envelope, before any verb ran.

@@ -70,16 +70,26 @@ package struct ObservedChangeDeadline: Sendable {
     let clock: any EngineClock
 }
 
-/// Holds the loop, the deadline's timer, and the continuation the two race to
-/// resume, so either can end the wait and neither can end it twice.
+/// How an observed wait ended.
+private enum ObservedWaitEnd<Value: Sendable>: Sendable {
+    /// The reading answered `Value`.
+    case read(Value)
+    /// The deadline passed first.
+    case expired
+    /// The caller was cancelled first.
+    case cancelled
+}
+
+/// Holds the loop, the deadline's timer, and the continuation they race to
+/// resume, so any of them can end the wait and none can end it twice.
 @MainActor
-private final class ObservationLoopBox {
+private final class ObservedWait<Value: Sendable> {
     var loop: ObservationLoop?
     private var timer: Task<Void, Never>?
-    private var continuation: CheckedContinuation<Bool, Never>?
+    private var continuation: CheckedContinuation<ObservedWaitEnd<Value>, Never>?
 
     /// Adopts the continuation the wait suspends on.
-    func arm(_ continuation: CheckedContinuation<Bool, Never>) {
+    func arm(_ continuation: CheckedContinuation<ObservedWaitEnd<Value>, Never>) {
         self.continuation = continuation
     }
 
@@ -88,16 +98,53 @@ private final class ObservationLoopBox {
         self.timer = timer
     }
 
-    /// Ends the wait, reporting whether the predicate held; later calls do
-    /// nothing.
-    func settle(_ satisfied: Bool) {
+    /// Ends the wait as `end` says; later calls do nothing.
+    func settle(_ end: ObservedWaitEnd<Value>) {
         guard let continuation else { return }
         self.continuation = nil
         loop?.cancel()
         loop = nil
         timer?.cancel()
         timer = nil
-        continuation.resume(returning: satisfied)
+        continuation.resume(returning: end)
+    }
+}
+
+/// The wait behind every observed-change wait: until `reading` answers a
+/// value, `deadline` passes, or — where `endsOnCancellation` — the caller is
+/// cancelled.
+@MainActor
+private func observe<Value: Sendable>(
+    _ reading: @escaping @MainActor () -> Value?, before deadline: ObservedChangeDeadline?,
+    endsOnCancellation: Bool
+) async -> ObservedWaitEnd<Value> {
+    if let value = reading() { return .read(value) }
+    let wait = ObservedWait<Value>()
+    // The read above, `observeRecurring`, and the timer all run without
+    // suspending, so no change can slip between them; `settle` resumes once
+    // and tears down whatever lost the race. A cancellation hops onto the main
+    // actor, so it lands after the continuation is armed even when the
+    // caller was cancelled before this began.
+    return await withTaskCancellationHandler {
+        await withCheckedContinuation { (continuation: CheckedContinuation<ObservedWaitEnd<Value>, Never>) in
+            wait.arm(continuation)
+            wait.loop = observeRecurring(
+                track: { _ = reading() },
+                apply: {
+                    guard let value = reading() else { return }
+                    wait.settle(.read(value))
+                }
+            )
+            guard let deadline else { return }
+            wait.arm(
+                deadline.clock.schedule(after: deadline.seconds) { @MainActor in
+                    guard !Task.isCancelled else { return }
+                    wait.settle(reading().map { .read($0) } ?? .expired)
+                })
+        }
+    } onCancel: {
+        guard endsOnCancellation else { return }
+        Task { @MainActor in wait.settle(.cancelled) }
     }
 }
 
@@ -123,25 +170,40 @@ package func waitForObservedChange(until predicate: @escaping @MainActor () -> B
 package func waitForObservedChange(
     until predicate: @escaping @MainActor () -> Bool, before deadline: ObservedChangeDeadline?
 ) async -> Bool {
-    guard !predicate() else { return true }
-    let box = ObservationLoopBox()
-    // The pre-arm check above, `observeRecurring`, and the timer all run without
-    // suspending, so no change can slip between them; `settle` resumes once and
-    // tears down whichever of the two lost the race.
-    return await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
-        box.arm(continuation)
-        box.loop = observeRecurring(
-            track: { _ = predicate() },
-            apply: {
-                guard predicate() else { return }
-                box.settle(true)
-            }
-        )
-        guard let deadline else { return }
-        box.arm(
-            deadline.clock.schedule(after: deadline.seconds) { @MainActor in
-                guard !Task.isCancelled else { return }
-                box.settle(predicate())
-            })
+    let end = await observe({ predicate() ? () : nil }, before: deadline, endsOnCancellation: false)
+    if case .read = end { return true }
+    return false
+}
+
+/// Suspends until `reading` answers a value, answering it.
+///
+/// `reading`'s contract is ``waitForObservedChange(until:)``'s on its
+/// predicate. Unlike that wait, a cancelled caller ends this one.
+///
+/// - Throws: `CancellationError` when the caller is cancelled first.
+@MainActor
+package func waitForObservedValue<Value: Sendable>(
+    _ reading: @escaping @MainActor () -> Value?
+) async throws -> Value {
+    // With no deadline, a cancellation is the one other end.
+    guard case .read(let value) = await observe(reading, before: nil, endsOnCancellation: true) else {
+        throw CancellationError()
+    }
+    return value
+}
+
+/// ``waitForObservedValue(_:)`` bounded by `deadline` as
+/// ``waitForObservedChange(until:before:)`` is, answering `nil` once it passes
+/// first.
+///
+/// - Throws: `CancellationError` when the caller is cancelled first.
+@MainActor
+package func waitForObservedValue<Value: Sendable>(
+    _ reading: @escaping @MainActor () -> Value?, before deadline: ObservedChangeDeadline
+) async throws -> Value? {
+    switch await observe(reading, before: deadline, endsOnCancellation: true) {
+    case .read(let value): return value
+    case .expired: return nil
+    case .cancelled: throw CancellationError()
     }
 }

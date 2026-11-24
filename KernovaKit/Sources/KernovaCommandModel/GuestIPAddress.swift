@@ -29,6 +29,16 @@ public enum GuestIPAddress: Codable, Sendable, Hashable {
         return address
     }
 
+    /// Why there is no address to state, `nil` for an observed one.
+    public var absence: GuestAddressAbsence? {
+        switch self {
+        case .unavailable: .unavailable
+        case .externallyAssigned: .externallyAssigned
+        case .notObserved: .notObserved
+        case .observed: nil
+        }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case state, address
     }
@@ -63,5 +73,26 @@ public enum GuestIPAddress: Codable, Sendable, Hashable {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(state, forKey: .state)
         try container.encodeIfPresent(address, forKey: .address)
+    }
+}
+
+/// A ``GuestIPAddress`` that states no address, by why.
+public enum GuestAddressAbsence: String, Codable, Sendable, Hashable {
+    /// ``GuestIPAddress/unavailable``.
+    case unavailable
+    /// ``GuestIPAddress/externallyAssigned``.
+    case externallyAssigned
+    /// ``GuestIPAddress/notObserved``.
+    case notObserved
+
+    /// Why Kernova states no address for the guest of the VM named `vm`.
+    public func sentence(vm: String) -> String {
+        let vm = "\u{201C}\(vm)\u{201D}"
+        return switch self {
+        case .unavailable: "Kernova has no address for \(vm)."
+        case .externallyAssigned:
+            "\(vm) is bridged, so your network assigns its address and Kernova cannot state it."
+        case .notObserved: "Kernova has not seen \(vm) on its network."
+        }
     }
 }

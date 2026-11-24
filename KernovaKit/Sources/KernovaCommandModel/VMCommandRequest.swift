@@ -10,7 +10,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
     /// What this build speaks. A peer answering a different number is talking
     /// about a different vocabulary, so the mismatch is refused rather than
     /// negotiated.
-    public static let currentProtocolVersion = 19
+    public static let currentProtocolVersion = 20
 
     /// The vocabulary this request is written in.
     public var protocolVersion: Int
@@ -52,8 +52,9 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
         /// Stops a VM taking one accessory back, naming it by the durable key
         /// `usbPairings` prints — the device itself is usually not plugged in.
         case forgetUSBPairing(VMSelector, key: String)
-        /// Subscribe: a snapshot frame, then one frame per library event.
-        case events
+        /// Answers the VM as it stands once it meets `until`. `timeout` bounds
+        /// the wait in seconds; `nil` leaves it unbounded.
+        case wait(VMSelector, until: WaitCondition, timeout: TimeInterval?)
 
         /// A VM that owes its guest a macOS account refuses with
         /// ``CommandErrorDTO/guestAccountPasswordRequired(prompt:)``: the wire
@@ -146,7 +147,7 @@ public struct VMCommandRequest: Codable, Sendable, Hashable {
             case .availableUSBAccessories: .availableUSBAccessories
             case .usbPairings: .usbPairings
             case .forgetUSBPairing: .forgetUSBPairing
-            case .events: .events
+            case .wait: .wait
             case .start: .start
             case .cancelGuestSetup: .cancelGuestSetup
             case .stop: .stop

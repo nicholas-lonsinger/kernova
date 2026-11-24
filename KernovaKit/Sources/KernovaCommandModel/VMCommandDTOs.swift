@@ -826,6 +826,8 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     /// waiting on it.
     case timedOut(
         vm: VMSummary, verb: VMVerb, seconds: TimeInterval, processEnd: VMProcessEndInstruction? = nil)
+    /// A wait for `condition` ended, as `ending` says, without `vm` meeting it.
+    case waitEnded(vm: VMSummary, condition: WaitCondition, ending: WaitEnding)
     /// The verb ran and did not complete. `title` is the heading the failure
     /// names for itself, `nil` when it has none of its own.
     case operationFailed(
@@ -891,7 +893,7 @@ extension CommandErrorDTO {
         switch self {
         case .notFound, .itemNotFound, .itemNotFoundOnHost, .ambiguous, .busy, .heldByAnotherCopy,
             .unsupported, .unsupportedByBuild, .unsupportedByMacOS, .invalidState, .changeTakesStoppedVM,
-            .timedOut, .invalidArgument, .terminating:
+            .timedOut, .waitEnded, .invalidArgument, .terminating:
             "Error"
         case .stepRequired(let requirement):
             requirement.title
@@ -985,11 +987,13 @@ extension CommandErrorDTO {
             // separate read, and any sentence guessing it here is wrong for
             // some VM that reached the deadline another way.
             "\u{201C}\(vm.name)\u{201D} did not power off within "
-                + "\(Self.deadlineText(seconds)) seconds"
+                + "\(CommandTimeout.text(seconds)) seconds"
                 + (verb == .restart ? ", so it was not started again. " : ". ")
                 + (processEnd?.text
                     ?? "A force stop terminates a guest that will not shut down, losing "
                     + "\(StopDisposition.forceLoss).")
+        case .waitEnded(let vm, let condition, let ending):
+            ending.message(vm: vm.name, condition: condition)
         case .operationFailed(_, _, let message, _):
             message
         case .filesKept(let kept):
@@ -1071,13 +1075,6 @@ extension CommandErrorDTO {
             ?? ("This virtual machine", "another")
         return "\(vm) has the same machine ID as \(other), "
             + (otherHeldByAnotherCopy ? "which another copy of Kernova is using." : "which is active.")
-    }
-
-    /// `seconds` written the way a person types a deadline: whole where it is
-    /// whole, one decimal otherwise.
-    private static func deadlineText(_ seconds: TimeInterval) -> String {
-        seconds == seconds.rounded()
-            ? String(format: "%.0f", seconds) : String(format: "%.1f", seconds)
     }
 
     /// What ``ConflictReason/macAddressInUse(address:holding:otherHolders:)``

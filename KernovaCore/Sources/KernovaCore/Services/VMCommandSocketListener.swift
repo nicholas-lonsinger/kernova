@@ -264,13 +264,12 @@ actor VMCommandConnection {
     private var writeSource: DispatchSourceWrite?
     private var timeoutSource: DispatchSourceTimer?
     private var pendingWrite = Data()
-    private var subscription: Task<Void, Never>?
 
     /// The verbs this connection has accepted and not yet answered.
     ///
     /// Held so ``closeNow()`` can cancel them: a client that hangs up mid-verb
     /// is waiting for nothing, and a verb that suspends on something only the
-    /// caller wanted — an import's permission panel above all — would otherwise
+    /// caller wanted — an import's permission panel, or a wait — would otherwise
     /// outlive every trace of the request that asked for it.
     private var inFlight: [Int: Task<Void, Never>] = [:]
 
@@ -306,11 +305,6 @@ actor VMCommandConnection {
     /// Queues one response payload, framed, for the client.
     nonisolated func send(_ payload: Data) {
         onQueue { $0.sendNow(payload) }
-    }
-
-    /// Adopts the task pumping an event subscription, so closing cancels it.
-    nonisolated func follow(_ task: Task<Void, Never>) {
-        onQueue { $0.followNow(task) }
     }
 
     /// Closes the connection; safe from any isolation, idempotent.
@@ -367,15 +361,6 @@ actor VMCommandConnection {
         flushPending()
     }
 
-    private func followNow(_ task: Task<Void, Never>) {
-        guard !isClosed else {
-            task.cancel()
-            return
-        }
-        subscription?.cancel()
-        subscription = task
-    }
-
     // MARK: - Read
 
     private func readAvailable() {
@@ -430,29 +415,15 @@ actor VMCommandConnection {
         case .success(let request):
             let router = self.router
             let awaitReady = self.awaitReady
-            if case .events = request.verb {
-                track { [self] in
-                    await awaitReady()
-                    let (snapshot, events) = router.snapshotAndEvents()
-                    send(router.encode(snapshot))
-                    follow(
-                        Task { [self] in
-                            for await event in events {
-                                send(router.encode(event))
-                            }
-                        })
+            let requester = activationRequester()
+            track { [self] in
+                // The library read has to have landed: a verb run against a
+                // library that has not is not refused, it is answered wrong.
+                await awaitReady()
+                let response = await ActivationRequester.$current.withValue(requester) {
+                    await router.respond(to: request)
                 }
-            } else {
-                let requester = activationRequester()
-                track { [self] in
-                    // The library read has to have landed: a verb run against a
-                    // library that has not is not refused, it is answered wrong.
-                    await awaitReady()
-                    let response = await ActivationRequester.$current.withValue(requester) {
-                        await router.respond(to: request)
-                    }
-                    send(router.encode(response))
-                }
+                send(router.encode(response))
             }
         }
     }
@@ -539,8 +510,6 @@ actor VMCommandConnection {
         timeoutSource = nil
         writeSource?.cancel()
         writeSource = nil
-        subscription?.cancel()
-        subscription = nil
         let running = inFlight.values
         inFlight.removeAll()
         for task in running { task.cancel() }

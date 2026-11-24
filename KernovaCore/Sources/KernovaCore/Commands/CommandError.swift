@@ -85,6 +85,8 @@ package enum CommandError: Error, Sendable, Equatable {
     /// on it.
     case timedOut(
         vm: VMSummary, verb: VMVerb, seconds: TimeInterval, processEnd: VMProcessEndInstruction? = nil)
+    /// A wait for `condition` ended, as `ending` says, without `vm` meeting it.
+    case waitEnded(vm: VMSummary, condition: WaitCondition, ending: WaitEnding)
     /// The verb ran and did not complete. `title` is the alert heading when the
     /// failure names its own; `recovery` is what the caller can do about it.
     case operationFailed(
@@ -212,6 +214,8 @@ extension CommandError {
             .terminating
         case .timedOut(let vm, let verb, let seconds, let processEnd):
             .timedOut(vm: vm, verb: verb, seconds: seconds, processEnd: processEnd)
+        case .waitEnded(let vm, let condition, let ending):
+            .waitEnded(vm: vm, condition: condition, ending: ending)
         case .operationFailed(let verb, let title, let message, let recovery):
             .operationFailed(
                 verb: verb, title: title, message: message, recovery: recovery?.dto)

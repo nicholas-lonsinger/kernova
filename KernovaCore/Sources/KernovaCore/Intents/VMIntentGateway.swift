@@ -208,6 +208,16 @@ package final class VMIntentGateway {
         }
     }
 
+    /// ``VMCommandCore/wait(_:until:timeout:)``, answering the VM as it stood
+    /// when it met `condition`.
+    func wait(
+        _ id: UUID, until condition: WaitCondition, givingUpAfter timeout: TimeInterval?
+    ) async throws -> VMEntity {
+        try await perform(.wait, on: id) {
+            VMEntity(try await self.commands.wait(.id(id), until: condition, timeout: timeout))
+        }
+    }
+
     /// Brings the VM in front of the user whatever state it is in — its display
     /// where there is one, else its row in the library.
     func reveal(_ id: UUID) async throws {
@@ -564,9 +574,7 @@ package final class VMIntentGateway {
     /// Brings the index up to what one pass over the library found, with
     /// whatever an earlier write was refused joining the write it makes.
     ///
-    /// One batch is at most one write of each kind. A batch that changes no
-    /// VM's name or membership writes nothing, pending or not: a status or an
-    /// agent change is nothing the index holds.
+    /// One batch is at most one write of each kind.
     private func apply(_ batch: [VMLibraryEvent]) async {
         var present: [UUID] = []
         var absent: [UUID] = []
@@ -575,10 +583,8 @@ package final class VMIntentGateway {
             case .added(let summary): present.append(summary.id)
             case .renamed(let id, _, _): present.append(id)
             case .removed(let id, _): absent.append(id)
-            case .statusChanged, .agentStatusChanged, .failure: break
             }
         }
-        guard !present.isEmpty || !absent.isEmpty else { return }
         let removing = absent.appending(pendingRemove)
         if !removing.isEmpty { await removeFromIndex(removing) }
         let indexing = present.appending(pendingIndex)

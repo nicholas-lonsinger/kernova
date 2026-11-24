@@ -23,6 +23,7 @@ extension VMVerbVocabulary {
         case .resume: ResumeVMIntent.self
         case .suspend: SuspendVMIntent.self
         case .restart: RestartVMIntent.self
+        case .wait: WaitForVMIntent.self
         case .reveal: OpenVMIntent.self
         case .takeSnapshot: TakeSnapshotIntent.self
         case .revertToSnapshot: RevertToSnapshotIntent.self
@@ -40,7 +41,7 @@ extension VMVerbVocabulary {
         case .deleteNetwork: DeleteNetworkIntent.self
         case .quit: QuitKernovaIntent.self
         case .list, .groups, .snapshotSizes, .sharedDirectories, .usbAccessories,
-            .availableUSBAccessories, .usbPairings, .forgetUSBPairing, .events, .open, .showInFinder,
+            .availableUSBAccessories, .usbPairings, .forgetUSBPairing, .open, .showInFinder,
             .create, .editStorageDisk, .editRemovableMedia, .editSharedDirectory, .editUSBAccessory,
             .configurationKeys, .configuration, .guestAgentDisk, .networks:
             nil

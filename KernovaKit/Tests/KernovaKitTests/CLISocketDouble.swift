@@ -57,29 +57,18 @@ final class TestCommandSocket: Sendable {
         wake = (ends[0], ends[1])
     }
 
-    /// Accepts the pending client and answers its requests with `groups` in
+    /// Accepts the pending client and answers its requests with `answers` in
     /// order, closing once they run out.
     ///
-    /// The Nth request is answered with every response in the Nth group, in the
-    /// order written — which is how a subscription's answer and the event
-    /// frames behind it both reach a client that sent one request for them.
-    ///
-    /// `holdingOpen: true` keeps the connection after the groups do run out,
+    /// `holdingOpen: true` keeps the connection after the answers do run out,
     /// recording what else arrives and answering none of it — the app that
     /// takes a request and never gets back to it, which is what a caller's own
     /// deadline is for.
     ///
     /// A request that cannot be decoded is still answered, so a test never
     /// hangs on the shape of what it sent.
-    func serve(_ groups: [[VMCommandResponse]], holdingOpen: Bool = false) {
-        serveFrames(
-            groups.map { $0.map { (try? JSONEncoder().encode($0)) ?? Data() } },
-            holdingOpen: holdingOpen)
-    }
-
-    /// ``serve(_:holdingOpen:)`` with each answer as the raw JSON payload of
-    /// its frame — for an app whose vocabulary this build cannot spell.
-    func serveFrames(_ groups: [[Data]], holdingOpen: Bool = false) {
+    func serve(_ answers: [VMCommandResponse], holdingOpen: Bool = false) {
+        let frames = answers.map { (try? JSONEncoder().encode($0)) ?? Data() }
         queue.async { [self] in
             // Accepts only once a client is waiting, so a close() before any client connects ends this block
             // rather than leaving it parked in accept().
@@ -99,7 +88,7 @@ final class TestCommandSocket: Sendable {
                 Darwin.close(connection)
                 return
             }
-            var remaining = groups[...]
+            var remaining = frames[...]
             var decoder = StreamFrameDecoder()
             var buffer = [UInt8](repeating: 0, count: 64 * 1024)
             while !remaining.isEmpty || holdingOpen {
@@ -110,9 +99,7 @@ final class TestCommandSocket: Sendable {
                         state.withLock { $0.received.append(request) }
                     }
                     guard !remaining.isEmpty else { continue }
-                    for response in remaining.removeFirst() {
-                        Self.write(response, to: connection)
-                    }
+                    Self.write(remaining.removeFirst(), to: connection)
                     continue
                 }
                 let count = buffer.withUnsafeMutableBytes {
@@ -127,7 +114,7 @@ final class TestCommandSocket: Sendable {
     }
 
     /// What the tool asked for, in the order it asked, once the serve loop
-    /// has ended — the groups ran out or the client hung up.
+    /// has ended — the answers ran out or the client hung up.
     ///
     /// Throws at ``testWaitBackstop`` when the loop is still reading: a test
     /// that queued an answer the tool never asks for, or held the connection
@@ -191,7 +178,7 @@ enum CLIWire {
         let client = try VMCommandClient(socketPath: listener.path)
         defer { client.close() }
         client.waitForFrames(upTo: testWaitBackstop)
-        listener.serve([[response]])
+        listener.serve([response])
 
         let answer = try client.send(request)
         return (try await listener.requests().map(\.verb), answer)

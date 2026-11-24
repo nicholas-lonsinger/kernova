@@ -167,23 +167,9 @@ package final class VMCommandCore {
     /// somebody is reading a stream.
     private var eventLoop: ObservationLoop?
 
-    /// What each row looked like at the last emission, diffed against the
-    /// library to decide what changed.
-    private var lastObserved: [UUID: ObservedState] = [:]
-
-    /// The per-row values ``events()`` reports changes to.
-    private struct ObservedState: Equatable {
-        let name: String
-        /// `nil` for an arrival, which has no ``VMStatus`` yet.
-        let status: VMStatus?
-        /// `nil` for an arrival and for a VM with no session.
-        let agentStatus: AgentStatus?
-        /// `nil` for an arrival, and for a VM that has recorded no failure.
-        let failure: VMFailure?
-
-        /// The status as it crosses the wire.
-        var wireStatus: String { status?.rawValue ?? VMStatus.preparingWireName }
-    }
+    /// Each row's name at the last emission, diffed against the library to
+    /// decide what changed.
+    private var lastObserved: [UUID: String] = [:]
 
     // MARK: - Initialization
 
@@ -662,18 +648,22 @@ package final class VMCommandCore {
 
     // MARK: - Reads
 
-    // `list`, `info` and `get` first catch each VM they read up with another
-    // copy of Kernova (``VMActivity/refreshFromBundle()``): the command socket
-    // is how a script sees that copy's work, and it runs without this copy
-    // ever becoming active.
+    // `list`, `info`, `get` and `wait` first catch each VM they read up with
+    // another copy of Kernova (``VMActivity/refreshFromBundle()``): the
+    // command socket is how a script sees that copy's work, and it runs
+    // without this copy ever becoming active.
 
     package func info(_ selector: VMSelector) throws -> VMInfo {
-        switch try resolveEntry(selector) {
-        case .vm(let instance):
-            instance.activity.refreshFromBundle()
-            return info(instance)
-        case .arriving(let arrival):
-            return info(arrival)
+        let entry = try resolveEntry(selector)
+        entry.vm?.activity.refreshFromBundle()
+        return info(entry)
+    }
+
+    /// The row's read as it stands, unrefreshed.
+    func info(_ entry: AddressableEntry) -> VMInfo {
+        switch entry {
+        case .vm(let instance): info(instance)
+        case .arriving(let arrival): info(arrival)
         }
     }
 
@@ -761,7 +751,8 @@ package final class VMCommandCore {
 
     // MARK: - Observation
 
-    /// A stream of library changes, for callers that cannot observe the model.
+    /// A stream of the library's row and name changes, for a reader that
+    /// keeps its own record of the library.
     ///
     /// Each element is every change one pass over the library found, in the
     /// order found, so a launch or a batch import lands as one element. Each
@@ -776,9 +767,9 @@ package final class VMCommandCore {
             guard eventLoop == nil else { return }
             // Seeded before arming, so a fresh subscriber is told what changes
             // from here rather than replayed the library it can already list.
-            lastObserved = currentObservedStates()
+            lastObserved = currentNames()
             eventLoop = observeRecurring(
-                track: { [weak self] in self?.trackEventInputs() },
+                track: { [weak self] in _ = self?.currentNames() },
                 apply: { [weak self] in self?.emitLibraryChanges() })
         } else {
             eventLoop?.cancel()
@@ -787,79 +778,35 @@ package final class VMCommandCore {
         }
     }
 
-    /// Reads every value a ``VMLibraryEvent`` reports, so a change to any of
-    /// them wakes the loop.
-    private func trackEventInputs() {
-        for entry in library.entries {
-            guard case .vm(let instance) = entry else { continue }
-            _ = instance.configuration.name
-            _ = instance.status
-            _ = instance.agentPresentation
-            _ = instance.activity.lastFailure
-        }
-    }
-
-    private func currentObservedStates() -> [UUID: ObservedState] {
-        var states: [UUID: ObservedState] = [:]
+    /// Every row's name, by identifier: what a ``VMLibraryEvent`` reports.
+    private func currentNames() -> [UUID: String] {
+        var names: [UUID: String] = [:]
         for entry in library.entries.compactMap(\.addressable) {
-            switch entry {
-            case .vm(let instance):
-                states[instance.instanceID] = ObservedState(
-                    name: instance.name,
-                    status: instance.status,
-                    agentStatus: instance.agentPresentation?.status,
-                    failure: instance.activity.lastFailure)
-            case .arriving(let arrival):
-                states[arrival.id] = ObservedState(
-                    name: arrival.name, status: nil, agentStatus: nil, failure: nil)
-            }
+            names[entry.id] = entry.name
         }
-        return states
+        return names
     }
 
-    /// Emits one batch carrying every value that moved since the last pass.
+    /// Emits one batch carrying every row and name that moved since the last
+    /// pass.
     ///
-    /// A diff rather than per-site emission: every verb, every guest-driven
-    /// transition, and every reconcile with disk lands in the same model, so
-    /// one reader of that model reports them all and no path can forget to.
-    /// The cost is coalescing — a VM that passed through `.starting` between
-    /// two passes reports only where it ended up. An arrival's adoption reads
-    /// as a status change from ``VMStatus/preparingWireName``.
-    ///
-    /// A VM fails at most once per pass, with the latest failure it recorded
-    /// (``VMActivity/lastFailure``) — which, unlike the status, outlasts
-    /// whatever phase the VM rests in next.
+    /// A diff rather than per-site emission: every verb and every reconcile
+    /// with disk lands in the same model, so one reader of that model reports
+    /// them all and no path can forget to. The VM an arrival becomes keeps
+    /// its identifier, so its adoption is no new row.
     private func emitLibraryChanges() {
-        let current = currentObservedStates()
+        let current = currentNames()
         var batch: [VMLibraryEvent] = []
         for entry in library.entries.compactMap(\.addressable) {
-            let id = entry.id
-            guard let now = current[id] else { continue }
-            guard let before = lastObserved[id] else {
-                batch.append(.added(summary(entry)))
-                continue
-            }
-            if before.status != now.status {
-                batch.append(
-                    .statusChanged(
-                        id: id, name: now.name, from: before.wireStatus, to: now.wireStatus))
-            }
-            if case .vm(let instance) = entry, let failure = now.failure, failure != before.failure,
-                let message = reportedMessage(of: failure, on: instance)
-            {
-                batch.append(.failure(id: id, name: now.name, message: message))
-            }
-            if before.agentStatus != now.agentStatus {
-                batch.append(
-                    .agentStatusChanged(
-                        id: id, name: now.name, status: now.agentStatus?.wireName))
-            }
-            if before.name != now.name {
-                batch.append(.renamed(id: id, from: before.name, to: now.name))
+            switch lastObserved[entry.id] {
+            case nil: batch.append(.added(summary(entry)))
+            case let before? where before != entry.name:
+                batch.append(.renamed(id: entry.id, from: before, to: entry.name))
+            default: break
             }
         }
         for (id, before) in lastObserved where current[id] == nil {
-            batch.append(.removed(id: id, name: before.name))
+            batch.append(.removed(id: id, name: before))
         }
         lastObserved = current
         broadcaster.emit(batch)
@@ -881,45 +828,14 @@ package final class VMCommandCore {
         onFailure?(failure, instance)
     }
 
-    /// What the event stream reports for `recorded`, a failure of `instance`: a
-    /// session's end in Virtualization's own words, and an operation's in the
-    /// words its verb gives its caller — ``bringUpFailure(_:verb:on:)`` for a
-    /// Start or Resume, ``failure(_:verb:on:)`` for a Suspend — unrecorded;
-    /// `nil` for a refusal, after which nothing about the VM moved.
-    private func reportedMessage(of recorded: VMFailure, on instance: VMInstance) -> String? {
-        switch recorded.cause {
-        case .sessionStoppedWithError(let message):
-            return message
-        case .operation(let verb, let error):
-            let reported: CommandError
-            switch error {
-            case is VMAdmissionRefusal:
-                return nil
-            case let command as CommandError:
-                reported = command
-            default:
-                reported =
-                    verb == .suspend
-                    ? failure(error, verb: verb, on: instance) : ranAndFailed(error, verb: verb, on: instance)
-            }
-            return reported.operationFailureMessage
-        }
-    }
-
-    /// Puts an arrival's failure on the event stream, waited or not, while its
-    /// row is still in the library: the diff in ``emitLibraryChanges()`` only
-    /// ever sees the row vanish, and reports that after this. A failure nobody
-    /// awaits is reported here too, in the same step, unless the config check
-    /// is its report (``VMArrival/isReportedByTheCheck(_:)``).
-    ///
-    /// The stream carries the failure's own words, as it does a VM's
-    /// (``reportedMessage(of:on:)``), and a refusal none.
+    /// Reports the failure of an arrival nobody awaits, unless the config
+    /// check is its report (``VMArrival/isReportedByTheCheck(_:)``); a cancel
+    /// is no failure (``VMArrival/failure(for:)``).
     private func arrivalFailed(_ arrival: VMArrival, with error: any Error) {
-        guard let failure = arrival.failure(for: error) else { return }
-        if let message = failure.operationFailureMessage {
-            broadcaster.emit([.failure(id: arrival.id, name: arrival.name, message: message)])
-        }
-        if !arrival.isAwaited, !VMArrival.isReportedByTheCheck(error) { report(failure, on: nil) }
+        guard !arrival.isAwaited, !VMArrival.isReportedByTheCheck(error),
+            let failure = arrival.failure(for: error)
+        else { return }
+        report(failure, on: nil)
     }
 }
 
@@ -942,6 +858,11 @@ enum AddressableEntry {
         case .vm(let instance): instance.name
         case .arriving(let arrival): arrival.name
         }
+    }
+
+    /// The VM, `nil` for an arrival.
+    var vm: VMInstance? {
+        if case .vm(let instance) = self { instance } else { nil }
     }
 }
 

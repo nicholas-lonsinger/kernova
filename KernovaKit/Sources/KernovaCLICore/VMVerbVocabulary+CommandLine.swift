@@ -7,8 +7,8 @@ extension VMVerbVocabulary {
     /// own job it is, the one that performs it or prints what it answers.
     ///
     /// A subcommand that sends a verb only to work out another answer —
-    /// `snapshot revert` listing snapshots to resolve a name, `wait` reading
-    /// a VM's state and its events — is not named for it.
+    /// `snapshot revert` listing snapshots to resolve a name, `ip --wait`
+    /// waiting for the address it prints — is not named for it.
     static let commandLine = VMVerbVocabulary { verb in
         let paths = subcommands(running: verb).map { KernovaCommand.words(of: $0).joined(separator: " ") }
         return paths.isEmpty ? nil : paths.joined(separator: ", ")
@@ -33,6 +33,7 @@ extension VMVerbVocabulary {
         case .resume: [KernovaCommand.Resume.self]
         case .suspend: [KernovaCommand.Suspend.self]
         case .restart: [KernovaCommand.Restart.self]
+        case .wait: [KernovaCommand.Wait.self]
         case .open: [KernovaCommand.Open.self]
         case .reveal: [KernovaCommand.Reveal.self]
         case .showInFinder: [KernovaCommand.ShowInFinder.self]
@@ -53,7 +54,7 @@ extension VMVerbVocabulary {
         case .renameNetwork: [KernovaCommand.Network.Rename.self]
         case .deleteNetwork: [KernovaCommand.Network.Delete.self]
         case .quit: [KernovaCommand.Quit.self]
-        case .events, .cancelGuestSetup, .setSnapshotNotes, .create, .cancelPreparing,
+        case .cancelGuestSetup, .setSnapshotNotes, .create, .cancelPreparing,
             .editStorageDisk, .editRemovableMedia, .guestAgentDisk:
             []
         }

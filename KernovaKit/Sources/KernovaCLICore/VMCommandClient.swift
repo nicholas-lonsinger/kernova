@@ -88,8 +88,8 @@ final class VMCommandClient {
 
     /// Sends one verb without reading its answer.
     ///
-    /// For a caller reading frames itself — a subscription interleaves the
-    /// answers to later verbs with the events it is following.
+    /// For a caller reading frames itself — `quit` reads on past its answer to
+    /// the app's hang-up, where a missing answer is no failure.
     func post(_ verb: VMCommandRequest.Verb) throws {
         try write(try JSONEncoder().encode(VMCommandRequest(verb: verb)))
     }

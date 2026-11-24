@@ -16,8 +16,8 @@ final class VMLibraryEventBroadcaster {
 
     func stream() -> AsyncStream<[VMLibraryEvent]> {
         let id = UUID()
-        // `.unbounded`: dropping a batch would make a caller waiting on a
-        // state wait forever, and the producer is human-scale.
+        // `.unbounded`: a dropped batch leaves the reader's record of the
+        // library wrong, and the producer is human-scale.
         let (stream, continuation) = AsyncStream<[VMLibraryEvent]>.makeStream(
             bufferingPolicy: .unbounded)
         continuation.onTermination = { [weak self] _ in

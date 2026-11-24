@@ -124,30 +124,6 @@ struct VMCommandCoreGroupActionTests {
         #expect(report.undone.map(\.vm.name) == ["Twin"])
     }
 
-    // MARK: - Failures on the event stream
-
-    /// A restore that fails rests the VM back on its saved state, so its status
-    /// carries nothing the stream could report it from.
-    @Test("A member's failure that rests the VM where it began goes on the event stream, once")
-    func memberFailureIsBroadcast() async throws {
-        let harness = makeHarness()
-        harness.virtualization.restoreError = VirtualizationError.restoreFailed(
-            underlying: NSError(domain: "test", code: 1))
-        let suspended = makeInstance(in: harness, name: "Suspended", phase: .suspended)
-        try VMInstanceFixture.writeSaveFile(for: suspended)
-        try harness.library.organization.createFolder(named: "Lab", members: [suspended.id])
-        let events = harness.core.events()
-
-        let report = try await harness.core.groupAction(.start, on: VMGroupReference(.folder, named: "Lab"))
-
-        guard case .failed = report.results.first?.outcome else {
-            Issue.record("reported \(String(describing: report.results.first?.outcome))")
-            return
-        }
-        #expect(suspended.status == .suspended)
-        #expect(try await harness.wired.failureMessages(of: suspended, on: events).count == 1)
-    }
-
     // MARK: - Error mapping
 
     @Test("A question is a VM to answer for; the quit and another copy's hold are nobody's failure; the rest fail")

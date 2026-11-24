@@ -44,7 +44,7 @@ struct CLINoticeTests {
         defer { listener.close() }
         let client = try VMCommandClient(socketPath: listener.path)
         client.waitForFrames(upTo: testWaitBackstop)
-        listener.serve([[VMCommandResponse(result: .configuration(settings), notices: notices)]])
+        listener.serve([VMCommandResponse(result: .configuration(settings), notices: notices)])
 
         let written = Written()
         let streams = Console.Streams(
