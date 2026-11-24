@@ -121,8 +121,8 @@ struct ItemMachines: Sendable {
             transfer.handleOffer(event, connection: &connection)
             drag.offersChanged(transfer, connection: &connection)
         case .dragTake:
-            if case .opened(let stream, let body) = event {
-                drag.opened(stream, body: body, items: transfer, connection: &connection)
+            if case .opened(let stream, .dragTake(let token)) = event {
+                drag.opened(stream, token: token, items: transfer, connection: &connection)
             } else {
                 drag.handleTake(event, items: &transfer, connection: &connection)
             }

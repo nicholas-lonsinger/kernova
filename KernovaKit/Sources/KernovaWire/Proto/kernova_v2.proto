@@ -38,10 +38,16 @@
 //
 // Everything not marked FROZEN is current-only: it changes freely with the
 // FeatureAdvert.version or Hello.protocol_version that owns it, with no
-// compatibility path. A frozen envelope never embeds a non-frozen message as a
-// typed field: non-frozen content travels as `bytes`, decoded only once the
-// owning version is known to match, so a shape change in a current-only
-// feature can never make a frozen message fail to decode.
+// compatibility path. A receiver refuses a current-only message that holds a
+// field its build does not define, in it or in any current-only message inside
+// it, so a peer of another build is refused rather than misread; a frozen
+// message inside one keeps the rules above. That holds only while a number
+// means one thing, so a current-only field number or enum value is never
+// reused: removing one reserves its number and name. A frozen envelope never
+// embeds a non-frozen message as a typed field: non-frozen content travels as
+// `bytes`, decoded only once the owning version is known to match, so a shape
+// change in a current-only feature can never make a frozen message fail to
+// decode.
 //
 // THE UPDATE PROFILE
 //

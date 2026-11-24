@@ -146,7 +146,7 @@ package final class SoloReplay {
 
     package init(_ transcript: Transcript) throws(TranscriptError) {
         self.transcript = transcript
-        let start = CoreInstant(nanoseconds: Duet.base)
+        let start = CoreInstant(nanoseconds: Self.base)
         let generation = ConnectionGeneration(rawValue: 1)
         switch transcript.pinned {
         case .peer:
@@ -162,11 +162,18 @@ package final class SoloReplay {
         }
     }
 
-    var instant: CoreInstant { CoreInstant(nanoseconds: Duet.base + now * 1_000_000) }
+    /// The instant a transcript's `t=0` stands for.
+    static let base: UInt64 = 1_000_000_000
 
-    /// The lines in the order the duet ran them. A wire line carries the time its
-    /// bytes were written, and the duet's hop delivers them a millisecond later; at
-    /// one instant the duet delivers, then applies inputs, and the checks follow both.
+    var instant: CoreInstant { CoreInstant(nanoseconds: Self.base + now * 1_000_000) }
+
+    static func bigEndian(_ value: UInt32) -> Data {
+        Data([UInt8(value >> 24), UInt8(value >> 16 & 0xFF), UInt8(value >> 8 & 0xFF), UInt8(value & 0xFF)])
+    }
+
+    /// The lines in the order the recording ran them. A wire line carries the time its
+    /// bytes were written, and the recording's hop delivered them a millisecond later; at
+    /// one instant it delivered, then applied inputs, and the checks follow both.
     private var timeline: [(time: UInt64, line: Transcript.Line)] {
         let keyed = transcript.lines.enumerated().map { index, line -> (time: UInt64, rank: Int, index: Int) in
             switch line {
@@ -245,7 +252,7 @@ package final class SoloReplay {
         while true {
             let deadline = host?.nextDeadline ?? peer?.nextDeadline
             guard let deadline else { break }
-            let ms = (deadline.nanoseconds - min(deadline.nanoseconds, Duet.base) + 999_999) / 1_000_000
+            let ms = (deadline.nanoseconds - min(deadline.nanoseconds, Self.base) + 999_999) / 1_000_000
             guard ms <= time else { break }
             now = max(now, ms)
             host?.handleTimeout(now: instant)
@@ -259,7 +266,7 @@ package final class SoloReplay {
     private func receive(_ bytes: Data) {
         pinnedDecoder.append(bytes)
         while let frame = try? pinnedDecoder.nextFrame() {
-            if frame.type == .open, let open = try? Kernova_V2_Open(serializedBytes: frame.payload) {
+            if frame.type == .open, let open = try? Kernova_V2_Open(wire: frame.payload) {
                 kinds[frame.streamID.rawValue] = open.kind
             }
         }
@@ -282,10 +289,6 @@ package final class SoloReplay {
             peer?.handle(
                 report.input(UpdatePullID(generation: TranscriptInput.generation, stream: StreamID(rawValue: stream))),
                 now: instant)
-        case .peerLogs: break
-        case .offer, .requestOffer, .itemPull, .withdraw, .release, .refuse, .takeDrag, .controlTake, .cancelTake,
-            .answerTake, .targetTake:
-            failures.append("t=\(now): `\(input.text)` names an item feature, which no frozen transcript replays")
         }
         drain()
         for fault in localFaults[faultsBefore...] {
@@ -362,7 +365,7 @@ package final class SoloReplay {
         decoder.append(bytes)
         while let frame = try? decoder.nextFrame() {
             let id = frame.streamID.rawValue
-            if frame.type == .open, let open = try? Kernova_V2_Open(serializedBytes: frame.payload) {
+            if frame.type == .open, let open = try? Kernova_V2_Open(wire: frame.payload) {
                 kinds[id] = open.kind
             }
             if frame.type == .ping { pings.append(now) }
@@ -375,7 +378,7 @@ package final class SoloReplay {
             if frame.type == .end, let total = rawTotals[id] {
                 produced.append(
                     FrozenLine(
-                        "s=\(id) DATA-TOTAL bytes=\(total.bytes) crc32c=\(FrozenFields.hex(Duet.bigEndian(total.crc.value)))"
+                        "s=\(id) DATA-TOTAL bytes=\(total.bytes) crc32c=\(FrozenFields.hex(Self.bigEndian(total.crc.value)))"
                     ))
             }
             if let described = FrozenFields.describe(frame, kinds: kinds) { produced.append(described) }

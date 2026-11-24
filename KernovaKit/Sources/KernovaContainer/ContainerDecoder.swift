@@ -5,7 +5,6 @@ import Foundation
 #endif
 
 import KernovaWire
-import SwiftProtobuf
 
 /// An LZ4 chunk the decoder admitted: its declared size counted against its entry and the pull, and its block not
 /// yet decompressed.
@@ -174,9 +173,9 @@ public struct ContainerDecoder {
         case .header:
             let header: EntryHeader
             do {
-                header = try EntryHeader(serializedBytes: payload)
+                header = try EntryHeader(wire: payload)
             } catch {
-                throw .headerUndecodable
+                throw .headerUndecodable(error)
             }
             let (leaving, entry) = try grammar.admit(header)
             leavesDue = leaving
@@ -204,9 +203,9 @@ public struct ContainerDecoder {
         case .end:
             let end: EndRecord
             do {
-                end = try EndRecord(serializedBytes: payload)
+                end = try EndRecord(wire: payload)
             } catch {
-                throw .endUndecodable
+                throw .endUndecodable(error)
             }
             leavesDue = try grammar.admitEnd(end)
             due = [.event(.end)]

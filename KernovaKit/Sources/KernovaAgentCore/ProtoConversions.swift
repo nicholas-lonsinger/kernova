@@ -55,7 +55,7 @@ extension WireError {
 
     /// Decodes a RESET or outcome payload; an undecodable one reads as UNSPECIFIED.
     init(receivedPayload payload: Data) {
-        if let error = try? Kernova_V2_Error(serializedBytes: payload) {
+        if let error = try? Kernova_V2_Error(wire: payload) {
             self.init(received: error)
         } else {
             self.init(.unspecified, debugDetail: "undecodable Error payload")
@@ -215,7 +215,7 @@ extension PowerOffer {
 
     /// Decodes a far side's `PowerCapability` params; nil when they do not decode.
     public init?(params: Data) {
-        guard let capability = try? Kernova_V2_PowerCapability(serializedBytes: params) else { return nil }
+        guard let capability = try? Kernova_V2_PowerCapability(wire: params) else { return nil }
         self.init(
             actions: capability.actions, asksAppsToQuit: capability.asksAppsToQuit,
             ignoringApps: capability.ignoreAppsActions)
@@ -240,7 +240,7 @@ public struct ClipboardPolicyValue: Sendable, Equatable {
     public init?(_ policy: PolicySnapshot) {
         guard let entry = policy.entries.first(where: { $0.feature == .clipboard }),
             entry.version == Self.version,
-            let decoded = try? Kernova_V2_ClipboardPolicy(serializedBytes: entry.params)
+            let decoded = try? Kernova_V2_ClipboardPolicy(wire: entry.params)
         else { return nil }
         self.init(maxPasteBytes: decoded.maxPasteBytes, passthrough: decoded.passthrough)
     }
@@ -275,7 +275,7 @@ extension UpdateOffer {
 
     /// Decodes a peer's `UpdateCapability` params; nil when they do not decode.
     public init?(params: Data) {
-        guard let capability = try? Kernova_V2_UpdateCapability(serializedBytes: params) else { return nil }
+        guard let capability = try? Kernova_V2_UpdateCapability(wire: params) else { return nil }
         let code = capability.rejectedCode == .unspecified ? nil : capability.rejectedCode
         self.init(
             formats: capability.formats,

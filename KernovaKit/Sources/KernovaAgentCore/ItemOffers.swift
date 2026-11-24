@@ -88,11 +88,6 @@ package struct ItemOfferRegistry: Sendable {
 
     package init() {}
 
-    /// Whether `body` is an item-set offer's OPEN body: an `ItemSetHeader` with a 16-byte token.
-    package static let isValidHeader: @Sendable (Data) -> Bool = { body in
-        (try? Kernova_V2_ItemSetHeader(serializedBytes: body))?.token.count == 16
-    }
-
     /// The tokens of this side's open offers.
     package var localTokens: [Data] { local.map(\.offer.token) }
 
@@ -112,7 +107,7 @@ package struct ItemOfferRegistry: Sendable {
         guard let entry = remote.first(where: { $0.header.token == token }), entry.complete,
             entry.items.count == entry.header.count
         else { return nil }
-        let items = entry.items.compactMap { try? OfferedItem(serializedBytes: $0) }
+        let items = entry.items.compactMap { try? OfferedItem(wire: $0) }
         guard items.count == entry.items.count else { return nil }
         return (entry.header.feature, items)
     }
@@ -140,7 +135,7 @@ package struct ItemOfferRegistry: Sendable {
         guard let entry = remote.first(where: { $0.header.token == token }), index < entry.items.count else {
             return nil
         }
-        return try? OfferedItem(serializedBytes: entry.items[index])
+        return try? OfferedItem(wire: entry.items[index])
     }
 
     /// The representation a pull of this side's offer names, and the offer's feature, or the code refusing it.
@@ -333,8 +328,8 @@ package struct ItemOfferRegistry: Sendable {
     /// Handles an event on an offer stream, appending what the owner hears.
     mutating func handle(_ event: FeatureEvent, connection: inout Connection, events: inout [ItemTransferOutput]) {
         switch event {
-        case .opened(let stream, let body):
-            received(stream, body, &connection)
+        case .opened(let stream, .itemSet(let header)):
+            received(stream, header, &connection)
         case .message(let stream, let message):
             item(stream, message, &connection)
         case .remoteEnded(let stream, _):
@@ -374,7 +369,7 @@ package struct ItemOfferRegistry: Sendable {
                 remote.remove(at: index)
             }
             answerSettled(on: stream, .ended(closure), events: &events)
-        case .data, .sessionEstablished, .usabilityChanged, .policyChanged, .slotFreed, .deadline:
+        case .opened, .data, .sessionEstablished, .usabilityChanged, .policyChanged, .slotFreed, .deadline:
             break
         }
     }
@@ -405,10 +400,11 @@ package struct ItemOfferRegistry: Sendable {
         end(localRequestAt: index, events: &events)
     }
 
-    private mutating func received(_ stream: StreamID, _ body: Data, _ connection: inout Connection) {
+    private mutating func received(
+        _ stream: StreamID, _ wire: Kernova_V2_ItemSetHeader, _ connection: inout Connection
+    ) {
         // The connection admits only a kind the table lists, and routes only an item-set offer kind here.
         guard let descriptor = connection.descriptor(of: stream), let feature = descriptor.feature else { return }
-        let wire = (try? Kernova_V2_ItemSetHeader(serializedBytes: body)) ?? Kernova_V2_ItemSetHeader()
         // The first clipboard offer naming a request of the host's answers it, whether or not it is refused here.
         if feature == .clipboard,
             let index = localRequests.firstIndex(where: { $0.token == wire.request && $0.answer == nil })
@@ -458,7 +454,7 @@ package struct ItemOfferRegistry: Sendable {
         guard remote[index].items.count < remote[index].header.count else {
             return WireError(.streamProtocolError, debugDetail: "more items than the header's count")
         }
-        guard let item = try? OfferedItem(serializedBytes: message) else {
+        guard let item = try? OfferedItem(wire: message) else {
             return WireError(.malformedMessage, debugDetail: "an Item that does not decode")
         }
         guard Self.isNamedByContract(item) else {

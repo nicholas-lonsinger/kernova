@@ -95,7 +95,7 @@ enum HostileItems {
     /// The host's END on the pull, as a `PullOutcome`.
     static func outcome(_ run: HostileRun) -> Kernova_V2_PullOutcome? {
         run.written.last { $0.type == .end && $0.streamID.rawValue == pullStream }
-            .flatMap { try? Kernova_V2_PullOutcome(serializedBytes: $0.payload) }
+            .flatMap { try? Kernova_V2_PullOutcome(wire: $0.payload) }
     }
 
     /// What breaks the pull's exactly-once ending: one `.pullEnded`, its sink released once and holding nothing.

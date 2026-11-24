@@ -32,6 +32,46 @@ package enum KindOwner: Sendable, Equatable {
     /// The simulation's bulk kinds, served by an endpoint's test sink.
     case testBulk
     #endif
+
+    /// `body` as the OPEN body of the kinds this owner serves, or nil when it is not one: the acceptor refuses
+    /// such an OPEN `MALFORMED_MESSAGE`, and its machine never hears of it.
+    func openBody(_ body: Data) -> OpenBody? {
+        switch self {
+        case .power:
+            return (try? Kernova_V2_PowerRequest(wire: body)).map(OpenBody.powerRequest)
+        case .update:
+            return (try? Kernova_V2_UpdatePull(wire: body)).map(OpenBody.updatePull)
+        case .logs:
+            return (try? Kernova_V2_LogOpen(wire: body)).map { _ in .logOpen }
+        case .itemTransfer:
+            return (try? PullRequest(wire: body)).map(OpenBody.pullRequest)
+        case .itemOffer:
+            guard let header = try? Kernova_V2_ItemSetHeader(wire: body), header.token.count == 16 else { return nil }
+            return .itemSet(header)
+        case .dragTake:
+            guard let take = try? Kernova_V2_DragTake(wire: body), take.token.count == 16 else { return nil }
+            return .dragTake(token: take.token)
+        #if DEBUG
+        case .testBulk:
+            return .testBulk
+        #endif
+        }
+    }
+}
+
+/// An accepted stream's OPEN body, as its owner's kinds carry it.
+package enum OpenBody: Sendable, Equatable {
+    case powerRequest(Kernova_V2_PowerRequest)
+    case updatePull(Kernova_V2_UpdatePull)
+    case logOpen
+    case pullRequest(PullRequest)
+    /// An item-set offer's header, whose token is 16 bytes.
+    case itemSet(Kernova_V2_ItemSetHeader)
+    /// The 16-byte token of the drag offer a take names.
+    case dragTake(token: Data)
+    #if DEBUG
+    case testBulk
+    #endif
 }
 
 /// One row of the static kind table.
@@ -57,16 +97,15 @@ package struct StreamKindDescriptor: Sendable {
     /// An OPEN of the kind takes a token from the acceptor's OPEN bucket. An item pull's does not: its opener
     /// cannot see when that bucket refills, and the 64-stream limit and credit already bound what a pull asks.
     package var spendsOpenBucket: Bool
-    /// The machine serving accepted streams of the kind; nil only for the
+    /// The machine serving accepted streams of the kind, which decides what their OPEN body is; nil only for the
     /// placeholder row a refused OPEN of an unknown kind carries.
     package var owner: KindOwner?
-    let isValidOpenBody: @Sendable (Data) -> Bool
 
     package init(
         kind: StreamKind, feature: FeatureID?, owner: KindOwner?, openerRole: OpenerRole,
         openerToAcceptor: StreamDirection, acceptorToOpener: StreamDirection, maxPerConnection: Int?,
         duplicateCode: ErrorCode = .streamProtocolError, acceptorEndsFirst: Bool = false,
-        spendsOpenBucket: Bool = true, isValidOpenBody: @escaping @Sendable (Data) -> Bool
+        spendsOpenBucket: Bool = true
     ) {
         self.kind = kind
         self.feature = feature
@@ -78,31 +117,27 @@ package struct StreamKindDescriptor: Sendable {
         self.duplicateCode = duplicateCode
         self.acceptorEndsFirst = acceptorEndsFirst
         self.spendsOpenBucket = spendsOpenBucket
-        self.isValidOpenBody = isValidOpenBody
     }
 
     /// The kinds every production endpoint serves.
     package static let production: [StreamKindDescriptor] = [
         StreamKindDescriptor(
             kind: .powerRequest, feature: .power, owner: .power, openerRole: .host, openerToAcceptor: .nothing,
-            acceptorToOpener: .messages, maxPerConnection: nil,
-            isValidOpenBody: { (try? Kernova_V2_PowerRequest(serializedBytes: $0)) != nil }),
+            acceptorToOpener: .messages, maxPerConnection: nil),
         StreamKindDescriptor(
             kind: .updatePull, feature: .update, owner: .update, openerRole: .peer, openerToAcceptor: .nothing,
-            acceptorToOpener: .rawData, maxPerConnection: 1, duplicateCode: .updateInProgress, acceptorEndsFirst: true,
-            isValidOpenBody: { (try? Kernova_V2_UpdatePull(serializedBytes: $0)) != nil }),
+            acceptorToOpener: .rawData, maxPerConnection: 1, duplicateCode: .updateInProgress, acceptorEndsFirst: true),
         StreamKindDescriptor(
             kind: .logForward, feature: .logs, owner: .logs, openerRole: .peer, openerToAcceptor: .messages,
-            acceptorToOpener: .nothing, maxPerConnection: 1,
-            isValidOpenBody: { (try? Kernova_V2_LogOpen(serializedBytes: $0)) != nil }),
+            acceptorToOpener: .nothing, maxPerConnection: 1),
         StreamKindDescriptor(
             kind: .itemPullByHost, feature: .itemTransfer, owner: .itemTransfer, openerRole: .host,
             openerToAcceptor: .nothing, acceptorToOpener: .rawData, maxPerConnection: nil, acceptorEndsFirst: true,
-            spendsOpenBucket: false, isValidOpenBody: { (try? PullRequest(serializedBytes: $0)) != nil }),
+            spendsOpenBucket: false),
         StreamKindDescriptor(
             kind: .itemPullByPeer, feature: .itemTransfer, owner: .itemTransfer, openerRole: .peer,
             openerToAcceptor: .nothing, acceptorToOpener: .rawData, maxPerConnection: nil, acceptorEndsFirst: true,
-            spendsOpenBucket: false, isValidOpenBody: { (try? PullRequest(serializedBytes: $0)) != nil }),
+            spendsOpenBucket: false),
         itemOffer(.clipboardOfferByHost, feature: .clipboard, openerRole: .host),
         itemOffer(.clipboardOfferByPeer, feature: .clipboard, openerRole: .peer),
         itemOffer(.clipboardOfferRequest, feature: .clipboard, openerRole: .host, openerToAcceptor: .nothing),
@@ -110,8 +145,7 @@ package struct StreamKindDescriptor: Sendable {
         itemOffer(.dragOffer, feature: .drag, openerRole: .peer),
         StreamKindDescriptor(
             kind: .dragTake, feature: .drag, owner: .dragTake, openerRole: .host, openerToAcceptor: .messages,
-            acceptorToOpener: .messages, maxPerConnection: nil, acceptorEndsFirst: true,
-            isValidOpenBody: { (try? Kernova_V2_DragTake(serializedBytes: $0))?.token.count == 16 }),
+            acceptorToOpener: .messages, maxPerConnection: nil, acceptorEndsFirst: true),
     ]
 
     /// An item-set kind: an `ItemSetHeader` OPEN followed by `Item` messages — none on a kind whose opener sends
@@ -121,7 +155,7 @@ package struct StreamKindDescriptor: Sendable {
     ) -> StreamKindDescriptor {
         StreamKindDescriptor(
             kind: kind, feature: feature, owner: .itemOffer, openerRole: openerRole, openerToAcceptor: openerToAcceptor,
-            acceptorToOpener: .nothing, maxPerConnection: nil, isValidOpenBody: ItemOfferRegistry.isValidHeader)
+            acceptorToOpener: .nothing, maxPerConnection: nil)
     }
 
     /// What this side sends on a stream of the kind, given whether it opened it.
@@ -161,22 +195,22 @@ struct FeatureDescriptor: Sendable {
             paramsDecode: { PowerOffer(params: $0) != nil }),
         FeatureDescriptor(
             feature: .update, frozen: true, policyGoverned: false, version: 1,
-            paramsDecode: { (try? Kernova_V2_UpdateCapability(serializedBytes: $0)) != nil }),
+            paramsDecode: { UpdateOffer(params: $0) != nil }),
         FeatureDescriptor(
             feature: .logs, frozen: false, policyGoverned: true, version: 1,
-            paramsDecode: { (try? Kernova_V2_LogCapability(serializedBytes: $0)) != nil }),
+            paramsDecode: { (try? Kernova_V2_LogCapability(wire: $0)) != nil }),
         FeatureDescriptor(
             feature: .itemTransfer, frozen: false, policyGoverned: false, version: 1,
-            paramsDecode: { (try? Kernova_V2_ItemTransferCapability(serializedBytes: $0)) != nil }),
+            paramsDecode: { (try? Kernova_V2_ItemTransferCapability(wire: $0)) != nil }),
         FeatureDescriptor(
             feature: .clipboard, frozen: false, policyGoverned: true, version: 1,
-            paramsDecode: { (try? Kernova_V2_ClipboardCapability(serializedBytes: $0)) != nil }),
+            paramsDecode: { (try? Kernova_V2_ClipboardCapability(wire: $0)) != nil }),
         FeatureDescriptor(
             feature: .drop, frozen: false, policyGoverned: true, version: 1,
-            paramsDecode: { (try? Kernova_V2_DropCapability(serializedBytes: $0)) != nil }),
+            paramsDecode: { (try? Kernova_V2_DropCapability(wire: $0)) != nil }),
         FeatureDescriptor(
             feature: .drag, frozen: false, policyGoverned: true, version: 1,
-            paramsDecode: { (try? Kernova_V2_DragCapability(serializedBytes: $0)) != nil }),
+            paramsDecode: { (try? Kernova_V2_DragCapability(wire: $0)) != nil }),
     ]
 
     static func lookup(_ feature: FeatureID) -> FeatureDescriptor? {

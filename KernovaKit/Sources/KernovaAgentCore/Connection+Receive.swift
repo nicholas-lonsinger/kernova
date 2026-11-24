@@ -116,7 +116,7 @@ extension Connection {
             return receiveConnectionReset(frame.payload)
         }
         guard frame.streamID == .session, frame.type == .data, frame.flags.contains(.message),
-            let message = try? Kernova_V2_SessionMessage(serializedBytes: frame.payload),
+            let message = try? Kernova_V2_SessionMessage(wire: frame.payload),
             case .hello(let hello) = message.message
         else { return fatal(.protocolError, "the first frame is not a Hello") }
         guard let claim = PeerClaim(received: hello.identity) else {
@@ -205,7 +205,7 @@ extension Connection {
         switch frame.type {
         case .data:
             guard frame.flags.contains(.message) else { return fatal(.protocolError, "raw DATA on stream 0") }
-            guard let message = try? Kernova_V2_SessionMessage(serializedBytes: frame.payload) else {
+            guard let message = try? Kernova_V2_SessionMessage(wire: frame.payload) else {
                 return fatal(.protocolError, "a stream-0 payload that is not a SessionMessage")
             }
             handleSessionMessage(message)
@@ -256,7 +256,7 @@ extension Connection {
             emit(.updateAvailable(manifest))
         case .extension(let bytes):
             if remoteHello.protocolVersion == configuration.protocolVersion,
-                (try? Kernova_V2_SessionExtension(serializedBytes: bytes)) == nil
+                (try? Kernova_V2_SessionExtension(wire: bytes)) == nil
             {
                 diagnose(.remoteViolation("a SessionExtension that does not decode"))
             }
@@ -344,7 +344,7 @@ extension Connection {
         if counted >= 2 * Limits.maxConcurrentStreams {
             return fatal(.protocolError, "the far side holds \(counted) streams against a limit of 64")
         }
-        guard let open = try? Kernova_V2_Open(serializedBytes: frame.payload) else {
+        guard let open = try? Kernova_V2_Open(wire: frame.payload) else {
             return refuse(id, nil, WireError(.malformedMessage, debugDetail: "the OPEN payload does not decode"))
         }
         guard let descriptor = descriptor(for: open.kind), !opensAsThisRole(descriptor) else {
@@ -358,7 +358,7 @@ extension Connection {
         if let feature = descriptor.feature, case .absent(let reason, _) = usability(feature) {
             return refuse(id, descriptor, WireError(.featureUnavailable, absence: reason))
         }
-        guard descriptor.isValidOpenBody(open.body) else {
+        guard let body = descriptor.owner?.openBody(open.body) else {
             return refuse(id, descriptor, WireError(.malformedMessage))
         }
         if let max = descriptor.maxPerConnection {
@@ -372,7 +372,7 @@ extension Connection {
         raiseToBulkTarget(&record, viaQueue: false)
         record.wasWritable = sendPredicate(record)
         insert(record)
-        emit(.opened(id, descriptor.kind, body: open.body), owner: descriptor.owner)
+        emit(.opened(id, descriptor.kind, body: body), owner: descriptor.owner)
     }
 
     /// Answers a refused OPEN with RESET; the stream counts as closed at once and
@@ -388,7 +388,7 @@ extension Connection {
 
     static let refusedDescriptor = StreamKindDescriptor(
         kind: .unspecified, feature: nil, owner: nil, openerRole: .host, openerToAcceptor: .nothing,
-        acceptorToOpener: .nothing, maxPerConnection: nil, isValidOpenBody: { _ in false })
+        acceptorToOpener: .nothing, maxPerConnection: nil)
 
     /// Raises a raw-DATA receive direction to the bulk target with one WINDOW.
     func raiseToBulkTarget(_ record: inout StreamRecord, viaQueue: Bool) {

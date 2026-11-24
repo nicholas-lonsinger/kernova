@@ -5,7 +5,6 @@ import Foundation
 #endif
 
 import KernovaWire
-import SwiftProtobuf
 
 /// A container's records as the `TreeEvent`s they stand for, held to `TreeEventSequence`: one enforcement
 /// path, which the encoder runs as it writes and the decoder as it reads, so neither side can produce what the
@@ -84,7 +83,6 @@ struct ContainerGrammar {
         try finishWholeFile()
         let leaving = sequence.enteredDirectories
         for _ in 0..<leaving { try sequence.admit(.leaveDirectory) }
-        guard end.unknownFields.data.isEmpty else { throw .unknownFields }
         try sequence.admit(.end)
         let stated = ContainerError.Counts(entries: end.entries, bytes: end.bytes)
         guard stated == sequence.counts else { throw .endCountsMismatch(stated: stated, counted: sequence.counts) }

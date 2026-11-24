@@ -47,7 +47,7 @@ enum Regression {
     static func resetLimits(_ run: HostileRun, on stream: UInt32) -> [UInt64] {
         run.written.compactMap { frame in
             guard frame.type == .reset, frame.streamID.rawValue == stream,
-                let error = try? Kernova_V2_Error(serializedBytes: frame.payload)
+                let error = try? Kernova_V2_Error(wire: frame.payload)
             else { return nil }
             return error.limit
         }

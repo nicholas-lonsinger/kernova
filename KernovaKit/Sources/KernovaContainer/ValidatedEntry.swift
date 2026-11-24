@@ -113,7 +113,6 @@ public struct ValidatedEntry: Sendable {
     }
 
     private static func check(_ header: EntryHeader) throws(ContainerError) {
-        guard header.unknownFields.data.isEmpty else { throw .unknownFields }
         if header.type == .data {
             let bare =
                 header.depth == 0 && header.name.isEmpty && header.mode == 0 && header.darwinFlags == 0
@@ -132,7 +131,6 @@ public struct ValidatedEntry: Sendable {
             throw .darwinFlagsNotAllowed(header.darwinFlags & ~allowedDarwinFlags)
         }
         for time in [header.modificationTime, header.birthTime] {
-            guard time.unknownFields.data.isEmpty else { throw .unknownFields }
             guard time.nanoseconds <= maxNanoseconds else { throw .nanosecondsOutOfRange(time.nanoseconds) }
         }
         if header.type == .symlink {
@@ -151,13 +149,10 @@ public struct ValidatedEntry: Sendable {
     private static func storage(of header: EntryHeader) throws(ContainerError) -> (UInt64, DecmpfsHeader?, Bool) {
         switch (header.type, header.storage) {
         case (.data, .plain(let plain)?), (.file, .plain(let plain)?):
-            guard plain.unknownFields.data.isEmpty else { throw .unknownFields }
             return (plain.size, nil, false)
         case (.data, .lz4(let lz4)?), (.file, .lz4(let lz4)?):
-            guard lz4.unknownFields.data.isEmpty else { throw .unknownFields }
             return (lz4.size, nil, true)
         case (.file, .decmpfs(let decmpfs)?):
-            guard decmpfs.unknownFields.data.isEmpty else { throw .unknownFields }
             do {
                 return (0, try DecmpfsHeader(attribute: decmpfs.attribute), false)
             } catch {
@@ -173,7 +168,6 @@ public struct ValidatedEntry: Sendable {
     private static func checkXattrs(of header: EntryHeader) throws(ContainerError) {
         var names = Set<Data>()
         for xattr in header.xattrs {
-            guard xattr.unknownFields.data.isEmpty else { throw .unknownFields }
             let name = xattr.name
             // Extended attribute names share `NAME_MAX` (`XATTR_MAXNAMELEN` on Darwin, `XATTR_NAME_MAX` on Linux).
             guard !name.isEmpty, name.count <= PathComponent.maxByteCount, !name.contains(0) else {

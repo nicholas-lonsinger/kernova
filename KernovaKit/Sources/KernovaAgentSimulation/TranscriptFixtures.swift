@@ -26,12 +26,9 @@ package enum TranscriptFixture {
     package static func host(_ name: String) -> HostConfiguration? {
         var bundles: [BundledPayload] = []
         var protocolVersion: UInt32 = 1
-        var items = false
         switch name {
         case "host-default":
             break
-        case "host-items":
-            items = true
         case "host-pax-system":
             bundles = [
                 BundledPayload(
@@ -49,33 +46,15 @@ package enum TranscriptFixture {
         default:
             return nil
         }
-        let policy = PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)])
         var configuration = HostConfiguration(
             claim: PeerClaim(role: .host, versionLabel: "Kernova"), sessionToken: token,
-            policy: items ? SimItems.policy(policy) : policy, bundles: bundles)
+            policy: PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]), bundles: bundles)
         let version = protocolVersion
         configuration.tweakForTesting = { connection in
             connection.recordsTraceForTesting = true
             connection.protocolVersion = version
         }
-        if items { configuration.items = SimItems.served }
         return configuration
-    }
-
-    /// The offer an `offer fixture=<name>` input makes.
-    package static func offer(_ name: String) -> ItemOffer? {
-        switch name {
-        case "file-2k":
-            SimItems.offer(
-                1, [[SimItems.representation(.file, size: 2048), SimItems.representation(.inline, size: 64)]])
-        case "text-64": SimItems.offer(2, [[SimItems.representation(.inline, size: 64)]])
-        case "folder-4k": SimItems.offer(3, [[SimItems.representation(.folder, size: 4096)]])
-        case "drag-1": SimItems.offer(1, [])
-        case "drag-4": SimItems.offer(4, [])
-        case "promise-folder":
-            SimItems.offer(4, [[SimItems.promise(.file, size: 2048)], [SimItems.representation(.folder, size: 0)]])
-        default: nil
-        }
     }
 
     /// The bundles a `setBundles fixture=<name>` input installs.
@@ -89,11 +68,9 @@ package enum TranscriptFixture {
 
     package static func peer(_ name: String) -> PeerConfiguration? {
         var protocolVersion: UInt32 = 1
-        var items = false
         let configuration: PeerConfiguration
         switch name {
-        case "linux-session-v1", "linux-session-proto2", "linux-session-items":
-            items = name == "linux-session-items"
+        case "linux-session-v1", "linux-session-proto2":
             protocolVersion = name == "linux-session-proto2" ? 2 : 1
             configuration = PeerConfiguration(
                 claim: PeerClaim(
@@ -131,7 +108,6 @@ package enum TranscriptFixture {
             connection.recordsTraceForTesting = true
             connection.protocolVersion = version
         }
-        if items { tweaked.items = SimItems.served }
         return tweaked
     }
 }
@@ -168,24 +144,24 @@ package enum FrozenFields {
         case .ping, .window:
             return nil
         case .reset:
-            let error = (try? Kernova_V2_Error(serializedBytes: frame.payload)) ?? Kernova_V2_Error()
+            let error = (try? Kernova_V2_Error(wire: frame.payload)) ?? Kernova_V2_Error()
             if id == 0 {
                 return FrozenLine("\(prefix) RESET code=\(error.code.rawValue) retry_after_ms=\(error.retryAfterMs)")
             }
             guard isFrozen(kinds[id]) else { return nil }
             return FrozenLine("\(prefix) RESET code=\(error.code.rawValue)")
         case .open:
-            let open = (try? Kernova_V2_Open(serializedBytes: frame.payload)) ?? Kernova_V2_Open()
+            let open = (try? Kernova_V2_Open(wire: frame.payload)) ?? Kernova_V2_Open()
             switch open.kind {
             case .powerRequest:
-                let body = (try? Kernova_V2_PowerRequest(serializedBytes: open.body)) ?? Kernova_V2_PowerRequest()
+                let body = (try? Kernova_V2_PowerRequest(wire: open.body)) ?? Kernova_V2_PowerRequest()
                 // `ignore_apps` is stated only when set, as it is encoded.
                 return FrozenLine(
                     "\(prefix) OPEN kind=POWER_REQUEST body.action=\(body.action.rawValue) body.acceptance_deadline_ms=\(body.acceptanceDeadlineMs)"
                         + (body.ignoreApps ? " body.ignore_apps=true" : "")
                 )
             case .updatePull:
-                let body = (try? Kernova_V2_UpdatePull(serializedBytes: open.body)) ?? Kernova_V2_UpdatePull()
+                let body = (try? Kernova_V2_UpdatePull(wire: open.body)) ?? Kernova_V2_UpdatePull()
                 return FrozenLine("\(prefix) OPEN kind=UPDATE_PULL body.payload_hash=\(hex(body.payloadHash))")
             default:
                 return nil
@@ -195,13 +171,13 @@ package enum FrozenFields {
             case .powerRequest:
                 guard !frame.payload.isEmpty else { return FrozenLine("\(prefix) END empty") }
                 let outcome =
-                    (try? Kernova_V2_PowerOutcome(serializedBytes: frame.payload)) ?? Kernova_V2_PowerOutcome()
+                    (try? Kernova_V2_PowerOutcome(wire: frame.payload)) ?? Kernova_V2_PowerOutcome()
                 return FrozenLine(
                     "\(prefix) END outcome.kind=\(outcome.kind.rawValue) outcome.code=\(outcome.error.code.rawValue) outcome.apps=\(apps(outcome.apps))"
                 )
             case .updatePull:
                 guard !frame.payload.isEmpty else { return FrozenLine("\(prefix) END empty") }
-                let result = (try? Kernova_V2_UpdateResult(serializedBytes: frame.payload)) ?? Kernova_V2_UpdateResult()
+                let result = (try? Kernova_V2_UpdateResult(wire: frame.payload)) ?? Kernova_V2_UpdateResult()
                 return FrozenLine(
                     "\(prefix) END result.kind=\(result.kind.rawValue) result.code=\(result.error.code.rawValue)")
             default:
@@ -211,7 +187,7 @@ package enum FrozenFields {
             guard frame.flags.contains(.message) else { return nil }
             if id == 0 { return session(frame.payload) }
             guard kinds[id] == .powerRequest else { return nil }
-            let progress = (try? Kernova_V2_PowerProgress(serializedBytes: frame.payload)) ?? Kernova_V2_PowerProgress()
+            let progress = (try? Kernova_V2_PowerProgress(wire: frame.payload)) ?? Kernova_V2_PowerProgress()
             return FrozenLine(
                 "\(prefix) MSG progress.stage=\(progress.stage.rawValue) progress.apps=\(apps(progress.apps))")
         }
@@ -222,7 +198,7 @@ package enum FrozenFields {
     }
 
     static func session(_ payload: Data) -> FrozenLine? {
-        guard let message = try? Kernova_V2_SessionMessage(serializedBytes: payload) else {
+        guard let message = try? Kernova_V2_SessionMessage(wire: payload) else {
             return FrozenLine("s=0 MSG undecodable")
         }
         switch message.message {
@@ -268,7 +244,7 @@ package enum FrozenFields {
             case .params(let params):
                 if feature == .power {
                     let capability =
-                        (try? Kernova_V2_PowerCapability(serializedBytes: params)) ?? Kernova_V2_PowerCapability()
+                        (try? Kernova_V2_PowerCapability(wire: params)) ?? Kernova_V2_PowerCapability()
                     // `ignore_apps_actions` is stated only when listed, as it is encoded.
                     let ignored = capability.ignoreAppsActions.map { "\($0.rawValue)" }.joined(separator: ",")
                     let ignoring = capability.ignoreAppsActions.isEmpty ? "" : ":ignore[\(ignored)]"
@@ -276,7 +252,7 @@ package enum FrozenFields {
                         "\(feature.rawValue)=v\(advert.version):actions[\(capability.actions.map { "\($0.rawValue)" }.joined(separator: ","))]:asks=\(capability.asksAppsToQuit)\(ignoring)"
                 }
                 let capability =
-                    (try? Kernova_V2_UpdateCapability(serializedBytes: params)) ?? Kernova_V2_UpdateCapability()
+                    (try? Kernova_V2_UpdateCapability(wire: params)) ?? Kernova_V2_UpdateCapability()
                 return
                     "\(feature.rawValue)=v\(advert.version):formats[\(capability.formats.map { "\($0.rawValue)" }.joined(separator: ","))]"
             case .absent(let absence):

@@ -200,7 +200,7 @@ package final class HostileRun {
     package var streamResets: [(stream: UInt32, code: ErrorCode)] {
         written.compactMap { frame in
             guard frame.type == .reset, frame.streamID != .session else { return nil }
-            let error = (try? Kernova_V2_Error(serializedBytes: frame.payload)) ?? Kernova_V2_Error()
+            let error = (try? Kernova_V2_Error(wire: frame.payload)) ?? Kernova_V2_Error()
             return (frame.streamID.rawValue, error.code)
         }
     }

@@ -20,10 +20,10 @@ extension StreamKindDescriptor {
     package static let testBulk: [StreamKindDescriptor] = [
         StreamKindDescriptor(
             kind: .testBulkByPeer, feature: nil, owner: .testBulk, openerRole: .peer, openerToAcceptor: .nothing,
-            acceptorToOpener: .rawData, maxPerConnection: nil, isValidOpenBody: { _ in true }),
+            acceptorToOpener: .rawData, maxPerConnection: nil),
         StreamKindDescriptor(
             kind: .testBulkByHost, feature: nil, owner: .testBulk, openerRole: .host, openerToAcceptor: .nothing,
-            acceptorToOpener: .rawData, maxPerConnection: nil, isValidOpenBody: { _ in true }),
+            acceptorToOpener: .rawData, maxPerConnection: nil),
     ]
 }
 

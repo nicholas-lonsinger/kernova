@@ -94,7 +94,7 @@ package enum ConnectionEvent: Sendable, Equatable {
     /// A liveness verdict.
     case liveness(LivenessChange)
     /// The far side opened a stream this side accepted.
-    case opened(StreamID, StreamKind, body: Data)
+    case opened(StreamID, StreamKind, body: OpenBody)
     /// A message arrived on a stream.
     case message(StreamID, Data)
     /// Raw bytes arrived on a stream; they hold credit until `consumed`.

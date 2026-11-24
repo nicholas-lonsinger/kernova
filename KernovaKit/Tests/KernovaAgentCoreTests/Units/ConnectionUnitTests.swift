@@ -29,7 +29,7 @@ extension CoreUnits {
             peer.connection.setLocalAdverts(adverts)
             let frames = peer.flush()
             #expect(frames.shape == ["0:data+msg", "0:data+msg"])
-            let messages = frames.compactMap { try? Kernova_V2_SessionMessage(serializedBytes: $0.payload) }
+            let messages = frames.compactMap { try? Kernova_V2_SessionMessage(wire: $0.payload) }
             #expect(messages.first?.peerState.userName == "c")
             #expect(messages.last?.capabilities.features.first?.absent.reason == .notOnConsole)
 
@@ -38,7 +38,7 @@ extension CoreUnits {
             host.connection.setPolicy(PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: false)]))
             host.connection.setPolicy(
                 PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true, params: Data([1]))]))
-            let policies = host.flush().compactMap { try? Kernova_V2_SessionMessage(serializedBytes: $0.payload) }
+            let policies = host.flush().compactMap { try? Kernova_V2_SessionMessage(wire: $0.payload) }
             #expect(policies.count == 1)
             #expect(policies.first?.policy.features.first?.params == Data([1]))
         }

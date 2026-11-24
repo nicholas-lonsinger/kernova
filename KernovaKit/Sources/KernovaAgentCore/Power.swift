@@ -173,8 +173,8 @@ package struct PowerResponder: FeatureMachine {
     /// Handles a stream event for POWER_REQUEST.
     package mutating func handle(_ event: FeatureEvent, connection: inout Connection) {
         switch event {
-        case .opened(let stream, let body):
-            opened(stream, body: body, connection: &connection)
+        case .opened(let stream, .powerRequest(let powerRequest)):
+            opened(stream, powerRequest, connection: &connection)
         case .writable(let stream):
             if request?.stream == stream { flushPending(&connection) }
         case .streamClosed(let stream, _):
@@ -189,7 +189,8 @@ package struct PowerResponder: FeatureMachine {
                 outbox.append(.power(.cancel(current.id)))
             }
             request = current
-        case .sessionEstablished, .usabilityChanged, .policyChanged, .message, .data, .remoteEnded, .slotFreed:
+        case .sessionEstablished, .usabilityChanged, .policyChanged, .opened, .message, .data, .remoteEnded,
+            .slotFreed:
             break
         }
     }
@@ -256,8 +257,9 @@ package struct PowerResponder: FeatureMachine {
         }
     }
 
-    private mutating func opened(_ stream: StreamID, body: Data, connection: inout Connection) {
-        let powerRequest = (try? Kernova_V2_PowerRequest(serializedBytes: body)) ?? Kernova_V2_PowerRequest()
+    private mutating func opened(
+        _ stream: StreamID, _ powerRequest: Kernova_V2_PowerRequest, connection: inout Connection
+    ) {
         let offered = availability.params?.actions(ignoringApps: powerRequest.ignoreApps) ?? []
         guard offered.contains(powerRequest.action), powerRequest.action != .unspecified else {
             return refuse(stream, .powerActionUnsupported, connection: &connection)
@@ -451,7 +453,7 @@ package struct PowerRequester: FeatureMachine {
     }
 
     private mutating func progress(_ index: Int, _ payload: Data, connection: inout Connection) {
-        guard let message = try? Kernova_V2_PowerProgress(serializedBytes: payload) else {
+        guard let message = try? Kernova_V2_PowerProgress(wire: payload) else {
             return conclude(index, .indeterminate, reset: .malformedMessage, connection: &connection)
         }
         let id = entries[index].id
@@ -472,7 +474,7 @@ package struct PowerRequester: FeatureMachine {
     }
 
     private mutating func ended(_ index: Int, _ body: Data) {
-        let outcome = (try? Kernova_V2_PowerOutcome(serializedBytes: body)) ?? Kernova_V2_PowerOutcome()
+        let outcome = (try? Kernova_V2_PowerOutcome(wire: body)) ?? Kernova_V2_PowerOutcome()
         let error = outcome.hasError ? WireError(received: outcome.error) : WireError(.unspecified)
         let result: PowerRequestResult
         switch (entries[index].phase, outcome.kind) {

@@ -28,10 +28,9 @@ struct ItemPullServer: Sendable {
 
     /// The far side opened a pull: serve it when it names a representation of an open offer, RESET otherwise.
     mutating func opened(
-        _ id: ItemPullID, body: Data, offers: ItemOfferRegistry, connection: inout Connection,
+        _ id: ItemPullID, _ request: PullRequest, offers: ItemOfferRegistry, connection: inout Connection,
         outbox: inout [ItemTransferOutput]
     ) {
-        let request = (try? PullRequest(serializedBytes: body)) ?? PullRequest()
         switch offers.localRepresentation(request) {
         case .failure(let error):
             connection.reset(id.stream, error)
@@ -113,7 +112,7 @@ struct ItemPullServer: Sendable {
     /// The puller's `PullOutcome` when it ENDed; otherwise how the stream closed.
     private static func result(_ closure: StreamClosure) -> ItemServeResult {
         guard case .completed(let body) = closure else { return .closed(closure) }
-        guard let outcome = try? Kernova_V2_PullOutcome(serializedBytes: body) else {
+        guard let outcome = try? Kernova_V2_PullOutcome(wire: body) else {
             return .failed(WireError(.malformedMessage, debugDetail: "a PullOutcome that does not decode"))
         }
         return outcome.kind == .landed ? .landed : .failed(WireError(received: outcome.error))

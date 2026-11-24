@@ -10,16 +10,13 @@ import Testing
 
 /// The golden transcripts, read from the source tree beside this file.
 enum TranscriptFiles {
-    static let root = SourceTree.url("KernovaKit/Tests/KernovaAgentCoreTests/Transcripts")
-    static let frozen = root.appendingPathComponent("frozen")
-    static let current = root.appendingPathComponent("current")
+    static let frozen = SourceTree.url("KernovaKit/Tests/KernovaAgentCoreTests/Transcripts/frozen")
 
-    /// Every frozen file the exchanges define: `Fnnh` with the host pinned, `Fnnp` the peer.
-    static var frozenNames: [String] {
-        Exchange.frozen.flatMap { exchange in
-            exchange.pinnable.map { "\(exchange.id)\($0 == .host ? "h" : "p").transcript" }
-        }
-    }
+    /// Every frozen file: `Fnnh` with the host pinned, `Fnnp` the peer.
+    static let frozenNames =
+        ["F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F09", "F10", "F11", "F14"].flatMap {
+            ["\($0)h.transcript", "\($0)p.transcript"]
+        } + ["F12h.transcript", "F13h.transcript"]
 
     static func read(_ url: URL) -> String? {
         (try? Data(contentsOf: url)).map { String(decoding: $0, as: UTF8.self) }
@@ -56,17 +53,5 @@ struct TranscriptTests {
                 return
             }
         }
-    }
-
-    @Test("Each current transcript replays duet, byte for byte", arguments: Exchange.current.map(\.id))
-    func duet(_ id: String) throws {
-        let exchange = try #require(Exchange.current.first { $0.id == id })
-        let expected = try #require(
-            TranscriptFiles.read(TranscriptFiles.current.appendingPathComponent("\(id).transcript")), "\(id) is missing"
-        )
-        let duet = try #require(Duet(exchange))
-        duet.run()
-        #expect(duet.failures.isEmpty, "\(duet.failures)")
-        #expect(duet.renderDuet() == expected)
     }
 }

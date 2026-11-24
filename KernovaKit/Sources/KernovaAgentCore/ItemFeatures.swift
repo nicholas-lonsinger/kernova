@@ -272,7 +272,7 @@ public struct DropLanded: Sendable, Equatable {
 
     /// What `endBody`, a peer's END body on DROP_OFFER, says landed; nil when it does not decode.
     public init?(endBody: Data) {
-        guard let landed = try? Kernova_V2_DropLanded(serializedBytes: endBody) else { return nil }
+        guard let landed = try? Kernova_V2_DropLanded(wire: endBody) else { return nil }
         self.landed = Int(landed.landed)
     }
 
@@ -523,7 +523,7 @@ struct DragOffers: Sendable {
         _ payload: Data, on stream: StreamID, items: inout ItemTransfer, connection: inout Connection
     ) {
         if let take = asked.first(where: { $0.id.stream == stream }) {
-            guard let message = try? Kernova_V2_DragTakeControl(serializedBytes: payload) else {
+            guard let message = try? Kernova_V2_DragTakeControl(wire: payload) else {
                 return resetTake(
                     stream, WireError(.malformedMessage, debugDetail: "a DragTakeControl that does not decode"),
                     &connection)
@@ -534,7 +534,7 @@ struct DragOffers: Sendable {
             case nil: diagnostics.append(.remoteViolation("a DragTakeControl that sets no control"))
             }
         } else if let index = opened.firstIndex(where: { $0.id.stream == stream }) {
-            guard let message = try? Kernova_V2_DragTakeReport(serializedBytes: payload) else {
+            guard let message = try? Kernova_V2_DragTakeReport(wire: payload) else {
                 return resetTake(
                     stream, WireError(.malformedMessage, debugDetail: "a DragTakeReport that does not decode"),
                     &connection)
@@ -718,9 +718,8 @@ struct DragOffers: Sendable {
         if let body = waiting.end, connection.canQueue(on: stream) { connection.end(stream, body: body) }
     }
 
-    /// Peer: the host opened a take of `body`'s token.
-    mutating func opened(_ stream: StreamID, body: Data, items: ItemTransfer, connection: inout Connection) {
-        let token = (try? Kernova_V2_DragTake(serializedBytes: body))?.token ?? Data()
+    /// Peer: the host opened a take of the drag offer of `token`.
+    mutating func opened(_ stream: StreamID, token: Data, items: ItemTransfer, connection: inout Connection) {
         let id = DragTakeID(generation: generation, stream: stream)
         guard items.offers.localFeature(token) == .drag, !taken.contains(token),
             !asked.contains(where: { $0.token == token })
@@ -768,7 +767,7 @@ struct DragOffers: Sendable {
     /// `STEP_NAMED` and one size per item of its taken offer; otherwise how the stream closed.
     private mutating func result(of take: Take, _ closure: StreamClosure) -> DragTakeResult {
         guard case .completed(let body) = closure else { return .closed(closure) }
-        guard let outcome = try? Kernova_V2_DragTakeOutcome(serializedBytes: body) else {
+        guard let outcome = try? Kernova_V2_DragTakeOutcome(wire: body) else {
             return .refused(WireError(.malformedMessage, debugDetail: "a DragTakeOutcome that does not decode"))
         }
         switch outcome.kind {

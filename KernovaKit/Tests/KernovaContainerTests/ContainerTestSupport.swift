@@ -33,7 +33,7 @@ func generous(for container: Data) -> ContainerAcceptance {
     let length = (0..<4).reduce(0) { $0 | Int(container[container.startIndex + 1 + $1]) << ($1 * 8) }
     let start = container.startIndex + prefix
     guard container.count >= prefix + length,
-        let header = try? EntryHeader(serializedBytes: container[start..<(start + length)])
+        let header = try? EntryHeader(wire: container[start..<(start + length)])
     else { return generous() }
     return generous(storage(sending: header.type))
 }
