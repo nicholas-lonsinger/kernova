@@ -101,7 +101,8 @@ enum AgentShell {
         // First, so every record the process makes reaches the ring, the start notice included.
         let logs = LogForwarding()
         KernovaLogger.bootstrapProcessSink(logs.sink)
-        let name = role == .systemPeer ? "system" : "session"
+        // A message of its own, so every record that interpolates it prints it.
+        let name: LogMessage = role == .systemPeer ? "system" : "session"
         let claim: PeerClaim
         do throws(LinuxIdentityError) {
             claim = try LinuxIdentity.current(role: role, versionLabel: label)
@@ -111,7 +112,7 @@ enum AgentShell {
         logger.log(
             .notice,
             """
-            The \(name, privacy: .public) peer \(label, privacy: .public) starts, scope \
+            The \(name) peer \(label, privacy: .public) starts, scope \
             \(String(describing: claim.scope), privacy: .public), payload \(lowercaseHex(claim.payloadHash), privacy: .public)
             """)
         let bus: DBusBusConnection
