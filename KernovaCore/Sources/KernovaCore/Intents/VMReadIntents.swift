@@ -69,34 +69,3 @@ struct FindStorageDisksIntent: AppIntent {
         .result(value: try await gateway.storageDisks(ofVM: vm.id))
     }
 }
-
-struct TakeSnapshotIntent: AppIntent {
-    static let title: LocalizedStringResource = "Take Snapshot"
-    static let description: IntentDescription? = IntentDescription(
-        "Captures a named restore point for a virtual machine.",
-        categoryName: "Virtual Machines",
-        resultValueName: "Snapshot Name")
-
-    @Parameter(title: "Virtual Machine")
-    var vm: VMEntity
-
-    @Parameter(title: "Name")
-    var name: String
-
-    @Parameter(title: "Notes", default: "")
-    var notes: String
-
-    @Dependency private var gateway: VMIntentGateway
-
-    static var parameterSummary: some ParameterSummary {
-        Summary("Take a snapshot of \(\.$vm) named \(\.$name)") {
-            \.$notes
-        }
-    }
-
-    @MainActor
-    func perform() async throws -> some IntentResult & ReturnsValue<String> {
-        let snapshot = try await gateway.takeSnapshot(vm.id, name: name, notes: notes)
-        return .result(value: snapshot.name)
-    }
-}

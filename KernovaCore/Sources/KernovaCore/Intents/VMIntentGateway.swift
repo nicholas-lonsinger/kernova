@@ -147,7 +147,15 @@ package final class VMIntentGateway {
     /// The VM's named restore points, newest first.
     func snapshots(ofVM id: UUID) async throws -> [SnapshotEntity] {
         try await perform(.snapshots, on: id) {
-            try self.commands.snapshots(of: .id(id)).map { SnapshotEntity($0, vm: id) }
+            try self.commands.snapshots(of: .id(id)).map { SnapshotEntity($0, vm: id, sizes: self) }
+        }
+    }
+
+    /// ``VMCommandCore/snapshotSize(of:snapshot:)`` of the snapshot `id`
+    /// names.
+    func snapshotSize(_ id: SnapshotEntityID) async throws -> SnapshotSize? {
+        try await perform(.snapshotSizes, on: id.vm) {
+            try await self.commands.snapshotSize(of: .id(id.vm), snapshot: id.snapshot)
         }
     }
 
@@ -235,11 +243,12 @@ package final class VMIntentGateway {
 
     // MARK: - Snapshots
 
-    @discardableResult
-    func takeSnapshot(_ id: UUID, name: String, notes: String) async throws -> SnapshotSummary {
+    /// Captures a snapshot of the VM, answering the snapshot it took.
+    func takeSnapshot(_ id: UUID, name: String, notes: String) async throws -> SnapshotEntity {
         try await perform(.takeSnapshot, on: id) {
-            try await self.commands.takeSnapshot(
+            let taken = try await self.commands.takeSnapshot(
                 .id(id), name: name, notes: notes, asEphemeralBaseline: false)
+            return SnapshotEntity(taken, vm: id, sizes: self)
         }
     }
 

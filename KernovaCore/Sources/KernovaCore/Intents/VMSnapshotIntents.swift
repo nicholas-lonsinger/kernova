@@ -23,6 +23,36 @@ struct FindSnapshotsIntent: AppIntent {
     }
 }
 
+struct TakeSnapshotIntent: AppIntent {
+    static let title: LocalizedStringResource = "Take Snapshot"
+    static let description: IntentDescription? = IntentDescription(
+        "Captures a named restore point for a virtual machine and returns the snapshot.",
+        categoryName: "Virtual Machines",
+        resultValueName: "Snapshot")
+
+    @Parameter(title: "Virtual Machine")
+    var vm: VMEntity
+
+    @Parameter(title: "Name")
+    var name: String
+
+    @Parameter(title: "Notes", default: "")
+    var notes: String
+
+    @Dependency private var gateway: VMIntentGateway
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Take a snapshot of \(\.$vm) named \(\.$name)") {
+            \.$notes
+        }
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<SnapshotEntity> {
+        .result(value: try await gateway.takeSnapshot(vm.id, name: name, notes: notes))
+    }
+}
+
 /// Returns a VM to a snapshot.
 struct RevertToSnapshotIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Revert to Snapshot"

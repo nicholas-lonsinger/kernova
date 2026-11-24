@@ -29,6 +29,7 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         var sweptStagingBundleURLs: [URL] = []
         var diskSizes: [UUID: VMBundleLayout.DiskSizes] = [:]
         var diskSizeReads = 0
+        var snapshotSizes: [UUID: SnapshotSize] = [:]
         var platformMachineIdentifier: Data?
     }
 
@@ -56,6 +57,12 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
     /// as unreadable.
     func setDiskSizes(_ sizes: VMBundleLayout.DiskSizes, for imageID: UUID) {
         state.withLock { $0.diskSizes[imageID] = sizes }
+    }
+
+    /// Seeds the size one snapshot reports; a snapshot not seeded reads as
+    /// unreadable.
+    func setSnapshotSize(_ size: SnapshotSize, for snapshotID: UUID) {
+        state.withLock { $0.snapshotSizes[snapshotID] = size }
     }
 
     /// Seeds the configuration one snapshot captured, as `prepareSnapshot`
@@ -145,9 +152,10 @@ final class MockVMBundleMachineFiles: VMBundleMachineFileWorking {
         state.withLock { $0.sweptStagingBundleURLs.append(bundleURL) }
     }
 
-    /// Every snapshot reports zero bytes.
     func snapshotSizes(bundleURL: URL, snapshotIDs: [UUID]) -> [UUID: SnapshotSize] {
-        Dictionary(uniqueKeysWithValues: snapshotIDs.map { ($0, SnapshotSize(bytes: 0, privateBytes: nil)) })
+        state.withLock { state in
+            Dictionary(uniqueKeysWithValues: snapshotIDs.compactMap { id in state.snapshotSizes[id].map { (id, $0) } })
+        }
     }
 
     func diskSizes(

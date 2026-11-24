@@ -262,10 +262,9 @@ package final class VMBundle {
         withMutation(keyPath: \.machineIdentifierFile) { machineIdentifierFileRead = .some(data) }
     }
 
-    /// The size of each snapshot the manifest lists; one whose size
-    /// can't be read has no entry.
-    func snapshotSizes() async -> [UUID: SnapshotSize] {
-        let ids = snapshotManifest.snapshots.map(\.id)
+    /// The size of each snapshot `ids` names; one whose size can't be read
+    /// has no entry.
+    func snapshotSizes(of ids: [UUID]) async -> [UUID: SnapshotSize] {
         guard !ids.isEmpty else { return [:] }
         return await offMainActorInfallibly { $0.snapshotSizes(bundleURL: $1, snapshotIDs: ids) }
     }

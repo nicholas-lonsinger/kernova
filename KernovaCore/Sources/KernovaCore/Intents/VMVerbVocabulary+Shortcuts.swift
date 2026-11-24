@@ -9,7 +9,7 @@ extension VMVerbVocabulary {
     }
 
     /// The action that runs `verb`, `nil` for a verb no action runs — one
-    /// Shortcuts reaches only through an entity's query included.
+    /// Shortcuts reaches only through an entity's query or property included.
     private static func action(running verb: VMVerb) -> (any AppIntent.Type)? {
         switch verb {
         case .info: GetVMStateIntent.self
