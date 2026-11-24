@@ -5,6 +5,7 @@ import Foundation
 #endif
 
 import KernovaWire
+import SwiftProtobuf
 
 /// An LZ4 chunk the decoder admitted: its declared size counted against its entry and the pull, and its block not
 /// yet decompressed.
@@ -173,10 +174,11 @@ public struct ContainerDecoder {
         case .header:
             let header: EntryHeader
             do {
-                header = try EntryHeader(wire: payload)
+                header = try EntryHeader(serializedBytes: payload)
             } catch {
-                throw .headerUndecodable(error)
+                throw .headerUndecodable
             }
+            guard !UnknownFieldFinder.holdsUnknownFields(header) else { throw .unknownFields }
             let (leaving, entry) = try grammar.admit(header)
             leavesDue = leaving
             switch entry {
@@ -203,10 +205,11 @@ public struct ContainerDecoder {
         case .end:
             let end: EndRecord
             do {
-                end = try EndRecord(wire: payload)
+                end = try EndRecord(serializedBytes: payload)
             } catch {
-                throw .endUndecodable(error)
+                throw .endUndecodable
             }
+            guard !UnknownFieldFinder.holdsUnknownFields(end) else { throw .unknownFields }
             leavesDue = try grammar.admitEnd(end)
             due = [.event(.end)]
         }
@@ -219,5 +222,44 @@ public struct ContainerDecoder {
         case .resourceForkFollows: [.event(.resourceFork)]
         case .complete: [.event(.finishFile)]
         }
+    }
+}
+
+/// Finds a field the schema does not define in a record's message or in any message inside it. An update payload
+/// is decoded by every installed agent, whatever its build, so its records hold only the update profile's fields.
+private struct UnknownFieldFinder: Visitor {
+    struct Found: Error {}
+
+    static func holdsUnknownFields(_ message: some SwiftProtobuf.Message) -> Bool {
+        var finder = UnknownFieldFinder()
+        return (try? message.traverse(visitor: &finder)) == nil
+    }
+
+    mutating func visitUnknown(bytes: Data) throws { throw Found() }
+
+    mutating func visitSingularMessageField<M: SwiftProtobuf.Message>(value: M, fieldNumber: Int) throws {
+        try value.traverse(visitor: &self)
+    }
+
+    mutating func visitSingularDoubleField(value: Double, fieldNumber: Int) throws {}
+    mutating func visitSingularInt64Field(value: Int64, fieldNumber: Int) throws {}
+    mutating func visitSingularUInt64Field(value: UInt64, fieldNumber: Int) throws {}
+    mutating func visitSingularBoolField(value: Bool, fieldNumber: Int) throws {}
+    mutating func visitSingularStringField(value: String, fieldNumber: Int) throws {}
+    mutating func visitSingularBytesField(value: Data, fieldNumber: Int) throws {}
+    mutating func visitSingularEnumField<E: Enum>(value: E, fieldNumber: Int) throws {}
+    mutating func visitMapField<KeyType, ValueType: MapValueType>(
+        fieldType: _ProtobufMap<KeyType, ValueType>.Type, value: _ProtobufMap<KeyType, ValueType>.BaseType,
+        fieldNumber: Int
+    ) throws {}
+    mutating func visitMapField<KeyType, ValueType>(
+        fieldType: _ProtobufEnumMap<KeyType, ValueType>.Type, value: _ProtobufEnumMap<KeyType, ValueType>.BaseType,
+        fieldNumber: Int
+    ) throws where ValueType.RawValue == Int {}
+    mutating func visitMapField<KeyType, ValueType>(
+        fieldType: _ProtobufMessageMap<KeyType, ValueType>.Type,
+        value: _ProtobufMessageMap<KeyType, ValueType>.BaseType, fieldNumber: Int
+    ) throws {
+        for message in value.values { try message.traverse(visitor: &self) }
     }
 }

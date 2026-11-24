@@ -366,10 +366,10 @@ struct DragDeliveryTests {
     ) {
         let frames = run.written.filter { $0.streamID == id.stream }
         let reports = try frames.filter { $0.type == .data }.map {
-            try Kernova_V2_DragTakeReport(wire: $0.payload).report
+            try Kernova_V2_DragTakeReport(serializedBytes: $0.payload).report
         }
         let end = try frames.first { $0.type == .end }.map {
-            try Kernova_V2_DragTakeOutcome(wire: $0.payload)
+            try Kernova_V2_DragTakeOutcome(serializedBytes: $0.payload)
         }
         return (reports, end)
     }

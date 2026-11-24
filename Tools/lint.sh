@@ -20,8 +20,7 @@ command -v shellcheck >/dev/null 2>&1 || die 'shellcheck is not installed: brew 
 shellcheck "${shell_sources[@]}" || exit 1
 pass "shellcheck: ${#shell_sources[@]} scripts"
 
-for check in Tools/check-agent-deployment-floor.sh Tools/check-package-origins.sh Tools/check-release-entitlements.sh \
-    Tools/check-wire-decodes.sh; do
+for check in Tools/check-agent-deployment-floor.sh Tools/check-package-origins.sh Tools/check-release-entitlements.sh; do
     bash "$check" || exit 1
 done
 

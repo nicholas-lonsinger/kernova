@@ -15,9 +15,11 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/output.sh
 . "$lib_dir/lib/output.sh"
+# shellcheck source=lib/proto-digest.sh
+. "$lib_dir/lib/proto-digest.sh"
 
-# Every tracked schema; its generated file is `<name>.pb.swift` in the same
-# directory, which is also the import root.
+# Every tracked schema; its generated files are `<name>.pb.swift` and
+# `<name>.digest.swift` in the same directory, which is also the import root.
 schemas=()
 while IFS= read -r schema; do
     schemas+=("$schema")
@@ -48,7 +50,22 @@ for schema in "${schemas[@]}"; do
         continue
     fi
     cp "$out/${name%.proto}.pb.swift" "$dir/${name%.proto}.pb.swift"
-    pass "$dir/${name%.proto}.pb.swift regenerated"
+    if ! digest=$(proto_schema_digest "$schema"); then
+        echo "regen-protos: could not digest $schema" >&2
+        status=1
+        continue
+    fi
+    cat >"$dir/${name%.proto}.digest.swift" <<EOF
+// DO NOT EDIT.
+// swift-format-ignore-file
+//
+// Written by Tools/regen-protos.sh from $name.
+
+/// The digest of \`$name\`'s schema (Tools/lib/proto-digest.sh): equal for two builds whose copies of the
+/// file differ at most in comments and spacing, and otherwise equal by chance once in 2^31.
+public let ${name%.proto}SchemaDigest: UInt32 = $digest
+EOF
+    pass "$dir/${name%.proto}.pb.swift and .digest.swift regenerated"
 done
 
 exit "$status"

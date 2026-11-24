@@ -459,7 +459,7 @@ enum HostileRows {
             run.feed([Unit.raw(1, Data(repeating: 1, count: 19_000)), Unit.end(1)])
         } expect: { run in
             let ends = run.written.on(1).filter { $0.type == .end }.compactMap {
-                try? Kernova_V2_UpdateResult(wire: $0.payload)
+                try? Kernova_V2_UpdateResult(serializedBytes: $0.payload)
             }
             return
                 (ends.map(\.kind) == [.rejected] && ends.first?.error.code == .updateSizeMismatch

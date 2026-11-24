@@ -272,7 +272,7 @@ public struct DropLanded: Sendable, Equatable {
 
     /// What `endBody`, a peer's END body on DROP_OFFER, says landed; nil when it does not decode.
     public init?(endBody: Data) {
-        guard let landed = try? Kernova_V2_DropLanded(wire: endBody) else { return nil }
+        guard let landed = try? Kernova_V2_DropLanded(serializedBytes: endBody) else { return nil }
         self.landed = Int(landed.landed)
     }
 
@@ -523,7 +523,7 @@ struct DragOffers: Sendable {
         _ payload: Data, on stream: StreamID, items: inout ItemTransfer, connection: inout Connection
     ) {
         if let take = asked.first(where: { $0.id.stream == stream }) {
-            guard let message = try? Kernova_V2_DragTakeControl(wire: payload) else {
+            guard let message = try? Kernova_V2_DragTakeControl(serializedBytes: payload) else {
                 return resetTake(
                     stream, WireError(.malformedMessage, debugDetail: "a DragTakeControl that does not decode"),
                     &connection)
@@ -534,7 +534,7 @@ struct DragOffers: Sendable {
             case nil: diagnostics.append(.remoteViolation("a DragTakeControl that sets no control"))
             }
         } else if let index = opened.firstIndex(where: { $0.id.stream == stream }) {
-            guard let message = try? Kernova_V2_DragTakeReport(wire: payload) else {
+            guard let message = try? Kernova_V2_DragTakeReport(serializedBytes: payload) else {
                 return resetTake(
                     stream, WireError(.malformedMessage, debugDetail: "a DragTakeReport that does not decode"),
                     &connection)
@@ -767,7 +767,7 @@ struct DragOffers: Sendable {
     /// `STEP_NAMED` and one size per item of its taken offer; otherwise how the stream closed.
     private mutating func result(of take: Take, _ closure: StreamClosure) -> DragTakeResult {
         guard case .completed(let body) = closure else { return .closed(closure) }
-        guard let outcome = try? Kernova_V2_DragTakeOutcome(wire: body) else {
+        guard let outcome = try? Kernova_V2_DragTakeOutcome(serializedBytes: body) else {
             return .refused(WireError(.malformedMessage, debugDetail: "a DragTakeOutcome that does not decode"))
         }
         switch outcome.kind {

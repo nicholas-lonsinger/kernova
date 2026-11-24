@@ -266,7 +266,7 @@ package final class SoloReplay {
     private func receive(_ bytes: Data) {
         pinnedDecoder.append(bytes)
         while let frame = try? pinnedDecoder.nextFrame() {
-            if frame.type == .open, let open = try? Kernova_V2_Open(wire: frame.payload) {
+            if frame.type == .open, let open = try? Kernova_V2_Open(serializedBytes: frame.payload) {
                 kinds[frame.streamID.rawValue] = open.kind
             }
         }
@@ -365,7 +365,7 @@ package final class SoloReplay {
         decoder.append(bytes)
         while let frame = try? decoder.nextFrame() {
             let id = frame.streamID.rawValue
-            if frame.type == .open, let open = try? Kernova_V2_Open(wire: frame.payload) {
+            if frame.type == .open, let open = try? Kernova_V2_Open(serializedBytes: frame.payload) {
                 kinds[id] = open.kind
             }
             if frame.type == .ping { pings.append(now) }

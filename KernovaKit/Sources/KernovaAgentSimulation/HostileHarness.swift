@@ -27,7 +27,8 @@ package enum WireFrames {
     /// and DRAG.
     package static func hello(
         role: Kernova_V2_PeerIdentity.Role, scope: Kernova_V2_PeerIdentity.InstallScope = .user,
-        sessionID: String = "c1", protocolVersion: UInt32 = 1, powerActions: [PowerAction] = [.shutdown, .restart],
+        sessionID: String = "c1", protocolVersion: UInt32 = SessionProtocol.version,
+        powerActions: [PowerAction] = [.shutdown, .restart],
         instanceID: Data = Data(repeating: 0x11, count: 16), payloadHash: Data = Data(repeating: 0xA1, count: 32),
         items: Bool = false
     ) -> Frame {
@@ -200,7 +201,7 @@ package final class HostileRun {
     package var streamResets: [(stream: UInt32, code: ErrorCode)] {
         written.compactMap { frame in
             guard frame.type == .reset, frame.streamID != .session else { return nil }
-            let error = (try? Kernova_V2_Error(wire: frame.payload)) ?? Kernova_V2_Error()
+            let error = (try? Kernova_V2_Error(serializedBytes: frame.payload)) ?? Kernova_V2_Error()
             return (frame.streamID.rawValue, error.code)
         }
     }

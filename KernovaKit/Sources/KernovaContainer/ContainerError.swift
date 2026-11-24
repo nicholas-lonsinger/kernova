@@ -16,10 +16,10 @@ public enum ContainerError: Error, Equatable, Sendable {
     case recordLengthOutOfRange(kind: ContainerRecordKind, length: Int)
     /// A record's CRC32C does not match its kind, length and payload.
     case checksumMismatch(kind: ContainerRecordKind)
-    /// A header record's payload does not decode as an `EntryHeader`, for the reason given.
-    case headerUndecodable(WireDecodingError)
-    /// An end record's payload does not decode as an `EndRecord`, for the reason given.
-    case endUndecodable(WireDecodingError)
+    /// A header record's payload is not an `EntryHeader`.
+    case headerUndecodable
+    /// An end record's payload is not an `EndRecord`.
+    case endUndecodable
     /// Anything follows the end.
     case bytesAfterEnd
     /// The input ended before the end record.
@@ -73,6 +73,8 @@ public enum ContainerError: Error, Equatable, Sendable {
     case xattrNotAllowed(Data)
     /// Two of an entry's extended attributes share a name.
     case duplicateXattrName(Data)
+    /// A header or end record, or a message inside one, holds a field the current schema does not define.
+    case unknownFields
     /// An entry other than a regular file declares a resource fork.
     case resourceForkNotAllowed(EntryHeader.TypeEnum)
     /// A file's data is larger than any file a POSIX system holds, `Int64.max` bytes.

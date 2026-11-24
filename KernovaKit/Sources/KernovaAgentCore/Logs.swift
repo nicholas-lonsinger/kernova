@@ -194,7 +194,7 @@ package struct LogReceiver: FeatureMachine {
             streams.append(id)
             connection.setCreditReturnRate(Self.returnRate.bytesPerSecond, burst: Self.returnRate.burst, on: id)
         case .message(let id, let payload):
-            guard let batch = try? Kernova_V2_LogBatch(wire: payload) else {
+            guard let batch = try? Kernova_V2_LogBatch(serializedBytes: payload) else {
                 diagnostics.append(.remoteViolation("a LogBatch that does not decode"))
                 if connection.canReset(id) { connection.reset(id, WireError(.malformedMessage)) }
                 return

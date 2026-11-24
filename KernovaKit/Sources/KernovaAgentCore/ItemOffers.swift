@@ -107,7 +107,7 @@ package struct ItemOfferRegistry: Sendable {
         guard let entry = remote.first(where: { $0.header.token == token }), entry.complete,
             entry.items.count == entry.header.count
         else { return nil }
-        let items = entry.items.compactMap { try? OfferedItem(wire: $0) }
+        let items = entry.items.compactMap { try? OfferedItem(serializedBytes: $0) }
         guard items.count == entry.items.count else { return nil }
         return (entry.header.feature, items)
     }
@@ -135,7 +135,7 @@ package struct ItemOfferRegistry: Sendable {
         guard let entry = remote.first(where: { $0.header.token == token }), index < entry.items.count else {
             return nil
         }
-        return try? OfferedItem(wire: entry.items[index])
+        return try? OfferedItem(serializedBytes: entry.items[index])
     }
 
     /// The representation a pull of this side's offer names, and the offer's feature, or the code refusing it.
@@ -454,7 +454,7 @@ package struct ItemOfferRegistry: Sendable {
         guard remote[index].items.count < remote[index].header.count else {
             return WireError(.streamProtocolError, debugDetail: "more items than the header's count")
         }
-        guard let item = try? OfferedItem(wire: message) else {
+        guard let item = try? OfferedItem(serializedBytes: message) else {
             return WireError(.malformedMessage, debugDetail: "an Item that does not decode")
         }
         guard Self.isNamedByContract(item) else {

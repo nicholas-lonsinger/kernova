@@ -27,7 +27,7 @@ package struct ConnectionConfiguration: Sendable {
     package var policy: ReceiverPolicy
     /// The kinds this connection serves.
     package var kinds: [StreamKindDescriptor]
-    package var protocolVersion: UInt32 = Limits.protocolVersion
+    package var protocolVersion = SessionProtocol.version
     #if DEBUG
     package var assertsOnMisuseForTesting = true
     package var recordsTraceForTesting = false

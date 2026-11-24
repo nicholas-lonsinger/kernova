@@ -453,7 +453,7 @@ package struct PowerRequester: FeatureMachine {
     }
 
     private mutating func progress(_ index: Int, _ payload: Data, connection: inout Connection) {
-        guard let message = try? Kernova_V2_PowerProgress(wire: payload) else {
+        guard let message = try? Kernova_V2_PowerProgress(serializedBytes: payload) else {
             return conclude(index, .indeterminate, reset: .malformedMessage, connection: &connection)
         }
         let id = entries[index].id
@@ -474,7 +474,7 @@ package struct PowerRequester: FeatureMachine {
     }
 
     private mutating func ended(_ index: Int, _ body: Data) {
-        let outcome = (try? Kernova_V2_PowerOutcome(wire: body)) ?? Kernova_V2_PowerOutcome()
+        let outcome = (try? Kernova_V2_PowerOutcome(serializedBytes: body)) ?? Kernova_V2_PowerOutcome()
         let error = outcome.hasError ? WireError(received: outcome.error) : WireError(.unspecified)
         let result: PowerRequestResult
         switch (entries[index].phase, outcome.kind) {

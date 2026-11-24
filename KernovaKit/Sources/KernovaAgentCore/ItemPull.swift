@@ -112,7 +112,7 @@ struct ItemPullServer: Sendable {
     /// The puller's `PullOutcome` when it ENDed; otherwise how the stream closed.
     private static func result(_ closure: StreamClosure) -> ItemServeResult {
         guard case .completed(let body) = closure else { return .closed(closure) }
-        guard let outcome = try? Kernova_V2_PullOutcome(wire: body) else {
+        guard let outcome = try? Kernova_V2_PullOutcome(serializedBytes: body) else {
             return .failed(WireError(.malformedMessage, debugDetail: "a PullOutcome that does not decode"))
         }
         return outcome.kind == .landed ? .landed : .failed(WireError(received: outcome.error))

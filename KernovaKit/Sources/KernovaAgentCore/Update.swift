@@ -318,7 +318,7 @@ package struct UpdateServer: FeatureMachine {
         case .remoteEnded(let stream, let body):
             // The connection resets an END that comes before this side's (`acceptorEndsFirst`).
             guard var current = pull, current.id.stream == stream else { return }
-            let decoded = (try? Kernova_V2_UpdateResult(wire: body)) ?? Kernova_V2_UpdateResult()
+            let decoded = (try? Kernova_V2_UpdateResult(serializedBytes: body)) ?? Kernova_V2_UpdateResult()
             let error = decoded.hasError ? WireError(received: decoded.error) : nil
             let result = UpdateResultValue(kind: decoded.kind == .staged ? .staged : .rejected, error: error)
             current.resultDelivered = true

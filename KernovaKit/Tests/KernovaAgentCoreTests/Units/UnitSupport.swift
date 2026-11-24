@@ -35,7 +35,7 @@ enum Unit {
     }
 
     static func error(_ payload: Data) -> Kernova_V2_Error {
-        (try? Kernova_V2_Error(wire: payload)) ?? Kernova_V2_Error()
+        (try? Kernova_V2_Error(serializedBytes: payload)) ?? Kernova_V2_Error()
     }
 
     static func progress(_ stage: Kernova_V2_PowerProgress.Stage, apps: Int = 0) -> Kernova_V2_PowerProgress {

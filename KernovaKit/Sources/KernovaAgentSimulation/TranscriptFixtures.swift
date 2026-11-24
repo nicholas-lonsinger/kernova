@@ -25,7 +25,6 @@ package enum TranscriptFixture {
 
     package static func host(_ name: String) -> HostConfiguration? {
         var bundles: [BundledPayload] = []
-        var protocolVersion: UInt32 = 1
         switch name {
         case "host-default":
             break
@@ -41,19 +40,13 @@ package enum TranscriptFixture {
             bundles = [SimHub.bundle(size: executableSize, tag: executableTag)]
         case "host-stale":
             bundles = [SimHub.bundle(size: 100_000, tag: staleTag)]
-        case "host-proto2":
-            protocolVersion = 2
         default:
             return nil
         }
         var configuration = HostConfiguration(
             claim: PeerClaim(role: .host, versionLabel: "Kernova"), sessionToken: token,
             policy: PolicySnapshot([FeaturePolicyValue(feature: .logs, enabled: true)]), bundles: bundles)
-        let version = protocolVersion
-        configuration.tweakForTesting = { connection in
-            connection.recordsTraceForTesting = true
-            connection.protocolVersion = version
-        }
+        configuration.tweakForTesting = { connection in connection.recordsTraceForTesting = true }
         return configuration
     }
 
@@ -67,11 +60,9 @@ package enum TranscriptFixture {
     }
 
     package static func peer(_ name: String) -> PeerConfiguration? {
-        var protocolVersion: UInt32 = 1
         let configuration: PeerConfiguration
         switch name {
-        case "linux-session-v1", "linux-session-proto2":
-            protocolVersion = name == "linux-session-proto2" ? 2 : 1
+        case "linux-session-v1":
             configuration = PeerConfiguration(
                 claim: PeerClaim(
                     role: .sessionPeer, scope: .user, os: .linux, osVersion: "24.04", osBuild: "6.8.0",
@@ -103,11 +94,7 @@ package enum TranscriptFixture {
             return nil
         }
         var tweaked = configuration
-        let version = protocolVersion
-        tweaked.tweakForTesting = { connection in
-            connection.recordsTraceForTesting = true
-            connection.protocolVersion = version
-        }
+        tweaked.tweakForTesting = { connection in connection.recordsTraceForTesting = true }
         return tweaked
     }
 }
@@ -144,24 +131,24 @@ package enum FrozenFields {
         case .ping, .window:
             return nil
         case .reset:
-            let error = (try? Kernova_V2_Error(wire: frame.payload)) ?? Kernova_V2_Error()
+            let error = (try? Kernova_V2_Error(serializedBytes: frame.payload)) ?? Kernova_V2_Error()
             if id == 0 {
                 return FrozenLine("\(prefix) RESET code=\(error.code.rawValue) retry_after_ms=\(error.retryAfterMs)")
             }
             guard isFrozen(kinds[id]) else { return nil }
             return FrozenLine("\(prefix) RESET code=\(error.code.rawValue)")
         case .open:
-            let open = (try? Kernova_V2_Open(wire: frame.payload)) ?? Kernova_V2_Open()
+            let open = (try? Kernova_V2_Open(serializedBytes: frame.payload)) ?? Kernova_V2_Open()
             switch open.kind {
             case .powerRequest:
-                let body = (try? Kernova_V2_PowerRequest(wire: open.body)) ?? Kernova_V2_PowerRequest()
+                let body = (try? Kernova_V2_PowerRequest(serializedBytes: open.body)) ?? Kernova_V2_PowerRequest()
                 // `ignore_apps` is stated only when set, as it is encoded.
                 return FrozenLine(
                     "\(prefix) OPEN kind=POWER_REQUEST body.action=\(body.action.rawValue) body.acceptance_deadline_ms=\(body.acceptanceDeadlineMs)"
                         + (body.ignoreApps ? " body.ignore_apps=true" : "")
                 )
             case .updatePull:
-                let body = (try? Kernova_V2_UpdatePull(wire: open.body)) ?? Kernova_V2_UpdatePull()
+                let body = (try? Kernova_V2_UpdatePull(serializedBytes: open.body)) ?? Kernova_V2_UpdatePull()
                 return FrozenLine("\(prefix) OPEN kind=UPDATE_PULL body.payload_hash=\(hex(body.payloadHash))")
             default:
                 return nil
@@ -171,13 +158,13 @@ package enum FrozenFields {
             case .powerRequest:
                 guard !frame.payload.isEmpty else { return FrozenLine("\(prefix) END empty") }
                 let outcome =
-                    (try? Kernova_V2_PowerOutcome(wire: frame.payload)) ?? Kernova_V2_PowerOutcome()
+                    (try? Kernova_V2_PowerOutcome(serializedBytes: frame.payload)) ?? Kernova_V2_PowerOutcome()
                 return FrozenLine(
                     "\(prefix) END outcome.kind=\(outcome.kind.rawValue) outcome.code=\(outcome.error.code.rawValue) outcome.apps=\(apps(outcome.apps))"
                 )
             case .updatePull:
                 guard !frame.payload.isEmpty else { return FrozenLine("\(prefix) END empty") }
-                let result = (try? Kernova_V2_UpdateResult(wire: frame.payload)) ?? Kernova_V2_UpdateResult()
+                let result = (try? Kernova_V2_UpdateResult(serializedBytes: frame.payload)) ?? Kernova_V2_UpdateResult()
                 return FrozenLine(
                     "\(prefix) END result.kind=\(result.kind.rawValue) result.code=\(result.error.code.rawValue)")
             default:
@@ -187,7 +174,7 @@ package enum FrozenFields {
             guard frame.flags.contains(.message) else { return nil }
             if id == 0 { return session(frame.payload) }
             guard kinds[id] == .powerRequest else { return nil }
-            let progress = (try? Kernova_V2_PowerProgress(wire: frame.payload)) ?? Kernova_V2_PowerProgress()
+            let progress = (try? Kernova_V2_PowerProgress(serializedBytes: frame.payload)) ?? Kernova_V2_PowerProgress()
             return FrozenLine(
                 "\(prefix) MSG progress.stage=\(progress.stage.rawValue) progress.apps=\(apps(progress.apps))")
         }
@@ -198,7 +185,7 @@ package enum FrozenFields {
     }
 
     static func session(_ payload: Data) -> FrozenLine? {
-        guard let message = try? Kernova_V2_SessionMessage(wire: payload) else {
+        guard let message = try? Kernova_V2_SessionMessage(serializedBytes: payload) else {
             return FrozenLine("s=0 MSG undecodable")
         }
         switch message.message {
@@ -244,7 +231,7 @@ package enum FrozenFields {
             case .params(let params):
                 if feature == .power {
                     let capability =
-                        (try? Kernova_V2_PowerCapability(wire: params)) ?? Kernova_V2_PowerCapability()
+                        (try? Kernova_V2_PowerCapability(serializedBytes: params)) ?? Kernova_V2_PowerCapability()
                     // `ignore_apps_actions` is stated only when listed, as it is encoded.
                     let ignored = capability.ignoreAppsActions.map { "\($0.rawValue)" }.joined(separator: ",")
                     let ignoring = capability.ignoreAppsActions.isEmpty ? "" : ":ignore[\(ignored)]"
@@ -252,7 +239,7 @@ package enum FrozenFields {
                         "\(feature.rawValue)=v\(advert.version):actions[\(capability.actions.map { "\($0.rawValue)" }.joined(separator: ","))]:asks=\(capability.asksAppsToQuit)\(ignoring)"
                 }
                 let capability =
-                    (try? Kernova_V2_UpdateCapability(wire: params)) ?? Kernova_V2_UpdateCapability()
+                    (try? Kernova_V2_UpdateCapability(serializedBytes: params)) ?? Kernova_V2_UpdateCapability()
                 return
                     "\(feature.rawValue)=v\(advert.version):formats[\(capability.formats.map { "\($0.rawValue)" }.joined(separator: ","))]"
             case .absent(let absence):

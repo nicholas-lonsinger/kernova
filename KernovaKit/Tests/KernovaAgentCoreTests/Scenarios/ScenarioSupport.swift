@@ -108,7 +108,7 @@ extension SimWorld {
         return links[link].wire.contains { record in
             guard record.side == .peer, record.time <= at, record.stream % 2 == 0, record.type == .data,
                 record.flags.contains(.message),
-                let progress = try? Kernova_V2_PowerProgress(wire: record.payload)
+                let progress = try? Kernova_V2_PowerProgress(serializedBytes: record.payload)
             else { return false }
             return progress.stage == .accepted
         }

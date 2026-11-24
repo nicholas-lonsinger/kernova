@@ -38,18 +38,20 @@ package enum KindOwner: Sendable, Equatable {
     func openBody(_ body: Data) -> OpenBody? {
         switch self {
         case .power:
-            return (try? Kernova_V2_PowerRequest(wire: body)).map(OpenBody.powerRequest)
+            return (try? Kernova_V2_PowerRequest(serializedBytes: body)).map(OpenBody.powerRequest)
         case .update:
-            return (try? Kernova_V2_UpdatePull(wire: body)).map(OpenBody.updatePull)
+            return (try? Kernova_V2_UpdatePull(serializedBytes: body)).map(OpenBody.updatePull)
         case .logs:
-            return (try? Kernova_V2_LogOpen(wire: body)).map { _ in .logOpen }
+            return (try? Kernova_V2_LogOpen(serializedBytes: body)).map { _ in .logOpen }
         case .itemTransfer:
-            return (try? PullRequest(wire: body)).map(OpenBody.pullRequest)
+            return (try? PullRequest(serializedBytes: body)).map(OpenBody.pullRequest)
         case .itemOffer:
-            guard let header = try? Kernova_V2_ItemSetHeader(wire: body), header.token.count == 16 else { return nil }
+            guard let header = try? Kernova_V2_ItemSetHeader(serializedBytes: body), header.token.count == 16 else {
+                return nil
+            }
             return .itemSet(header)
         case .dragTake:
-            guard let take = try? Kernova_V2_DragTake(wire: body), take.token.count == 16 else { return nil }
+            guard let take = try? Kernova_V2_DragTake(serializedBytes: body), take.token.count == 16 else { return nil }
             return .dragTake(token: take.token)
         #if DEBUG
         case .testBulk:
@@ -198,19 +200,19 @@ struct FeatureDescriptor: Sendable {
             paramsDecode: { UpdateOffer(params: $0) != nil }),
         FeatureDescriptor(
             feature: .logs, frozen: false, policyGoverned: true, version: 1,
-            paramsDecode: { (try? Kernova_V2_LogCapability(wire: $0)) != nil }),
+            paramsDecode: { (try? Kernova_V2_LogCapability(serializedBytes: $0)) != nil }),
         FeatureDescriptor(
             feature: .itemTransfer, frozen: false, policyGoverned: false, version: 1,
-            paramsDecode: { (try? Kernova_V2_ItemTransferCapability(wire: $0)) != nil }),
+            paramsDecode: { (try? Kernova_V2_ItemTransferCapability(serializedBytes: $0)) != nil }),
         FeatureDescriptor(
             feature: .clipboard, frozen: false, policyGoverned: true, version: 1,
-            paramsDecode: { (try? Kernova_V2_ClipboardCapability(wire: $0)) != nil }),
+            paramsDecode: { (try? Kernova_V2_ClipboardCapability(serializedBytes: $0)) != nil }),
         FeatureDescriptor(
             feature: .drop, frozen: false, policyGoverned: true, version: 1,
-            paramsDecode: { (try? Kernova_V2_DropCapability(wire: $0)) != nil }),
+            paramsDecode: { (try? Kernova_V2_DropCapability(serializedBytes: $0)) != nil }),
         FeatureDescriptor(
             feature: .drag, frozen: false, policyGoverned: true, version: 1,
-            paramsDecode: { (try? Kernova_V2_DragCapability(wire: $0)) != nil }),
+            paramsDecode: { (try? Kernova_V2_DragCapability(serializedBytes: $0)) != nil }),
     ]
 
     static func lookup(_ feature: FeatureID) -> FeatureDescriptor? {
@@ -292,5 +294,10 @@ enum Limits {
     static let maxWindow = Int(WireConstants.maxWindow)
     static let maxConcurrentStreams = 64
     static let writableLowWater = 65_536
-    static let protocolVersion: UInt32 = 1
+}
+
+/// The session layer's version, `Hello.protocol_version`, as this build sends it.
+package enum SessionProtocol {
+    /// The digest of this build's schema, so two builds whose schemas differ share the frozen subset alone.
+    package static let version = kernova_v2SchemaDigest
 }
