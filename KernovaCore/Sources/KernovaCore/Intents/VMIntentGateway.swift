@@ -390,17 +390,20 @@ package final class VMIntentGateway {
         await configurationKeys().filter { $0.id.localizedCaseInsensitiveContains(text) }
     }
 
-    /// Writes `value` to `key` of the VM, answering the value the key ended up
-    /// holding.
+    /// ``VMCommandCore/configuration(_:key:)``, answering the value alone.
+    func configuration(_ id: UUID, key: String) async throws -> String {
+        try await perform(.configuration, on: id) {
+            try self.commands.configuration(.id(id), key: key).value
+        }
+    }
+
+    /// ``VMCommandCore/setConfiguration(_:assignment:consent:)``, answering
+    /// the value alone.
     func setConfiguration(_ id: UUID, key: String, value: String, consent: Consent) async throws -> String {
         try await perform(.setConfiguration, on: id) {
-            let answered = try self.commands.setConfiguration(
-                .id(id), assignments: [ConfigurationEntry(key: key, value: value)], consent: consent)
-            guard let held = answered.first else {
-                assertionFailure("setConfiguration answered nothing for \(key)")
-                return value
-            }
-            return held.value
+            try self.commands.setConfiguration(
+                .id(id), assignment: ConfigurationEntry(key: key, value: value), consent: consent
+            ).value
         }
     }
 

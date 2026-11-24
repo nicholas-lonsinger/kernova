@@ -50,6 +50,19 @@ struct VMCommandCoreConfigurationTests {
         }
     }
 
+    @Test("A one-key read answers what another copy wrote to the bundle since this one read it")
+    func oneKeyReadCatchesUpWithTheBundle() throws {
+        let harness = makeHarness()
+        let instance = makeInstance(in: harness) { $0.cpuCount = 2 }
+        var onDisk = instance.configuration
+        onDisk.cpuCount = 3
+        harness.storage.files.setConfiguration(onDisk, at: instance.bundleURL)
+
+        let read = try harness.core.configuration(.name("Alpha"), key: "cpus")
+
+        #expect(read == ConfigurationEntry(key: "cpus", value: "3"))
+    }
+
     // MARK: - Write
 
     @Test("A set keeps what another copy wrote to the bundle since this one read it")

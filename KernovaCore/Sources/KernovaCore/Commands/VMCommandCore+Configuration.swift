@@ -31,20 +31,41 @@ extension VMCommandCore {
     /// Each value is written the way ``setConfiguration(_:assignments:consent:)``
     /// parses it back.
     func configuration(_ selector: VMSelector, keys: [String]?) throws -> [ConfigurationEntry] {
-        let instance = try resolve(selector)
-        instance.activity.refreshFromBundle()
-        let settings = instance.settings
+        let settings = try currentSettings(of: selector)
         guard let keys else {
             // A key the guest cannot have is left out rather than reported with
             // a value no `set` would take back.
             return VMConfigurationKeyRegistry.keys
                 .filter { $0.applies(settings.configuration) }
-                .map { ConfigurationEntry(key: $0.name, value: $0.read(settings)) }
+                .map { Self.entry($0, in: settings) }
         }
-        return try keys.map { name in
-            let key = try requireKey(named: name, on: settings.configuration)
-            return ConfigurationEntry(key: key.name, value: key.read(settings))
-        }
+        return try keys.map { try entry(named: $0, in: settings) }
+    }
+
+    /// The VM's value for `key`, refusing a key the keyspace does not hold and
+    /// one this guest cannot have.
+    ///
+    /// The value is written the way ``setConfiguration(_:assignments:consent:)``
+    /// parses it back.
+    func configuration(_ selector: VMSelector, key: String) throws -> ConfigurationEntry {
+        try entry(named: key, in: currentSettings(of: selector))
+    }
+
+    /// What the VM's bundle holds now.
+    private func currentSettings(of selector: VMSelector) throws -> VMSettings {
+        let instance = try resolve(selector)
+        instance.activity.refreshFromBundle()
+        return instance.settings
+    }
+
+    private func entry(named name: String, in settings: VMSettings) throws -> ConfigurationEntry {
+        Self.entry(try requireKey(named: name, on: settings.configuration), in: settings)
+    }
+
+    /// `key`'s value in `settings`, in the spelling ``setConfiguration(_:assignments:consent:)``
+    /// parses back.
+    private static func entry(_ key: VMConfigurationKey, in settings: VMSettings) -> ConfigurationEntry {
+        ConfigurationEntry(key: key.name, value: key.read(settings))
     }
 
     // MARK: - Write
@@ -83,20 +104,40 @@ extension VMCommandCore {
         _ selector: VMSelector, assignments: [ConfigurationEntry], consent: Consent
     ) throws -> [ConfigurationEntry] {
         let instance = try resolve(selector)
+        let edits = try assignments.map {
+            (key: try requireKey(named: $0.key, on: instance.configuration), value: $0.value)
+        }
+        let written = try write(edits, to: instance, consent: consent)
+        return edits.map { Self.entry($0.key, in: written) }
+    }
+
+    /// Applies `assignment` as ``setConfiguration(_:assignments:consent:)``
+    /// applies a batch of one, answering the value its key ended up holding.
+    func setConfiguration(
+        _ selector: VMSelector, assignment: ConfigurationEntry, consent: Consent
+    ) throws -> ConfigurationEntry {
+        let instance = try resolve(selector)
+        let key = try requireKey(named: assignment.key, on: instance.configuration)
+        let written = try write([(key: key, value: assignment.value)], to: instance, consent: consent)
+        return Self.entry(key, in: written)
+    }
+
+    /// The write both `setConfiguration` forms make, of keys already required
+    /// on `instance`, answering the settings it left the VM holding.
+    private func write(
+        _ edits: [(key: VMConfigurationKey, value: String)], to instance: VMInstance,
+        consent: Consent
+    ) throws -> VMSettings {
         let context = VMConfigurationWriteContext(instance, in: library)
 
-        var answered: [VMConfigurationKey] = []
         var configurationWrites: [ConfigurationWrite] = []
         var hostStateWrites: [HostStateWrite] = []
-        for assignment in assignments {
-            let key = try requireKey(named: assignment.key, on: instance.configuration)
-            answered.append(key)
+        for (key, value) in edits {
             switch key.field {
             case .configuration(let field):
-                configurationWrites.append(
-                    ConfigurationWrite(key: key, field: field, value: assignment.value))
+                configurationWrites.append(ConfigurationWrite(key: key, field: field, value: value))
             case .hostState(let field):
-                hostStateWrites.append(HostStateWrite(key: key, field: field, value: assignment.value))
+                hostStateWrites.append(HostStateWrite(key: key, field: field, value: value))
             }
         }
         // Before either file is touched: host state commits after the
@@ -153,8 +194,7 @@ extension VMCommandCore {
                 "Changed \(moved.map(\.name).joined(separator: ", "), privacy: .public) on '\(instance.name, privacy: .public)'"
             )
         }
-        let written = instance.settings
-        return answered.map { ConfigurationEntry(key: $0.name, value: $0.read(written)) }
+        return instance.settings
     }
 
     /// One configuration assignment of a ``setConfiguration(_:assignments:consent:)`` batch.

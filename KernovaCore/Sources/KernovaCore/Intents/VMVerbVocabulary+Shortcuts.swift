@@ -35,6 +35,7 @@ extension VMVerbVocabulary {
         case .delete: DeleteVMIntent.self
         case .importVM: ImportVMIntent.self
         case .cancelPreparing: CancelPreparingIntent.self
+        case .configuration: GetVMSettingIntent.self
         case .setConfiguration: SetVMSettingIntent.self
         case .createNetwork: CreateNetworkIntent.self
         case .renameNetwork: RenameNetworkIntent.self
@@ -43,7 +44,7 @@ extension VMVerbVocabulary {
         case .list, .groups, .snapshotSizes, .sharedDirectories, .usbAccessories,
             .availableUSBAccessories, .usbPairings, .forgetUSBPairing, .open, .showInFinder,
             .create, .editStorageDisk, .editRemovableMedia, .editSharedDirectory, .editUSBAccessory,
-            .configurationKeys, .configuration, .guestAgentDisk, .networks:
+            .configurationKeys, .guestAgentDisk, .networks:
             nil
         }
     }

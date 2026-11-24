@@ -1,6 +1,33 @@
 import AppIntents
 import Foundation
 
+/// Reads one configuration key, the value spelled as ``SetVMSettingIntent``
+/// takes it.
+struct GetVMSettingIntent: AppIntent {
+    static let title: LocalizedStringResource = "Get Virtual Machine Setting"
+    static let description: IntentDescription? = IntentDescription(
+        "Returns the value one of a virtual machine's settings holds, written as Change Virtual Machine Setting takes it. It fails for a setting the virtual machine's guest doesn't have.",
+        categoryName: "Virtual Machines",
+        resultValueName: "Value")
+
+    @Parameter(title: "Virtual Machine")
+    var vm: VMEntity
+
+    @Parameter(title: "Setting")
+    var setting: VMSettingKeyEntity
+
+    @Dependency private var gateway: VMIntentGateway
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Get \(\.$setting) of \(\.$vm)")
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+        .result(value: try await gateway.configuration(vm.id, key: setting.id))
+    }
+}
+
 /// Writes one configuration key, the value spelled as `kernova set` takes it.
 ///
 /// One action over the whole keyspace rather than one per setting, so a key
