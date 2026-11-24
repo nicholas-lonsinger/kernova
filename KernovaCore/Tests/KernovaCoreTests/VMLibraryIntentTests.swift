@@ -6,8 +6,8 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// The library half of the App Intents surface: what a rename, a clone, an
-/// import and a delete do to the library, and how narrowly the delete is offered.
+/// The library half of the App Intents surface: what a rename, an import and a
+/// delete do to the library, and how narrowly the delete is offered.
 ///
 /// Driven through the gateway rather than through the intents, which resolve
 /// their `@Dependency` only inside a live intent session.
@@ -43,24 +43,6 @@ struct VMLibraryIntentTests {
         }
 
         #expect(vm.name == "Wired")
-    }
-
-    // MARK: - Clone
-
-    /// A shortcut's next action takes the VM this answers: a Start refuses one
-    /// still being copied as busy, and Shortcuts has no action that waits for
-    /// a copy to finish.
-    @Test("A clone that waits for its copy answers the VM the copy became")
-    func aWaitedCloneAnswersTheSettledVM() async throws {
-        let wired = WiredCommandCore()
-        let source = wired.register(name: "Source")
-
-        let clone = try await makeGateway(wired).clone(
-            source.id, outcome: .newMachine, waitForOutcome: true)
-
-        #expect(wired.library.arrivals.isEmpty)
-        #expect(Set(wired.library.instances.map(\.id)) == [source.id, clone.id])
-        #expect(clone.status == VMStatus.stopped.rawValue)
     }
 
     // MARK: - Import

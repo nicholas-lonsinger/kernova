@@ -302,9 +302,8 @@ package final class VMIntentGateway {
 
     // MARK: - Library
 
-    /// Copies the VM's bundle. `waitForOutcome` answers the VM the copy became,
-    /// throwing the copy's failure; without it the answer is the arrival the
-    /// copy fills, read in the main-actor turn that registered it.
+    /// ``VMCommandCore/clone(_:outcome:waitForOutcome:)``, answering the whole
+    /// `info` read of the VM it answers.
     func clone(_ id: UUID, outcome: CloneOutcome?, waitForOutcome: Bool) async throws -> VMEntity {
         try await perform(.clone, on: id) {
             let copy = try await self.commands.clone(
