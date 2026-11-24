@@ -118,6 +118,8 @@ package final class VMIntentGateway {
             return { listed.contains($0.id) != negated }
         case .naming(let network, let holds):
             return try predicate(for: holds(try commands.namedNetwork(network, verb: .list).id))
+        case .spelling(let membership, let holds):
+            return try predicate(for: holds(try commands.networkMembership(spelledBy: membership)))
         }
     }
 

@@ -196,6 +196,10 @@ package struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQu
         /// name, ignoring case, or by identifier — which the gateway resolves,
         /// refusing one the library does not list.
         case naming(network: String, holds: @Sendable (UUID) -> Condition)
+        /// Holds where `holds` does of the membership `text` spells, as
+        /// `network.membership` takes one — which the gateway resolves,
+        /// refusing what that key refuses.
+        case spelling(membership: String, holds: @Sendable (VMNetworkMembership) -> Condition)
 
         /// Holds for each VM `kernova list` lists under `filter`, or with
         /// `holding` false, for every other VM.
@@ -218,19 +222,12 @@ package struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQu
         }
 
         /// Holds for each VM whose ``VMEntity/networkMembership`` is the one
-        /// `text` names: `common` or `isolated`, ignoring case, or a named
-        /// network; a `nil` text names none, and holds for each VM whose
-        /// membership reads `nil`.
+        /// `text` spells; a `nil` text spells none, and holds for each VM
+        /// whose membership reads `nil`.
         static func inMembership(_ text: String?) -> Self {
             guard let text else { return .admits { $0.networkMembership == nil } }
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let membership = [VMNetworkMembership.common, .isolated].first(where: {
-                $0.rawValue.caseInsensitiveCompare(trimmed) == .orderedSame
-            }) {
-                return .admits { $0.networkMembership == membership.rawValue }
-            }
-            return .naming(network: text) { id in
-                .admits { $0.networkMembership == VMNetworkMembership.network(id).rawValue }
+            return .spelling(membership: text) { membership in
+                .admits { $0.networkMembership == membership.rawValue }
             }
         }
 
@@ -256,6 +253,7 @@ package struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQu
             case .admits(let admits): .admits { !admits($0) }
             case .listed(let query, let negated): .listed(query, negated: !negated)
             case .naming(let network, let holds): .naming(network: network) { holds($0).negated }
+            case .spelling(let membership, let holds): .spelling(membership: membership) { holds($0).negated }
             }
         }
     }

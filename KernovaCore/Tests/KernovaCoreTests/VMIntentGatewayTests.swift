@@ -102,15 +102,22 @@ struct VMIntentGatewayTests {
         }
         harness.register(name: "Common", hostState: VMHostState(tags: [prod.id])) { $0.applyNetworkMode(.nat) }
         harness.register(name: "Off", guestOS: .macOS)
+        // Brought from another Mac, or back by a snapshot taken before its
+        // network was deleted: no other condition finds it.
+        harness.register(name: "Unlisted") {
+            $0.applyNetworkMode(.nat)
+            $0.networkMembership = .network(gone.id)
+        }
         let gateway = makeGateway(over: harness)
 
         func found(_ condition: VMEntityQuery.Condition) async throws -> [String] {
             try await gateway.vms(meeting: [condition], mode: .and).map(\.name)
         }
 
-        #expect(try await found(.onNetwork("lab").negated) == ["Common", "Off"])
-        #expect(try await found(.inMembership("Lab").negated) == ["Common", "Off"])
-        #expect(try await found(.carrying(tag: "prod").negated) == ["On Lab", "Off"])
+        #expect(try await found(.onNetwork("lab").negated) == ["Common", "Off", "Unlisted"])
+        #expect(try await found(.inMembership("Lab").negated) == ["Common", "Off", "Unlisted"])
+        #expect(try await found(.inMembership(gone.id.uuidString)) == ["Unlisted"])
+        #expect(try await found(.carrying(tag: "prod").negated) == ["On Lab", "Off", "Unlisted"])
         #expect(try await found(.admitted(by: VMLibraryFilter(guestOSes: [.linux]), holding: false)) == ["Off"])
         // Refused rather than answering every VM: a network since deleted, a
         // mode's word, which names no network, a membership nothing spells,

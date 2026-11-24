@@ -24,6 +24,14 @@ extension VMCommandCore {
         return try library.networks.requireNetwork(named: text, verb: verb)
     }
 
+    /// The membership `text` spells as `network.membership` takes one
+    /// (``VMConfigurationKeyRegistry/membership(_:networks:)``), against the
+    /// library's list of networks as its file holds it now.
+    func networkMembership(spelledBy text: String) throws -> VMNetworkMembership {
+        library.networks.reload()
+        return try VMConfigurationKeyRegistry.membership(text, networks: library.networks.state)
+    }
+
     /// `network` as every read surface reports it, with the VMs on it.
     func summary(_ network: VMNamedNetwork) -> NetworkSummary {
         NetworkSummary(

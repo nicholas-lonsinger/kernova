@@ -528,22 +528,20 @@ package enum VMConfigurationKeyRegistry {
         read: { $0.networkMembership.rawValue },
         write: { value, config, context in
             let before = config
-            config.networkMembership = try membership(value, context: context)
+            config.networkMembership = try membership(value, networks: context.networks)
             try requireAttachableNetwork(movingFrom: before, to: config, context: context)
         },
         refusalOnResult: membershipRefusal)
 
-    /// The membership `value` spells: `common`, `isolated`, or a named
-    /// network the library lists, by identifier or by name.
+    /// The membership `value` spells: `common`, `isolated`, a network's
+    /// identifier, or the name of one `networks` lists.
     ///
-    /// The identifier a VM already names is taken back even when the library
-    /// no longer lists it, so a read written back stays a no-op.
-    private static func membership(
-        _ value: String, context: VMConfigurationWriteContext
-    ) throws -> VMNetworkMembership {
+    /// An identifier is taken whether or not the library lists it, so a read
+    /// written back stays a no-op; only a name needs the list.
+    static func membership(_ value: String, networks: VMNetworkDirectory.State) throws -> VMNetworkMembership {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if let membership = VMNetworkMembership(rawValue: trimmed) { return membership }
-        guard let networks = context.networks.listed else {
+        guard let networks = networks.listed else {
             throw CommandError.invalidArgument(VMNetworkDirectory.unreadableMessage)
         }
         if let network = networks.first(where: {
