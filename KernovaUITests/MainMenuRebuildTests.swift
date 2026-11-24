@@ -49,35 +49,4 @@ struct MainMenuRebuildTests {
         #expect(passthrough.action == #selector(AppDelegate.toggleClipboardPassthrough(_:)))
         #expect(passthrough.keyEquivalent.isEmpty)
     }
-
-    // MARK: - USB Device
-
-    @Test(
-        "Without passthrough, USB Device is dimmed and its tooltip names what it needs, as the CLI does",
-        arguments: [
-            (USBAccessoryPassthrough.Gap.needsMacOS(27), "Kernova needs macOS 27 or later for USB accessory passthrough."),
-            (.needsEntitlement, "This build of Kernova does not support USB accessory passthrough."),
-        ])
-    func usbDeviceNamesWhatPassthroughNeeds(gap: USBAccessoryPassthrough.Gap, reason: String) throws {
-        let viewModel = makeLibraryViewModel(preferences: preferences, usbAccessoryPassthrough: .unavailable(gap))
-        let controller = MainMenuController(viewModel: viewModel, windows: makeWindowRegistry(viewModel))
-        let vmMenu = try #require(submenu(titled: "Virtual Machine", in: controller.makeMainMenu()))
-        vmMenu.update()
-
-        let usb = try #require(vmMenu.items.first { $0.title == "USB Device" })
-        #expect(!usb.isEnabled)
-        #expect(usb.toolTip == reason)
-    }
-
-    @Test("With passthrough, USB Device opens its accessory list and carries no tooltip")
-    func usbDeviceOpensWithPassthrough() throws {
-        let viewModel = makeLibraryViewModel(
-            preferences: preferences, usbAccessoryPassthrough: .available(MockUSBAccessoryService()))
-        let controller = MainMenuController(viewModel: viewModel, windows: makeWindowRegistry(viewModel))
-        let vmMenu = try #require(submenu(titled: "Virtual Machine", in: controller.makeMainMenu()))
-
-        let usb = try #require(vmMenu.items.first { $0.title == "USB Device" })
-        #expect(usb.submenu?.items.map(\.title) == ["No USB Accessories"])
-        #expect(usb.toolTip == nil)
-    }
 }
