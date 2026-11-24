@@ -96,20 +96,21 @@ struct RenameVMIntent: AppIntent {
     }
 }
 
-/// Moves a VM's bundle to the Trash.
+/// Moves a VM's bundle to the Trash, or deletes it immediately.
 ///
-/// The narrowest of the deletes the core offers: no permanent delete, because
-/// bypassing the Trash is a choice the user makes at a sheet that spells out
-/// what it costs, and no external files, because a Shortcut never showed the
-/// user which files those are.
+/// No external files, because a Shortcut never showed the user which files
+/// those are.
 struct DeleteVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Delete Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Moves a virtual machine's bundle to the Trash. Files stored outside the bundle are left alone.",
+        "Moves a virtual machine's bundle to the Trash, or with Delete Immediately on, deletes it without the Trash, which can't be undone. Files stored outside the bundle are left alone.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
     var vm: VMEntity
+
+    @Parameter(title: "Delete Immediately", default: false)
+    var deletesImmediately: Bool
 
     @Parameter(title: "Confirm Before Deleting", default: true)
     var confirmsFirst: Bool
@@ -118,6 +119,7 @@ struct DeleteVMIntent: ConsentingIntent {
 
     static var parameterSummary: some ParameterSummary {
         Summary("Delete \(\.$vm)") {
+            \.$deletesImmediately
             \.$confirmsFirst
         }
     }
@@ -125,7 +127,7 @@ struct DeleteVMIntent: ConsentingIntent {
     @MainActor
     func perform() async throws -> some IntentResult {
         try await runWithConsent { consent in
-            try await gateway.delete(vm.id, consent: consent)
+            try await gateway.delete(vm.id, permanently: deletesImmediately, consent: consent)
         }
         return .result()
     }
