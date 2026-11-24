@@ -8,9 +8,10 @@ import KernovaLogging
 ///
 /// A copy of one read, not a handle: the container rebuilds the whole list on
 /// every specifier evaluation, so a script always reads a VM as it stands now
-/// and nothing here has to be kept current. Its writable properties are
-/// configuration keys: setting one is the `setConfiguration` verb, which the
-/// gateway runs and records a refusal of on the command being answered.
+/// and nothing here has to be kept current. Setting `name` is the rename verb,
+/// and its other writable properties are configuration keys, which setting
+/// writes through the `setConfiguration` verb; the gateway runs either and
+/// records a refusal on the command being answered.
 @MainActor
 @objc(VMScriptObject)
 package final class VMScriptObject: NSObject {
@@ -34,7 +35,10 @@ package final class VMScriptObject: NSObject {
 
     @objc var uniqueID: String { info.id.uuidString }
 
-    @objc var name: String { info.name }
+    @objc var name: String {
+        get { info.name }
+        set { gateway?.rename(info.id, to: newValue) }
+    }
 
     /// The `VM state` enumerator for the VM's status, as the Apple event code
     /// the dictionary gives it.
@@ -230,7 +234,7 @@ package final class VMScriptObject: NSObject {
 
     /// Where Cocoa removes a snapshot by index, which only a `move` reaches —
     /// every `delete` naming a snapshot, one reference or a list of them, goes
-    /// to ``VMScriptingGateway/deleteSnapshots(_:for:reading:)`` — and
+    /// to ``VMScriptingGateway/delete(_:in:for:)`` — and
     /// ``VMScriptingGateway/refuseToMoveSnapshot()`` refuses.
     @objc(removeFromSnapshotsAtIndex:)
     func removeFromSnapshots(at index: Int) {

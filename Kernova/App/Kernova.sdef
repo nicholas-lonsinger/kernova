@@ -5,19 +5,45 @@
 
 	<suite name="Standard Suite" code="????" description="Common classes and commands for all applications.">
 
-		<xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef" xpointer="xpointer(/dictionary/suite/node()[not(self::command and (@name = 'delete' or @name = 'make'))])"/>
+		<xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef" xpointer="xpointer(/dictionary/suite/node()[not(self::command and (@name = 'delete' or @name = 'duplicate' or @name = 'make'))])"/>
 
-		<!-- The Standard Suite's delete, taking a list of references too and the consent a snapshot's delete refuses without, with the class that deletes a snapshot by what its reference evaluates to. -->
-		<command name="delete" code="coredelo" description="Delete an object.">
+		<!-- The Standard Suite's delete, taking a list of references too, the consent deleting a virtual machine or a snapshot refuses without, and a virtual machine's delete past the Trash, with the class that deletes both by what their references evaluate to. -->
+		<command name="delete" code="coredelo" description="Delete an object. A virtual machine&#8217;s bundle moves to the Trash, and files it uses outside its bundle stay where they are. A delete naming several stops at the first one refused, leaving those before it deleted.">
 			<cocoa class="VMDeleteScriptCommand"/>
 			<access-group identifier="*"/>
 			<direct-parameter description="The object(s) to delete.">
 				<type type="specifier"/>
 				<type type="specifier" list="yes"/>
 			</direct-parameter>
-			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent deleting a snapshot refuses without.">
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent deleting a virtual machine or a snapshot refuses without.">
 				<cocoa key="Confirmation"/>
 			</parameter>
+			<parameter name="immediate deletion" code="KpIm" type="boolean" optional="yes" description="Delete a virtual machine&#8217;s bundle immediately, bypassing the Trash.">
+				<cocoa key="ImmediateDeletion"/>
+			</parameter>
+		</command>
+
+		<!-- The Standard Suite's duplicate, taking what a clone is of its source and whether to wait for its copy, with the class that clones a virtual machine and answers the clone. -->
+		<command name="duplicate" code="coreclon" description="Copy an object. A virtual machine&#8217;s copy is a new virtual machine in the library, answered once its copy has finished; a reference to several answers a list, and stops at the first one refused. AppleScript stops waiting for an answer after two minutes unless a with timeout block gives it longer, and the copy goes on in Kernova.">
+			<cocoa class="VMDuplicateScriptCommand"/>
+			<access-group identifier="*"/>
+			<direct-parameter type="specifier" requires-access="r" description="The object(s) to copy."/>
+			<parameter name="to" code="insh" type="location specifier" description="The location for the new copy or copies." optional="yes">
+				<cocoa key="ToLocation"/>
+			</parameter>
+			<parameter name="with properties" code="prdt" type="record" description="Properties to set in the new copy or copies right away." optional="yes">
+				<cocoa key="WithProperties"/>
+			</parameter>
+			<parameter name="as" code="KpCo" type="clone outcome" optional="yes" description="What a virtual machine&#8217;s clone is of its source; without it, Clone as in Kernova&#8217;s Advanced settings decides.">
+				<cocoa key="CloneOutcome"/>
+			</parameter>
+			<parameter name="waiting" code="KpWt" type="boolean" optional="yes" description="Wait for a virtual machine&#8217;s copy to finish before answering, as by default; without waiting answers the new virtual machine while its copy is still being written.">
+				<cocoa key="Waiting"/>
+			</parameter>
+			<result description="The new virtual machine, or a list of them for a reference to several.">
+				<type type="specifier"/>
+				<type type="specifier" list="yes"/>
+			</result>
 		</command>
 
 		<!-- The Standard Suite's make, with the class that takes a snapshot for one made at a virtual machine. -->
@@ -89,6 +115,11 @@
 			<enumerator name="cold" code="KkCo" description="Its disks and settings, without the guest&#8217;s memory."/>
 		</enumeration>
 
+		<enumeration name="clone outcome" code="KvCO" description="What a virtual machine&#8217;s clone is of its source.">
+			<enumerator name="new machine" code="KcNm" description="A virtual machine of its own: a new machine identity and MAC address, so both can run at once, with no snapshots and Ephemeral Mode off. Not offered for a guest running macOS 12 or earlier."/>
+			<enumerator name="exact copy" code="KcEx" description="The source&#8217;s machine identity and MAC address, its snapshots, Ephemeral Mode and display preferences. The two run at once only when one is started anyway."/>
+		</enumeration>
+
 		<class-extension extends="application" description="Kernova’s top-level scripting object.">
 			<cocoa class="NSApplication"/>
 			<element type="virtual machine" access="r" description="The virtual machines in the library.">
@@ -114,7 +145,7 @@
 			<property name="id" code="ID  " type="text" access="r" description="Its stable identifier.">
 				<cocoa key="uniqueID"/>
 			</property>
-			<property name="name" code="pnam" type="text" access="r" description="Its display name, which is not unique.">
+			<property name="name" code="pnam" type="text" description="Its display name, which another virtual machine can share. Setting it renames it.">
 				<cocoa key="name"/>
 			</property>
 			<property name="state" code="KvSt" type="VM state" access="r" description="What it is doing right now.">
@@ -386,6 +417,40 @@
 				<type type="snapshot" list="yes"/>
 			</direct-parameter>
 			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent a revert refuses without, running the virtual machine beside an active one with the same machine ID included, where Kernova&#8217;s Settings allow starting one anyway.">
+				<cocoa key="Confirmation"/>
+			</parameter>
+		</command>
+
+		<command name="cancel guest setup" code="KrnvCnGs" description="Interrupt the download, verification or install a virtual machine&#8217;s first start is running. The virtual machine and its bundle are kept, and its next start begins its guest setup again.">
+			<cocoa class="VMCancelGuestSetupScriptCommand"/>
+			<direct-parameter description="The virtual machine whose guest setup to cancel, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent cancelling a guest setup refuses without.">
+				<cocoa key="Confirmation"/>
+			</parameter>
+		</command>
+
+		<command name="import" code="KrnvImpt" description="Copy a virtual machine bundle into the library, leaving the original where it is, and answer the imported virtual machine once its copy has finished; a bundle already in the library answers the virtual machine it is. Kernova asks for a bundle it can&#8217;t already read in an open panel, which comes in front once the script has told Kernova to activate. AppleScript stops waiting for an answer after two minutes unless a with timeout block gives it longer, and the import goes on in Kernova.">
+			<cocoa class="VMImportScriptCommand"/>
+			<direct-parameter description="The bundle, as a file or as its full path, starting with / or ~/.">
+				<type type="file"/>
+				<type type="text"/>
+			</direct-parameter>
+			<parameter name="waiting" code="KpWt" type="boolean" optional="yes" description="Wait for the copy to finish before answering, as by default; without waiting answers the new virtual machine while its copy is still being written.">
+				<cocoa key="Waiting"/>
+			</parameter>
+			<result type="specifier" description="The imported virtual machine."/>
+		</command>
+
+		<command name="cancel copy" code="KrnvCnCp" description="Stop a new virtual machine that a duplicate, import or create is still writing, one whose state is preparing, and remove what it has written. A virtual machine whose copy has finished refuses, as does the one a clone is copied from.">
+			<cocoa class="VMCancelCopyScriptCommand"/>
+			<direct-parameter description="The virtual machine still being written, or a list of them.">
+				<type type="virtual machine"/>
+				<type type="virtual machine" list="yes"/>
+			</direct-parameter>
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent cancelling a copy refuses without.">
 				<cocoa key="Confirmation"/>
 			</parameter>
 		</command>

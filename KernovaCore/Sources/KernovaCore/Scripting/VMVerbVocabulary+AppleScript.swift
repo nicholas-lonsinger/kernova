@@ -31,12 +31,17 @@ extension VMVerbVocabulary {
         case .deleteSnapshot: "delete snapshot"
         case .renameSnapshot: "set name of snapshot"
         case .setSnapshotNotes: "set notes of snapshot"
+        case .clone: "duplicate"
+        case .rename: "set name"
+        case .delete: "delete"
+        case .importVM: "import"
+        case .cancelPreparing: "cancel copy"
+        case .cancelGuestSetup: "cancel guest setup"
         // The standard suite's `quit` is a quit Apple event, which the app
         // classifies by its sender rather than running this verb.
         case .quit, .groups, .ipAddress, .sharedDirectories, .usbAccessories,
-            .availableUSBAccessories, .usbPairings, .forgetUSBPairing, .wait, .cancelGuestSetup,
-            .open, .showInFinder, .create, .clone, .rename, .delete, .importVM, .cancelPreparing,
-            .editStorageDisk, .editRemovableMedia, .editSharedDirectory, .editUSBAccessory,
+            .availableUSBAccessories, .usbPairings, .forgetUSBPairing, .wait, .open, .showInFinder,
+            .create, .editStorageDisk, .editRemovableMedia, .editSharedDirectory, .editUSBAccessory,
             .configurationKeys, .configuration, .guestAgentDisk:
             nil
         }

@@ -141,9 +141,21 @@ enum ScriptEvent {
         return event
     }
 
-    /// `delete <reference> [with confirmation]`.
-    static func delete(_ reference: NSAppleEventDescriptor, confirmation: Bool = false) -> NSAppleEventDescriptor {
-        confirming(event("core", "delo", reference), confirmation)
+    /// `delete <reference> [with confirmation] [with immediate deletion]`.
+    static func delete(
+        _ reference: NSAppleEventDescriptor, confirmation: Bool = false, immediateDeletion: Bool = false
+    ) -> NSAppleEventDescriptor {
+        let delete = confirming(event("core", "delo", reference), confirmation)
+        if immediateDeletion { delete.setParam(NSAppleEventDescriptor(boolean: true), forKeyword: code("KpIm")) }
+        return delete
+    }
+
+    /// `duplicate <reference> [as <outcome>]`, the outcome named by its
+    /// enumerator's code.
+    static func duplicate(_ reference: NSAppleEventDescriptor, as outcome: String? = nil) -> NSAppleEventDescriptor {
+        let duplicate = event("core", "clon", reference)
+        if let outcome { duplicate.setParam(NSAppleEventDescriptor(enumCode: code(outcome)), forKeyword: code("KpCo")) }
+        return duplicate
     }
 
     /// One of Kernova's own verbs, `<verb> <reference> [with confirmation]`.

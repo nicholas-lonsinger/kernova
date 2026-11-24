@@ -45,21 +45,25 @@ struct KernovaScriptingDefinitionTests {
     @Test("Every command the dictionary names is handled by a script command class")
     func everyCommandHasItsHandler() throws {
         let suite = try loadSuite()
-        // What each verb addresses, one or a list of them, by its direct
-        // parameter.
+        // What each verb addresses by its direct parameter, one or a list of
+        // them, or for `import` a file, named by itself or by its path.
         let addressed = [
             "start": "virtual machine", "stop": "virtual machine", "restart": "virtual machine",
             "pause": "virtual machine", "resume": "virtual machine", "suspend": "virtual machine",
-            "reveal": "virtual machine", "revert to": "snapshot",
+            "reveal": "virtual machine", "revert to": "snapshot", "cancel guest setup": "virtual machine",
+            "cancel copy": "virtual machine",
         ]
-        #expect(Set(try values("command", "name", in: suite)) == Set(addressed.keys))
+        #expect(Set(try values("command", "name", in: suite)) == Set(addressed.keys).union(["import"]))
 
         for command in try suite.nodes(forXPath: "command").compactMap({ $0 as? XMLElement }) {
             let name = try #require(command.attribute(forName: "name")?.stringValue)
             let handler = try #require(try values("cocoa", "class", in: command).first)
             let handlerClass: AnyClass = try #require(NSClassFromString(handler))
             #expect(handlerClass is VMScriptCommand.Type, "\(handler) is not a Kernova verb")
-            let type = try #require(addressed[name])
+            guard let type = addressed[name] else {
+                #expect(try values("direct-parameter/type", "type", in: command) == ["file", "text"])
+                continue
+            }
             #expect(try values("direct-parameter/type", "type", in: command) == [type, type])
             #expect(try values("direct-parameter/type", "list", in: command) == ["yes"])
         }
@@ -104,12 +108,12 @@ struct KernovaScriptingDefinitionTests {
         }
     }
 
-    @Test("A virtual machine's network membership, network mode and MAC address are writable; the rest read only")
-    func theNetworkPropertiesAreWritable() throws {
+    @Test("A virtual machine's name, network membership, network mode and MAC address are writable; the rest read only")
+    func theWritablePropertiesHaveSetters() throws {
         let classes = try loadSuite().nodes(forXPath: "class[@name='virtual machine']")
         let vm = try #require(classes.first as? XMLElement)
         let properties = try vm.nodes(forXPath: "property").compactMap { $0 as? XMLElement }
-        let writable: Set = ["network membership", "network mode", "MAC address"]
+        let writable: Set = ["name", "network membership", "network mode", "MAC address"]
 
         for property in properties {
             let name = try #require(property.attribute(forName: "name")?.stringValue)
@@ -269,6 +273,20 @@ struct KernovaScriptingDefinitionTests {
         for method in VMScriptStopMethod.allCases {
             let term = try #require(terms[method], "No term for \(method)")
             #expect(declared[term] == method.code, "No \(term) enumerator")
+        }
+    }
+
+    @Test("Every clone outcome has a term a script can name")
+    func everyCloneOutcomeHasAnEnumerator() throws {
+        let declared = try enumerators("clone outcome")
+
+        let terms: [VMScriptCloneOutcome: String] = [.newMachine: "new machine", .exactCopy: "exact copy"]
+
+        #expect(declared.count == CloneOutcome.allCases.count)
+        #expect(Set(VMScriptCloneOutcome.allCases.map(\.outcome)) == Set(CloneOutcome.allCases))
+        for outcome in VMScriptCloneOutcome.allCases {
+            let term = try #require(terms[outcome], "No term for \(outcome)")
+            #expect(declared[term] == outcome.code, "No \(term) enumerator")
         }
     }
 

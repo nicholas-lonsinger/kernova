@@ -660,7 +660,7 @@ extension VMCommandCore {
     /// The VM returns to `.initialBoot` so a subsequent Start can resume, and the
     /// bundle is preserved — this is the non-destructive cancel. A VM with no
     /// setup in flight refuses.
-    func cancelGuestSetup(_ selector: VMSelector, consent: Consent) throws {
+    package func cancelGuestSetup(_ selector: VMSelector, consent: Consent) throws {
         let instance = try resolve(selector)
         try require(.cancelGuestSetup, on: instance)
         guard consent.covers(.cancelGuestSetup) else {

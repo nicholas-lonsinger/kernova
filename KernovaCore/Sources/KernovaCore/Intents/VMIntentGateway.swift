@@ -372,8 +372,8 @@ package final class VMIntentGateway {
     }
 
     /// ``VMCommandCore/addSharedDirectory(_:path:readOnly:)`` of the folder at
-    /// `path` (``requireFullPath(_:)``), answering the share the folder chosen
-    /// fills.
+    /// `path` (``UserHome/fullPath(_:of:)``), answering the share the folder
+    /// chosen fills.
     ///
     /// `bringForward` asks Shortcuts to bring Kernova forward. It is this
     /// verb's ``ActivationRequester``, so it runs only when the core is about
@@ -384,7 +384,7 @@ package final class VMIntentGateway {
         bringingForward bringForward: @escaping @MainActor @Sendable () async throws -> Void
     ) async throws -> SharedDirectoryEntity {
         try await perform(.editSharedDirectory, on: id) {
-            let folder = try Self.requireFullPath(path)
+            let folder = try UserHome.fullPath(path, of: "A folder")
             let requester = ActivationRequester(awaiting: { [prepareToSurface] in
                 try await bringForward()
                 prepareToSurface()
@@ -693,21 +693,6 @@ package final class VMIntentGateway {
             throw CommandError.notFound(.id(id))
         }
         return summary
-    }
-
-    /// `path` as a full path, a leading `~` read as the user's home folder
-    /// (``UserHome``), refusing any other path that does not start at `/`.
-    ///
-    /// The `kernova` tool reads a relative path against the directory it is
-    /// typed in; an action has none to read it against.
-    private static func requireFullPath(_ path: String) throws -> String {
-        if path == "~" { return UserHome.path }
-        if path.hasPrefix("~/") { return UserHome.path + path.dropFirst() }
-        guard path.hasPrefix("/") else {
-            throw CommandError.invalidArgument(
-                "A folder is named by its full path, which starts with \u{201C}/\u{201D} or \u{201C}~/\u{201D}.")
-        }
-        return path
     }
 
     // MARK: - Dispatch

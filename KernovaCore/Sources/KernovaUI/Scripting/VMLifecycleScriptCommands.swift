@@ -51,6 +51,49 @@ enum VMScriptStopMethod: CaseIterable {
     }
 }
 
+/// The dictionary's `clone outcome` enumeration, in Swift: what `duplicate`
+/// makes of a virtual machine.
+///
+/// The cases and codes here and the enumerators in `Kernova.sdef` are two
+/// halves of one thing, which is what `KernovaScriptingDefinitionTests` checks.
+enum VMScriptCloneOutcome: CaseIterable {
+    case newMachine
+    case exactCopy
+
+    // periphery:ignore - never called: an exhaustive switch, so an outcome added stops compiling here
+    /// The term `outcome` is named by. Exhaustive, so a new outcome has to be
+    /// given a term before it compiles.
+    init(_ outcome: CloneOutcome) {
+        switch outcome {
+        case .newMachine: self = .newMachine
+        case .exactCopy: self = .exactCopy
+        }
+    }
+
+    /// The outcome an Apple event naming `code` asked for, `nil` for a code
+    /// from no vocabulary this app writes.
+    init?(code: FourCharCode) {
+        guard let match = Self.allCases.first(where: { $0.code == code }) else { return nil }
+        self = match
+    }
+
+    /// The Apple event code the dictionary gives this case's term.
+    var code: FourCharCode {
+        switch self {
+        case .newMachine: FourCharCode(scriptingCode: "KcNm")
+        case .exactCopy: FourCharCode(scriptingCode: "KcEx")
+        }
+    }
+
+    /// The outcome this term names.
+    var outcome: CloneOutcome {
+        switch self {
+        case .newMachine: .newMachine
+        case .exactCopy: .exactCopy
+        }
+    }
+}
+
 // MARK: - The shape every Kernova verb takes
 
 /// What every Kernova verb an Apple event can ask for is built out of: take
@@ -69,6 +112,9 @@ class VMScriptCommand: NSScriptCommand {
 
     /// The Cocoa key of `with confirmation`, on every command that takes it.
     nonisolated static let confirmationKey = "Confirmation"
+
+    /// The Cocoa key of `waiting`, on every command that takes it.
+    nonisolated static let waitingKey = "Waiting"
 
     /// Takes the event over from Cocoa's own dispatch, for the gateway to
     /// answer (``VMScriptingGateway/execute(_:)``).
@@ -214,6 +260,58 @@ final class VMRevealScriptCommand: VMScriptCommand {
     }
 }
 
+/// `cancel guest setup virtual machine … [with confirmation]`
+@objc(VMCancelGuestSetupScriptCommand)
+final class VMCancelGuestSetupScriptCommand: VMScriptCommand {
+    override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
+        try await gateway.cancelGuestSetup(selectors, confirmation: flag(Self.confirmationKey))
+    }
+}
+
+/// `cancel copy virtual machine … [with confirmation]`
+@objc(VMCancelCopyScriptCommand)
+final class VMCancelCopyScriptCommand: VMScriptCommand {
+    override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
+        try await gateway.cancelCopy(selectors, confirmation: flag(Self.confirmationKey))
+    }
+}
+
+/// `import <file or path> [without waiting]`
+@objc(VMImportScriptCommand)
+final class VMImportScriptCommand: VMScriptCommand {
+    override func work(on gateway: VMScriptingGateway) -> VMScriptingGateway.Work? {
+        let path: String
+        do {
+            path = try bundlePath()
+        } catch let refusal as CommandError {
+            refuse(refusal)
+            return nil
+        } catch {
+            refuse(Int(errAEEventFailed), error.localizedDescription)
+            return nil
+        }
+        let waiting = arguments?[Self.waitingKey] as? Bool ?? true
+        return { try await gateway.importVM(atPath: path, waiting: waiting) }
+    }
+
+    /// The full path of the bundle the direct parameter names: a file's own,
+    /// or text read as ``UserHome/fullPath(_:of:)`` reads it.
+    ///
+    /// A file reference is read for its path alone, which the core's import
+    /// reads as is where Kernova may already read it and asks for in an open
+    /// panel where it may not: Apple documents an app's sandbox extended to
+    /// what open and save panels and a drag to its Dock icon hand it
+    /// ("Accessing files from the macOS App Sandbox"), and to no file an
+    /// Apple event names.
+    private func bundlePath() throws -> String {
+        switch directParameter {
+        case let url as URL where url.isFileURL: url.path(percentEncoded: false)
+        case let text as String: try UserHome.fullPath(text, of: "A virtual machine bundle")
+        default: throw CommandError.invalidArgument("Name the bundle to import, as a file or its full path.")
+        }
+    }
+}
+
 /// `revert to snapshot … [with confirmation]`
 ///
 /// It addresses snapshots, each of which names its VM, so it reverts a VM to
@@ -233,48 +331,130 @@ final class VMRevertScriptCommand: VMScriptCommand {
 
 // MARK: - Standard Suite
 
-/// The Standard Suite's `delete … [with confirmation]`: a snapshot's delete,
-/// or a list of references, goes to
-/// ``VMScriptingGateway/deleteSnapshots(_:for:reading:)``, and every other
-/// delete is Cocoa's own.
-///
-/// Cocoa splits a delete's one reference into the container it evaluates and
-/// the element it names (``deletedElement``), and runs this once that
-/// container is in hand; a list it leaves whole, as the direct parameter.
+/// The Standard Suite's `delete … [with confirmation] [with immediate
+/// deletion]`: a delete of a virtual machine or a snapshot, or of a list of
+/// references, goes to ``VMScriptingGateway/delete(_:in:for:)``, and every
+/// other delete is Cocoa's own.
 @MainActor
 @objc(VMDeleteScriptCommand)
 final class VMDeleteScriptCommand: NSDeleteCommand {
+    /// The Cocoa key of `delete`'s `immediate deletion`, as the dictionary
+    /// declares it.
+    nonisolated static let immediateDeletionKey = "ImmediateDeletion"
+
     /// A selector hop to the main actor, as ``VMScriptCommand/execute()``
-    /// takes, for a snapshot's delete or a list's.
+    /// takes, for a delete the gateway answers.
     nonisolated override func performDefaultImplementation() -> Any? {
-        guard directParameter is [Any] || deletedElement?.key == VMScriptObject.snapshotsKey else {
+        let handled = [VMScriptingRoot.virtualMachinesKey, VMScriptObject.snapshotsKey]
+        guard directParameter is [Any] || handled.contains(where: { $0 == splitElement?.key }) else {
             return super.performDefaultImplementation()
         }
-        performSelector(onMainThread: #selector(deleteSnapshots), with: nil, waitUntilDone: true)
+        performSelector(onMainThread: #selector(deleteObjects), with: nil, waitUntilDone: true)
         return nil
     }
 
-    /// The element one reference names, `nil` for a list: the header declares
-    /// ``keySpecifier`` non-null, and Cocoa sets it only when the direct
-    /// parameter is one reference.
-    nonisolated private var deletedElement: NSScriptObjectSpecifier? {
-        value(forKey: #keyPath(NSDeleteCommand.keySpecifier)) as? NSScriptObjectSpecifier
-    }
-
     /// Where the hop lands, on the main actor.
-    @objc private func deleteSnapshots() {
+    @objc private func deleteObjects() {
         guard let gateway = (NSApp.delegate as? VMScriptingRoot)?.scriptingGateway else {
             refuse(Int(errAEEventFailed), VMScriptCommand.notReady)
             return
         }
         if let list = directParameter as? [Any] {
-            gateway.deleteSnapshots(list, for: self) { try VMScriptSelector.snapshots(addressing: list) }
-        } else if let deleted = deletedElement {
-            let containers = evaluatedReceivers
-            gateway.deleteSnapshots(deleted, for: self) {
-                try VMScriptSelector.snapshots(addressing: deleted, in: containers)
-            }
+            gateway.delete(list, in: nil, for: self)
+        } else if let deleted = splitElement {
+            gateway.delete(deleted, in: evaluatedReceivers, for: self)
         }
+    }
+}
+
+/// The Standard Suite's `duplicate … [as <clone outcome>] [without waiting]`:
+/// a duplicate of a virtual machine goes to
+/// ``VMScriptingGateway/duplicate(_:in:for:outcome:waiting:)``, and every
+/// other duplicate is Cocoa's own.
+///
+/// Its direct parameter is one reference, as the Standard Suite's is: Cocoa
+/// answers a list of them with a coercion error (`errAECoercionFail`) before
+/// any command runs, whatever the dictionary declares (observed on macOS 27).
+@MainActor
+@objc(VMDuplicateScriptCommand)
+final class VMDuplicateScriptCommand: NSCloneCommand {
+    /// The Cocoa keys of `duplicate`'s parameters, as the dictionary declares
+    /// them.
+    nonisolated private static let locationKey = "ToLocation"
+    nonisolated private static let propertiesKey = "WithProperties"
+    nonisolated private static let cloneOutcomeKey = "CloneOutcome"
+
+    /// A selector hop to the main actor, as ``VMScriptCommand/execute()``
+    /// takes, for a duplicate the gateway answers.
+    nonisolated override func performDefaultImplementation() -> Any? {
+        guard splitElement?.key == VMScriptingRoot.virtualMachinesKey else {
+            return super.performDefaultImplementation()
+        }
+        performSelector(onMainThread: #selector(duplicateVirtualMachines), with: nil, waitUntilDone: true)
+        return nil
+    }
+
+    /// Where the hop lands, on the main actor: refuses the parameters a
+    /// clone has no use for, and hands the rest to the gateway.
+    ///
+    /// The library places a clone, and a clone takes its properties from the
+    /// verbs a script runs on the reference `duplicate` answers.
+    @objc private func duplicateVirtualMachines() {
+        guard let gateway = (NSApp.delegate as? VMScriptingRoot)?.scriptingGateway else {
+            refuse(Int(errAEEventFailed), VMScriptCommand.notReady)
+            return
+        }
+        guard arguments?[Self.locationKey] == nil else {
+            refuse(Int(errAECantPutThatThere), "Kernova puts a clone in the library itself, so duplicate takes no to.")
+            return
+        }
+        guard arguments?[Self.propertiesKey] == nil else {
+            refuse(
+                Int(errAEEventFailed),
+                "Set a clone\u{2019}s properties on the virtual machine duplicate answers, so duplicate takes no with properties."
+            )
+            return
+        }
+        let outcome: CloneOutcome?
+        do {
+            outcome = try cloneOutcome()
+        } catch let refusal as CommandError {
+            refuse(refusal)
+            return
+        } catch {
+            refuse(Int(errAEEventFailed), error.localizedDescription)
+            return
+        }
+        guard let cloned = splitElement else { return }
+        gateway.duplicate(
+            cloned, in: evaluatedReceivers, for: self, outcome: outcome,
+            waiting: arguments?[VMScriptCommand.waitingKey] as? Bool ?? true)
+    }
+
+    /// The outcome `as` asked for, `nil` — Kernova's own setting — when the
+    /// script named none.
+    ///
+    /// - Throws: ``CommandError/invalidArgument(_:)`` for a code from no
+    ///   vocabulary this app writes.
+    private func cloneOutcome() throws -> CloneOutcome? {
+        guard let named = arguments?[Self.cloneOutcomeKey] as? NSNumber else { return nil }
+        guard let outcome = VMScriptCloneOutcome(code: named.uint32Value) else {
+            throw CommandError.invalidArgument("That is not a way Kernova clones a virtual machine.")
+        }
+        return outcome.outcome
+    }
+}
+
+extension NSScriptCommand {
+    /// The element a Standard Suite `delete`'s or `duplicate`'s one reference
+    /// names, which Cocoa splits off from the container it evaluates apart
+    /// (`keySpecifier`, against `evaluatedReceivers`) — `nil` for a list,
+    /// which it leaves whole, as the direct parameter.
+    ///
+    /// Read by key: the header declares `keySpecifier` non-null, and Cocoa
+    /// sets it only when the direct parameter is one reference.
+    nonisolated fileprivate var splitElement: NSScriptObjectSpecifier? {
+        value(forKey: #keyPath(NSDeleteCommand.keySpecifier)) as? NSScriptObjectSpecifier
     }
 }
 
