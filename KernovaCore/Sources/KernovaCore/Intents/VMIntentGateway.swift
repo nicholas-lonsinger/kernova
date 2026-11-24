@@ -103,13 +103,19 @@ package final class VMIntentGateway {
     ) async throws -> [VMEntity] {
         try await perform(.list, on: nil) {
             let predicates = try conditions.map(self.predicate(for:))
-            return self.everyVM().filter { vm in
+            let library = self.everyVM()
+            let found = library.filter { vm in
                 switch mode {
                 case .and: predicates.allSatisfy { $0(vm) }
                 case .or: predicates.isEmpty || predicates.contains { $0(vm) }
                 @unknown default: true
                 }
             }
+            self.logger.log(
+                .notice,
+                "Find matched \(found.count, privacy: .public) of \(library.count, privacy: .public) VMs under \(conditions.count, privacy: .public) condition(s)"
+            )
+            return found
         }
     }
 

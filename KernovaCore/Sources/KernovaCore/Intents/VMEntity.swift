@@ -176,14 +176,18 @@ package struct VMEntity: IndexedEntity {
 /// How Shortcuts and Spotlight find the VM an intent acts on.
 ///
 /// Every method forwards to ``VMIntentGateway``, which owns the matching as
-/// well as the readiness await: the library is small and fully enumerable, so
-/// `allEntities()` gives Shortcuts a picker rather than a search field, and a
-/// typed name resolves through a case-insensitive contains match.
+/// well as the readiness await: `suggestedEntities()` lists the whole library
+/// for a picker, and a typed name resolves through a case-insensitive contains
+/// match.
 ///
-/// The property query filters and sorts that same enumeration in memory, in
-/// library order until a sort is chosen; a network or tag condition is the
-/// listing `kernova list` answers (``Condition/listed(_:negated:)``).
-package struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQuery, EntityPropertyQuery {
+/// Find Virtual Machines runs as this property query, which filters and sorts
+/// the library in memory, in library order until a sort is chosen; a
+/// condition `kernova list` also takes is its listing
+/// (``Condition/listed(_:negated:)``). It is no `EnumerableEntityQuery`:
+/// Shortcuts runs a Find over one by filtering every entity itself, never
+/// calling ``entities(matching:mode:sortedBy:limit:)`` (WorkflowKit's
+/// `WFEntityQueryTypeForQueryMetadata`, macOS 27.2).
+package struct VMEntityQuery: EntityStringQuery, EntityPropertyQuery {
     /// One condition a Find puts on the VMs it answers, as the comparator a
     /// Shortcut chose makes it.
     package enum Condition: Sendable {
@@ -260,9 +264,7 @@ package struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQu
 
     package typealias ComparatorMappingType = Condition
 
-    /// Describes the Find action Shortcuts generates from this query. Both
-    /// query protocols this conforms to carry a default, which is ambiguous
-    /// where a type takes them both, so it is stated here.
+    /// Describes the Find action Shortcuts generates from this query.
     package static let findIntentDescription: IntentDescription? = IntentDescription(
         "Finds virtual machines in the library, filtered and sorted by their properties. With no sort, they come in the order the sidebar lists them under Sort By ▸ Manual.",
         categoryName: "Virtual Machines",
@@ -280,7 +282,7 @@ package struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQu
         await gateway.vms(matching: string)
     }
 
-    package func allEntities() async throws -> [VMEntity] {
+    package func suggestedEntities() async throws -> [VMEntity] {
         await gateway.vms()
     }
 
