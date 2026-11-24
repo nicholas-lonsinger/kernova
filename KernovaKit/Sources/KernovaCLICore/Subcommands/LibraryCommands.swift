@@ -141,15 +141,19 @@ extension KernovaCommand {
         /// What `kernova cancel-copy --help` says.
         static let configuration = CommandConfiguration(
             commandName: "cancel-copy",
-            abstract: "Cancel a virtual machine that is still being created, cloned or imported.",
-            discussion: "The copy is stopped and what it has written is removed, so the virtual "
-                + "machine leaves the library; a `kernova clone` or `kernova import` waiting for "
-                + "it exits 1. Returns once the cancel is requested, without waiting for the "
-                + "removal. Refuses without --yes. A virtual machine whose copy has finished "
-                + "refuses: `kernova delete` is the verb for it.")
+            abstract: "Cancel a new virtual machine that a clone, import or create is still writing.",
+            discussion: "<vm> is the new virtual machine, the one `kernova list` shows as "
+                + "Preparing, not the one it is cloned from. Its copy is stopped and what it has "
+                + "written is removed, so it leaves the library; a `kernova clone` or `kernova "
+                + "import` waiting for it exits 1. Returns once the cancel is requested, without "
+                + "waiting for the removal. Refuses without --yes. Any other virtual machine "
+                + "refuses, a clone's source included; once the new one's copy has finished, "
+                + "`kernova delete` is the verb that removes it.")
 
-        /// Which virtual machine, by name or identifier.
-        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
+        /// Which new virtual machine, by name or identifier.
+        @Argument(
+            help: "The new virtual machine's name or identifier, as `kernova list` shows it while Preparing.",
+            completion: CompletionSource.vm)
         var vm: String
 
         /// The options every subcommand carries.

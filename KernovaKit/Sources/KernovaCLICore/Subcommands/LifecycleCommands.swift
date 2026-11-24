@@ -355,10 +355,10 @@ extension KernovaCommand {
             commandName: "cancel-setup",
             abstract: "Cancel the guest setup a virtual machine is running.",
             discussion: "Interrupts the download, verification or install the virtual machine's "
-                + "first start is running. The virtual machine is kept, and its next `kernova "
-                + "start` takes the setup up again. Refuses without --yes, saying what that start does about the "
-                + "step it interrupts. A "
-                + "virtual machine with no guest setup running refuses.")
+                + "first start is running. The virtual machine and its bundle are kept, back in "
+                + "the state in which a start begins its guest setup. Refuses without --yes, "
+                + "saying what becomes of the step it interrupts. A virtual machine with no "
+                + "guest setup running refuses.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
