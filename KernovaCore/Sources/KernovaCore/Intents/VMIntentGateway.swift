@@ -331,16 +331,15 @@ package final class VMIntentGateway {
         }
     }
 
-    /// Moves the VM's bundle to the Trash.
+    /// Moves the VM's bundle to the Trash, or `permanently` deletes it.
     ///
-    /// The permanent delete and the external files a delete can also remove are
-    /// both left to the app's own sheet: one is a user-confirmed exception to
-    /// the project's file-deletion rule, and the other names files this surface
-    /// never showed the user.
-    func delete(_ id: UUID, consent: Consent) async throws {
+    /// The external files a delete can also remove are left to the app's own
+    /// sheet, which is the one surface that shows the user which files those
+    /// are.
+    func delete(_ id: UUID, permanently: Bool, consent: Consent) async throws {
         try await perform(.delete, on: id) {
             try await self.commands.delete(
-                .id(id), permanently: false, alsoRemoving: [], consent: consent)
+                .id(id), permanently: permanently, alsoRemoving: [], consent: consent)
         }
     }
 

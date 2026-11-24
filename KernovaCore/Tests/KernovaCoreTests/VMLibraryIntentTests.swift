@@ -99,7 +99,7 @@ struct VMLibraryIntentTests {
         var asked: [ConfirmationPrompt] = []
 
         try await VMConsentPolicy.run(prompting: { asked.append($0) }) { consent in
-            try await gateway.delete(vm.id, consent: consent)
+            try await gateway.delete(vm.id, permanently: false, consent: consent)
         }
 
         #expect(asked.map(\.kind) == [.deleteVM])

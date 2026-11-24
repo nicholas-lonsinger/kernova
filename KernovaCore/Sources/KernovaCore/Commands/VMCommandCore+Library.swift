@@ -783,18 +783,15 @@ extension VMCommandCore {
         // re-check catches — trashing the bundle then would pull the disk
         // image out from under a guest that is running or about to be.
         try require(.delete, on: instance)
-        guard consent.covers(.deleteVM) else {
-            throw CommandError.confirmationRequired(
-                Self.deletePrompt(
-                    instance, permanently: permanently,
-                    externals: await externalAttachments(for: instance)))
-        }
-
         var toDelete: [ExternalAttachment] = []
         if !alsoRemoving.isEmpty {
             toDelete = await externalAttachments(for: instance).filter {
                 alsoRemoving.contains($0.id) && !$0.isShared
             }
+        }
+        guard consent.covers(.deleteVM) else {
+            throw CommandError.confirmationRequired(
+                Self.deletePrompt(instance, permanently: permanently, externals: toDelete))
         }
         // One operation from the bundle's removal to the last external file's,
         // so nothing can start the VM, or be decided against it, while its
