@@ -249,7 +249,7 @@
 			</element>
 		</class>
 
-		<class name="setting" code="KvCf" plural="settings" description="One of a virtual machine&#8217;s settings, such as setting &quot;cpus&quot; or setting &quot;display.width&quot;.">
+		<class name="setting" code="KvCf" plural="settings" description="One of a virtual machine&#8217;s settings, such as setting &quot;cpus&quot; or setting &quot;display.width&quot;. On a virtual machine in Ephemeral Mode, a change to most of them goes back to its baseline snapshot at the next shutdown.">
 			<cocoa class="VMSettingScriptObject"/>
 			<property name="name" code="pnam" type="text" access="r" description="Its key.">
 				<cocoa key="name"/>
