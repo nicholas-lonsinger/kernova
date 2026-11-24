@@ -51,10 +51,10 @@ enum VMScriptStopMethod: CaseIterable {
     }
 }
 
-// MARK: - The shape every VM verb takes
+// MARK: - The shape every Kernova verb takes
 
 /// What every Kernova verb an Apple event can ask for is built out of: take
-/// the event over, read who it addressed once the library has landed, run the
+/// the event over, read what it addressed once the library has landed, run the
 /// verb, and answer once it settles.
 ///
 /// Main-actor isolated because everything it touches is: Cocoa creates and
@@ -66,6 +66,9 @@ class VMScriptCommand: NSScriptCommand {
 
     /// What a script reads back before the app has a gateway to answer it.
     nonisolated static let notReady = "Kernova is not ready to answer scripts."
+
+    /// The Cocoa key of `with confirmation`, on every command that takes it.
+    nonisolated static let confirmationKey = "Confirmation"
 
     /// Takes the event over from Cocoa's own dispatch, for the gateway to
     /// answer (``VMScriptingGateway/execute(_:)``).
@@ -94,23 +97,24 @@ class VMScriptCommand: NSScriptCommand {
         gateway.execute(self)
     }
 
-    /// Runs the verb on `selectors`, recording whatever refused it.
+    /// Reads what the event addresses — inside a dispatch of the gateway's
+    /// own — and answers the verb to run on it once that dispatch returns, or
+    /// `nil` with the refusal recorded.
     ///
-    /// The gateway resumes the event once this returns, which is what hands
-    /// it back, so a refusal not recorded by then is not reported at all.
-    func perform(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async {
-        do {
-            try await run(gateway, on: selectors)
-        } catch let refusal as CommandError {
-            refuse(refusal)
-        } catch {
-            refuse(Int(errAEEventFailed), error.localizedDescription)
+    /// A command addressing VMs runs ``run(_:on:)`` on the ones its direct
+    /// parameter names; one addressing anything else overrides this.
+    func work(on gateway: VMScriptingGateway) -> VMScriptingGateway.Work? {
+        guard let selectors = gateway.virtualMachines(addressedBy: self) else { return nil }
+        return {
+            try await self.run(gateway, on: selectors)
+            return nil
         }
     }
 
     /// The verb, run on the VMs the event addressed.
     ///
-    /// Every command overrides this; reaching the base is a programming error.
+    /// Every command addressing VMs overrides this; reaching the base is a
+    /// programming error.
     func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         Self.logger.log(
             .fault,
@@ -139,7 +143,7 @@ class VMScriptCommand: NSScriptCommand {
 final class VMStartScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         try await gateway.start(
-            selectors, recoveryMode: flag("RecoveryMode"), confirmation: flag("Confirmation"))
+            selectors, recoveryMode: flag("RecoveryMode"), confirmation: flag(Self.confirmationKey))
     }
 }
 
@@ -148,7 +152,7 @@ final class VMStartScriptCommand: VMScriptCommand {
 final class VMStopScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         try await gateway.stop(
-            selectors, method: try stopMethod(), confirmation: flag("Confirmation"),
+            selectors, method: try stopMethod(), confirmation: flag(Self.confirmationKey),
             givingUpAfter: seconds("GivingUpAfter"))
     }
 }
@@ -158,7 +162,7 @@ final class VMStopScriptCommand: VMScriptCommand {
 final class VMRestartScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         try await gateway.restart(
-            selectors, method: try stopMethod(), confirmation: flag("Confirmation"),
+            selectors, method: try stopMethod(), confirmation: flag(Self.confirmationKey),
             givingUpAfter: seconds("GivingUpAfter"))
     }
 }
@@ -190,7 +194,7 @@ final class VMPauseScriptCommand: VMScriptCommand {
 @objc(VMResumeScriptCommand)
 final class VMResumeScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
-        try await gateway.resume(selectors, confirmation: flag("Confirmation"))
+        try await gateway.resume(selectors, confirmation: flag(Self.confirmationKey))
     }
 }
 
@@ -207,5 +211,50 @@ final class VMSuspendScriptCommand: VMScriptCommand {
 final class VMRevealScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         try await gateway.reveal(selectors)
+    }
+}
+
+/// The Standard Suite's `delete … [with confirmation]`: a snapshot's delete
+/// goes to ``VMScriptingGateway/deleteSnapshots(_:in:for:)``, and everything
+/// else's is Cocoa's own.
+///
+/// Cocoa splits a delete's reference into the container it evaluates and the
+/// element it names (``keySpecifier``), and runs this once that container is
+/// in hand.
+@MainActor
+@objc(VMDeleteScriptCommand)
+final class VMDeleteScriptCommand: NSDeleteCommand {
+    /// A selector hop to the main actor, as ``VMScriptCommand/execute()``
+    /// takes, for a snapshot's delete.
+    nonisolated override func performDefaultImplementation() -> Any? {
+        guard keySpecifier.key == VMScriptObject.snapshotsKey else { return super.performDefaultImplementation() }
+        performSelector(onMainThread: #selector(deleteSnapshots), with: nil, waitUntilDone: true)
+        return nil
+    }
+
+    /// Where the hop lands, on the main actor.
+    @objc private func deleteSnapshots() {
+        guard let gateway = (NSApp.delegate as? VMScriptingRoot)?.scriptingGateway else {
+            refuse(Int(errAEEventFailed), VMScriptCommand.notReady)
+            return
+        }
+        gateway.deleteSnapshots(keySpecifier, in: evaluatedReceivers, for: self)
+    }
+}
+
+/// `revert to snapshot … [with confirmation]`
+///
+/// It addresses snapshots, each of which names its VM, so it reverts a VM to
+/// a snapshot of its own by construction.
+@objc(VMRevertScriptCommand)
+final class VMRevertScriptCommand: VMScriptCommand {
+    override func work(on gateway: VMScriptingGateway) -> VMScriptingGateway.Work? {
+        guard let snapshots = gateway.snapshots(addressedBy: self, unnamed: "Name the snapshot to revert to.")
+        else { return nil }
+        let confirmation = flag(Self.confirmationKey)
+        return {
+            try await gateway.revert(to: snapshots, confirmation: confirmation)
+            return nil
+        }
     }
 }

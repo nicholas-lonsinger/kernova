@@ -7,10 +7,10 @@ import KernovaLogging
 /// One named network as the scripting dictionary's `network`, each
 /// ``NetworkSummary`` field read by the key ``key(carrying:)`` names.
 ///
-/// A snapshot, like ``VMScriptObject``: the container rebuilds the list on
-/// every specifier evaluation. `name` is its one writable property, and setting
-/// it is the rename verb — the gateway runs it and records a refusal on the
-/// command being answered.
+/// A copy of one read, like ``VMScriptObject``: the container rebuilds the
+/// list on every specifier evaluation. `name` is its one writable property,
+/// and setting it is the rename verb — the gateway runs it and records a
+/// refusal on the command being answered.
 @MainActor
 @objc(VMNetworkScriptObject)
 package final class VMNetworkScriptObject: NSObject {

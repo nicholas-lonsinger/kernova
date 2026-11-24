@@ -64,6 +64,23 @@ extension VMCommandCore {
         }
     }
 
+    /// `name` with its surrounding whitespace gone, refusing one that carries
+    /// nothing else.
+    ///
+    /// Both rename verbs trim and return without writing when nothing is left,
+    /// because an inline field commits on end-editing whether or not the text
+    /// changed and must not raise an alert about a rename nobody made. A
+    /// script or a Shortcut supplies the name deliberately — often from a
+    /// variable that resolves to nothing — so its door refuses the same input
+    /// through this, rather than answer a success that renamed nothing.
+    nonisolated package static func requireName(_ name: String) throws -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw CommandError.invalidArgument("A name is at least one character that is not a space.")
+        }
+        return trimmed
+    }
+
     // MARK: - Arrival Outcomes
 
     /// The outcome of `arrival` for the caller that waits on it: the VM its

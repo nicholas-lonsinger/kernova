@@ -326,7 +326,7 @@ package final class VMIntentGateway {
 
     func renameSnapshot(_ id: UUID, snapshot: SnapshotEntityID, to newName: String) async throws {
         try await perform(.renameSnapshot, on: id) {
-            let named = try Self.requireName(newName)
+            let named = try VMCommandCore.requireName(newName)
             let listed = try self.listedSnapshot(snapshot, on: id)
             try self.commands.renameSnapshot(.id(id), snapshot: listed, to: named)
         }
@@ -529,7 +529,7 @@ package final class VMIntentGateway {
 
     func rename(_ id: UUID, to newName: String) async throws {
         try await perform(.rename, on: id) {
-            try self.commands.rename(.id(id), to: Self.requireName(newName))
+            try self.commands.rename(.id(id), to: VMCommandCore.requireName(newName))
         }
     }
 
@@ -673,24 +673,6 @@ package final class VMIntentGateway {
     }
 
     // MARK: - Arguments
-
-    /// `name` with its surrounding whitespace gone, refusing one that carries
-    /// nothing else.
-    ///
-    /// Both rename verbs in the core trim and return without writing when
-    /// nothing is left, because an inline field commits on end-editing whether
-    /// or not the text changed and must not raise an alert about a rename
-    /// nobody made. A Shortcut supplies the name deliberately — often from a
-    /// variable that resolves to nothing — so the same input is a refusal
-    /// here, rather than a success that renamed nothing.
-    private static func requireName(_ name: String) throws -> String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw CommandError.invalidArgument(
-                "A name is at least one character that is not a space.")
-        }
-        return trimmed
-    }
 
     /// Refuses an item picked from the list of the VM `pickedVM` when the
     /// action names the VM `vm`.

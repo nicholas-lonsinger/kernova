@@ -6,7 +6,7 @@ import KernovaLogging
 /// One disk a VM attaches, as the scripting dictionary's `storage disk`, each
 /// ``StorageDiskSummary`` field read by the key ``key(carrying:)`` names.
 ///
-/// A snapshot of one measured read, like ``VMScriptObject``: the VM rebuilds
+/// A copy of one measured read, like ``VMScriptObject``: the VM rebuilds
 /// its list on every specifier evaluation. Every property is read only.
 @MainActor
 @objc(VMStorageDiskScriptObject)
@@ -52,16 +52,12 @@ package final class VMStorageDiskScriptObject: NSObject {
 
     @objc var notes: String { disk.notes }
 
-    /// The size the guest sees, in gigabytes of 10^9 bytes — the unit the app
-    /// states disk sizes in — or `missing value` when the image can't be read.
-    @objc var capacity: NSNumber? { Self.gigabytes(disk.capacityBytes) }
+    /// The size the guest sees, in ``Foundation/NSNumber/init(gigabytesOf:)``'s
+    /// unit, or `missing value` when the image can't be read.
+    @objc var capacity: NSNumber? { disk.capacityBytes.map { NSNumber(gigabytesOf: $0) } }
 
     /// What the image takes on its volume, in the unit ``capacity`` is.
-    @objc var usedSpace: NSNumber? { Self.gigabytes(disk.usedBytes) }
-
-    private static func gigabytes(_ bytes: UInt64?) -> NSNumber? {
-        bytes.map { NSNumber(value: Double($0) / 1_000_000_000) }
-    }
+    @objc var usedSpace: NSNumber? { disk.usedBytes.map { NSNumber(gigabytesOf: $0) } }
 
     /// The Cocoa key of the property the dictionary reads `field` by — the key
     /// `Kernova.sdef` gives that term, which `KernovaScriptingDefinitionTests`
@@ -94,6 +90,14 @@ package final class VMStorageDiskScriptObject: NSObject {
             containerSpecifier: VMScriptObject.specifier(for: vm),
             key: VMScriptObject.storageDisksKey,
             uniqueID: disk.id.uuidString)
+    }
+}
+
+extension NSNumber {
+    /// `bytes` in gigabytes of 10^9 bytes, the unit the app states disk sizes
+    /// in and the dictionary states every size in.
+    convenience init(gigabytesOf bytes: UInt64) {
+        self.init(value: Double(bytes) / 1_000_000_000)
     }
 }
 

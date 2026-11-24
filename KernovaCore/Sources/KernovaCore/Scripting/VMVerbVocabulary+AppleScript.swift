@@ -24,12 +24,18 @@ extension VMVerbVocabulary {
         case .createNetwork: "make new network"
         case .renameNetwork: "set name of network"
         case .deleteNetwork: "delete network"
+        case .snapshots: "get snapshots"
+        case .snapshotSizes: "get size of snapshot"
+        case .takeSnapshot: "make new snapshot"
+        case .revertToSnapshot: "revert to"
+        case .deleteSnapshot: "delete snapshot"
+        case .renameSnapshot: "set name of snapshot"
+        case .setSnapshotNotes: "set notes of snapshot"
         // The standard suite's `quit` is a quit Apple event, which the app
         // classifies by its sender rather than running this verb.
-        case .quit, .groups, .ipAddress, .snapshots, .snapshotSizes, .sharedDirectories, .usbAccessories,
+        case .quit, .groups, .ipAddress, .sharedDirectories, .usbAccessories,
             .availableUSBAccessories, .usbPairings, .forgetUSBPairing, .wait, .cancelGuestSetup,
-            .open, .showInFinder, .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot,
-            .setSnapshotNotes, .create, .clone, .rename, .delete, .importVM, .cancelPreparing,
+            .open, .showInFinder, .create, .clone, .rename, .delete, .importVM, .cancelPreparing,
             .editStorageDisk, .editRemovableMedia, .editSharedDirectory, .editUSBAccessory,
             .configurationKeys, .configuration, .guestAgentDisk:
             nil

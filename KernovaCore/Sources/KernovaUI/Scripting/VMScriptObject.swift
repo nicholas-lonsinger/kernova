@@ -6,9 +6,9 @@ import KernovaLogging
 /// One VM as the scripting dictionary's `virtual machine`, each ``VMInfo``
 /// field read by the key ``key(carrying:)`` names for it.
 ///
-/// A snapshot, not a handle: the container rebuilds the whole list on every
-/// specifier evaluation, so a script always reads a VM as it stands now and
-/// nothing here has to be kept current. Its writable properties are
+/// A copy of one read, not a handle: the container rebuilds the whole list on
+/// every specifier evaluation, so a script always reads a VM as it stands now
+/// and nothing here has to be kept current. Its writable properties are
 /// configuration keys: setting one is the `setConfiguration` verb, which the
 /// gateway runs and records a refusal of on the command being answered.
 @MainActor
@@ -160,6 +160,10 @@ package final class VMScriptObject: NSObject {
     /// with.
     nonisolated static let guestAgentsKey = "guestAgents"
 
+    /// The literal KVC key the dictionary's `snapshot` element is declared
+    /// with.
+    nonisolated static let snapshotsKey = "snapshots"
+
     /// Every disk the VM attaches, in attachment order, measured
     /// for the command being answered — see
     /// ``VMScriptingGateway/storageDisks(of:)``.
@@ -172,22 +176,65 @@ package final class VMScriptObject: NSObject {
         info.agents.enumerated().map { VMGuestAgentScriptObject($0.element, at: $0.offset, of: info.id) }
     }
 
-    /// Refuses `make new storage disk at` or `make new guest agent at` a VM:
-    /// a script adds neither.
+    /// The VM's snapshots, newest first — see
+    /// ``VMScriptingGateway/snapshots(of:)``.
+    @objc var snapshots: [VMSnapshotScriptObject] {
+        gateway?.snapshots(of: info.id) ?? []
+    }
+
+    /// The named-element accessor Cocoa resolves `snapshot "…"` through —
+    /// see ``VMScriptingGateway/snapshot(named:of:)``.
     ///
-    /// Cocoa's own answer allocates the element's class with `init()`, which
-    /// neither ``VMStorageDiskScriptObject`` nor ``VMGuestAgentScriptObject``
-    /// has — so it would trap.
+    /// Cocoa's own answer is the first snapshot whose name matches, and
+    /// several snapshots of one VM can share a name.
+    @objc(valueInSnapshotsWithName:)
+    func valueInSnapshots(withName name: String) -> VMSnapshotScriptObject? {
+        gateway?.snapshot(named: name, of: info.id)
+    }
+
+    /// Takes a snapshot for `make new snapshot at` the VM — see
+    /// ``VMScriptingGateway/makeSnapshot(of:name:notes:)`` — and refuses
+    /// `make new storage disk at` or `make new guest agent at` it: a script
+    /// adds neither.
+    ///
+    /// Answers nothing: the snapshot is taken once the dispatch returns, and
+    /// the `make` answers the script with it then. Cocoa's own answer
+    /// allocates the element's class with `init()`, which none of the
+    /// element classes has — so it would trap.
     package nonisolated override func newScriptingObject(
         of objectClass: AnyClass, forValueForKey key: String, withContentsValue contentsValue: Any?,
         properties: [String: Any]
     ) -> Any? {
+        // Cocoa has coerced each property to the type the dictionary declares.
+        let name = properties["name"] as? String
+        let notes = properties["notes"] as? String
         MainActor.assumeIsolated {
-            gateway?.refuseToMake(
-                key == Self.guestAgentsKey
-                    ? VMScriptingGateway.cannotMakeGuestAgent : VMScriptingGateway.cannotMakeStorageDisk)
+            switch key {
+            case Self.snapshotsKey: gateway?.makeSnapshot(of: info.id, name: name, notes: notes)
+            case Self.guestAgentsKey: gateway?.refuseToMake(VMScriptingGateway.cannotMakeGuestAgent)
+            default: gateway?.refuseToMake(VMScriptingGateway.cannotMakeStorageDisk)
+            }
         }
         return nil
+    }
+
+    /// Where Cocoa inserts a snapshot a `make` or `move` places: a snapshot is
+    /// listed by the take that makes it, and there is no order to move one in,
+    /// so there is nothing to insert. Without it, Cocoa's KVC falls back to a
+    /// setter the element has none of, which raises.
+    @objc(insertInSnapshots:)
+    func insertInSnapshots(_ snapshot: Any) {}
+
+    /// The positional spelling of ``insertInSnapshots(_:)``: the snapshots are
+    /// ordered newest first, so the position names nothing.
+    @objc(insertInSnapshots:atIndex:)
+    func insertInSnapshots(_ snapshot: Any, at index: Int) {}
+
+    /// Where Cocoa removes a snapshot for a `move`, which
+    /// ``VMScriptingGateway/refuseToMoveSnapshot()`` refuses.
+    @objc(removeFromSnapshotsAtIndex:)
+    func removeFromSnapshots(at index: Int) {
+        gateway?.refuseToMoveSnapshot()
     }
 
     // MARK: - Specifier

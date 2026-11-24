@@ -741,7 +741,7 @@ package final class VMCommandCore {
     }
 
     /// The VM's named restore points, newest first.
-    func snapshots(of selector: VMSelector) throws -> [SnapshotSummary] {
+    package func snapshots(of selector: VMSelector) throws -> [SnapshotSummary] {
         let instance = try resolve(selector)
         return instance.snapshotManifest.ordered.map { snapshotSummary($0, on: instance) }
     }

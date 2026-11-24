@@ -45,20 +45,22 @@ struct KernovaScriptingDefinitionTests {
     @Test("Every command the dictionary names is handled by a script command class")
     func everyCommandHasItsHandler() throws {
         let suite = try loadSuite()
-        let verbs = try values("command", "name", in: suite)
-        #expect(
-            Set(verbs)
-                == ["start", "stop", "restart", "pause", "resume", "suspend", "reveal"])
+        // What each verb addresses, one or a list of them, by its direct
+        // parameter.
+        let addressed = [
+            "start": "virtual machine", "stop": "virtual machine", "restart": "virtual machine",
+            "pause": "virtual machine", "resume": "virtual machine", "suspend": "virtual machine",
+            "reveal": "virtual machine", "revert to": "snapshot",
+        ]
+        #expect(Set(try values("command", "name", in: suite)) == Set(addressed.keys))
 
         for command in try suite.nodes(forXPath: "command").compactMap({ $0 as? XMLElement }) {
+            let name = try #require(command.attribute(forName: "name")?.stringValue)
             let handler = try #require(try values("cocoa", "class", in: command).first)
             let handlerClass: AnyClass = try #require(NSClassFromString(handler))
-            #expect(handlerClass is NSScriptCommand.Type, "\(handler) is not a script command")
-            // Every verb addresses a VM, or a list of them, and the direct
-            // parameter is what a script names them with.
-            #expect(
-                try values("direct-parameter/type", "type", in: command)
-                    == ["virtual machine", "virtual machine"])
+            #expect(handlerClass is VMScriptCommand.Type, "\(handler) is not a Kernova verb")
+            let type = try #require(addressed[name])
+            #expect(try values("direct-parameter/type", "type", in: command) == [type, type])
             #expect(try values("direct-parameter/type", "list", in: command) == ["yes"])
         }
     }
@@ -70,7 +72,14 @@ struct KernovaScriptingDefinitionTests {
         let classes: [(name: String, object: NSObject.Type, keys: [String])] = [
             (
                 "virtual machine", VMScriptObject.self,
-                VMInfo.Field.allCases.compactMap(VMScriptObject.key(carrying:)) + [VMScriptObject.storageDisksKey]
+                VMInfo.Field.allCases.compactMap(VMScriptObject.key(carrying:))
+                    + [VMScriptObject.storageDisksKey, VMScriptObject.snapshotsKey]
+            ),
+            (
+                "snapshot", VMSnapshotScriptObject.self,
+                SnapshotSummary.Field.allCases.map(VMSnapshotScriptObject.key(carrying:))
+                    // Measured apart from the listing.
+                    + [#keyPath(VMSnapshotScriptObject.size), #keyPath(VMSnapshotScriptObject.privateSize)]
             ),
             (
                 "guest agent", VMGuestAgentScriptObject.self,
@@ -324,5 +333,25 @@ struct KernovaScriptingDefinitionTests {
         #expect(
             try values("class[@name='storage disk']/property[@name='kind']", "type", in: suite)
                 == ["storage disk kind"])
+    }
+
+    @Test("Every kind of snapshot has a term a script can compare against")
+    func everySnapshotKindHasAnEnumerator() throws {
+        let declared = try enumerators("snapshot kind")
+
+        // `VMScriptSnapshotKind` covers every `VMSnapshotKind` by an exhaustive
+        // switch, so a new kind cannot compile without landing here.
+        let terms: [VMScriptSnapshotKind: String] = [.warm: "warm", .cold: "cold"]
+
+        #expect(declared.count == VMScriptSnapshotKind.allCases.count)
+        for kind in VMScriptSnapshotKind.allCases {
+            let term = try #require(terms[kind], "No term for \(kind)")
+            #expect(declared[term] == kind.code, "No \(term) enumerator")
+        }
+        #expect(VMScriptSnapshotKind(wireName: "warm") == .warm)
+        #expect(VMScriptSnapshotKind(wireName: "cold") == .cold)
+        let suite = try loadSuite()
+        #expect(
+            try values("class[@name='snapshot']/property[@name='kind']", "type", in: suite) == ["snapshot kind"])
     }
 }

@@ -3,7 +3,21 @@
 
 <dictionary title="Kernova Terminology" xmlns:xi="http://www.w3.org/2001/XInclude">
 
-	<xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef" xpointer="xpointer(/dictionary/suite)"/>
+	<suite name="Standard Suite" code="????" description="Common classes and commands for all applications.">
+
+		<xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef" xpointer="xpointer(/dictionary/suite/node()[not(self::command and @name = 'delete')])"/>
+
+		<!-- The Standard Suite's delete, with the consent a snapshot's delete refuses without, and the class that deletes a snapshot by what its reference evaluates to. -->
+		<command name="delete" code="coredelo" description="Delete an object.">
+			<cocoa class="VMDeleteScriptCommand"/>
+			<access-group identifier="*"/>
+			<direct-parameter type="specifier" description="The object(s) to delete."/>
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent deleting a snapshot refuses without.">
+				<cocoa key="Confirmation"/>
+			</parameter>
+		</command>
+
+	</suite>
 
 	<suite name="Kernova Suite" code="Krnv" description="Classes and commands for controlling virtual machines.">
 
@@ -46,6 +60,11 @@
 		<enumeration name="storage disk kind" code="KvDK" description="The bus the guest sees a storage disk on.">
 			<enumerator name="virtio" code="KdVi" description="A virtio block device."/>
 			<enumerator name="USB mass storage" code="KdUs" description="A USB mass storage device."/>
+		</enumeration>
+
+		<enumeration name="snapshot kind" code="KvSK" description="What a snapshot captured.">
+			<enumerator name="warm" code="KkWa" description="Its disks and settings, and the guest&#8217;s memory."/>
+			<enumerator name="cold" code="KkCo" description="Its disks and settings, without the guest&#8217;s memory."/>
 		</enumeration>
 
 		<class-extension extends="application" description="Kernova’s top-level scripting object.">
@@ -154,6 +173,45 @@
 				<accessor style="range"/>
 				<accessor style="test"/>
 			</element>
+			<element type="snapshot" description="Its snapshots, newest first. Several can share a name: snapshot &#8220;&#8230;&#8221; refuses one more than one of them carries, listing their ids.">
+				<cocoa key="snapshots"/>
+				<accessor style="index"/>
+				<accessor style="name"/>
+				<accessor style="id"/>
+				<accessor style="range"/>
+				<accessor style="test"/>
+			</element>
+		</class>
+
+		<class name="snapshot" code="KvSn" plural="snapshots" description="A virtual machine&#8217;s named restore point. Take one with make new snapshot at a virtual machine, with properties {name:&#8230;, notes:&#8230;}; with no name, Kernova names it Snapshot, then Snapshot 2, and so on. Its sizes are measured from its files each time a script reads them.">
+			<cocoa class="VMSnapshotScriptObject"/>
+			<property name="id" code="ID  " type="text" access="r" description="Its stable identifier, unique among its virtual machine&#8217;s snapshots.">
+				<cocoa key="uniqueID"/>
+			</property>
+			<property name="name" code="pnam" type="text" description="Its name, which another of its virtual machine&#8217;s snapshots can share. Setting it renames it.">
+				<cocoa key="name"/>
+			</property>
+			<property name="notes" code="KvNo" type="text" description="The user&#8217;s note on it, empty when there is none. Setting it replaces the note, trimmed of leading and trailing spaces and line breaks; empty text clears it.">
+				<cocoa key="notes"/>
+			</property>
+			<property name="kind" code="KvKd" type="snapshot kind" access="r" description="What it captured.">
+				<cocoa key="kind"/>
+			</property>
+			<property name="creation date" code="ascd" type="date" access="r" description="When it was taken.">
+				<cocoa key="creationDate"/>
+			</property>
+			<property name="current" code="KvCu" type="boolean" access="r" description="Whether its virtual machine&#8217;s state descends from it.">
+				<cocoa key="current"/>
+			</property>
+			<property name="ephemeral baseline" code="KvEb" type="boolean" access="r" description="Whether it is the snapshot its virtual machine returns to at every shutdown in Ephemeral Mode. Deleting it is refused while it is.">
+				<cocoa key="ephemeralBaseline"/>
+			</property>
+			<property name="size" code="ptsz" type="real" access="r" description="What its files take on their volume, space they share with other files included, in gigabytes of 10^9 bytes, or missing value when they can&#8217;t be read.">
+				<cocoa key="size"/>
+			</property>
+			<property name="private size" code="KvPz" type="real" access="r" description="The part of its size no other file shares, the space freed once it is deleted and the Trash is emptied, in gigabytes of 10^9 bytes; missing value on a volume that can&#8217;t clone files, where size is that space, or when its files can&#8217;t be read.">
+				<cocoa key="privateSize"/>
+			</property>
 		</class>
 
 		<class name="guest agent" code="KvGA" plural="guest agents" description="A Kernova guest agent in a virtual machine&#8217;s guest.">
@@ -297,6 +355,17 @@
 				<type type="virtual machine"/>
 				<type type="virtual machine" list="yes"/>
 			</direct-parameter>
+		</command>
+
+		<command name="revert to" code="KrnvRvrt" description="Return a snapshot&#8217;s virtual machine to it.">
+			<cocoa class="VMRevertScriptCommand"/>
+			<direct-parameter description="The snapshot to revert its virtual machine to, or a list of them.">
+				<type type="snapshot"/>
+				<type type="snapshot" list="yes"/>
+			</direct-parameter>
+			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent a revert refuses without, running the virtual machine beside an active one with the same machine ID included, where Kernova&#8217;s Settings allow starting one anyway.">
+				<cocoa key="Confirmation"/>
+			</parameter>
 		</command>
 
 	</suite>

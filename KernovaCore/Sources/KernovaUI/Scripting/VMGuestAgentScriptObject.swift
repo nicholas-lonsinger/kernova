@@ -7,7 +7,7 @@ import KernovaLogging
 /// `guest agent`, each ``VMAgentLine`` field read by the key
 /// ``key(carrying:)`` names.
 ///
-/// A snapshot of one read, like ``VMScriptObject``: the VM rebuilds its list
+/// A copy of one read, like ``VMScriptObject``: the VM rebuilds its list
 /// on every specifier evaluation. Every property is read only.
 @MainActor
 @objc(VMGuestAgentScriptObject)

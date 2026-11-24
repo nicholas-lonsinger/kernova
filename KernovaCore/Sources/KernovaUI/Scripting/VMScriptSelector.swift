@@ -2,7 +2,7 @@ import Cocoa
 import KernovaCommandModel
 import KernovaCore
 
-/// How one Apple event addresses the VMs its verb runs on.
+/// How one Apple event addresses the VMs or snapshots its verb runs on.
 ///
 /// A specifier that names a VM on its own — by name or by identifier, as an
 /// element of the application — is read *unevaluated*: the name reaches the
@@ -19,18 +19,50 @@ enum VMScriptSelector {
     ///   ``CommandError/invalidArgument(_:)`` for a list item that is not a
     ///   specifier.
     static func selectors(addressing parameter: Any) throws -> [VMSelector] {
-        if let specifier = parameter as? NSScriptObjectSpecifier {
-            return try selectors(addressing: specifier)
+        try specifiers(in: parameter, naming: "virtual machine").flatMap { specifier in
+            try selectors(addressing: specifier)
         }
+    }
+
+    /// The snapshots `parameter` addresses — one specifier, or a list of them
+    /// — each evaluated, in the order it named them.
+    ///
+    /// Evaluated whole, VM included: a snapshot's VM container reached by name
+    /// resolves through the core as a VM a verb names does
+    /// (`valueInVirtualMachinesWithName:`).
+    ///
+    /// - Throws: As ``selectors(addressing:)-swift.type.method`` does.
+    static func snapshots(addressing parameter: Any) throws -> [VMSnapshotAddress] {
+        try specifiers(in: parameter, naming: "snapshot").flatMap { specifier in
+            try snapshots(addressing: specifier, in: nil)
+        }
+    }
+
+    /// The snapshots `specifier` addresses, evaluated as
+    /// ``snapshots(addressing:)`` evaluates one — against `containers` where
+    /// Cocoa evaluated them apart from it, as it does a `delete`'s.
+    ///
+    /// - Throws: As ``snapshots(addressing:)`` does.
+    static func snapshots(
+        addressing specifier: NSScriptObjectSpecifier, in containers: Any?
+    ) throws -> [VMSnapshotAddress] {
+        try objects(evaluating: specifier, in: containers, as: VMSnapshotScriptObject.self).map { $0.address }
+    }
+
+    /// `parameter` as the specifiers it holds: one, or a list of them.
+    ///
+    /// - Throws: ``CommandError/invalidArgument(_:)`` for anything else, or a
+    ///   list item that is not a specifier.
+    private static func specifiers(in parameter: Any, naming noun: String) throws -> [NSScriptObjectSpecifier] {
+        if let specifier = parameter as? NSScriptObjectSpecifier { return [specifier] }
         guard let list = parameter as? [Any] else {
-            throw CommandError.invalidArgument("Name a virtual machine, or a list of them.")
+            throw CommandError.invalidArgument("Name a \(noun), or a list of them.")
         }
-        return try list.enumerated().flatMap { index, item in
+        return try list.enumerated().map { index, item in
             guard let specifier = item as? NSScriptObjectSpecifier else {
-                throw CommandError.invalidArgument(
-                    "A list here names virtual machines only; item \(index + 1) is not one.")
+                throw CommandError.invalidArgument("A list here names \(noun)s only; item \(index + 1) is not one.")
             }
-            return try selectors(addressing: specifier)
+            return specifier
         }
     }
 
@@ -48,10 +80,7 @@ enum VMScriptSelector {
         if let named = selector(naming: specifier) {
             return [named]
         }
-        guard let evaluated = specifier.objectsByEvaluatingSpecifier else {
-            throw VMScriptEvaluationFailure(specifier)
-        }
-        return try selectors(resolvedTo: evaluated)
+        return try objects(evaluating: specifier, as: VMScriptObject.self).map(\.selector)
     }
 
     /// The VM `specifier` names by itself, `nil` when reading it takes an
@@ -77,17 +106,30 @@ enum VMScriptSelector {
         }
     }
 
-    /// The VMs a specifier evaluated to, each addressed by identifier.
-    private static func selectors(resolvedTo evaluated: Any) throws -> [VMSelector] {
-        let objects = evaluated as? [Any] ?? [evaluated]
-        return try objects.map { object in
-            guard let vm = object as? VMScriptObject else {
-                // The event named something the dictionary has that is not a
-                // VM, which Cocoa's own dispatch answers as an object with no
-                // handler for the verb.
+    /// What `specifier` evaluates to — against `containers`, or else its own
+    /// container chain — each of it an `Element`, in order.
+    ///
+    /// A list Cocoa answers for each of several containers — `every snapshot
+    /// of every virtual machine` — is read through.
+    ///
+    /// - Throws: ``VMScriptEvaluationFailure`` when Cocoa could not evaluate
+    ///   the specifier, or evaluated it to something that is not an `Element`.
+    private static func objects<Element>(
+        evaluating specifier: NSScriptObjectSpecifier, in containers: Any? = nil, as _: Element.Type
+    ) throws -> [Element] {
+        let evaluated = containers.map { specifier.objectsByEvaluating(withContainers: $0) }
+        guard let evaluated = evaluated ?? specifier.objectsByEvaluatingSpecifier else {
+            throw VMScriptEvaluationFailure(specifier)
+        }
+        func items(_ value: Any) -> [Any] { (value as? [Any])?.flatMap(items) ?? [value] }
+        return try items(evaluated).map { object in
+            guard let element = object as? Element else {
+                // The event named something else the dictionary has, which
+                // Cocoa's own dispatch answers as an object with no handler
+                // for the verb.
                 throw VMScriptEvaluationFailure(number: Int(errAEEventNotHandled))
             }
-            return vm.selector
+            return element
         }
     }
 
