@@ -64,8 +64,18 @@ struct KernovaScriptingDefinitionTests {
                 #expect(try values("direct-parameter/type", "type", in: command) == ["file", "text"])
                 continue
             }
-            #expect(try values("direct-parameter/type", "type", in: command) == [type, type])
+            // A group action's verb takes a group too, and answers what it
+            // acted on; every other verb on VMs answers nothing.
+            let actsOnGroups = handlerClass is any VMGroupActionCommand.Type
+            let groups = actsOnGroups ? ["smart group", "folder"] : []
+            #expect(try values("direct-parameter/type", "type", in: command) == [type, type] + groups)
             #expect(try values("direct-parameter/type", "list", in: command) == ["yes"])
+            if type == "virtual machine" {
+                #expect(command.elements(forName: "result").count == (actsOnGroups ? 1 : 0), "\(name)")
+                let answers = try values("result/type", "type", in: command)
+                #expect(answers == (actsOnGroups ? ["specifier", "specifier"] : []), "\(name)")
+                #expect(try values("result/type", "list", in: command) == (actsOnGroups ? ["yes"] : []), "\(name)")
+            }
         }
     }
 
@@ -106,6 +116,14 @@ struct KernovaScriptingDefinitionTests {
             (
                 "network", VMNetworkScriptObject.self,
                 NetworkSummary.Field.allCases.map(VMNetworkScriptObject.key(carrying:))
+            ),
+            (
+                "smart group", VMSmartGroupScriptObject.self,
+                GroupSummary.Field.allCases.compactMap(VMGroupScriptObject.key(carrying:))
+            ),
+            (
+                "folder", VMFolderScriptObject.self,
+                GroupSummary.Field.allCases.compactMap(VMGroupScriptObject.key(carrying:))
             ),
         ]
 

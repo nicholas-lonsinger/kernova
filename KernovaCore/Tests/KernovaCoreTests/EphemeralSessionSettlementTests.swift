@@ -177,7 +177,7 @@ struct EphemeralSessionSettlementTests {
         case .guestFails:
             instance.activity.deliverSessionEvent(.didStopWithError(Probe()), from: session)
         }
-        try await restart.joined()
+        _ = try await restart.joined()
 
         #expect(virtualization.revertCallCount == 0)
         // The disks the session left, booted cold — not the baseline's saved

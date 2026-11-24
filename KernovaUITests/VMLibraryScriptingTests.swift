@@ -139,19 +139,30 @@ struct VMLibraryScriptingTests {
         /// `delete virtual machine "Solo" of network "Lab"`, where the one VM
         /// called Solo is on no network.
         case notOnTheNetwork
+        /// `delete virtual machine "Build" of folder "Lab"`.
+        case folder
+        /// `delete virtual machine "Solo" of folder "Lab"`, where the one VM
+        /// called Solo is in no folder.
+        case notInTheFolder
 
         /// The event's reference.
         @MainActor
         func reference() -> NSAppleEventDescriptor {
             let lab = ScriptEvent.element("KvNw", named: "Lab")
+            let folder = ScriptEvent.element("KvGF", named: "Lab")
             return switch self {
             case .application: VMLibraryScriptingTests.vm(named: "Build")
             case .network: ScriptEvent.element("KvVM", named: "Build", of: lab)
             case .snapshotOfNetwork:
                 ScriptEvent.element("KvSn", named: "Clean", of: ScriptEvent.element("KvVM", named: "Build", of: lab))
             case .notOnTheNetwork: ScriptEvent.element("KvVM", named: "Solo", of: lab)
+            case .folder: ScriptEvent.element("KvVM", named: "Build", of: folder)
+            case .notInTheFolder: ScriptEvent.element("KvVM", named: "Solo", of: folder)
             }
         }
+
+        /// Whether the one VM called Solo is the name the form refuses.
+        var namesSolo: Bool { self == .notOnTheNetwork || self == .notInTheFolder }
     }
 
     @Test(
@@ -172,6 +183,7 @@ struct VMLibraryScriptingTests {
             wired.register(name: "build", snapshots: [clean], mutate: member),
         ]
         let solo = wired.register(name: "Solo")
+        try wired.library.organization.createFolder(named: "Lab", members: builds.map(\.id))
         let host = ScriptHost()
         let gateway = await makeGateway(wired, host: host)
 
@@ -182,9 +194,9 @@ struct VMLibraryScriptingTests {
             to: gateway)
 
         #expect(reply.errorNumber == Int(errAENoSuchObject))
-        let named = form == .notOnTheNetwork ? [solo] : builds
+        let named = form.namesSolo ? [solo] : builds
         for vm in named {
-            #expect(reply.errorString?.contains(form == .notOnTheNetwork ? vm.name : vm.id.uuidString) == true)
+            #expect(reply.errorString?.contains(form.namesSolo ? vm.name : vm.id.uuidString) == true)
         }
         #expect(Set(wired.library.instances.map(\.id)) == Set((builds + [solo]).map(\.id)))
         #expect(wired.storage.deleteVMBundleCallCount + wired.storage.permanentlyDeleteVMBundleCallCount == 0)

@@ -2,10 +2,8 @@ import Foundation
 
 /// One lifecycle action taken on every virtual machine in a smart group or a
 /// folder — the header menu's Start All, Suspend All, Stop All and Restart
-/// All, the
-/// `kernova` lifecycle verbs given a group, and the Shortcuts group action —
-/// and, as ``start``, the app's launch pass over the VMs marked to start
-/// automatically.
+/// All, and the same action from every other door — and, as ``start``, the
+/// app's launch pass over the VMs marked to start automatically.
 public enum VMGroupAction: String, Codable, Sendable, Hashable, CaseIterable {
     /// Brings up each VM whose state takes it: a start, the restore of a
     /// suspended session, or the resume of a paused guest.
@@ -56,6 +54,11 @@ public struct VMGroupActionReport: Codable, Sendable, Hashable {
 
     /// The VMs the action concerned and left undone, in the group's order.
     public var undone: [VMGroupActionResult] { results.undone }
+
+    /// The VMs the action was done to, in the group's order.
+    public var done: [VMGroupActionResult] {
+        results.filter { if case .done = $0.outcome { true } else { false } }
+    }
 
     /// What a surface heads its account of ``undone`` with.
     public var undoneTitle: String {

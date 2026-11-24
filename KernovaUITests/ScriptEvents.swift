@@ -220,6 +220,10 @@ struct ScriptReply {
         switch result {
         case let descriptor as NSAppleEventDescriptor: descriptor
         case let specifier as NSScriptObjectSpecifier: specifier.descriptor
+        case let specifiers as [NSScriptObjectSpecifier]:
+            specifiers.compactMap(\.descriptor).reduce(into: NSAppleEventDescriptor.list()) {
+                $0.insert($1, at: $0.numberOfItems + 1)
+            }
         default: nil
         }
     }

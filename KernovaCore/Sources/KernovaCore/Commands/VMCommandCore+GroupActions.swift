@@ -3,9 +3,8 @@ import KernovaCommandModel
 import KernovaLogging
 
 /// Start, suspend, stop or restart every VM in a set — the one executor
-/// behind the group header menus, the `kernova` lifecycle verbs given a group,
-/// the Shortcuts group action, and the launch pass that starts the VMs marked
-/// to start automatically.
+/// behind every door's group action and the launch pass that starts the VMs
+/// marked to start automatically.
 extension VMCommandCore {
     /// How many of the VMs in `group` each action acts on — what the actions'
     /// menu items count, by the rule the actions themselves act by
@@ -53,7 +52,7 @@ extension VMCommandCore {
     ///   library does not list, and ``CommandError/operationFailed(verb:title:message:recovery:)``
     ///   when the library's groups cannot be read — both before any VM is
     ///   acted on.
-    func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws -> VMGroupActionReport {
+    package func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws -> VMGroupActionReport {
         library.refreshFromOtherCopies(reportingUnreadable: false)
         let resolved = try self.group(group, verb: action.verb)
         let set = MemberSet(
@@ -418,5 +417,15 @@ extension VMCommandCore {
         default:
             .failed(error: refusal.dto)
         }
+    }
+}
+
+extension VMGroupActionReport {
+    /// The failure the action answers with when it left a VM it concerned
+    /// undone — ``undoneTitle`` over ``undoneMessage(in:)`` in `vocabulary` —
+    /// or `nil` when it left none.
+    package func undoneFailure(in vocabulary: VMVerbVocabulary) -> CommandError? {
+        guard !undone.isEmpty else { return nil }
+        return .operationFailed(verb: action.verb, title: undoneTitle, message: undoneMessage(in: vocabulary))
     }
 }

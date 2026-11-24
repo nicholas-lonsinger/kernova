@@ -82,7 +82,7 @@ final class VMScriptingGateway {
         return commands.list(.all).compactMap { object(for: $0.id) }
     }
 
-    /// The one VM called `name`, resolved by the core — among `network`'s
+    /// The one VM called `name`, resolved by the core — among `scope`'s
     /// members when it is given — or nothing, with the command asking
     /// deferred, until the library has landed.
     ///
@@ -92,15 +92,14 @@ final class VMScriptingGateway {
     /// name no VM answers to in its own words too — both recorded on the
     /// command being answered, so the script reads the refusal every other door
     /// shows rather than a bare "can't get".
-    func virtualMachine(named name: String, on network: NetworkSummary? = nil) -> VMScriptObject? {
+    func virtualMachine(named name: String, in scope: VMNameScope? = nil) -> VMScriptObject? {
         guard !deferUntilLanded() else { return nil }
         do {
-            return VMScriptObject(
-                try commands.info(.name(name), among: network.map { Set($0.members.map(\.id)) }), gateway: self)
-        } catch CommandError.notFound where network != nil {
+            return VMScriptObject(try commands.info(.name(name), among: scope?.members), gateway: self)
+        } catch CommandError.notFound where scope != nil {
             answering?.refuse(
                 CommandError.itemNotFoundOnHost(
-                    item: "virtual machine named \u{201C}\(name)\u{201D} on \u{201C}\(network?.name ?? "")\u{201D}"))
+                    item: "virtual machine named \u{201C}\(name)\u{201D} \(scope?.placement ?? "")"))
             return nil
         } catch let refusal as CommandError {
             answering?.refuse(refusal)
@@ -548,17 +547,19 @@ final class VMScriptingGateway {
         if let work = verb.work(on: self) { evaluating.work.append(work) }
     }
 
-    /// The VMs `verb` addresses — its direct parameter, one specifier or a
-    /// list of them, or the `tell` block's subject, which Cocoa promotes into
-    /// the same slot — or `nil` with the refusal recorded on it.
-    func virtualMachines(addressedBy verb: VMScriptCommand) -> [VMSelector]? {
+    /// The VMs or the group `verb` addresses
+    /// (``VMScriptSelector/lifecycleSubject(addressing:)``) — its direct
+    /// parameter, one specifier or a list of them, or the `tell` block's
+    /// subject, which Cocoa promotes into the same slot — or `nil` with the
+    /// refusal recorded on it.
+    func subject(addressedBy verb: VMScriptCommand) -> VMScriptSelector.LifecycleSubject? {
         addressed(
             by: verb, unnamed: "Name the virtual machine to \(verb.commandDescription.commandName).",
-            { try VMScriptSelector.selectors(addressing: $0) })
+            { try VMScriptSelector.lifecycleSubject(addressing: $0) })
     }
 
-    /// The snapshots `verb` addresses, as ``virtualMachines(addressedBy:)``
-    /// reads VMs — each evaluated, so a reference names the snapshot its VM
+    /// The snapshots `verb` addresses, as ``subject(addressedBy:)`` reads
+    /// VMs — each evaluated, so a reference names the snapshot its VM
     /// lists under it as the dispatch reads it.
     func snapshots(addressedBy verb: VMScriptCommand, unnamed: String) -> [VMSnapshotAddress]? {
         addressed(by: verb, unnamed: unnamed, { try VMScriptSelector.snapshots(addressing: $0) })
@@ -604,7 +605,9 @@ final class VMScriptingGateway {
 
     // MARK: - Lifecycle
 
-    func start(_ selectors: [VMSelector], recoveryMode: Bool, confirmation: Bool) async throws {
+    /// Starts each VM, answering the identifier of each one started, in
+    /// order.
+    func start(_ selectors: [VMSelector], recoveryMode: Bool, confirmation: Bool) async throws -> [UUID] {
         try await perform(.start, on: selectors) { selector in
             try await self.commands.start(
                 selector, recovery: recoveryMode, consent: Self.consent(confirmation))
@@ -612,11 +615,12 @@ final class VMScriptingGateway {
     }
 
     /// Stops each VM the way `method` names, with `confirmation` as the
-    /// consent a destructive stop refuses without.
+    /// consent a destructive stop refuses without, answering the identifier
+    /// of each one stopped, in order.
     func stop(
         _ selectors: [VMSelector], method: StopDisposition, confirmation: Bool,
         givingUpAfter timeout: TimeInterval?
-    ) async throws {
+    ) async throws -> [UUID] {
         try await perform(.stop, on: selectors) { selector in
             try await self.commands.stop(
                 selector, disposition: method, consent: Self.consent(confirmation), timeout: timeout)
@@ -630,11 +634,12 @@ final class VMScriptingGateway {
     }
 
     /// Restarts each VM, taking it down the way `method` names, with
-    /// `confirmation` as the consent a destructive restart refuses without.
+    /// `confirmation` as the consent a destructive restart refuses without,
+    /// answering the identifier of each one restarted, in order.
     func restart(
         _ selectors: [VMSelector], method: StopDisposition, confirmation: Bool,
         givingUpAfter timeout: TimeInterval?
-    ) async throws {
+    ) async throws -> [UUID] {
         try await perform(.restart, on: selectors) { selector in
             try await self.commands.restart(
                 selector, disposition: method, timeout: timeout, consent: Self.consent(confirmation))
@@ -653,7 +658,9 @@ final class VMScriptingGateway {
         }
     }
 
-    func suspend(_ selectors: [VMSelector]) async throws {
+    /// Suspends each VM, answering the identifier of each one suspended, in
+    /// order.
+    func suspend(_ selectors: [VMSelector]) async throws -> [UUID] {
         try await perform(.suspend, on: selectors) {
             try await self.commands.suspend($0)
         }
@@ -1026,11 +1033,13 @@ final class VMScriptingGateway {
     ///
     /// Cocoa inserts what this answers into the element afterwards, which
     /// therefore has nothing left to do. Every other element is refused:
-    /// Cocoa's own answer allocates the class with `init()`, which
-    /// ``VMScriptObject`` does not have.
+    /// Cocoa's own answer allocates the class with `init()`, which none of
+    /// their classes has.
     func makeElement(forKey key: String, name: String?, kind: NSNumber?) -> VMNetworkScriptObject? {
         guard key == VMScriptingRoot.networksKey else {
-            refuseToMake(Self.cannotMakeVirtualMachine)
+            refuseToMake(
+                VMScriptingRoot.groupKind(forKey: key).map { "A script can\u{2019}t make a \($0.noun)." }
+                    ?? Self.cannotMakeVirtualMachine)
             return nil
         }
         return run(.createNetwork, on: nil) {
@@ -1119,6 +1128,54 @@ final class VMScriptingGateway {
         }
     }
 
+    // MARK: - Groups
+
+    /// The library's smart groups or folders, as `kind` says, in the order
+    /// the sidebar lists them — or nothing, with the command asking deferred,
+    /// until the library has landed, and with the command refused while the
+    /// library's groups cannot be read.
+    func groups(of kind: VMGroupKind) -> [VMGroupScriptObject] {
+        guard !deferUntilLanded() else { return [] }
+        return run(.groups, on: nil) { try commands.groups() }?.filter { $0.kind == kind }.map(object(for:)) ?? []
+    }
+
+    /// The group of `kind` that `name` names, by the core's rule — or `nil`,
+    /// deferred until the library has landed, or with the core's refusal
+    /// recorded on the command being answered.
+    func group(_ kind: VMGroupKind, named name: String) -> VMGroupScriptObject? {
+        guard !deferUntilLanded() else { return nil }
+        return run(.groups, on: nil) { try commands.group(VMGroupReference(kind, named: name)) }.map(object(for:))
+    }
+
+    /// Refuses Cocoa's removal of a group of `kind` by index, which a
+    /// `delete` or a `move` of one asks for: a script deletes and moves none.
+    func refuseToRemove(_ kind: VMGroupKind) {
+        guard let command = answering else { return }
+        command.refuse(
+            Int(errAENotModifiable),
+            "A script can\u{2019}t \(command is NSDeleteCommand ? "delete" : "move") a \(kind.noun).")
+    }
+
+    /// One group's read, with the VMs in it.
+    private func object(for group: GroupSummary) -> VMGroupScriptObject {
+        VMGroupScriptObject.make(group, members: group.members.compactMap { object(for: $0.id) }, gateway: self)
+    }
+
+    /// Takes `action` on every VM in `group` — a lifecycle command given a
+    /// smart group or folder — answering a reference to each VM it was done
+    /// to, in the group's order.
+    ///
+    /// - Throws: The core's refusal of the group, before any VM is acted on,
+    ///   and ``VMGroupActionReport/undoneFailure(in:)`` once every VM's turn
+    ///   has come, when the action left one it concerned undone.
+    func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws -> [NSScriptObjectSpecifier] {
+        try await perform(action.verb, on: [group], naming: \.name) { group in
+            let report = try await self.commands.groupAction(action, on: group)
+            if let failure = report.undoneFailure(in: .appleScript) { throw failure }
+            return report.done.compactMap { VMScriptObject.specifier(for: $0.vm.id) }
+        }.first ?? []
+    }
+
     // MARK: - Dispatch
 
     /// Runs `verb` on each VM, as ``perform(_:on:naming:_:)`` runs it on each
@@ -1162,6 +1219,26 @@ final class VMScriptingGateway {
             }
             return answers
         }
+    }
+}
+
+/// A container other than the application that a script names a VM under:
+/// the VMs it holds, and where a refusal places a name none of them carries.
+struct VMNameScope {
+    let members: Set<UUID>
+    /// Where the container is, as a sentence ends: "on “Lab”".
+    let placement: String
+
+    /// The VMs that join `network`.
+    init(_ network: NetworkSummary) {
+        members = Set(network.members.map(\.id))
+        placement = "on \u{201C}\(network.name)\u{201D}"
+    }
+
+    /// The VMs in `group`.
+    init(_ group: GroupSummary) {
+        members = Set(group.members.map(\.id))
+        placement = "in the \(group.kind.noun) \u{201C}\(group.name)\u{201D}"
     }
 }
 

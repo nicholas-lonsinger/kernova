@@ -1,10 +1,11 @@
 import Cocoa
+import KernovaCommandModel
 import KernovaCore
 
 /// The application's delegate as the scripting root: `NSApplication` is the
-/// root of the dictionary, which gives it `virtual machines` and `networks`
-/// elements — keys it forwards here, and every one of which reaches
-/// ``scriptingGateway``.
+/// root of the dictionary, which gives it `virtual machines`, `networks`,
+/// `smart groups` and `folders` elements — keys it forwards here, and every
+/// one of which reaches ``scriptingGateway``.
 ///
 /// Every command Cocoa builds from a script's event reaches the gateway
 /// through here: Cocoa hands a command nothing else to work with.
@@ -25,8 +26,24 @@ package class VMScriptingRoot: NSObject, NSApplicationDelegate {
     /// The literal KVC key the dictionary's `network` element is declared with.
     nonisolated static let networksKey = "networks"
 
+    /// The literal KVC key the dictionary's `smart group` or `folder` element
+    /// is declared with, as `kind` says.
+    nonisolated static func groupsKey(of kind: VMGroupKind) -> String {
+        switch kind {
+        case .smartGroup: "smartGroups"
+        case .folder: "folders"
+        }
+    }
+
+    /// The kind of group the element under `key` holds, `nil` for an element
+    /// that holds none.
+    nonisolated static func groupKind(forKey key: String?) -> VMGroupKind? {
+        VMGroupKind.allCases.first { groupsKey(of: $0) == key }
+    }
+
     /// Every element key the application's dictionary entry declares.
-    package nonisolated static let scriptingKeys: Set<String> = [virtualMachinesKey, networksKey]
+    package nonisolated static let scriptingKeys = Set(
+        [virtualMachinesKey, networksKey] + VMGroupKind.allCases.map(groupsKey(of:)))
 
     /// Every VM in the library, as the dictionary's `virtual machine` elements.
     ///
@@ -42,7 +59,7 @@ package class VMScriptingRoot: NSObject, NSApplicationDelegate {
     /// Cocoa's own answer, without this, is the first VM whose name matches
     /// case-insensitively — which for two VMs sharing a display name is
     /// whichever the library lists first, described to the script as though it
-    /// were the one asked for. ``VMScriptingGateway/virtualMachine(named:)``
+    /// were the one asked for. ``VMScriptingGateway/virtualMachine(named:in:)``
     /// resolves the name through the core instead, and a name the core refuses
     /// — as ambiguous, or as unknown — reads back in the core's words.
     @objc(valueInVirtualMachinesWithName:)
@@ -55,6 +72,63 @@ package class VMScriptingRoot: NSObject, NSApplicationDelegate {
     @objc var networks: [VMNetworkScriptObject] {
         scriptingGateway?.networks() ?? []
     }
+
+    /// Every smart group, as the dictionary's `smart group` elements, read as
+    /// ``virtualMachines`` is.
+    @objc var smartGroups: [VMGroupScriptObject] {
+        scriptingGateway?.groups(of: .smartGroup) ?? []
+    }
+
+    /// The named-element accessor Cocoa resolves `smart group "…"` through,
+    /// by the core's rule for naming a group — see
+    /// ``VMScriptingGateway/group(_:named:)``.
+    @objc(valueInSmartGroupsWithName:)
+    func valueInSmartGroups(withName name: String) -> VMGroupScriptObject? {
+        scriptingGateway?.group(.smartGroup, named: name)
+    }
+
+    /// Every folder, as the dictionary's `folder` elements, read as
+    /// ``virtualMachines`` is.
+    @objc var folders: [VMGroupScriptObject] {
+        scriptingGateway?.groups(of: .folder) ?? []
+    }
+
+    /// The named-element accessor Cocoa resolves `folder "…"` through — see
+    /// ``valueInSmartGroups(withName:)``.
+    @objc(valueInFoldersWithName:)
+    func valueInFolders(withName name: String) -> VMGroupScriptObject? {
+        scriptingGateway?.group(.folder, named: name)
+    }
+
+    /// Where Cocoa removes a smart group for a `delete` or a `move` — see
+    /// ``VMScriptingGateway/refuseToRemove(_:)``.
+    @objc(removeFromSmartGroupsAtIndex:)
+    func removeFromSmartGroups(at index: Int) {
+        scriptingGateway?.refuseToRemove(.smartGroup)
+    }
+
+    /// Where Cocoa removes a folder for a `delete` or a `move` — see
+    /// ``VMScriptingGateway/refuseToRemove(_:)``.
+    @objc(removeFromFoldersAtIndex:)
+    func removeFromFolders(at index: Int) {
+        scriptingGateway?.refuseToRemove(.folder)
+    }
+
+    /// Where a `move` re-inserts the smart group it removed, which
+    /// ``removeFromSmartGroups(at:)`` refused: there is nothing to insert, and
+    /// the script reads that refusal.
+    ///
+    /// Cocoa's move inserts after a refused removal all the same. Without
+    /// this, its KVC fallback inserts into the Swift array ``smartGroups``
+    /// answered, whose bounds check traps where no exception handler can catch
+    /// it (observed in the test host on macOS 27; with the array answered as
+    /// an `NSArray`, Cocoa catches the exception, and the script reads −10000).
+    @objc(insertInSmartGroups:atIndex:)
+    func insertInSmartGroups(_ group: Any, at index: Int) {}
+
+    /// The folders' spelling of ``insertInSmartGroups(_:at:)``.
+    @objc(insertInFolders:atIndex:)
+    func insertInFolders(_ folder: Any, at index: Int) {}
 
     /// What `make new …` creates as an element of the application: Cocoa asks
     /// `NSApplication`, which forwards a key this delegate handles.

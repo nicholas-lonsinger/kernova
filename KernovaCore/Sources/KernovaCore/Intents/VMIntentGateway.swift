@@ -222,7 +222,7 @@ package final class VMIntentGateway {
 
     func start(_ id: UUID, recovery: Bool, consent: Consent) async throws {
         try await perform(.start, on: id) {
-            try await self.commands.start(.id(id), recovery: recovery, consent: consent)
+            _ = try await self.commands.start(.id(id), recovery: recovery, consent: consent)
         }
     }
 
@@ -231,7 +231,7 @@ package final class VMIntentGateway {
         givingUpAfter timeout: TimeInterval?
     ) async throws {
         try await perform(.stop, on: id) {
-            try await self.commands.stop(
+            _ = try await self.commands.stop(
                 .id(id), disposition: disposition, consent: consent, timeout: timeout)
         }
     }
@@ -247,7 +247,7 @@ package final class VMIntentGateway {
     }
 
     func suspend(_ id: UUID) async throws {
-        try await perform(.suspend, on: id) { try await self.commands.suspend(.id(id)) }
+        try await perform(.suspend, on: id) { _ = try await self.commands.suspend(.id(id)) }
     }
 
     func restart(
@@ -255,7 +255,7 @@ package final class VMIntentGateway {
         givingUpAfter timeout: TimeInterval?
     ) async throws {
         try await perform(.restart, on: id) {
-            try await self.commands.restart(
+            _ = try await self.commands.restart(
                 .id(id), disposition: disposition, timeout: timeout, consent: consent)
         }
     }
@@ -658,21 +658,13 @@ package final class VMIntentGateway {
     /// in the group's order and as they stand once it is done — less any
     /// deleted since its turn, which has nothing left to read.
     ///
-    /// A VM the action concerned and left undone fails the intent, with one
-    /// line per such VM — what the `kernova` tool's exit 10 and the app's
-    /// summary alert report.
+    /// A VM the action concerned and left undone fails the intent
+    /// (``VMGroupActionReport/undoneFailure(in:)``).
     func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws -> [VMEntity] {
         try await perform(action.verb, on: nil) {
             let report = try await self.commands.groupAction(action, on: group)
-            guard report.undone.isEmpty else {
-                throw CommandError.operationFailed(
-                    verb: action.verb, title: report.undoneTitle,
-                    message: report.undoneMessage(in: .shortcuts))
-            }
-            return report.results.compactMap { result in
-                guard case .done = result.outcome else { return nil }
-                return self.entity(for: result.vm.id, named: .beforeSuspension)
-            }
+            if let failure = report.undoneFailure(in: .shortcuts) { throw failure }
+            return report.done.compactMap { self.entity(for: $0.vm.id, named: .beforeSuspension) }
         }
     }
 

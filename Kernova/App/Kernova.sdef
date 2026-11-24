@@ -144,6 +144,22 @@
 				<accessor style="range"/>
 				<accessor style="test"/>
 			</element>
+			<element type="smart group" access="r" description="The library's smart groups, in the order the sidebar lists them.">
+				<cocoa key="smartGroups"/>
+				<accessor style="index"/>
+				<accessor style="name"/>
+				<accessor style="id"/>
+				<accessor style="range"/>
+				<accessor style="test"/>
+			</element>
+			<element type="folder" access="r" description="The library's folders, in the order the sidebar lists them.">
+				<cocoa key="folders"/>
+				<accessor style="index"/>
+				<accessor style="name"/>
+				<accessor style="id"/>
+				<accessor style="range"/>
+				<accessor style="test"/>
+			</element>
 		</class-extension>
 
 		<class name="virtual machine" code="KvVM" plural="virtual machines" description="One virtual machine in the library.">
@@ -353,11 +369,39 @@
 			</element>
 		</class>
 
-		<command name="start" code="KrnvStrt" description="Start a virtual machine, running whatever guest setup it still owes first.">
+		<class name="smart group" code="KvGS" plural="smart groups" description="A saved library filter, listed as a section of the sidebar: its virtual machines are the ones the filter admits as a script reads them. A smart group and a folder can share a name. Start, suspend, stop or restart one to do what its Start All, Suspend All, Stop All or Restart All does. A script can&#8217;t make, rename or delete one, or change its filter.">
+			<cocoa class="VMSmartGroupScriptObject"/>
+			<property name="id" code="ID  " type="text" access="r" description="Its stable identifier.">
+				<cocoa key="uniqueID"/>
+			</property>
+			<property name="name" code="pnam" type="text" access="r" description="Its name, unique among smart groups ignoring case.">
+				<cocoa key="name"/>
+			</property>
+			<element type="virtual machine" access="r" description="The virtual machines its filter admits, in library order. Several can share a name: virtual machine &#8220;&#8230;&#8221; of a smart group refuses one more than one of them carries, listing their ids.">
+				<cocoa key="virtualMachines"/>
+			</element>
+		</class>
+
+		<class name="folder" code="KvGF" plural="folders" description="A collection of virtual machines put in it by hand, listed as a section of the sidebar. A smart group and a folder can share a name. Start, suspend, stop or restart one to do what its Start All, Suspend All, Stop All or Restart All does. A script can&#8217;t make, rename or delete one, or change what it holds.">
+			<cocoa class="VMFolderScriptObject"/>
+			<property name="id" code="ID  " type="text" access="r" description="Its stable identifier.">
+				<cocoa key="uniqueID"/>
+			</property>
+			<property name="name" code="pnam" type="text" access="r" description="Its name, unique among folders ignoring case.">
+				<cocoa key="name"/>
+			</property>
+			<element type="virtual machine" access="r" description="The virtual machines in it, in its own order. Several can share a name: virtual machine &#8220;&#8230;&#8221; of a folder refuses one more than one of them carries, listing their ids.">
+				<cocoa key="virtualMachines"/>
+			</element>
+		</class>
+
+		<command name="start" code="KrnvStrt" description="Start a virtual machine, running whatever guest setup it still owes first. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default, and the command goes on in Kernova. Given several virtual machines, it takes them in turn and ends at the first one refused, leaving those before it started. Given a smart group or folder, it starts, restores or resumes each virtual machine in it whose state takes it, one after another, as Start All does, asking nothing, passing over one whose start would set up its guest, and taking no recovery mode or confirmation. One whose own start would ask something first, or fails, is left undone while the start goes on to the next; once each has had its turn, it errors with a line for each one left undone, and what it did to the others stands.">
 			<cocoa class="VMStartScriptCommand"/>
-			<direct-parameter description="The virtual machine to start, or a list of them.">
+			<direct-parameter description="The virtual machine to start, a list of them, or a smart group or folder.">
 				<type type="virtual machine"/>
 				<type type="virtual machine" list="yes"/>
+				<type type="smart group"/>
+				<type type="folder"/>
 			</direct-parameter>
 			<parameter name="recovery mode" code="Kprc" type="boolean" optional="yes" description="Cold-boot a stopped macOS guest into macOS Recovery.">
 				<cocoa key="RecoveryMode"/>
@@ -365,13 +409,19 @@
 			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Start it beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.">
 				<cocoa key="Confirmation"/>
 			</parameter>
+			<result description="The virtual machines it acted on, each as virtual machine id &#8220;&#8230;&#8221;: a reference for a reference to one virtual machine, and a list, in order, for a list of them, a reference to several, or a smart group or folder &#8212; for a group, those it started, restored or resumed.">
+				<type type="specifier"/>
+				<type type="specifier" list="yes"/>
+			</result>
 		</command>
 
-		<command name="stop" code="KrnvStop" description="Stop a virtual machine. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default.">
+		<command name="stop" code="KrnvStop" description="Stop a virtual machine. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default, and the command goes on in Kernova. Given several virtual machines, it takes them in turn and ends at the first one refused, leaving those before it stopped. Given a smart group or folder, it asks each running guest in it to shut down, one after another, as Stop All does, asking nothing, passing over a paused or suspended one, and taking no method but normal, and no confirmation or giving up after. One whose own stop would ask something first, or fails, is left undone while the stop goes on to the next; once each has had its turn, it errors with a line for each one left undone, and what it did to the others stands.">
 			<cocoa class="VMStopScriptCommand"/>
-			<direct-parameter description="The virtual machine to stop, or a list of them.">
+			<direct-parameter description="The virtual machine to stop, a list of them, or a smart group or folder.">
 				<type type="virtual machine"/>
 				<type type="virtual machine" list="yes"/>
+				<type type="smart group"/>
+				<type type="folder"/>
 			</direct-parameter>
 			<parameter name="method" code="KpSm" type="VM stop method" optional="yes" description="How to reach a powered-off guest; normal by default.">
 				<cocoa key="StopMethod"/>
@@ -382,13 +432,19 @@
 			<parameter name="giving up after" code="givu" type="integer" optional="yes" description="Seconds to wait for the guest to power off before giving up and leaving it as it was.">
 				<cocoa key="GivingUpAfter"/>
 			</parameter>
+			<result description="The virtual machines it acted on, each as virtual machine id &#8220;&#8230;&#8221;: a reference for a reference to one virtual machine, and a list, in order, for a list of them, a reference to several, or a smart group or folder &#8212; for a group, those it asked to shut down.">
+				<type type="specifier"/>
+				<type type="specifier" list="yes"/>
+			</result>
 		</command>
 
-		<command name="restart" code="KrnvRstr" description="Shut a virtual machine's guest down and start it again. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default.">
+		<command name="restart" code="KrnvRstr" description="Shut a virtual machine's guest down and start it again. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default, and the command goes on in Kernova. Given several virtual machines, it takes them in turn and ends at the first one refused, leaving those before it restarted. Given a smart group or folder, it restarts every running guest in it at once, as Restart All does, asking nothing, passing over a paused or suspended one, and taking no method but normal, and no confirmation or giving up after. One whose own restart would ask something first, or fails, is left undone while the others restart; once each is back up or has failed, it errors with a line for each one left undone, and what it did to the others stands.">
 			<cocoa class="VMRestartScriptCommand"/>
-			<direct-parameter description="The virtual machine to restart, or a list of them.">
+			<direct-parameter description="The virtual machine to restart, a list of them, or a smart group or folder.">
 				<type type="virtual machine"/>
 				<type type="virtual machine" list="yes"/>
+				<type type="smart group"/>
+				<type type="folder"/>
 			</direct-parameter>
 			<parameter name="method" code="KpSm" type="VM stop method" optional="yes" description="How to take the guest down before starting it again; normal by default.">
 				<cocoa key="StopMethod"/>
@@ -399,6 +455,10 @@
 			<parameter name="giving up after" code="givu" type="integer" optional="yes" description="Seconds to wait for the guest to power off before giving up and starting nothing.">
 				<cocoa key="GivingUpAfter"/>
 			</parameter>
+			<result description="The virtual machines it acted on, each as virtual machine id &#8220;&#8230;&#8221;: a reference for a reference to one virtual machine, and a list, in order, for a list of them, a reference to several, or a smart group or folder &#8212; for a group, those it restarted.">
+				<type type="specifier"/>
+				<type type="specifier" list="yes"/>
+			</result>
 		</command>
 
 		<command name="pause" code="KrnvPaus" description="Freeze a running guest in memory.">
@@ -420,12 +480,18 @@
 			</parameter>
 		</command>
 
-		<command name="suspend" code="KrnvSusp" description="Save the guest's state to the bundle's suspend slot and stop running it.">
+		<command name="suspend" code="KrnvSusp" description="Save the guest's state to the bundle's suspend slot and stop running it. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default, and the command goes on in Kernova. Given several virtual machines, it takes them in turn and ends at the first one refused, leaving those before it suspended. Given a smart group or folder, it suspends each running or paused guest in it, one after another, as Suspend All does, asking nothing. One whose own suspend would ask something first, or fails, is left undone while the suspend goes on to the next; once each has had its turn, it errors with a line for each one left undone, and what it did to the others stands.">
 			<cocoa class="VMSuspendScriptCommand"/>
-			<direct-parameter description="The virtual machine to suspend, or a list of them.">
+			<direct-parameter description="The virtual machine to suspend, a list of them, or a smart group or folder.">
 				<type type="virtual machine"/>
 				<type type="virtual machine" list="yes"/>
+				<type type="smart group"/>
+				<type type="folder"/>
 			</direct-parameter>
+			<result description="The virtual machines it acted on, each as virtual machine id &#8220;&#8230;&#8221;: a reference for a reference to one virtual machine, and a list, in order, for a list of them, a reference to several, or a smart group or folder &#8212; for a group, those it suspended.">
+				<type type="specifier"/>
+				<type type="specifier" list="yes"/>
+			</result>
 		</command>
 
 		<command name="reveal" code="KrnvRevl" description="Bring a virtual machine in front of the user, whatever state it is in.">
