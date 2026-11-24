@@ -40,11 +40,7 @@ enum GroupActionOutput {
         case .json:
             return try JSONRenderer.render(report)
         case .table:
-            guard !quiet else {
-                return report.results.filter {
-                    if case .done = $0.outcome { true } else { false }
-                }.map(\.vm.name).joined(separator: "\n")
-            }
+            guard !quiet else { return report.done.map(\.vm.name).joined(separator: "\n") }
             return report.results.map { $0.line(for: report.action, in: .commandLine) }
                 .joined(separator: "\n")
         }

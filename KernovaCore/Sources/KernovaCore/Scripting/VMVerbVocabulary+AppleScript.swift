@@ -7,7 +7,7 @@ extension VMVerbVocabulary {
     ///
     /// A verb no script reaches has none — the `IP address` property included,
     /// which answers from the `virtual machine` read.
-    static let appleScript = VMVerbVocabulary { verb in
+    package static let appleScript = VMVerbVocabulary { verb in
         switch verb {
         case .start: "start"
         case .stop: "stop"
@@ -39,9 +39,10 @@ extension VMVerbVocabulary {
         case .importVM: "import"
         case .cancelPreparing: "cancel copy"
         case .cancelGuestSetup: "cancel guest setup"
+        case .groups: "get smart groups, get folders"
         // The standard suite's `quit` is a quit Apple event, which the app
         // classifies by its sender rather than running this verb.
-        case .quit, .groups, .ipAddress, .sharedDirectories, .usbAccessories,
+        case .quit, .ipAddress, .sharedDirectories, .usbAccessories,
             .availableUSBAccessories, .usbPairings, .forgetUSBPairing, .wait, .open, .showInFinder,
             .create, .editStorageDisk, .editRemovableMedia, .editSharedDirectory, .editUSBAccessory,
             .guestAgentDisk:

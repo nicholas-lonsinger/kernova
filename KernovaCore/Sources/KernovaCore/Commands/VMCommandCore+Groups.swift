@@ -52,17 +52,26 @@ extension VMResolvedGroup {
         switch reference.kind {
         case .smartGroup:
             guard let group = organization.smartGroup(named: reference.name) else { return nil }
-            self.init(
-                kind: .smartGroup, id: group.id, name: group.name,
-                membership: VMGroupMembership(contains: { _, subject in group.filter.admits(subject) }, order: nil))
+            self.init(group)
         case .folder:
             guard let folder = organization.folder(named: reference.name) else { return nil }
-            let members = Set(folder.members)
-            self.init(
-                kind: .folder, id: folder.id, name: folder.name,
-                membership: VMGroupMembership(
-                    contains: { entry, _ in members.contains(entry.id) }, order: folder.members))
+            self.init(folder)
         }
+    }
+
+    /// The smart group `group`: the entries its filter admits.
+    init(_ group: VMSmartGroup) {
+        self.init(
+            kind: .smartGroup, id: group.id, name: group.name,
+            membership: VMGroupMembership(contains: { _, subject in group.filter.admits(subject) }, order: nil))
+    }
+
+    /// The folder `folder`: the entries put in it, in its order.
+    init(_ folder: VMFolder) {
+        let members = Set(folder.members)
+        self.init(
+            kind: .folder, id: folder.id, name: folder.name,
+            membership: VMGroupMembership(contains: { entry, _ in members.contains(entry.id) }, order: folder.members))
     }
 }
 
@@ -83,21 +92,28 @@ extension VMCommandCore {
     /// The library's smart groups, then its folders, each in the order the
     /// sidebar lists them, with their members — in library order, a folder's
     /// in its own.
-    func groups() throws -> [GroupSummary] {
+    package func groups() throws -> [GroupSummary] {
         library.refreshFromOtherCopies()
         let organization = try readOrganization(verb: .groups)
-        let named: [(id: UUID, name: String, kind: VMGroupKind)] =
-            organization.smartGroups.map { ($0.id, $0.name, .smartGroup) }
-            + organization.folders.map { ($0.id, $0.name, .folder) }
-        return try named.map { group in
-            let selection = try self.selection(
-                for: VMListQuery(
-                    filter: VMLibraryFilter(), networks: [], tags: [],
-                    groups: [VMGroupReference(group.kind, named: group.id.uuidString)], sort: .manual),
-                verb: .groups)
-            return GroupSummary(
-                id: group.id, name: group.name, kind: group.kind, members: entries(in: selection).map(summary))
-        }
+        return (organization.smartGroups.map(VMResolvedGroup.init) + organization.folders.map(VMResolvedGroup.init))
+            .map(summary(of:))
+    }
+
+    /// The one group `reference` names, with its members, read as
+    /// ``groups()`` reads each.
+    ///
+    /// - Throws: ``CommandError/itemNotFoundOnHost(item:)`` for a group the
+    ///   library does not list, and ``CommandError/operationFailed(verb:title:message:recovery:)``
+    ///   when the library's groups cannot be read.
+    package func group(_ reference: VMGroupReference) throws -> GroupSummary {
+        library.refreshFromOtherCopies()
+        return summary(of: try group(reference, verb: .groups))
+    }
+
+    /// `group` with the entries it holds, in its order.
+    private func summary(of group: VMResolvedGroup) -> GroupSummary {
+        GroupSummary(
+            id: group.id, name: group.name, kind: group.kind, members: entries(in: group.selection).map(summary))
     }
 
     // MARK: - Resolution

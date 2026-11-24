@@ -653,21 +653,13 @@ package final class VMIntentGateway {
     /// in the group's order and as they stand once it is done — less any
     /// deleted since its turn, which has nothing left to read.
     ///
-    /// A VM the action concerned and left undone fails the intent, with one
-    /// line per such VM — what the `kernova` tool's exit 10 and the app's
-    /// summary alert report.
+    /// A VM the action concerned and left undone fails the intent
+    /// (``VMGroupActionReport/undoneFailure(in:)``).
     func groupAction(_ action: VMGroupAction, on group: VMGroupReference) async throws -> [VMEntity] {
         try await perform(action.verb, on: nil) {
             let report = try await self.commands.groupAction(action, on: group)
-            guard report.undone.isEmpty else {
-                throw CommandError.operationFailed(
-                    verb: action.verb, title: report.undoneTitle,
-                    message: report.undoneMessage(in: .shortcuts))
-            }
-            return report.results.compactMap { result in
-                guard case .done = result.outcome else { return nil }
-                return self.entity(for: result.vm.id, named: .beforeSuspension)
-            }
+            if let failure = report.undoneFailure(in: .shortcuts) { throw failure }
+            return report.done.compactMap { self.entity(for: $0.vm.id, named: .beforeSuspension) }
         }
     }
 

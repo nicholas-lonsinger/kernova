@@ -540,5 +540,5 @@ package final class VMOrganizationDirectory {
 
 extension VMGroupKind {
     /// What a sentence calls a group of this kind.
-    var noun: String { VMOrganizationDirectory.Element(self).noun }
+    package var noun: String { VMOrganizationDirectory.Element(self).noun }
 }
