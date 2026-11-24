@@ -29,7 +29,7 @@ struct ListFilterOptions: ParsableArguments {
     @Option(
         name: .customLong("agent"),
         help: ArgumentHelp(
-            "List only macOS guests whose guest agent, against the one this build bundles, is this.",
+            "List only VMs whose guest agent, against the one this build bundles, is this.",
             valueName: "agent"))
     var guestAgents: [VMGuestAgentBucket] = []
 
