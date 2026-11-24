@@ -11,9 +11,9 @@ import KernovaDBus
 /// `DBusTransport` from two threads of its own: one blocks in reads and
 /// handles what they complete, one blocks in writes.
 ///
-/// Signal handlers and the method-call handler run on the reader thread, one
-/// message at a time in arrival order; one that blocks stalls every later
-/// message, so none may make a blocking call on this connection.
+/// Signal handlers, the method-call handler and the end handler run on the
+/// reader thread, one at a time in arrival order; one that blocks stalls every
+/// later message, so none may make a blocking call on this connection.
 ///
 /// The connection ends on deinit, or when the bus or transport
 /// fails it; every call then waiting throws `DBusCallError.disconnected`.
@@ -67,17 +67,23 @@ public final class DBusBusConnection: Sendable {
     /// reply to send, or nil to send none. Without one, every call gets
     /// `org.freedesktop.DBus.Error.UnknownMethod`. A reply to a call sent with
     /// NO_REPLY_EXPECTED is dropped.
+    ///
+    /// `onEnd` is called once with why the connection ended, when the bus or
+    /// the transport ends a connection this returns: an end before that is
+    /// this initializer's error, and a released connection never calls it.
     public convenience init(
-        bus: Bus, onMethodCall: (@Sendable (DBusReceivedMessage) -> DBusMessage?)? = nil
+        bus: Bus, onMethodCall: (@Sendable (DBusReceivedMessage) -> DBusMessage?)? = nil,
+        onEnd: @escaping @Sendable (DBusDisconnection) -> Void
     ) throws(DBusConnectError) {
-        try self.init(address: try bus.address(), onMethodCall: onMethodCall)
+        try self.init(address: try bus.address(), onMethodCall: onMethodCall, onEnd: onEnd)
     }
 
     /// Connects to the first address in `address` whose socket accepts the
     /// connection, then authenticates and says `Hello` over it, `onMethodCall`
-    /// as `init(bus:onMethodCall:)` takes it.
+    /// and `onEnd` as `init(bus:onMethodCall:onEnd:)` takes them.
     public convenience init(
-        address: String, onMethodCall: (@Sendable (DBusReceivedMessage) -> DBusMessage?)? = nil
+        address: String, onMethodCall: (@Sendable (DBusReceivedMessage) -> DBusMessage?)? = nil,
+        onEnd: @escaping @Sendable (DBusDisconnection) -> Void
     ) throws(DBusConnectError) {
         let addresses: [DBusAddress]
         do throws(DBusAddressError) {
@@ -97,15 +103,16 @@ public final class DBusBusConnection: Sendable {
         guard let transport else {
             throw lastError.map { .transport($0) } ?? .noConnectableAddress(address)
         }
-        try self.init(transport: transport, uid: getuid(), onMethodCall: onMethodCall)
+        try self.init(transport: transport, uid: getuid(), onMethodCall: onMethodCall, onEnd: onEnd)
     }
 
     /// Authenticates as `uid` and says `Hello` over `transport`, returning
-    /// once the bus answers, `onMethodCall` as `init(bus:onMethodCall:)` takes
-    /// it.
+    /// once the bus answers, `onMethodCall` and `onEnd` as
+    /// `init(bus:onMethodCall:onEnd:)` takes them.
     public init(
         transport: any DBusTransport, uid: UInt32,
-        onMethodCall: (@Sendable (DBusReceivedMessage) -> DBusMessage?)? = nil
+        onMethodCall: (@Sendable (DBusReceivedMessage) -> DBusMessage?)? = nil,
+        onEnd: @escaping @Sendable (DBusDisconnection) -> Void
     ) throws(DBusConnectError) {
         let engine = DBusConnectionEngine(transport: transport, uid: uid, onMethodCall: onMethodCall)
         do throws(DBusConnectError) {
@@ -115,7 +122,7 @@ public final class DBusBusConnection: Sendable {
             throw error
         }
         do throws(DBusCallError) {
-            uniqueName = try engine.waitUntilReady(timeout: Self.defaultTimeout)
+            uniqueName = try engine.waitUntilReady(timeout: Self.defaultTimeout, thenReportEndTo: onEnd)
         } catch {
             engine.close()
             throw .handshake(error)
@@ -242,8 +249,13 @@ private final class DBusConnectionEngine: @unchecked Sendable {
         var owners: [String: (owner: String?, subscribers: Int)] = [:]
         /// `GetNameOwner` calls in flight, by serial.
         var ownerLookups: [UInt32: String] = [:]
+        /// The end handler, set once the initializer has the bus's answer to
+        /// `Hello`, until the reader takes it to report the end or `close()`
+        /// drops it.
+        var onEnd: (@Sendable (DBusDisconnection) -> Void)?
         /// The handler the reader thread is running, while it runs: a
-        /// subscription's, or the method-call handler's when nil.
+        /// subscription's, or the connection's own — the method-call or end
+        /// handler — when nil.
         var delivery: (subscription: UInt64?, thread: pthread_t)?
 
         /// Whether the calling thread is running a handler, so a blocking call
@@ -299,21 +311,31 @@ private final class DBusConnectionEngine: @unchecked Sendable {
         return try body(&state)
     }
 
-    func waitUntilReady(timeout: Duration) throws(DBusCallError) -> String {
+    /// Waits for the bus to answer `Hello`, returning this connection's unique
+    /// name once it has and the connection still stands; `onEnd` is then the
+    /// handler the reader reports the connection's end to.
+    func waitUntilReady(
+        timeout: Duration, thenReportEndTo onEnd: @escaping @Sendable (DBusDisconnection) -> Void
+    ) throws(DBusCallError) -> String {
         let deadline = Deadline(after: timeout)
         condition.lock()
         defer { condition.unlock() }
+        var timedOut = false
         while true {
-            if let name = state.uniqueName { return name }
             if let disconnection = state.disconnection { throw .disconnected(disconnection) }
-            guard condition.wait(until: deadline) else {
-                if let name = state.uniqueName { return name }
-                throw .timedOut
+            if let name = state.uniqueName {
+                state.onEnd = onEnd
+                return name
             }
+            if timedOut { throw .timedOut }
+            timedOut = !condition.wait(until: deadline)
         }
     }
 
+    /// Ends the connection; once it returns no handler is running or runs
+    /// again, unless a handler called it.
     func close() {
+        locked { $0.onEnd = nil }
         disconnect(.closed)
         awaitDeliveries { _ in true }
     }
@@ -523,6 +545,26 @@ private final class DBusConnectionEngine: @unchecked Sendable {
     }
 
     private func runReader() {
+        readUntilEnd()
+        reportEnd()
+    }
+
+    /// Calls the end handler, unless `close()` dropped it, with why the
+    /// connection ended, recorded as a delivery while it runs.
+    private func reportEnd() {
+        let end = locked { state -> (handler: @Sendable (DBusDisconnection) -> Void, reason: DBusDisconnection)? in
+            guard let handler = state.onEnd, let reason = state.disconnection else { return nil }
+            state.onEnd = nil
+            state.delivery = (nil, pthread_self())
+            return (handler, reason)
+        }
+        guard let end else { return }
+        end.handler(end.reason)
+        locked { $0.delivery = nil }
+    }
+
+    /// Reads and handles what arrives until the connection ends.
+    private func readUntilEnd() {
         let buffer = UnsafeMutableRawBufferPointer.allocate(byteCount: 65_536, alignment: 1)
         defer { buffer.deallocate() }
         while true {

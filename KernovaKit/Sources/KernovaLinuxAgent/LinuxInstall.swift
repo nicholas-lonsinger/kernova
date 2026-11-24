@@ -81,7 +81,8 @@ struct SystemdServiceManager: ServiceManager {
     let scope: InstallScope
 
     func peerProcessID() throws -> UInt32 {
-        let bus = try DBusBusConnection(bus: scope == .system ? .system : .user)
+        // Each call below throws `.disconnected` once the connection ends, which is all an end means here.
+        let bus = try DBusBusConnection(bus: scope == .system ? .system : .user) { _ in }
         return try SystemdManager(connection: bus).mainPID(ofService: InstallLayout.serviceName(scope))
     }
 }

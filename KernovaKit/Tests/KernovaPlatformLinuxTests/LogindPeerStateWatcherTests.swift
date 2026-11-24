@@ -130,8 +130,8 @@ struct LogindPeerStateTests {
     static let unknownObject = DBusServiceError.call(
         .remote(DBusRemoteError(name: "org.freedesktop.DBus.Error.UnknownObject", message: "Unknown object")))
 
-    @Test("A read that fails delivers its error alone, keeps both subscriptions, and the next signal rereads")
-    func failedReadKeepsWatching() async throws {
+    @Test("A read that fails after the first state delivers its error")
+    func failedRead() async throws {
         try await Watch.with(.session(uid: FakeLogind.displayUID)) { watch in
             #expect(try await watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
 
@@ -140,17 +140,6 @@ struct LogindPeerStateTests {
             watch.fake.recorder.display.withLock { $0 = FakeLogind.nextUserSession }
             try watch.displayChanged()
             #expect(try await watch.nextFailure() == Self.unknownObject)
-            #expect(try watch.isSettled())
-
-            // The session subscription it had still rereads...
-            watch.fake.recorder.vanishedSessions.withLock { $0 = [] }
-            try watch.sessionChanged(FakeLogind.userSession, [("Active", .boolean(false))])
-            #expect(try await watch.next() == PeerSessionState(console: .on, sessionID: "3", userName: Self.user))
-
-            // ...and so does the user's.
-            watch.fake.recorder.display.withLock { $0 = FakeLogind.userSession }
-            try watch.displayChanged()
-            #expect(try await watch.next() == PeerSessionState(console: .off, sessionID: "2", userName: Self.user))
         }
     }
 

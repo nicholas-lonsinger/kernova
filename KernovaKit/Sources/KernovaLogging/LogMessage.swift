@@ -31,7 +31,8 @@ public enum LogPrivacy: Sendable {
 /// Each interpolation takes an optional `privacy:` argument. Without one it
 /// gets `os.Logger`'s documented default: "By default, the system doesn't
 /// redact integer, floating-point and Boolean values, but it does redact the
-/// contents of dynamic strings and complex dynamic objects."
+/// contents of dynamic strings and complex dynamic objects." An interpolated
+/// `LogMessage` keeps its own runs' marks.
 public struct LogMessage: ExpressibleByStringInterpolation, Sendable, Equatable {
     /// The message's literal runs and rendered interpolations, in order.
     public let segments: [LogSegment]
@@ -87,6 +88,15 @@ public struct LogMessage: ExpressibleByStringInterpolation, Sendable, Equatable 
         /// A string, private unless `privacy` says otherwise.
         public mutating func appendInterpolation(_ value: String, privacy: LogPrivacy? = nil) {
             append(value, privacy, byDefault: .private)
+        }
+
+        /// Another message's runs, each marked as that message marks it unless
+        /// `privacy` says otherwise.
+        public mutating func appendInterpolation(_ message: LogMessage, privacy: LogPrivacy? = nil) {
+            for segment in message.segments {
+                let isPrivate = privacy.map { $0 == .private } ?? segment.isPrivate
+                segments.append(LogSegment(text: segment.text, isPrivate: isPrivate))
+            }
         }
 
         /// Any other value, rendered with `String(describing:)`, private unless

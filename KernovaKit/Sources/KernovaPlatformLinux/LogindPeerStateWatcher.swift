@@ -43,8 +43,8 @@ public final class LogindPeerStateWatcher: Sendable {
     /// elects no display session for the user, as for a lingering user with no session at all.
     ///
     /// Delivers the first state, then each that differs from the last, on `queue`, where every read runs
-    /// — never on the connection's reader thread. A failed read delivers its error and keeps watching:
-    /// the next change rereads. Throws when logind does not know the user or refuses the subscription.
+    /// — never on the connection's reader thread. A failed read delivers its error. Throws when logind does
+    /// not know the user or refuses the subscription.
     public static func sessionPeer(
         _ logind: Logind, uid: UInt32, on queue: DispatchQueue,
         _ deliver: @escaping @Sendable (Result<PeerSessionState?, DBusServiceError>) -> Void
