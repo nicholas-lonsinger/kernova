@@ -177,16 +177,16 @@ package struct VMEntity: IndexedEntity {
 ///
 /// Every method forwards to ``VMIntentGateway``, which owns the matching as
 /// well as the readiness await: `suggestedEntities()` lists the whole library
-/// for a picker, and a typed name resolves through a case-insensitive contains
-/// match.
+/// for a picker, and a typed name matches as the sidebar's search does
+/// (``SidebarNameSearch``).
 ///
 /// Find Virtual Machines runs as this property query, which filters and sorts
 /// the library in memory, in library order until a sort is chosen; a
 /// condition `kernova list` also takes is its listing
-/// (``Condition/listed(_:negated:)``). It is no `EnumerableEntityQuery`:
-/// Shortcuts runs a Find over one by filtering every entity itself, never
-/// calling ``entities(matching:mode:sortedBy:limit:)`` (WorkflowKit's
-/// `WFEntityQueryTypeForQueryMetadata`, macOS 27.2).
+/// (``Condition/listed(_:negated:)``). It is no `EnumerableEntityQuery`, whose
+/// entities Shortcuts filters itself, as that protocol's documentation says.
+/// On macOS 27.2, Shortcuts filtered a query adopting both protocols itself
+/// too, and never called ``entities(matching:mode:sortedBy:limit:)``.
 package struct VMEntityQuery: EntityStringQuery, EntityPropertyQuery {
     /// One condition a Find puts on the VMs it answers, as the comparator a
     /// Shortcut chose makes it.
@@ -292,14 +292,22 @@ package struct VMEntityQuery: EntityStringQuery, EntityPropertyQuery {
         sortedBy: [EntityQuerySort<VMEntity>],
         limit: Int?
     ) async throws -> [VMEntity] {
-        Self.ordered(try await gateway.vms(meeting: comparators, mode: mode), by: sortedBy, limit: limit)
+        try Self.ordered(try await gateway.vms(meeting: comparators, mode: mode), by: sortedBy, limit: limit)
     }
 
     /// The sort and truncation a property query asks of `entities`, given in
     /// library order.
-    static func ordered(_ entities: [VMEntity], by sortedBy: [EntityQuerySort<VMEntity>], limit: Int?) -> [VMEntity] {
+    ///
+    /// - Throws: ``CommandError/invalidArgument(_:)`` for a negative `limit`,
+    ///   which the framework types as any `Int` and `prefix` traps on.
+    static func ordered(
+        _ entities: [VMEntity], by sortedBy: [EntityQuerySort<VMEntity>], limit: Int?
+    ) throws -> [VMEntity] {
         let ordered = sortedBy.first.map { sorted(entities, by: $0.by, ascending: $0.order == .ascending) } ?? entities
         guard let limit else { return ordered }
+        guard limit >= 0 else {
+            throw CommandError.invalidArgument("A Find\u{2019}s limit is a number of virtual machines, not \(limit).")
+        }
         return Array(ordered.prefix(limit))
     }
 
@@ -311,9 +319,9 @@ package struct VMEntityQuery: EntityStringQuery, EntityPropertyQuery {
     // `Sendable`: each is built once from constant closures and never mutated.
     package nonisolated(unsafe) static let properties = QueryProperties {
         Property(\VMEntity.$name) {
-            EqualToComparator { value in .admits { $0.name == value } }
-            NotEqualToComparator { value in .admits { $0.name != value } }
-            ContainsComparator { value in .admits { $0.name.localizedCaseInsensitiveContains(value) } }
+            EqualToComparator { value in .admits { VMCommandCore.name($0.name, isNamedBy: value) } }
+            NotEqualToComparator { value in .admits { !VMCommandCore.name($0.name, isNamedBy: value) } }
+            ContainsComparator { value in .admits { SidebarNameSearch(text: value).admits($0.name) } }
         }
         Property(\VMEntity.$status) {
             EqualToComparator { value in .admits { $0.status == value } }

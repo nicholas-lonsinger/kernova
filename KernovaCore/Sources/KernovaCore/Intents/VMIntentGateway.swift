@@ -108,7 +108,6 @@ package final class VMIntentGateway {
                 switch mode {
                 case .and: predicates.allSatisfy { $0(vm) }
                 case .or: predicates.isEmpty || predicates.contains { $0(vm) }
-                @unknown default: true
                 }
             }
             self.logger.log(
