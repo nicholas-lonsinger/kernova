@@ -22,11 +22,12 @@ public struct KernovaCommand: ParsableCommand {
         subcommands: [
             List.self, Groups.self, Info.self, IP.self,
             Start.self, Stop.self, Suspend.self, Pause.self, Resume.self, Restart.self,
+            CancelSetup.self,
             Open.self, Reveal.self,
             Wait.self,
             Snapshot.self,
             Get.self, Set.self, Share.self, USB.self, Network.self,
-            Clone.self, Import.self, Rename.self, Delete.self, ShowInFinder.self,
+            Clone.self, Import.self, CancelCopy.self, Rename.self, Delete.self, ShowInFinder.self,
             Quit.self,
             Version.self,
         ],
