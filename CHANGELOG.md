@@ -30,7 +30,7 @@ In progress since 2026-09-16: everything since 0.10.0 (TestFlight build 835). Th
 
 - **Clipboard sharing can no longer point a Mac app at one of your files.** A guest could put content on the Mac clipboard that a Mac app, on paste, resolves to a file on your Mac rather than to the guest's own data: file URLs in disguised spellings, aliases and bookmarks, and rich text whose attachments link to a Mac path.
   The clipboard now refuses all of these, for clipboard sharing and Copy to Mac alike ([#1812](https://github.com/nicholas-lonsinger/kernova/pull/1812), [#1813](https://github.com/nicholas-lonsinger/kernova/pull/1813); release tracked in [#1818](https://github.com/nicholas-lonsinger/kernova/issues/1818)).
-- **Guest log values marked private stay private on the Mac.** Records the guest agent forwards keep their privacy marks, so the Mac's log hides those values as it does its own instead of storing them in plain text ([#1254](https://github.com/nicholas-lonsinger/kernova/pull/1254)).
+- **Guest log values marked private stay private on the Mac.** Records the guest agent forwards keep their privacy marks, so the Mac's log hides those values as it does its own instead of storing them in plain text. A guest agent from another Kernova build can't strip that mark, or a copied password's: until it updates, Kernova and the agent refuse each other's clipboard, drag and drop, and log messages wherever their builds shape them differently ([#1254](https://github.com/nicholas-lonsinger/kernova/pull/1254), [#2101](https://github.com/nicholas-lonsinger/kernova/pull/2101)).
 
 ### Guest agent
 
