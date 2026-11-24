@@ -11,7 +11,7 @@ extension VMCommandCore {
     /// What a refusal calls the capability, completing "This build of Kernova
     /// does not support …", "Kernova needs macOS … or later for …" — or, for
     /// the one VM-scoped cause, "This virtual machine does not support …".
-    static let usbAccessoryCapability = "USB accessory passthrough"
+    nonisolated static let usbAccessoryCapability = "USB accessory passthrough"
 
     // MARK: - Reads
 
@@ -275,18 +275,7 @@ extension VMCommandCore {
     private func requireUSBAccessoryService() throws -> any USBAccessoryProviding {
         switch lifecycle.usbAccessoryPassthrough {
         case .available(let service): service
-        case .unavailable(let gap): throw Self.usbPassthroughRefusal(gap)
-        }
-    }
-
-    /// The refusal that names what keeps passthrough from this process — the
-    /// macOS version, or a signature without the entitlement.
-    static func usbPassthroughRefusal(_ gap: USBAccessoryPassthrough.Gap) -> CommandError {
-        switch gap {
-        case .needsMacOS(let version):
-            .unsupportedByMacOS(capability: usbAccessoryCapability, minimumVersion: version)
-        case .needsEntitlement:
-            .unsupportedByBuild(capability: usbAccessoryCapability)
+        case .unavailable(let gap): throw gap.refusal
         }
     }
 
@@ -324,4 +313,21 @@ extension VMCommandCore {
                 verb: .editUSBAccessory, message: accessoryError.localizedDescription)
         }
     }
+}
+
+extension USBAccessoryPassthrough.Gap {
+    /// The refusal every USB accessory verb answers with while this gap
+    /// stands: the macOS version, or a signature without the entitlement.
+    var refusal: CommandError {
+        switch self {
+        case .needsMacOS(let version):
+            .unsupportedByMacOS(capability: VMCommandCore.usbAccessoryCapability, minimumVersion: version)
+        case .needsEntitlement:
+            .unsupportedByBuild(capability: VMCommandCore.usbAccessoryCapability)
+        }
+    }
+
+    /// What a surface offering passthrough says of it while this gap stands —
+    /// ``refusal``'s own words, so the app names the cause as the verbs do.
+    package var reason: String { refusal.message(in: .app) }
 }

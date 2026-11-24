@@ -2,13 +2,13 @@ import AppKit
 import KernovaCore
 
 /// One remembered USB accessory: what it is called, where it was and when it
-/// was placed, and the button that forgets it.
+/// was placed, and the button that forgets it, enabled as `isEnabled` says.
 ///
 /// Built from the pairing alone — the device itself is usually not plugged in,
 /// which is the whole reason this row exists rather than a menu item.
 @MainActor
 final class USBAccessoryPairingRowView: NSView {
-    init(pairing: USBAccessoryPairing, target: AnyObject, action: Selector) {
+    init(pairing: USBAccessoryPairing, isEnabled: Bool, target: AnyObject, action: Selector) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
@@ -43,11 +43,12 @@ final class USBAccessoryPairingRowView: NSView {
             detail.trailingAnchor.constraint(equalTo: text.trailingAnchor),
         ])
 
-        let remove = NSButton()
+        let remove = TintedButton()
         remove.image = .systemSymbol("minus.circle", accessibilityDescription: "Forget")
         remove.imagePosition = .imageOnly
         remove.isBordered = false
-        remove.contentTintColor = .secondaryLabelColor
+        remove.tint = .secondaryLabelColor
+        remove.isEnabled = isEnabled
         // The key travels on the button, which is what the action reads it
         // back off — the row itself is not addressed by anything.
         remove.identifier = NSUserInterfaceItemIdentifier(pairing.key)

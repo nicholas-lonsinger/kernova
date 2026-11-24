@@ -29,9 +29,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     var keptThroughEphemeralRevert: [String] {
         var kept: [String] = []
         if agentSettings.contains(.installReminder) { kept.append(Self.installReminderTitle) }
-        if viewModel.supportsUSBAccessories, !instance.usbPairings.isEmpty {
-            kept.append(Self.usbPairingsTitle)
-        }
+        if !instance.usbPairings.isEmpty { kept.append(Self.usbPairingsTitle) }
         return kept
     }
 
@@ -64,14 +62,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         var sections = [buildSharedDirectoriesSection()]
         let settings = agentSettings
         if !settings.isEmpty { sections.append(buildGuestAgentSection(settings)) }
-        // Absent, not disabled, in a process that cannot pass accessories
-        // through: there is nothing it could ever list.
-        pairingSection = nil
-        if viewModel.supportsUSBAccessories {
-            let section = buildUSBPairingsSection()
-            pairingSection = section
-            sections.append(section)
-        }
+        sections.append(buildUSBPairingsSection())
         for section in sections {
             addGroupedFormFullWidth(section, to: panelStack)
         }
@@ -129,9 +120,10 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
 
     // Remembered USB accessories
     private var pairingListStack = NSStackView()
-    /// The whole section, hidden while this VM remembers nothing; `nil` in a
-    /// build that never built one.
-    private var pairingSection: NSView?
+    /// Names what keeps passthrough from this process, while something does.
+    private var pairingGapNote: GroupedFormStateNote?
+    /// The whole section, hidden while it has nothing to say.
+    private var pairingSection = NSView()
     private var pairingLoop: ObservationLoop?
 
     // MARK: Shared Directories
@@ -191,7 +183,8 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     // MARK: Remembered USB Accessories
 
     /// The accessories this VM takes back on its own, each with the button that
-    /// forgets it.
+    /// forgets it, and what keeps passthrough from this process while something
+    /// does.
     ///
     /// Here rather than in the Virtual Machine menu because the rows that most
     /// need removing name hardware that is in a drawer, and a menu can only
@@ -200,9 +193,11 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     /// already what the host hands this guest while it runs.
     private func buildUSBPairingsSection() -> NSView {
         pairingListStack = makeGroupedFormListStack()
+        let gapNote = GroupedFormStateNote { [weak self] in self?.viewModel.usbPassthroughGap?.reason }
+        pairingGapNote = gapNote
         // Not lockable: a remembered accessory is a preference about what to
-        // attach, so it takes an edit whatever the VM is doing.
-        return makeGroupedFormSection([
+        // attach, which the pane's read-only state pins none of.
+        let section = makeGroupedFormSection([
             lockRegistry.makeHeader(
                 Self.usbPairingsTitle,
                 paragraphs: [
@@ -213,29 +208,33 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                         "Taking an accessory back from the USB Device menu forgets it, as does removing it here."
                     ),
                 ]),
-            makeGroupedFormCard(rows: [pairingListStack]),
+            makeGroupedFormCard(rows: [pairingListStack], notes: [gapNote]),
         ])
+        pairingSection = section
+        return section
     }
 
     private func refreshUSBPairings() {
-        guard let pairingSection else { return }
         let pairings = instance.usbPairings.pairings
-        // Absent rather than an empty list: a VM that has never been handed an
-        // accessory has nothing to say about them.
-        pairingSection.isHidden = instance.usbPairings.isEmpty
+        let forgets = viewModel.capabilities.isAvailable(.forgetUSBPairing, on: instance)
         clearGroupedFormStack(pairingListStack)
         for pairing in pairings {
             let row = USBAccessoryPairingRowView(
-                pairing: pairing, target: self, action: #selector(forgetPairingTapped))
+                pairing: pairing, isEnabled: forgets, target: self, action: #selector(forgetPairingTapped))
             addGroupedFormFullWidth(row, to: pairingListStack)
         }
+        pairingListStack.isHidden = pairings.isEmpty
+        pairingGapNote?.refresh()
+        // Absent rather than an empty list: a VM that has never been handed an
+        // accessory, in a process that can pass one through, has nothing to
+        // say about them.
+        pairingSection.isHidden = pairings.isEmpty && viewModel.usbPassthroughGap == nil
     }
 
     /// Re-renders the list whenever the set changes, so an accessory placed or
     /// taken back while this panel is open lands without a revisit.
     private func armPairingLoop() {
         pairingLoop?.cancel()
-        guard pairingSection != nil else { return }
         pairingLoop = observeRecurring(
             track: { [instance] in _ = instance.usbPairings },
             apply: { [weak self] in self?.refreshUSBPairings() })

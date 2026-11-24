@@ -393,7 +393,7 @@ package final class VMCommandCore {
                 verb: .editUSBAccessory,
                 message: "That USB accessory is in use by \u{201C}\(holder.name)\u{201D}.")
         case .usbPassthroughUnavailable(let gap):
-            Self.usbPassthroughRefusal(gap)
+            gap.refusal
         case .terminating:
             .terminating
         case .heldByAnotherCopy:
