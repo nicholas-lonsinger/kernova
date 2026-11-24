@@ -422,9 +422,9 @@ message FeatureAdvert {
   uint32 version = 2;
   oneof availability {
     // Available; the feature's capability message (PowerCapability,
-    // UpdateCapability, LogCapability, ...), encoded. Decoded only when both
-    // sides' versions are equal, and for a non-frozen feature their
-    // protocol_version too.
+    // UpdateCapability, LogCapability, ...), encoded. A non-frozen feature's
+    // is decoded only when both Hellos carry the same protocol_version, and any
+    // is used only when both sides' versions of the feature are equal.
     bytes params = 3;
     Absence absent = 4;
   }

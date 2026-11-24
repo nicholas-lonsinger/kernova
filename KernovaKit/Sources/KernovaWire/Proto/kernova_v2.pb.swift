@@ -1372,9 +1372,9 @@ public nonisolated struct Kernova_V2_FeatureAdvert: Sendable {
   public var availability: Kernova_V2_FeatureAdvert.OneOf_Availability? = nil
 
   /// Available; the feature's capability message (PowerCapability,
-  /// UpdateCapability, LogCapability, ...), encoded. Decoded only when both
-  /// sides' versions are equal, and for a non-frozen feature their
-  /// protocol_version too.
+  /// UpdateCapability, LogCapability, ...), encoded. A non-frozen feature's
+  /// is decoded only when both Hellos carry the same protocol_version, and any
+  /// is used only when both sides' versions of the feature are equal.
   public var params: Data {
     get {
       if case .params(let v)? = availability {return v}
@@ -1395,9 +1395,9 @@ public nonisolated struct Kernova_V2_FeatureAdvert: Sendable {
 
   public nonisolated enum OneOf_Availability: Equatable, Sendable {
     /// Available; the feature's capability message (PowerCapability,
-    /// UpdateCapability, LogCapability, ...), encoded. Decoded only when both
-    /// sides' versions are equal, and for a non-frozen feature their
-    /// protocol_version too.
+    /// UpdateCapability, LogCapability, ...), encoded. A non-frozen feature's
+    /// is decoded only when both Hellos carry the same protocol_version, and any
+    /// is used only when both sides' versions of the feature are equal.
     case params(Data)
     case absent(Kernova_V2_Absence)
 

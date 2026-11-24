@@ -33,7 +33,7 @@ options=(--swift_opt=Visibility=Public --swift_opt=FileNaming=PathToUnderscores)
 protoc=$("$lib_dir/install-protoc.sh") || exit 1
 bin=${protoc%/*}
 
-out=$(mktemp -d)
+out=$(mktemp -d) || exit 1
 trap 'rm -rf "$out"' EXIT
 
 status=0
@@ -49,13 +49,13 @@ for schema in "${schemas[@]}"; do
         status=1
         continue
     fi
-    cp "$out/${name%.proto}.pb.swift" "$dir/${name%.proto}.pb.swift"
     if ! digest=$(proto_schema_digest "$schema"); then
         echo "regen-protos: could not digest $schema" >&2
         status=1
         continue
     fi
-    cat >"$dir/${name%.proto}.digest.swift" <<EOF
+    generated=("${name%.proto}.pb.swift" "${name%.proto}.digest.swift")
+    if ! cat >"$out/${generated[1]}" <<EOF; then
 // DO NOT EDIT.
 // swift-format-ignore-file
 //
@@ -65,7 +65,24 @@ for schema in "${schemas[@]}"; do
 /// file differ at most in comments and spacing, and otherwise equal by chance once in 2^31.
 public let ${name%.proto}SchemaDigest: UInt32 = $digest
 EOF
-    pass "$dir/${name%.proto}.pb.swift and .digest.swift regenerated"
+        echo "regen-protos: could not write ${generated[1]}" >&2
+        status=1
+        continue
+    fi
+    # Both files describe one schema, so a run that leaves either unwritten fails.
+    written=0
+    for file in "${generated[@]}"; do
+        if cp "$out/$file" "$dir/$file"; then
+            written=$((written + 1))
+        else
+            echo "regen-protos: could not write $dir/$file" >&2
+        fi
+    done
+    if [ "$written" -ne "${#generated[@]}" ]; then
+        status=1
+        continue
+    fi
+    pass "$dir/${generated[0]} and ${generated[1]} regenerated"
 done
 
 exit "$status"
