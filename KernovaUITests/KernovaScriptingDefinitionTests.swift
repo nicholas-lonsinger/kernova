@@ -53,8 +53,6 @@ struct KernovaScriptingDefinitionTests {
             "reveal": "virtual machine", "revert to": "snapshot", "cancel guest setup": "virtual machine",
             "cancel copy": "virtual machine", "change": "setting",
         ]
-        // The verbs that also take one smart group or folder, as a whole.
-        let takingGroups: Set = ["start", "stop", "restart", "suspend"]
         #expect(Set(try values("command", "name", in: suite)) == Set(addressed.keys).union(["import"]))
 
         for command in try suite.nodes(forXPath: "command").compactMap({ $0 as? XMLElement }) {
@@ -66,9 +64,17 @@ struct KernovaScriptingDefinitionTests {
                 #expect(try values("direct-parameter/type", "type", in: command) == ["file", "text"])
                 continue
             }
-            let groups = takingGroups.contains(name) ? ["smart group", "folder"] : []
+            // A group action's verb takes a group too, and answers what it
+            // acted on; every other verb on VMs answers nothing.
+            let actsOnGroups = handlerClass is any VMGroupActionCommand.Type
+            let groups = actsOnGroups ? ["smart group", "folder"] : []
             #expect(try values("direct-parameter/type", "type", in: command) == [type, type] + groups)
             #expect(try values("direct-parameter/type", "list", in: command) == ["yes"])
+            if type == "virtual machine" {
+                let answers = try values("result/type", "type", in: command)
+                #expect(answers == (actsOnGroups ? ["specifier", "specifier"] : []), "\(name)")
+                #expect(try values("result/type", "list", in: command) == (actsOnGroups ? ["yes"] : []), "\(name)")
+            }
         }
     }
 

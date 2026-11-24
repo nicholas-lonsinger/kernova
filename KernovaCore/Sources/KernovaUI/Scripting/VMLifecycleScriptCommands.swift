@@ -153,33 +153,22 @@ class VMScriptCommand: NSScriptCommand {
     /// own — and answers the verb to run on it once that dispatch returns, or
     /// `nil` with the refusal recorded.
     ///
-    /// A command addressing VMs runs ``run(_:on:)`` on the ones its direct
-    /// parameter names, and its ``groupAction`` on a smart group or folder;
-    /// one addressing anything else overrides this.
+    /// A ``VMGroupActionCommand`` answers what it addresses its own way. Any
+    /// other command addressing VMs runs ``run(_:on:)`` on the ones its direct
+    /// parameter names, answering nothing, and refuses a smart group or
+    /// folder; one addressing anything else overrides this.
     func work(on gateway: VMScriptingGateway) -> VMScriptingGateway.Work? {
-        switch gateway.subject(addressedBy: self) {
-        case nil:
-            return nil
-        case .virtualMachines(let selectors):
+        guard let subject = gateway.subject(addressedBy: self) else { return nil }
+        if let acting = self as? any VMGroupActionCommand { return acting.work(on: gateway, addressing: subject) }
+        switch subject {
+        case .virtualMachines(let selectors, _):
             return {
                 try await self.run(gateway, on: selectors)
                 return nil
             }
-        case .group(let group):
-            guard let action = groupAction else {
-                refuse(CommandError.invalidArgument(Self.groupActionsRefusal(commandDescription.commandName)))
-                return nil
-            }
-            do throws(CommandError) {
-                if let given = try parameterTakenByOneVM() {
-                    throw CommandError.invalidArgument(
-                        "`\(given)` acts on one virtual machine, not a smart group or folder.")
-                }
-            } catch {
-                refuse(error)
-                return nil
-            }
-            return { try await gateway.groupAction(action, on: group) }
+        case .group:
+            refuse(CommandError.invalidArgument(Self.groupActionsRefusal(commandDescription.commandName)))
+            return nil
         }
     }
 
@@ -191,22 +180,10 @@ class VMScriptCommand: NSScriptCommand {
             + "\(offered.dropLast().joined(separator: ", ")) or \(offered.last ?? "")."
     }
 
-    /// The action this command takes on every VM in a smart group or folder
-    /// it is given — `nil` for one that refuses a group.
-    var groupAction: VMGroupAction? { nil }
-
-    /// The first parameter given that changes only one VM's verb, as the
-    /// script writes it — what the command refuses a group with — or `nil`
-    /// for none.
-    ///
-    /// - Throws: ``CommandError/invalidArgument(_:)`` for a parameter whose
-    ///   value names nothing the command takes.
-    func parameterTakenByOneVM() throws(CommandError) -> String? { nil }
-
     /// The verb, run on the VMs the event addressed.
     ///
-    /// Every command addressing VMs overrides this; reaching the base is a
-    /// programming error.
+    /// Every command addressing VMs but a ``VMGroupActionCommand`` overrides
+    /// this; reaching the base is a programming error.
     func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         Self.logger.log(
             .fault,
@@ -228,20 +205,80 @@ class VMScriptCommand: NSScriptCommand {
     }
 }
 
-// MARK: - Commands
+// MARK: - The verbs of a group action
+
+/// A lifecycle command a smart group or folder takes as a whole — the verb of
+/// one of the core's group actions — answering the VMs it acted on, each by
+/// identifier: a reference for one VM named by one reference, and a list for
+/// a list of them, a reference to several, or a group.
+///
+/// Its dictionary entry declares that result, as no other lifecycle
+/// command's does: Cocoa answers a resumed command as its declared result
+/// type, a declared one with nothing to answer as `missing value` (observed
+/// on macOS 27).
+@MainActor
+protocol VMGroupActionCommand: VMScriptCommand {
+    /// The action it takes on every VM in a smart group or folder.
+    var groupAction: VMGroupAction { get }
+
+    /// The first parameter given that changes only one VM's verb, as the
+    /// script writes it — what the command refuses a group with — or `nil`
+    /// for none.
+    ///
+    /// - Throws: ``CommandError/invalidArgument(_:)`` for a parameter whose
+    ///   value names nothing the command takes.
+    func parameterTakenByOneVM() throws(CommandError) -> String?
+
+    /// The verb, run on the VMs the event addressed, answering the identifier
+    /// of each one it acted on, in order.
+    func act(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws -> [UUID]
+}
+
+extension VMGroupActionCommand {
+    func parameterTakenByOneVM() throws(CommandError) -> String? { nil }
+
+    /// The work ``VMScriptCommand/work(on:)`` answers for `subject`: the verb
+    /// on its VMs, or the group action on its group, each answering the VMs
+    /// it acted on — or `nil`, with the refusal recorded, for a group given a
+    /// parameter only one VM's verb takes.
+    fileprivate func work(
+        on gateway: VMScriptingGateway, addressing subject: VMScriptSelector.LifecycleSubject
+    ) -> VMScriptingGateway.Work? {
+        switch subject {
+        case .virtualMachines(let selectors, let isList):
+            return {
+                let acted = try await self.act(gateway, on: selectors).compactMap(VMScriptObject.specifier(for:))
+                guard isList else { return acted.first }
+                return acted
+            }
+        case .group(let group):
+            do throws(CommandError) {
+                if let given = try parameterTakenByOneVM() {
+                    throw CommandError.invalidArgument(
+                        "`\(given)` acts on one virtual machine, not a smart group or folder.")
+                }
+            } catch {
+                refuse(error)
+                return nil
+            }
+            let action = groupAction
+            return { try await gateway.groupAction(action, on: group) }
+        }
+    }
+}
 
 /// `start virtual machine … [with recovery mode] [with confirmation]`, or
 /// `start <smart group or folder>`
 @objc(VMStartScriptCommand)
-final class VMStartScriptCommand: VMScriptCommand {
-    override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
+final class VMStartScriptCommand: VMScriptCommand, VMGroupActionCommand {
+    var groupAction: VMGroupAction { .start }
+
+    func act(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws -> [UUID] {
         try await gateway.start(
             selectors, recoveryMode: flag("RecoveryMode"), confirmation: flag(Self.confirmationKey))
     }
 
-    override var groupAction: VMGroupAction? { .start }
-
-    override func parameterTakenByOneVM() throws(CommandError) -> String? {
+    func parameterTakenByOneVM() throws(CommandError) -> String? {
         if flag("RecoveryMode") { return "with recovery mode" }
         return flag(Self.confirmationKey) ? "with confirmation" : nil
     }
@@ -250,16 +287,16 @@ final class VMStartScriptCommand: VMScriptCommand {
 /// `stop virtual machine … [method <method>] [with confirmation] [giving up
 /// after <seconds>]`, or `stop <smart group or folder>`
 @objc(VMStopScriptCommand)
-final class VMStopScriptCommand: VMScriptCommand {
-    override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
+final class VMStopScriptCommand: VMScriptCommand, VMGroupActionCommand {
+    var groupAction: VMGroupAction { .stop }
+
+    func act(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws -> [UUID] {
         try await gateway.stop(
             selectors, method: try stopMethod().disposition, confirmation: flag(Self.confirmationKey),
             givingUpAfter: seconds(Self.givingUpAfterKey))
     }
 
-    override var groupAction: VMGroupAction? { .stop }
-
-    override func parameterTakenByOneVM() throws(CommandError) -> String? {
+    func parameterTakenByOneVM() throws(CommandError) -> String? {
         try stopParameterTakenByOneVM()
     }
 }
@@ -267,19 +304,31 @@ final class VMStopScriptCommand: VMScriptCommand {
 /// `restart virtual machine … [method <method>] [with confirmation] [giving
 /// up after <seconds>]`, or `restart <smart group or folder>`
 @objc(VMRestartScriptCommand)
-final class VMRestartScriptCommand: VMScriptCommand {
-    override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
+final class VMRestartScriptCommand: VMScriptCommand, VMGroupActionCommand {
+    var groupAction: VMGroupAction { .restart }
+
+    func act(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws -> [UUID] {
         try await gateway.restart(
             selectors, method: try stopMethod().disposition, confirmation: flag(Self.confirmationKey),
             givingUpAfter: seconds(Self.givingUpAfterKey))
     }
 
-    override var groupAction: VMGroupAction? { .restart }
-
-    override func parameterTakenByOneVM() throws(CommandError) -> String? {
+    func parameterTakenByOneVM() throws(CommandError) -> String? {
         try stopParameterTakenByOneVM()
     }
 }
+
+/// `suspend virtual machine …`, or `suspend <smart group or folder>`
+@objc(VMSuspendScriptCommand)
+final class VMSuspendScriptCommand: VMScriptCommand, VMGroupActionCommand {
+    var groupAction: VMGroupAction { .suspend }
+
+    func act(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws -> [UUID] {
+        try await gateway.suspend(selectors)
+    }
+}
+
+// MARK: - Commands
 
 extension VMScriptCommand {
     /// The Cocoa key of `giving up after`, on `stop` and `restart`.
@@ -299,7 +348,8 @@ extension VMScriptCommand {
     }
 
     /// The first of `stop`'s or `restart`'s parameters given that changes
-    /// only one VM's verb, as ``parameterTakenByOneVM()`` answers it: a group
+    /// only one VM's verb, as ``VMGroupActionCommand/parameterTakenByOneVM()``
+    /// answers it: a group
     /// takes its guests down by `method normal`, asking nothing, with no
     /// deadline.
     func stopParameterTakenByOneVM() throws(CommandError) -> String? {
@@ -324,16 +374,6 @@ final class VMResumeScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         try await gateway.resume(selectors, confirmation: flag(Self.confirmationKey))
     }
-}
-
-/// `suspend virtual machine …`, or `suspend <smart group or folder>`
-@objc(VMSuspendScriptCommand)
-final class VMSuspendScriptCommand: VMScriptCommand {
-    override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
-        try await gateway.suspend(selectors)
-    }
-
-    override var groupAction: VMGroupAction? { .suspend }
 }
 
 /// `reveal virtual machine …`

@@ -59,15 +59,16 @@ enum VMScriptSelector {
     /// What a lifecycle command's direct parameter addresses: virtual
     /// machines, or one smart group or folder.
     enum LifecycleSubject {
-        /// The VMs, as ``selectors(addressing:in:)`` reads them.
-        case virtualMachines([VMSelector])
+        /// The VMs, and whether they are addressed as a list, as
+        /// ``virtualMachines(addressing:in:)`` reads them.
+        case virtualMachines([VMSelector], isList: Bool)
         /// The group, which the command's group action takes as a whole.
         case group(VMGroupReference)
     }
 
     /// What `parameter` addresses for a lifecycle command: one reference
     /// Cocoa evaluates to a single smart group or folder is that group, and
-    /// anything else is the VMs ``selectors(addressing:in:)`` reads.
+    /// anything else is the VMs ``virtualMachines(addressing:in:)`` reads.
     ///
     /// A group is never one of several: a list of references holds VMs only,
     /// as ``specifiers(in:naming:key:)`` refuses anything else.
@@ -77,12 +78,14 @@ enum VMScriptSelector {
     ///   several groups.
     static func lifecycleSubject(addressing parameter: Any) throws -> LifecycleSubject {
         guard let specifier = parameter as? NSScriptObjectSpecifier, selector(naming: specifier) == nil else {
-            return .virtualMachines(try selectors(addressing: parameter))
+            let addressed = try virtualMachines(addressing: parameter)
+            return .virtualMachines(addressed.selectors, isList: addressed.isList)
         }
         let evaluated = try evaluate(specifier, in: nil)
         let groups = evaluated.items.compactMap { $0 as? VMGroupScriptObject }
         guard !groups.isEmpty else {
-            return .virtualMachines(try elements(of: evaluated.items, as: VMScriptObject.self).map(\.selector))
+            return .virtualMachines(
+                try elements(of: evaluated.items, as: VMScriptObject.self).map(\.selector), isList: evaluated.isList)
         }
         guard evaluated.items.count == 1, let group = groups.first else {
             throw CommandError.invalidArgument(

@@ -217,7 +217,7 @@ package final class VMIntentGateway {
 
     func start(_ id: UUID, recovery: Bool, consent: Consent) async throws {
         try await perform(.start, on: id) {
-            try await self.commands.start(.id(id), recovery: recovery, consent: consent)
+            _ = try await self.commands.start(.id(id), recovery: recovery, consent: consent)
         }
     }
 
@@ -226,7 +226,7 @@ package final class VMIntentGateway {
         givingUpAfter timeout: TimeInterval?
     ) async throws {
         try await perform(.stop, on: id) {
-            try await self.commands.stop(
+            _ = try await self.commands.stop(
                 .id(id), disposition: disposition, consent: consent, timeout: timeout)
         }
     }
@@ -242,7 +242,7 @@ package final class VMIntentGateway {
     }
 
     func suspend(_ id: UUID) async throws {
-        try await perform(.suspend, on: id) { try await self.commands.suspend(.id(id)) }
+        try await perform(.suspend, on: id) { _ = try await self.commands.suspend(.id(id)) }
     }
 
     func restart(
@@ -250,7 +250,7 @@ package final class VMIntentGateway {
         givingUpAfter timeout: TimeInterval?
     ) async throws {
         try await perform(.restart, on: id) {
-            try await self.commands.restart(
+            _ = try await self.commands.restart(
                 .id(id), disposition: disposition, timeout: timeout, consent: consent)
         }
     }

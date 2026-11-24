@@ -605,7 +605,9 @@ final class VMScriptingGateway {
 
     // MARK: - Lifecycle
 
-    func start(_ selectors: [VMSelector], recoveryMode: Bool, confirmation: Bool) async throws {
+    /// Starts each VM, answering the identifier of each one started, in
+    /// order.
+    func start(_ selectors: [VMSelector], recoveryMode: Bool, confirmation: Bool) async throws -> [UUID] {
         try await perform(.start, on: selectors) { selector in
             try await self.commands.start(
                 selector, recovery: recoveryMode, consent: Self.consent(confirmation))
@@ -613,11 +615,12 @@ final class VMScriptingGateway {
     }
 
     /// Stops each VM the way `method` names, with `confirmation` as the
-    /// consent a destructive stop refuses without.
+    /// consent a destructive stop refuses without, answering the identifier
+    /// of each one stopped, in order.
     func stop(
         _ selectors: [VMSelector], method: StopDisposition, confirmation: Bool,
         givingUpAfter timeout: TimeInterval?
-    ) async throws {
+    ) async throws -> [UUID] {
         try await perform(.stop, on: selectors) { selector in
             try await self.commands.stop(
                 selector, disposition: method, consent: Self.consent(confirmation), timeout: timeout)
@@ -631,11 +634,12 @@ final class VMScriptingGateway {
     }
 
     /// Restarts each VM, taking it down the way `method` names, with
-    /// `confirmation` as the consent a destructive restart refuses without.
+    /// `confirmation` as the consent a destructive restart refuses without,
+    /// answering the identifier of each one restarted, in order.
     func restart(
         _ selectors: [VMSelector], method: StopDisposition, confirmation: Bool,
         givingUpAfter timeout: TimeInterval?
-    ) async throws {
+    ) async throws -> [UUID] {
         try await perform(.restart, on: selectors) { selector in
             try await self.commands.restart(
                 selector, disposition: method, timeout: timeout, consent: Self.consent(confirmation))
@@ -654,7 +658,9 @@ final class VMScriptingGateway {
         }
     }
 
-    func suspend(_ selectors: [VMSelector]) async throws {
+    /// Suspends each VM, answering the identifier of each one suspended, in
+    /// order.
+    func suspend(_ selectors: [VMSelector]) async throws -> [UUID] {
         try await perform(.suspend, on: selectors) {
             try await self.commands.suspend($0)
         }

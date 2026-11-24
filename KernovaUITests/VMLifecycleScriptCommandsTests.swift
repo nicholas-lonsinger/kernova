@@ -48,7 +48,7 @@ struct VMLifecycleScriptCommandsTests {
         let command = try makeCommand(
             VMStartScriptCommand.init(commandDescription:), code: "Strt", arguments: ["RecoveryMode": true])
 
-        try await command.run(makeGateway(wired), on: [.name("Alpha")])
+        _ = try await command.act(makeGateway(wired), on: [.name("Alpha")])
 
         #expect(virtualization.startCallCount == 1)
         #expect(virtualization.lastStartBootIntoRecovery)
@@ -72,14 +72,14 @@ struct VMLifecycleScriptCommandsTests {
         }
 
         let unoffered = try await #require(throws: CommandError.self) {
-            try await command(confirmation: true).run(makeGateway(wired), on: [.name("Alpha")])
+            try await command(confirmation: true).act(makeGateway(wired), on: [.name("Alpha")])
         }
         #expect(unoffered.stepRequirement?.message.contains("\u{201C}For everyone\u{201D}") == true)
 
         alpha.publishAgentHubSnapshotForTesting(
             AgentHubSnapshot(peers: [], features: FeatureStatus.merge([]), powerIgnoringApps: .agent(.systemPeer)))
         let unconsented = try await #require(throws: CommandError.self) {
-            try await command(confirmation: false).run(makeGateway(wired), on: [.name("Alpha")])
+            try await command(confirmation: false).act(makeGateway(wired), on: [.name("Alpha")])
         }
         #expect(unconsented.confirmationPrompt?.kind == .stopAnyway)
 
@@ -98,7 +98,7 @@ struct VMLifecycleScriptCommandsTests {
             VMStopScriptCommand.init(commandDescription:), code: "Stop", arguments: ["GivingUpAfter": 30])
 
         let refusal = try await #require(throws: CommandError.self) {
-            try await command.run(makeGateway(wired), on: [.name("Alpha")])
+            try await command.act(makeGateway(wired), on: [.name("Alpha")])
         }
 
         #expect(refusal == .timedOut(vm: wired.core.summary(alpha), verb: .stop, seconds: 30))
@@ -115,7 +115,7 @@ struct VMLifecycleScriptCommandsTests {
             VMRestartScriptCommand.init(commandDescription:), code: "Rstr", arguments: ["GivingUpAfter": 20])
 
         let refusal = try await #require(throws: CommandError.self) {
-            try await command.run(makeGateway(wired), on: [.name("Alpha")])
+            try await command.act(makeGateway(wired), on: [.name("Alpha")])
         }
 
         #expect(refusal == .timedOut(vm: wired.core.summary(alpha), verb: .restart, seconds: 20))
@@ -141,12 +141,12 @@ struct VMLifecycleScriptCommandsTests {
             arguments: ["Confirmation": true])
 
         let refusal = try await #require(throws: CommandError.self) {
-            try await unconfirmed.run(makeGateway(wired), on: [.name("Alpha")])
+            try await unconfirmed.act(makeGateway(wired), on: [.name("Alpha")])
         }
         #expect(refusal.confirmationPrompt?.kind == .startBesideSharedMachineIdentity)
         #expect(virtualization.stopCallCount == 0)
 
-        try await confirmed.run(makeGateway(wired), on: [.name("Alpha")])
+        _ = try await confirmed.act(makeGateway(wired), on: [.name("Alpha")])
 
         #expect(virtualization.stopCallCount == 1)
         #expect(virtualization.startCallCount == 1)
@@ -166,7 +166,7 @@ struct VMLifecycleScriptCommandsTests {
         try await makeCommand(VMResumeScriptCommand.init(commandDescription:), code: "Resu").run(
             gateway, on: [selector])
         #expect(alpha.status == .running)
-        try await makeCommand(VMSuspendScriptCommand.init(commandDescription:), code: "Susp").run(
+        _ = try await makeCommand(VMSuspendScriptCommand.init(commandDescription:), code: "Susp").act(
             gateway, on: [selector])
         #expect(alpha.status == .suspended)
         try await makeCommand(VMRevealScriptCommand.init(commandDescription:), code: "Revl").run(

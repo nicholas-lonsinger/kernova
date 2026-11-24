@@ -36,7 +36,10 @@ extension VMCommandCore {
     /// Another active VM having open an external disk image the VM would open
     /// refuses it with ``CommandError/conflict(vm:with:reason:)``, unless both
     /// have it read-only.
-    package func start(_ selector: VMSelector, recovery: Bool, consent: Consent) async throws {
+    ///
+    /// - Returns: The identifier of the VM it started.
+    @discardableResult
+    package func start(_ selector: VMSelector, recovery: Bool, consent: Consent) async throws -> UUID {
         let instance = try resolve(selector)
         do {
             try await startNow(
@@ -45,6 +48,7 @@ extension VMCommandCore {
         } catch {
             throw bringUpFailure(error, verb: .start, on: instance)
         }
+        return instance.id
     }
 
     /// What a start may begin beyond the bring-up itself: two independent
@@ -738,13 +742,17 @@ extension VMCommandCore {
     /// asked to go down. Only a door whose caller is sitting there waiting
     /// supplies one: a user watching a window can see the guest is taking its
     /// time and stop it themselves.
+    ///
+    /// - Returns: The identifier of the VM it stopped.
+    @discardableResult
     package func stop(
         _ selector: VMSelector, disposition: StopDisposition, consent: Consent,
         timeout: TimeInterval?
-    ) async throws {
+    ) async throws -> UUID {
         try Self.requireUsable(timeout)
-        try await stop(
-            try resolve(selector), disposition: disposition, consent: consent, timeout: timeout)
+        let instance = try resolve(selector)
+        try await stop(instance, disposition: disposition, consent: consent, timeout: timeout)
+        return instance.id
     }
 
     /// Takes the guest down, waiting out the power-off only for a caller that
@@ -1133,8 +1141,13 @@ extension VMCommandCore {
     }
 
     /// Save-suspends the VM to its bundle's suspend slot.
-    package func suspend(_ selector: VMSelector) async throws {
-        try await suspend(try resolve(selector))
+    ///
+    /// - Returns: The identifier of the VM it suspended.
+    @discardableResult
+    package func suspend(_ selector: VMSelector) async throws -> UUID {
+        let instance = try resolve(selector)
+        try await suspend(instance)
+        return instance.id
     }
 
     func suspend(_ instance: VMInstance, origin: VMRequestOrigin = .newWork) async throws {
@@ -1197,10 +1210,13 @@ extension VMCommandCore {
     /// before the stop for the same reason; `consent` answers it, and the boot
     /// carries that answer. A MAC address another active VM uses on the
     /// network is refused there too.
+    ///
+    /// - Returns: The identifier of the VM it restarted.
+    @discardableResult
     package func restart(
         _ selector: VMSelector, disposition: StopDisposition, timeout: TimeInterval?,
         consent: Consent
-    ) async throws {
+    ) async throws -> UUID {
         try Self.requireUsable(timeout)
         let instance = try resolve(selector)
         try requireRestart(instance, disposition: disposition)
@@ -1258,6 +1274,7 @@ extension VMCommandCore {
         } catch {
             throw bringUpFailure(error, verb: .start, on: instance)
         }
+        return instance.id
     }
 
     /// Refuses a restart `disposition` the VM does not take now, in the words

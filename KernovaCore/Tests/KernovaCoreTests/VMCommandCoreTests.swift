@@ -93,7 +93,7 @@ struct VMCommandCoreTests {
         // release cannot land ahead of it.
         Task { @MainActor in harness.virtualization.resumeSuspended() }
         try await harness.core.start(.id(instance.id), recovery: false, consent: .none)
-        try await first.joined()
+        _ = try await first.joined()
 
         #expect(harness.virtualization.startCallCount == 1)
         #expect(instance.status == .running)
@@ -118,7 +118,7 @@ struct VMCommandCoreTests {
         #expect({ if case .busy = error { true } else { false } }())
 
         harness.virtualization.resumeSuspended()
-        try await first.joined()
+        _ = try await first.joined()
     }
 
     @Test("A resume arriving while a restore is in flight joins it")
@@ -789,8 +789,8 @@ struct VMCommandCoreTests {
         try await clock.sleepRequested.wait { clock.parked.count == 2 }
 
         instance.activity.deliverSessionEvent(.guestDidStop, from: session)
-        try await first.joined()
-        try await second.joined()
+        _ = try await first.joined()
+        _ = try await second.joined()
 
         // The second boot joined the first rather than meeting the VM the
         // first brought up.

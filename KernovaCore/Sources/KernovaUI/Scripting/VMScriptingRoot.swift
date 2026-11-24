@@ -115,11 +115,14 @@ package class VMScriptingRoot: NSObject, NSApplicationDelegate {
     }
 
     /// Where a `move` re-inserts the smart group it removed, which
-    /// ``removeFromSmartGroups(at:)`` refused: there is nothing to insert.
+    /// ``removeFromSmartGroups(at:)`` refused: there is nothing to insert, and
+    /// the script reads that refusal.
     ///
-    /// Cocoa's move inserts after a refused removal all the same, and without
-    /// this its KVC fallback inserts into the array ``smartGroups`` answered,
-    /// past its end, which traps (observed on macOS 27).
+    /// Cocoa's move inserts after a refused removal all the same. Without
+    /// this, its KVC fallback inserts into the Swift array ``smartGroups``
+    /// answered, whose bounds check traps where no exception handler can catch
+    /// it (observed in the test host on macOS 27; with the array answered as
+    /// an `NSArray`, Cocoa catches the exception, and the script reads −10000).
     @objc(insertInSmartGroups:atIndex:)
     func insertInSmartGroups(_ group: Any, at index: Int) {}
 

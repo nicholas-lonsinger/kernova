@@ -9,9 +9,9 @@ import Testing
 @testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
-/// The dictionary's `smart group` and `folder` given to a lifecycle command:
-/// which VMs the group action lands on, what it answers, and how it fails for
-/// a VM it left undone.
+/// The verbs of a group action — `start`, `suspend`, `stop`, `restart` —
+/// given VMs or a smart group or folder: which VMs they land on, what they
+/// answer, and how a group action fails for a VM it left undone.
 ///
 /// A script's own events are dispatched to the test host (``ScriptHost``) and
 /// answered by the gateway under test.
@@ -62,6 +62,59 @@ struct VMGroupScriptingTests {
         #expect(beta.status == .stopped)
         #expect(delta.status == (kind == .folder ? .running : .stopped))
         #expect(alpha.status == .stopped)
+    }
+
+    /// The ways a script names the VMs a verb lands on, and the names of
+    /// those VMs, in order.
+    enum VMForm: CaseIterable, Sendable {
+        /// `virtual machine "alpha"`, a name the core resolves ignoring case.
+        case named
+        /// `{virtual machine id "<Beta's>", virtual machine "Alpha"}`.
+        case list
+        /// `every virtual machine whose name is "Beta"`.
+        case whose
+
+        /// The event's reference, and the names of the VMs it lands on.
+        @MainActor
+        fileprivate func reference(beta: UUID) -> (NSAppleEventDescriptor, [String]) {
+            switch self {
+            case .named:
+                return (ScriptEvent.element("KvVM", named: "alpha"), ["Alpha"])
+            case .list:
+                let list = NSAppleEventDescriptor.list()
+                list.insert(ScriptEvent.element("KvVM", id: beta.uuidString), at: 1)
+                list.insert(ScriptEvent.element("KvVM", named: "Alpha"), at: 2)
+                return (list, ["Beta", "Alpha"])
+            case .whose:
+                let name = ScriptEvent.property("pnam", of: ScriptEvent.examined)
+                return (
+                    ScriptEvent.every("KvVM", whose: ScriptEvent.equals(name, NSAppleEventDescriptor(string: "Beta"))),
+                    ["Beta"]
+                )
+            }
+        }
+    }
+
+    @Test(
+        "A verb given VMs answers each one it acted on by identifier: a reference for one, a list in order for several",
+        arguments: ["Strt", "Stop", "Susp", "Rstr"], VMForm.allCases)
+    func aVerbAnswersTheVMsItActedOn(verb: String, form: VMForm) async throws {
+        let wired = WiredCommandCore(virtualization: MockVirtualizationService())
+        let phase: VMLifecyclePhase = verb == "Strt" ? .stopped : .running(sessionID: UUID())
+        let vms = ["Alpha", "Beta", "Gamma"].map { wired.register(name: $0, phase: phase) }
+        let host = ScriptHost()
+        let gateway = await makeGateway(wired, host: host)
+        let (reference, named) = form.reference(beta: vms[1].id)
+
+        let reply = try await host.send(ScriptEvent.verb(verb, reference), to: gateway)
+
+        #expect(reply.errorNumber == 0, "\(reply.errorString ?? "")")
+        let answer = try #require(reply.descriptor)
+        #expect(answer.descriptorType == (form == .named ? typeObjectSpecifier : typeAEList))
+        for item in answer.items {
+            #expect(item.forKeyword(ScriptEvent.code("form"))?.enumCodeValue == ScriptEvent.code("ID  "))
+        }
+        #expect(Self.answered(reply) == named.compactMap { name in vms.first { $0.name == name }?.id })
     }
 
     @Test("A group start that leaves a VM undone starts the rest, then fails naming that VM in AppleScript's words")

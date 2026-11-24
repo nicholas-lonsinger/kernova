@@ -409,7 +409,8 @@
 			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Start it beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.">
 				<cocoa key="Confirmation"/>
 			</parameter>
-			<result description="The virtual machines a smart group&#8217;s or folder&#8217;s start started, restored or resumed, in its order; nothing for a virtual machine.">
+			<result description="The virtual machines it acted on, each as virtual machine id &#8220;&#8230;&#8221;: a reference for a reference to one virtual machine, and a list, in order, for a list of them, a reference to several, or a smart group or folder &#8212; for a group, those it started, restored or resumed.">
+				<type type="specifier"/>
 				<type type="specifier" list="yes"/>
 			</result>
 		</command>
@@ -431,7 +432,8 @@
 			<parameter name="giving up after" code="givu" type="integer" optional="yes" description="Seconds to wait for the guest to power off before giving up and leaving it as it was.">
 				<cocoa key="GivingUpAfter"/>
 			</parameter>
-			<result description="The virtual machines a smart group&#8217;s or folder&#8217;s stop asked to shut down, in its order; nothing for a virtual machine.">
+			<result description="The virtual machines it acted on, each as virtual machine id &#8220;&#8230;&#8221;: a reference for a reference to one virtual machine, and a list, in order, for a list of them, a reference to several, or a smart group or folder &#8212; for a group, those it asked to shut down.">
+				<type type="specifier"/>
 				<type type="specifier" list="yes"/>
 			</result>
 		</command>
@@ -453,7 +455,8 @@
 			<parameter name="giving up after" code="givu" type="integer" optional="yes" description="Seconds to wait for the guest to power off before giving up and starting nothing.">
 				<cocoa key="GivingUpAfter"/>
 			</parameter>
-			<result description="The virtual machines a smart group&#8217;s or folder&#8217;s restart restarted, in its order; nothing for a virtual machine.">
+			<result description="The virtual machines it acted on, each as virtual machine id &#8220;&#8230;&#8221;: a reference for a reference to one virtual machine, and a list, in order, for a list of them, a reference to several, or a smart group or folder &#8212; for a group, those it restarted.">
+				<type type="specifier"/>
 				<type type="specifier" list="yes"/>
 			</result>
 		</command>
@@ -485,7 +488,8 @@
 				<type type="smart group"/>
 				<type type="folder"/>
 			</direct-parameter>
-			<result description="The virtual machines a smart group&#8217;s or folder&#8217;s suspend suspended, in its order; nothing for a virtual machine.">
+			<result description="The virtual machines it acted on, each as virtual machine id &#8220;&#8230;&#8221;: a reference for a reference to one virtual machine, and a list, in order, for a list of them, a reference to several, or a smart group or folder &#8212; for a group, those it suspended.">
+				<type type="specifier"/>
 				<type type="specifier" list="yes"/>
 			</result>
 		</command>
