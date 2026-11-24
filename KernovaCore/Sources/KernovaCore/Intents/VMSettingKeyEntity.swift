@@ -9,7 +9,7 @@ struct VMSettingKeyEntity: AppEntity {
 
     static let defaultQuery = VMSettingKeyEntityQuery()
 
-    /// The dotted key name, which a write addresses the value by.
+    /// The dotted key name, which a read or a write addresses the value by.
     let id: String
 
     /// One line naming the unit or the accepted values.
@@ -25,7 +25,7 @@ struct VMSettingKeyEntity: AppEntity {
     }
 }
 
-/// How Shortcuts finds the setting an intent writes.
+/// How Shortcuts finds the setting an intent reads or writes.
 ///
 /// Every method forwards to ``VMIntentGateway``, as ``NetworkEntityQuery``'s
 /// do: the keyspace is fully enumerable, so `allEntities()` gives Shortcuts a

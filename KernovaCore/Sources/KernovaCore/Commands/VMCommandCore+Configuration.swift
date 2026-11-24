@@ -31,9 +31,7 @@ extension VMCommandCore {
     /// Each value is written the way ``setConfiguration(_:assignments:consent:)``
     /// parses it back.
     func configuration(_ selector: VMSelector, keys: [String]?) throws -> [ConfigurationEntry] {
-        let instance = try resolve(selector)
-        instance.activity.refreshFromBundle()
-        let settings = instance.settings
+        let settings = try currentSettings(of: selector)
         guard let keys else {
             // A key the guest cannot have is left out rather than reported with
             // a value no `set` would take back.
@@ -41,10 +39,28 @@ extension VMCommandCore {
                 .filter { $0.applies(settings.configuration) }
                 .map { ConfigurationEntry(key: $0.name, value: $0.read(settings)) }
         }
-        return try keys.map { name in
-            let key = try requireKey(named: name, on: settings.configuration)
-            return ConfigurationEntry(key: key.name, value: key.read(settings))
-        }
+        return try keys.map { try entry(named: $0, in: settings) }
+    }
+
+    /// The VM's value for `key`, refusing a key the keyspace does not hold and
+    /// one this guest cannot have.
+    ///
+    /// The value is written the way ``setConfiguration(_:assignments:consent:)``
+    /// parses it back.
+    func configuration(_ selector: VMSelector, key: String) throws -> ConfigurationEntry {
+        try entry(named: key, in: currentSettings(of: selector))
+    }
+
+    /// What the VM's bundle holds now.
+    private func currentSettings(of selector: VMSelector) throws -> VMSettings {
+        let instance = try resolve(selector)
+        instance.activity.refreshFromBundle()
+        return instance.settings
+    }
+
+    private func entry(named name: String, in settings: VMSettings) throws -> ConfigurationEntry {
+        let key = try requireKey(named: name, on: settings.configuration)
+        return ConfigurationEntry(key: key.name, value: key.read(settings))
     }
 
     // MARK: - Write
