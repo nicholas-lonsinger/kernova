@@ -103,38 +103,50 @@ package final class VMSettingScriptObject: NSObject {
 
 /// A setting's value as a script reads it: a boolean, an integer, a real
 /// number of gigabytes, a `VM network mode` constant or missing value, or
-/// text, as its key's kind is — compared in a `whose` test as AppleScript
-/// compares it in an `if`.
+/// text, as its key's kind is.
 ///
-/// Two documented behaviors carry it. The dictionary's `any` is
-/// NSAppleEventDescriptor (Cocoa Scripting Guide, "Support for basic
-/// AppleScript types"), so a value of any of those types reaches the script as
-/// itself. A `whose` test asks the value it reads to compare itself when it
-/// implements `NSScriptingComparisonMethods` (NSScriptWhoseTests.h), which
-/// NSAppleEventDescriptor doesn't, so this does: a number with a number, text
-/// with text ignoring case, and a boolean, constant or missing value with its
-/// equal, and nothing of another type.
+/// The dictionary's `any` is NSAppleEventDescriptor (Cocoa Scripting Guide,
+/// "Support for basic AppleScript types"), so the value reaches a script as
+/// itself, and an `if` compares it as AppleScript compares that type. A
+/// `whose` test asks the value it reads to compare itself when it implements
+/// `NSScriptingComparisonMethods` (NSScriptWhoseTests.h), which
+/// NSAppleEventDescriptor doesn't, so this does, from what the descriptor
+/// holds and for each of the eight tests:
+/// - text with text, through NSString's own implementations, which Cocoa
+///   compares every text property with: ignoring case and considering
+///   diacriticals, as an `if` does unless told otherwise, and blind to
+///   `considering case`;
+/// - a number with a number;
+/// - a boolean, a constant or missing value with its equal, which is also
+///   all such a value contains, begins or ends with, as in an `if`.
+///
+/// Any other test is false: two values of different types, which an `if` may
+/// first convert, and a boolean, constant or missing value ordered, which an
+/// `if` stops at or answers false.
+///
+/// NSAppleEventDescriptor makes a copy or a coercion of one as one of this
+/// class, through ``init(aeDescNoCopy:)``, which compares as what it then
+/// holds.
 final class VMScriptSettingValue: NSAppleEventDescriptor {
-    /// What the descriptor holds.
-    let held: ConfigurationTypedValue
-
-    init(_ held: ConfigurationTypedValue) {
-        self.held = held
+    convenience init(_ value: ConfigurationTypedValue) {
         var desc = AEDesc()
-        if let plain = Self.descriptor(held).aeDesc {
+        if let plain = Self.descriptor(value).aeDesc {
             AEDuplicateDesc(plain, &desc)
         }
-        super.init(aeDescNoCopy: &desc)
+        self.init(aeDescNoCopy: &desc)
     }
 
-    /// Unarchiving one is not supported: nothing archives a script's value.
+    override init(aeDescNoCopy aeDesc: UnsafePointer<AEDesc>) {
+        super.init(aeDescNoCopy: aeDesc)
+    }
+
     required init?(coder: NSCoder) {
-        return nil
+        super.init(coder: coder)
     }
 
-    /// `held` as a plain descriptor of its type.
-    private static func descriptor(_ held: ConfigurationTypedValue) -> NSAppleEventDescriptor {
-        switch held {
+    /// `value` as a plain descriptor of its type.
+    private static func descriptor(_ value: ConfigurationTypedValue) -> NSAppleEventDescriptor {
+        switch value {
         case .boolean(let value): NSAppleEventDescriptor(boolean: value)
         case .integer(let value): NSAppleEventDescriptor(int32: Int32(clamping: value))
         case .gigabytes(let size): NSAppleEventDescriptor(double: size.gibibytes)
@@ -151,7 +163,7 @@ final class VMScriptSettingValue: NSAppleEventDescriptor {
 
     // MARK: Comparison
 
-    /// What a test's value is, as these comparisons read it.
+    /// What a value is, as these comparisons read it.
     private enum Operand {
         case number(Double)
         case boolean(Bool)
@@ -187,45 +199,74 @@ final class VMScriptSettingValue: NSAppleEventDescriptor {
         }
     }
 
-    /// How this value orders against `value`, `nil` when the two don't
-    /// order: they are of different types, or of one that has no order.
-    private func order(against value: Any) -> ComparisonResult? {
-        switch (held, Operand(value)) {
-        case (.integer(let held), .number(let other)): Self.order(Double(held), other)
-        case (.gigabytes(let size), .number(let other)): Self.order(size.gibibytes, other)
-        case (.text(let held), .text(let other)): held.compare(other, options: .caseInsensitive)
-        default: nil
+    /// One of a `whose` test's comparisons.
+    private enum Test {
+        case equal, lessThan, lessThanOrEqual, greaterThan, greaterThanOrEqual, beginsWith, endsWith, contains
+
+        /// What it answers for two values that order as `order` says, `nil`
+        /// for two that don't.
+        func answer(ordered order: ComparisonResult?) -> Bool {
+            switch self {
+            case .lessThan: order == .orderedAscending
+            case .lessThanOrEqual: order == .orderedAscending || order == .orderedSame
+            case .greaterThan: order == .orderedDescending
+            case .greaterThanOrEqual: order == .orderedDescending || order == .orderedSame
+            case .equal, .beginsWith, .endsWith, .contains: order == .orderedSame
+            }
+        }
+
+        /// What it answers for two values of a type with no order.
+        func answer(equal: Bool) -> Bool {
+            switch self {
+            case .equal, .beginsWith, .endsWith, .contains: equal
+            case .lessThan, .lessThanOrEqual, .greaterThan, .greaterThanOrEqual: false
+            }
+        }
+
+        /// What it answers for `text` against `other`.
+        func answer(_ text: NSString, _ other: String) -> Bool {
+            switch self {
+            case .equal: text.scriptingIsEqual(to: other)
+            case .lessThan: text.scriptingIsLessThan(other)
+            case .lessThanOrEqual: text.scriptingIsLessThanOrEqual(to: other)
+            case .greaterThan: text.scriptingIsGreaterThan(other)
+            case .greaterThanOrEqual: text.scriptingIsGreaterThanOrEqual(to: other)
+            case .beginsWith: text.scriptingBegins(with: other)
+            case .endsWith: text.scriptingEnds(with: other)
+            case .contains: text.scriptingContains(other)
+            }
         }
     }
 
-    private static func order(_ lhs: Double, _ rhs: Double) -> ComparisonResult {
-        lhs < rhs ? .orderedAscending : lhs > rhs ? .orderedDescending : .orderedSame
-    }
-
-    override func scriptingIsEqual(to object: Any) -> Bool {
-        switch (held, Operand(object)) {
-        case (.boolean(let held), .boolean(let other)): held == other
-        case (.networkMode(let mode?), .constant(let code)): VMScriptNetworkMode(mode).code == code
-        case (.networkMode(nil), .missing): true
-        default: order(against: object) == .orderedSame
+    /// What `test` answers for this value against `object`, a `whose` test's
+    /// value.
+    private func answers(_ test: Test, against object: Any) -> Bool {
+        switch (Operand(self), Operand(object)) {
+        case (.text(let text), .text(let other)): test.answer(text as NSString, other)
+        case (.number(let number), .number(let other)): test.answer(ordered: Self.order(number, other))
+        case (.boolean(let value), .boolean(let other)): test.answer(equal: value == other)
+        case (.constant(let code), .constant(let other)): test.answer(equal: code == other)
+        case (.missing, .missing): test.answer(equal: true)
+        default: false
         }
     }
 
-    override func scriptingIsLessThan(_ object: Any) -> Bool {
-        order(against: object) == .orderedAscending
+    private static func order(_ lhs: Double, _ rhs: Double) -> ComparisonResult? {
+        if lhs < rhs { return .orderedAscending }
+        if lhs > rhs { return .orderedDescending }
+        return lhs == rhs ? .orderedSame : nil
     }
 
-    override func scriptingIsLessThanOrEqual(to object: Any) -> Bool {
-        [.orderedAscending, .orderedSame].contains(order(against: object))
-    }
-
-    override func scriptingIsGreaterThan(_ object: Any) -> Bool {
-        order(against: object) == .orderedDescending
-    }
-
+    override func scriptingIsEqual(to object: Any) -> Bool { answers(.equal, against: object) }
+    override func scriptingIsLessThan(_ object: Any) -> Bool { answers(.lessThan, against: object) }
+    override func scriptingIsLessThanOrEqual(to object: Any) -> Bool { answers(.lessThanOrEqual, against: object) }
+    override func scriptingIsGreaterThan(_ object: Any) -> Bool { answers(.greaterThan, against: object) }
     override func scriptingIsGreaterThanOrEqual(to object: Any) -> Bool {
-        [.orderedDescending, .orderedSame].contains(order(against: object))
+        answers(.greaterThanOrEqual, against: object)
     }
+    override func scriptingBegins(with object: Any) -> Bool { answers(.beginsWith, against: object) }
+    override func scriptingEnds(with object: Any) -> Bool { answers(.endsWith, against: object) }
+    override func scriptingContains(_ object: Any) -> Bool { answers(.contains, against: object) }
 
     // MARK: Writing
 

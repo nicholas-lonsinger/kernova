@@ -241,6 +241,7 @@ struct VMSettingScriptingTests {
             $0.audioOutputEnabled = false
             $0.networkEnabled = true
             $0.networkMode = .bridged
+            $0.bridgedInterfaceIdentifier = "éth1"
             $0.macAddress = "02:4b:4e:56:0c:02"
         }
         let gamma = wired.register(name: "Gamma") {
@@ -269,10 +270,51 @@ struct VMSettingScriptingTests {
         #expect(
             try names(#"name of every virtual machine whose value of setting "network.mode" is bridged"#) == ["Beta"])
 
+        // Text contains, begins and ends with text ignoring case, and orders
+        // "é" before "f", as an `if` finds; any other value contains only
+        // its equal, as AppleScript's one-item list does.
+        let alphaSettings = #"name of every setting of virtual machine "Alpha" whose value"#
+        #expect(try names(#"\#(alphaSettings) contains "4B:4E""#) == ["network.mac"])
+        #expect(try names(#"\#(alphaSettings) begins with "02:4B" and value ends with "0C:01""#) == ["network.mac"])
+        let uncontaining = try names(#"\#(alphaSettings) does not contain "4b""#)
+        #expect(!uncontaining.contains("network.mac"))
+        #expect(uncontaining.contains("cpus"))
+        #expect(try names(#"\#(alphaSettings) contains 16"#) == ["cpus"])
+        #expect(
+            try names(#"name of every setting of virtual machine "Beta" whose value < "f""#)
+                .contains("network.bridgedInterface"))
+
         _ = try answer(#"set value of setting "network.mode" of virtual machine "Gamma" to host only"#)
         _ = try answer(#"set value of setting "network.mode" of virtual machine "Beta" to missing value"#)
 
         #expect(gamma.configuration.effectiveNetworkMode == .hostOnly)
         #expect(beta.configuration.effectiveNetworkMode == nil)
+    }
+
+    /// NSAppleEventDescriptor makes a copy or a coercion of a descriptor as
+    /// one of the descriptor's own class.
+    @Test("A copied or coerced value is a value that compares as what it holds")
+    func aCopiedValueComparesAsWhatItHolds() throws {
+        let values: [(held: ConfigurationTypedValue, equal: NSAppleEventDescriptor)] = [
+            (.boolean(true), NSAppleEventDescriptor(boolean: true)),
+            (.integer(4), NSAppleEventDescriptor(int32: 4)),
+            (.gigabytes(try #require(VMMemorySize(gibibytes: 4.5))), NSAppleEventDescriptor(double: 4.5)),
+            (.networkMode(.nat), NSAppleEventDescriptor(enumCode: FourCharCode(scriptingCode: "KnSh"))),
+            (.networkMode(nil), NSAppleEventDescriptor(typeCode: FourCharCode(scriptingCode: "msng"))),
+            (.text("inline"), NSAppleEventDescriptor(string: "INLINE")),
+        ]
+        for (held, equal) in values {
+            let value = VMScriptSettingValue(held)
+            let copies: [Any?] = [
+                value.copy(), value.coerce(toDescriptorType: value.descriptorType),
+                NSDictionary(object: 1, forKey: value).allKeys.first,
+            ]
+            for copy in copies {
+                let copy = try #require(copy as? NSAppleEventDescriptor, "\(held)")
+                #expect(copy.scriptingIsEqual(to: equal), "\(held)")
+            }
+        }
+        let text = try #require(VMScriptSettingValue(.integer(4)).coerce(toDescriptorType: typeUnicodeText))
+        #expect(text.scriptingBegins(with: "4"))
     }
 }
