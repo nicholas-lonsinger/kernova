@@ -3,8 +3,9 @@ import Foundation
 /// One command in the command core's vocabulary.
 ///
 /// Named rather than described so a refusal can list the verbs a VM's current
-/// state does allow. The raw value is the name the wire carries; a person reads
-/// a verb only through the ``VMVerbVocabulary`` of the surface showing it.
+/// state does allow. The raw value is the name the wire carries; a sentence
+/// that names one as a command to run reads it through the
+/// ``VMVerbVocabulary`` of the surface showing it.
 public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case list
     case groups

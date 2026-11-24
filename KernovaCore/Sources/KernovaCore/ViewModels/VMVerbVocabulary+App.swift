@@ -2,48 +2,38 @@ import Foundation
 import KernovaCommandModel
 
 extension VMVerbVocabulary {
-    /// How the app's own windows and alerts name a verb: the words the app
-    /// gives the command that runs it, without the ellipsis of a menu item
-    /// that asks for more.
+    /// How the app's own windows and alerts name a verb: the base title of
+    /// the one Virtual Machine or File menu command that runs it
+    /// (``AppCommandTitle``) — the base, because the menu retitles the start
+    /// and stop slots for a VM whose state calls for another word.
     ///
-    /// A read the app shows rather than runs as a command, and a verb only
-    /// another door offers, have none. A `kernova:` link's refusal is shown
-    /// in an app alert, so it is worded here too.
+    /// A verb the app runs only through controls titled in context — a
+    /// snapshot row's actions, a settings panel's buttons, the USB Device
+    /// menu, the guest agent disk item, the setup view's Cancel — has none,
+    /// and so does one the app's own controls never run. A `kernova:` link's
+    /// refusal is shown in an app alert, so it is worded here too.
     package static let app = VMVerbVocabulary { verb in
         switch verb {
-        case .forgetUSBPairing: "Forget USB Accessory"
-        case .start: "Start"
-        case .cancelGuestSetup: "Cancel Setup"
-        case .stop: "Stop"
-        case .pause: "Pause"
-        case .resume: "Resume"
-        case .suspend: "Suspend"
-        case .restart: "Restart"
-        case .showInFinder: "Show in Finder"
-        case .takeSnapshot: "Take Snapshot"
-        case .revertToSnapshot: "Revert to Snapshot"
-        case .deleteSnapshot: "Delete Snapshot"
-        case .renameSnapshot: "Rename Snapshot"
-        case .setSnapshotNotes: "Edit Snapshot Note"
-        case .create: "New Virtual Machine"
-        case .clone: "Clone"
-        case .rename: "Rename"
-        case .delete: "Move to Trash"
-        case .importVM: "Import"
-        case .cancelPreparing: "Cancel"
-        case .editStorageDisk: "Edit Storage Disks"
-        case .editRemovableMedia: "Edit Removable Media"
-        case .editSharedDirectory: "Edit Shared Directories"
-        case .editUSBAccessory: "Edit USB Accessories"
-        case .setConfiguration: "Change Settings"
-        case .guestAgentDisk: "Guest Agent Disk"
-        case .createNetwork: "Create Network"
-        case .renameNetwork: "Rename Network"
-        case .deleteNetwork: "Delete Network"
-        case .quit: "Quit Kernova"
+        case .create: AppCommandTitle.newVirtualMachine
+        case .start: AppCommandTitle.start
+        case .pause: AppCommandTitle.pause
+        case .resume: AppCommandTitle.resume
+        case .stop: AppCommandTitle.stop
+        case .restart: AppCommandTitle.restart
+        case .suspend: AppCommandTitle.suspend
+        case .takeSnapshot: AppCommandTitle.takeSnapshot
+        case .revertToSnapshot: AppCommandTitle.revertToSnapshot
+        case .rename: AppCommandTitle.rename
+        case .clone: AppCommandTitle.clone
+        case .showInFinder: AppCommandTitle.showInFinder
+        case .delete: AppCommandTitle.moveToTrash
         case .list, .groups, .info, .ipAddress, .snapshots, .snapshotSizes, .sharedDirectories,
-            .storageDisks, .usbAccessories, .availableUSBAccessories, .usbPairings, .events, .open,
-            .reveal, .configurationKeys, .configuration, .networks:
+            .storageDisks, .usbAccessories, .availableUSBAccessories, .usbPairings, .forgetUSBPairing,
+            .events, .cancelGuestSetup, .open, .reveal, .deleteSnapshot, .renameSnapshot,
+            .setSnapshotNotes, .importVM, .cancelPreparing, .editStorageDisk, .editRemovableMedia,
+            .editSharedDirectory, .editUSBAccessory, .configurationKeys, .configuration,
+            .setConfiguration, .guestAgentDisk, .networks, .createNetwork, .renameNetwork,
+            .deleteNetwork, .quit:
             nil
         }
     }

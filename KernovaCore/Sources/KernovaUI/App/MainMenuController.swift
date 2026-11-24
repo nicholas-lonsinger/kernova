@@ -500,7 +500,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         let fileMenuItem = NSMenuItem()
         let fileMenu = NSMenu(title: "File")
         fileMenu.addItem(
-            withTitle: "New Virtual Machine…", action: #selector(AppDelegate.newVM(_:)),
+            withTitle: AppCommandTitle.newVirtualMachine + "\u{2026}", action: #selector(AppDelegate.newVM(_:)),
             keyEquivalent: "n")
         fileMenu.addItem(.separator())
         // "Open … Folder" (a Finder window of the contents), not "Show in Finder",
@@ -571,7 +571,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         let vmMenuItem = NSMenuItem()
         let vmMenu = NSMenu(title: "Virtual Machine")
         vmMenu.addItem(
-            withTitle: "Start", action: #selector(AppDelegate.startVM(_:)), keyEquivalent: "r")
+            withTitle: AppCommandTitle.start, action: #selector(AppDelegate.startVM(_:)), keyEquivalent: "r")
         // The ⌥⌘R shortcut is shared with "Resume" — unambiguous because a VM is
         // never both stopped and paused, and recovery precedes Resume in menu order.
         let recoveryItem = vmMenu.addItem(
@@ -579,18 +579,18 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             action: #selector(AppDelegate.startVMInRecovery(_:)), keyEquivalent: "r")
         recoveryItem.keyEquivalentModifierMask = [.command, .option]
         let pauseItem = vmMenu.addItem(
-            withTitle: "Pause", action: #selector(AppDelegate.pauseVM(_:)), keyEquivalent: "p")
+            withTitle: AppCommandTitle.pause, action: #selector(AppDelegate.pauseVM(_:)), keyEquivalent: "p")
         pauseItem.keyEquivalentModifierMask = [.command, .option]
         let resumeItem = vmMenu.addItem(
-            withTitle: "Resume", action: #selector(AppDelegate.resumeVM(_:)), keyEquivalent: "r")
+            withTitle: AppCommandTitle.resume, action: #selector(AppDelegate.resumeVM(_:)), keyEquivalent: "r")
         resumeItem.keyEquivalentModifierMask = [.command, .option]
         // Every power command is listed, with nothing behind Option, so each
         // can be found here; validation disables what the VM does not take.
         for (title, action) in [
-            ("Stop", #selector(AppDelegate.stopVM(_:))),
+            (AppCommandTitle.stop, #selector(AppDelegate.stopVM(_:))),
             ("Stop Anyway…", #selector(AppDelegate.stopAnywayVM(_:))),
             ("Force Stop…", #selector(AppDelegate.forceStopVM(_:))),
-            ("Restart", #selector(AppDelegate.restartVM(_:))),
+            (AppCommandTitle.restart, #selector(AppDelegate.restartVM(_:))),
             ("Restart Anyway…", #selector(AppDelegate.restartAnywayVM(_:))),
             ("Force Restart…", #selector(AppDelegate.forceRestartVM(_:))),
         ] {
@@ -598,12 +598,12 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         }
         vmMenu.addItem(.separator())
         let saveItem = vmMenu.addItem(
-            withTitle: "Suspend", action: #selector(AppDelegate.saveVM(_:)), keyEquivalent: "s")
+            withTitle: AppCommandTitle.suspend, action: #selector(AppDelegate.saveVM(_:)), keyEquivalent: "s")
         saveItem.keyEquivalentModifierMask = [.command, .option]
         // "Take Snapshot…" gathers input (the sheet's name and notes), so the
         // ellipsis is HIG-correct here.
         let takeSnapshotItem = vmMenu.addItem(
-            withTitle: "Take Snapshot\u{2026}", action: #selector(AppDelegate.takeSnapshot(_:)),
+            withTitle: AppCommandTitle.takeSnapshot + "\u{2026}", action: #selector(AppDelegate.takeSnapshot(_:)),
             keyEquivalent: "s")
         takeSnapshotItem.keyEquivalentModifierMask = [.command, .shift]
         let revertItem = NSMenuItem(title: SnapshotRevertMenu.title, action: nil, keyEquivalent: "")
@@ -649,7 +649,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // No ellipsis on "Rename": it starts an inline edit on the sidebar row (like
         // Finder's single-item Rename), not a dialog.
         vmMenu.addItem(
-            withTitle: "Rename", action: #selector(AppDelegate.renameVM(_:)), keyEquivalent: "")
+            withTitle: AppCommandTitle.rename, action: #selector(AppDelegate.renameVM(_:)), keyEquivalent: "")
         let cloneItems = preferences.cloneMenuItems(for: nil)
         vmMenu.addItem(
             withTitle: cloneItems.primary.title, action: #selector(AppDelegate.cloneVM(_:)),
@@ -666,13 +666,13 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             keyEquivalent: "d")
         cloneAlternateItem.keyEquivalentModifierMask = [.command, .option]
         vmMenu.addItem(
-            withTitle: "Show in Finder", action: #selector(AppDelegate.showVMInFinder(_:)),
+            withTitle: AppCommandTitle.showInFinder, action: #selector(AppDelegate.showVMInFinder(_:)),
             keyEquivalent: "")
         vmMenu.addItem(.separator())
         // "Move to Trash…" gathers input (the delete sheet lets the user pick which
         // external files to remove too), so the ellipsis is HIG-correct here.
         let deleteItem = vmMenu.addItem(
-            withTitle: "Move to Trash…", action: #selector(AppDelegate.deleteVM(_:)),
+            withTitle: AppCommandTitle.moveToTrash + "\u{2026}", action: #selector(AppDelegate.deleteVM(_:)),
             keyEquivalent: "\u{08}")
         deleteItem.keyEquivalentModifierMask = [.command]
         // ⌥-alternate, Finder's idiom for this pair: it is irreversible, so it stays

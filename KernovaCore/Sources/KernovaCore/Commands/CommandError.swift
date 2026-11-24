@@ -147,7 +147,7 @@ extension CommandError {
     /// What a verb that ran and did not complete says about it, in the words
     /// the failure carries, which name no verb; `nil` for a refusal.
     var operationFailureMessage: String? {
-        guard isOperationFailure, case .operationFailed(_, _, let message, _) = dto else { return nil }
+        guard case .operationFailed(_, _, let message, _) = dto else { return nil }
         return message
     }
 

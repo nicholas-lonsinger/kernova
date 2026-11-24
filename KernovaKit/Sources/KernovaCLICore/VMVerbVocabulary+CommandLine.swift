@@ -3,20 +3,20 @@ import Foundation
 import KernovaCommandModel
 
 extension VMVerbVocabulary {
-    /// How the `kernova` tool names a verb: the words, under `kernova`, of
-    /// each subcommand that sends it.
+    /// How the `kernova` tool names a verb: the words of each subcommand whose
+    /// own job it is, the one that performs it or prints what it answers.
+    ///
+    /// A subcommand that sends a verb only to work out another answer —
+    /// `snapshot revert` listing snapshots to resolve a name, `wait` reading
+    /// a VM's state and its events — is not named for it.
     static let commandLine = VMVerbVocabulary { verb in
-        let paths = subcommands(sending: verb).compactMap { subcommand in
-            let path = KernovaCommand.path(to: subcommand)
-            if path == nil { assertionFailure("\(subcommand) is not a subcommand of kernova") }
-            return path
-        }
+        let paths = subcommands(running: verb).map { KernovaCommand.words(of: $0).joined(separator: " ") }
         return paths.isEmpty ? nil : paths.joined(separator: ", ")
     }
 
-    /// The subcommands that send `verb`, none for a verb the tool does not
-    /// send.
-    private static func subcommands(sending verb: VMVerb) -> [any ParsableCommand.Type] {
+    /// The subcommands whose own job `verb` is, none for a verb no subcommand
+    /// runs.
+    private static func subcommands(running verb: VMVerb) -> [any ParsableCommand.Type] {
         switch verb {
         case .list: [KernovaCommand.List.self]
         case .groups: [KernovaCommand.Groups.self]
@@ -27,7 +27,6 @@ extension VMVerbVocabulary {
         case .usbAccessories, .availableUSBAccessories: [KernovaCommand.USB.List.self]
         case .usbPairings: [KernovaCommand.USB.Rules.self]
         case .forgetUSBPairing: [KernovaCommand.USB.Forget.self]
-        case .events: [KernovaCommand.Wait.self]
         case .start: [KernovaCommand.Start.self]
         case .stop: [KernovaCommand.Stop.self]
         case .pause: [KernovaCommand.Pause.self]
@@ -53,34 +52,9 @@ extension VMVerbVocabulary {
         case .renameNetwork: [KernovaCommand.Network.Rename.self]
         case .deleteNetwork: [KernovaCommand.Network.Delete.self]
         case .quit: [KernovaCommand.Quit.self]
-        case .cancelGuestSetup, .reveal, .setSnapshotNotes, .create, .cancelPreparing,
+        case .events, .cancelGuestSetup, .reveal, .setSnapshotNotes, .create, .cancelPreparing,
             .editStorageDisk, .editRemovableMedia, .guestAgentDisk:
             []
         }
-    }
-}
-
-extension KernovaCommand {
-    /// The words that run `command` under `kernova` — `snapshot take` for
-    /// ``Snapshot/Take`` — or `nil` for a command the tree does not hold.
-    static func path(to command: any ParsableCommand.Type) -> String? {
-        path(to: command, among: configuration.subcommands)?.joined(separator: " ")
-    }
-
-    /// The names leading from `subcommands` to `command`, depth first.
-    private static func path(
-        to command: any ParsableCommand.Type, among subcommands: [any ParsableCommand.Type]
-    ) -> [String]? {
-        for subcommand in subcommands {
-            guard let name = subcommand.configuration.commandName else {
-                assertionFailure("\(subcommand) names no command")
-                continue
-            }
-            if ObjectIdentifier(subcommand) == ObjectIdentifier(command) { return [name] }
-            if let rest = path(to: command, among: subcommand.configuration.subcommands) {
-                return [name] + rest
-            }
-        }
-        return nil
     }
 }

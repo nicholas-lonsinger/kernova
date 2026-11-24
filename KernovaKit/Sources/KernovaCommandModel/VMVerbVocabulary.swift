@@ -3,11 +3,12 @@ import Foundation
 /// How one surface names the command core's verbs: its own name for each verb
 /// it can run, and none for a verb it cannot.
 ///
-/// Every sentence that puts a verb in front of a person is worded in one, so
-/// a refusal names only what the surface showing it can run, in its words.
-/// A surface writes its vocabulary as one `switch` over ``VMVerb`` with no
-/// `default:`, so a new verb fails to compile at every surface until each
-/// answers for it.
+/// A refusal's sentences that name a ``VMVerb`` as a command to run — what a
+/// VM accepts now, how to answer for a VM a group action skipped — are worded
+/// in one, so they name only what the surface showing them can run, in its
+/// words. A surface writes its vocabulary as one `switch` over ``VMVerb``
+/// with no `default:`, so a new verb fails to compile at every surface until
+/// each answers for it.
 public struct VMVerbVocabulary: Sendable {
     private let names: @Sendable (VMVerb) -> String?
 

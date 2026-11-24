@@ -270,7 +270,7 @@ package struct AppPreferences: @unchecked Sendable {
 package struct CloneMenuItem: Equatable {
     let outcome: CloneOutcome
 
-    package var title: String { "Clone as \(outcome.displayName)" }
+    package var title: String { "\(AppCommandTitle.clone) as \(outcome.displayName)" }
 }
 
 extension CloneOutcome {

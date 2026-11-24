@@ -916,12 +916,12 @@ extension SidebarViewController {
             menu.addItem(recovery)
         }
         if capabilities.isApplicable(.pause, to: instance) {
-            let pause = item("Pause", #selector(menuPause(_:)), instance)
+            let pause = item(AppCommandTitle.pause, #selector(menuPause(_:)), instance)
             pause.isEnabled = capabilities.isAvailable(.pause, on: instance)
             menu.addItem(pause)
         }
         if capabilities.isApplicable(.resume, to: instance) {
-            let resume = item("Resume", #selector(menuResume(_:)), instance)
+            let resume = item(AppCommandTitle.resume, #selector(menuResume(_:)), instance)
             resume.isEnabled = capabilities.isAvailable(.resume, on: instance)
             menu.addItem(resume)
         }
@@ -940,7 +940,7 @@ extension SidebarViewController {
                 force: ("Force Stop…", #selector(menuForceStop(_:))), for: instance, to: menu)
         }
         if capabilities.isApplicable(.restart, to: instance) {
-            let restart = item("Restart", #selector(menuRestart(_:)), instance)
+            let restart = item(AppCommandTitle.restart, #selector(menuRestart(_:)), instance)
             restart.isEnabled = capabilities.isAvailable(.restart, on: instance)
             addPowerRow(
                 restart, anyway: ("Restart Anyway…", #selector(menuRestartAnyway(_:))),
@@ -965,13 +965,13 @@ extension SidebarViewController {
             menu.addItem(.separator())
         }
         if canSuspend {
-            let suspend = item("Suspend", #selector(menuSuspend(_:)), instance)
+            let suspend = item(AppCommandTitle.suspend, #selector(menuSuspend(_:)), instance)
             suspend.isEnabled = capabilities.isAvailable(.suspend, on: instance)
             menu.addItem(suspend)
         }
         if canTakeSnapshot {
             let takeSnapshot = item(
-                "Take Snapshot\u{2026}", #selector(menuTakeSnapshot(_:)), instance)
+                AppCommandTitle.takeSnapshot + "\u{2026}", #selector(menuTakeSnapshot(_:)), instance)
             takeSnapshot.isEnabled = capabilities.isAvailable(.takeSnapshot, on: instance)
             menu.addItem(takeSnapshot)
         }
@@ -1017,7 +1017,7 @@ extension SidebarViewController {
         menu.addItem(.separator())
 
         // Management
-        let rename = item("Rename", #selector(menuRename(_:)), instance)
+        let rename = item(AppCommandTitle.rename, #selector(menuRename(_:)), instance)
         rename.isEnabled = capabilities.isAvailable(.rename, on: instance)
         menu.addItem(rename)
 
@@ -1038,7 +1038,7 @@ extension SidebarViewController {
             menu.addItem(cloneAlternate)
         }
 
-        menu.addItem(item("Show in Finder", #selector(menuShowInFinder(_:)), instance))
+        menu.addItem(item(AppCommandTitle.showInFinder, #selector(menuShowInFinder(_:)), instance))
         if !instance.unreadableFiles.isEmpty {
             menu.addItem(item("Check Config Files\u{2026}", #selector(menuCheckConfigFiles(_:)), instance))
         }
@@ -1047,7 +1047,7 @@ extension SidebarViewController {
 
         // "Move to Trash…" gathers input (which externals to delete), so the
         // ellipsis is correct here.
-        let trash = item("Move to Trash…", #selector(menuMoveToTrash(_:)), instance)
+        let trash = item(AppCommandTitle.moveToTrash + "\u{2026}", #selector(menuMoveToTrash(_:)), instance)
         trash.isEnabled = capabilities.isAvailable(.delete, on: instance)
         menu.addItem(trash)
         // An ⌥-alternate of "Move to Trash…". This pair sits at the menu's end, so

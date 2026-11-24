@@ -51,7 +51,7 @@ package enum VMOverviewAction: String, Sendable {
 
     package var title: String {
         switch self {
-        case .takeSnapshot: "Take Snapshot\u{2026}"
+        case .takeSnapshot: AppCommandTitle.takeSnapshot + "\u{2026}"
         }
     }
 }

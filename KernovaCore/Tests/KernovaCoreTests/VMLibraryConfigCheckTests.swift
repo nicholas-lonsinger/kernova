@@ -133,7 +133,10 @@ struct VMLibraryConfigCheckTests {
         #expect(harness.library.organization.folder(withID: folder.id)?.members == [readable, dev])
 
         for reference in [VMGroupReference(.folder, named: "Lab"), VMGroupReference(.smartGroup, named: "All")] {
-            let selection = try harness.core.selection(for: VMListQuery(groups: [reference]), verb: .list)
+            let selection = try harness.core.selection(
+                for: VMListQuery(
+                    filter: VMLibraryFilter(), networks: [], tags: [], groups: [reference], sort: .manual),
+                verb: .list)
             #expect(harness.core.list(selection).map(\.id) == [readable], "\(reference)")
             let report = try await harness.core.groupAction(.stop, on: reference)
             #expect(report.results.map(\.vm.id) == [readable], "\(reference)")

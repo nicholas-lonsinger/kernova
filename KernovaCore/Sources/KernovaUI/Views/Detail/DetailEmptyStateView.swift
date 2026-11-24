@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCore
 
 /// Centered state shown in the detail pane when it has no VM to show: none
 /// selected, or a selected bundle Kernova can't read — a symbol, a title, an
@@ -23,7 +24,7 @@ final class DetailEmptyStateView: NSView {
         DetailEmptyStateView(
             symbolName: "desktopcomputer", title: "No Virtual Machine Selected",
             message: "Select a virtual machine from the sidebar or create a new one.",
-            buttonTitle: "New Virtual Machine", action: onNewVM)
+            buttonTitle: AppCommandTitle.newVirtualMachine, action: onNewVM)
     }
 
     /// A selected bundle Kernova can't read, offering the config check; its

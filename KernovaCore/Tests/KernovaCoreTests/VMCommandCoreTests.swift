@@ -819,8 +819,7 @@ struct VMCommandCoreTests {
         #expect(instance.status == .initialBoot)
         let messages = try await harness.wired.failureMessages(of: instance, on: events)
         #expect(messages.count == 1)
-        // The sentence the alert gets, not the raw error — one failure, worded
-        // once.
+        // The sentence the alert gets — one failure, worded once.
         #expect(messages.first == harness.failures.first?.message(in: .app))
     }
 

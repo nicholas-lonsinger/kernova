@@ -21,7 +21,7 @@ struct CLIArgumentParsingTests {
         let list = try #require(try parse(["list"] + arguments) as? KernovaCommand.List)
         guard case .list(let query) = try list.verb() else {
             Issue.record("list asked for something other than a listing")
-            return VMListQuery()
+            return VMListQuery(filter: VMLibraryFilter(), networks: [], tags: [], groups: [], sort: .manual)
         }
         return query
     }

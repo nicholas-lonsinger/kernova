@@ -409,7 +409,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         case Self.toolbarClone:
             return makeToolbarItem(
                 identifier: itemIdentifier,
-                label: "Clone",
+                label: AppCommandTitle.clone,
                 symbol: "plus.square.on.square",
                 action: #selector(AppDelegate.cloneVM(_:)),
                 toolTip: "Clone the selected virtual machine"
@@ -417,7 +417,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         case Self.toolbarShowInFinder:
             return makeToolbarItem(
                 identifier: itemIdentifier,
-                label: "Show in Finder",
+                label: AppCommandTitle.showInFinder,
                 // SF Symbols reserves `finder` for referring to the Finder;
                 // AppKit's own reveal image (`NSRevealFreestanding`) is a
                 // magnifying glass, which Search shows.
@@ -428,7 +428,7 @@ final class MainWindowController: NSWindowController, NSToolbarDelegate, NSWindo
         case Self.toolbarMoveToTrash:
             return makeToolbarItem(
                 identifier: itemIdentifier,
-                label: "Move to Trash",
+                label: AppCommandTitle.moveToTrash,
                 symbol: "trash",
                 action: #selector(AppDelegate.deleteVM(_:)),
                 toolTip: "Move the selected virtual machine to the Trash"

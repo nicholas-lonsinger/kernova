@@ -167,13 +167,15 @@ final class VMToolbarManager: NSObject {
             let group = NSToolbarItemGroup(
                 itemIdentifier: identifier,
                 images: [
-                    .systemSymbol("play.fill", accessibilityDescription: "Start"),
-                    .systemSymbol("pause.fill", accessibilityDescription: "Pause"),
-                    .systemSymbol("stop.fill", accessibilityDescription: "Stop"),
-                    .systemSymbol("arrow.clockwise", accessibilityDescription: "Restart"),
+                    .systemSymbol("play.fill", accessibilityDescription: AppCommandTitle.start),
+                    .systemSymbol("pause.fill", accessibilityDescription: AppCommandTitle.pause),
+                    .systemSymbol("stop.fill", accessibilityDescription: AppCommandTitle.stop),
+                    .systemSymbol("arrow.clockwise", accessibilityDescription: AppCommandTitle.restart),
                 ],
                 selectionMode: .momentary,
-                labels: ["Start", "Pause", "Stop", "Restart"],
+                labels: [
+                    AppCommandTitle.start, AppCommandTitle.pause, AppCommandTitle.stop, AppCommandTitle.restart,
+                ],
                 target: self,
                 action: #selector(lifecycleAction(_:))
             )
@@ -208,7 +210,7 @@ final class VMToolbarManager: NSObject {
         case configuration.saveStateID:
             return makeBorderedItem(
                 identifier: identifier,
-                label: "Suspend",
+                label: AppCommandTitle.suspend,
                 symbol: "moon.zzz.fill",
                 action: #selector(AppDelegate.saveVM(_:)),
                 toolTip: Self.saveStateToolTip
@@ -217,7 +219,7 @@ final class VMToolbarManager: NSObject {
         case configuration.takeSnapshotID:
             return makeBorderedItem(
                 identifier: identifier,
-                label: "Take Snapshot",
+                label: AppCommandTitle.takeSnapshot,
                 symbol: "clock.arrow.circlepath",
                 action: #selector(AppDelegate.takeSnapshot(_:)),
                 toolTip: Self.takeSnapshotToolTip
@@ -422,7 +424,7 @@ final class VMToolbarManager: NSObject {
             playLabel = startAction.label
             playToolTip = Self.resumeDownloadToolTip
         case .start where canResume:
-            playLabel = "Resume"
+            playLabel = AppCommandTitle.resume
             playToolTip = Self.resumeToolTip
         case .start:
             playLabel = startAction.label

@@ -21,11 +21,11 @@ public struct VMListQuery: Codable, Hashable, Sendable {
     /// The order the VMs are listed in.
     public var sort: VMLibrarySort
 
-    /// A query constraining what is given; the defaults list every VM in
-    /// library order.
+    /// A query constraining what is given: an empty filter and empty lists
+    /// constrain nothing, and `.manual` is library order.
     public init(
-        filter: VMLibraryFilter = VMLibraryFilter(), networks: [String] = [], tags: [String] = [],
-        groups: [VMGroupReference] = [], sort: VMLibrarySort = .manual
+        filter: VMLibraryFilter, networks: [String], tags: [String], groups: [VMGroupReference],
+        sort: VMLibrarySort
     ) {
         self.filter = filter
         self.networks = networks

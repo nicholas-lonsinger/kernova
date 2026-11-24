@@ -91,7 +91,9 @@ extension VMCommandCore {
             + organization.folders.map { ($0.id, $0.name, .folder) }
         return try named.map { group in
             let selection = try self.selection(
-                for: VMListQuery(groups: [VMGroupReference(group.kind, named: group.id.uuidString)]),
+                for: VMListQuery(
+                    filter: VMLibraryFilter(), networks: [], tags: [],
+                    groups: [VMGroupReference(group.kind, named: group.id.uuidString)], sort: .manual),
                 verb: .groups)
             return GroupSummary(
                 id: group.id, name: group.name, kind: group.kind, members: entries(in: selection).map(summary))
