@@ -2,8 +2,22 @@ import Testing
 
 @testable import KernovaDBus
 
-@Suite("DBusMarshal nesting bounds and malformed values")
+@Suite("DBusMarshal text, nesting bounds and malformed values")
 struct MarshalTests {
+    @Test("A string decodes holding every Unicode scalar of a plane but U+0000 and the surrogates", arguments: 0...16)
+    func everyScalar(plane: UInt32) throws {
+        var scalars = String.UnicodeScalarView()
+        for value in (plane << 16)...(plane << 16 | 0xFFFF) where value != 0 {
+            if let scalar = Unicode.Scalar(value) { scalars.append(scalar) }
+        }
+        let text = String(scalars)
+        // An `s` as the specification lays it out: a little-endian UINT32 length, the UTF-8, then a NUL.
+        let utf8 = Array(text.utf8)
+        let length = UInt32(utf8.count)
+        let bytes = (0..<4).map { UInt8(truncatingIfNeeded: length >> (8 * $0)) } + utf8 + [0]
+        #expect(try DBusMarshal.decode(bytes, signature: "s", byteOrder: .littleEndian) == [.string(text)])
+    }
+
     @Test("Values nest 64 containers deep, variants included, and no deeper")
     func valueNesting() throws {
         func variants(_ depth: Int) -> DBusValue {
