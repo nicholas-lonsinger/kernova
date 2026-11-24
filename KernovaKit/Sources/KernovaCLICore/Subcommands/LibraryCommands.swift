@@ -206,14 +206,14 @@ extension KernovaCommand {
         }
     }
 
-    /// `kernova reveal <vm>` — select the bundle in the Finder.
-    struct Reveal: VerbCommand {
-        /// What `kernova reveal --help` says.
+    /// `kernova show-in-finder <vm>` — select the bundle in the Finder.
+    struct ShowInFinder: VerbCommand {
+        /// What `kernova show-in-finder --help` says.
         ///
         /// The Finder is what comes forward, not Kernova: this answers where
         /// the virtual machine lives, which is a question about a file.
         static let configuration = CommandConfiguration(
-            commandName: "reveal",
+            commandName: "show-in-finder",
             abstract: "Select a virtual machine's bundle in the Finder.",
             discussion: "A virtual machine still being copied has no bundle to select — its "
                 + "files are written under a staging path and published when the copy finishes — "
@@ -231,7 +231,7 @@ extension KernovaCommand {
             .showInFinder(try SelectorParsing.selector(from: vm, forcingID: options.id))
         }
 
-        /// Reveals the VM's bundle.
+        /// Selects the VM's bundle in the Finder.
         func run() throws {
             try perform()
         }

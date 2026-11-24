@@ -34,7 +34,8 @@ extension VMVerbVocabulary {
         case .suspend: [KernovaCommand.Suspend.self]
         case .restart: [KernovaCommand.Restart.self]
         case .open: [KernovaCommand.Open.self]
-        case .showInFinder: [KernovaCommand.Reveal.self]
+        case .reveal: [KernovaCommand.Reveal.self]
+        case .showInFinder: [KernovaCommand.ShowInFinder.self]
         case .takeSnapshot: [KernovaCommand.Snapshot.Take.self]
         case .revertToSnapshot: [KernovaCommand.Snapshot.Revert.self]
         case .deleteSnapshot: [KernovaCommand.Snapshot.Delete.self]
@@ -52,7 +53,7 @@ extension VMVerbVocabulary {
         case .renameNetwork: [KernovaCommand.Network.Rename.self]
         case .deleteNetwork: [KernovaCommand.Network.Delete.self]
         case .quit: [KernovaCommand.Quit.self]
-        case .events, .cancelGuestSetup, .reveal, .setSnapshotNotes, .create, .cancelPreparing,
+        case .events, .cancelGuestSetup, .setSnapshotNotes, .create, .cancelPreparing,
             .editStorageDisk, .editRemovableMedia, .guestAgentDisk:
             []
         }

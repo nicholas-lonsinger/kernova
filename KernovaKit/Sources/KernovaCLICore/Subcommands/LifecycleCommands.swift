@@ -351,8 +351,9 @@ extension KernovaCommand {
     struct Open: VerbCommand {
         /// What `kernova open --help` says.
         ///
-        /// The one verb here that surfaces something: it is what somebody
-        /// at the machine types when they want to see the guest.
+        /// What somebody at the machine types when they want to see the
+        /// guest, so it refuses a virtual machine with no display to bring
+        /// forward.
         static let configuration = CommandConfiguration(
             commandName: "open",
             abstract: "Bring a running guest's display to the front.")
@@ -370,6 +371,34 @@ extension KernovaCommand {
         }
 
         /// Surfaces the VM's display.
+        func run() throws {
+            try perform()
+        }
+    }
+
+    /// `kernova reveal <vm>` — put the virtual machine in front of the user,
+    /// whatever state it is in.
+    struct Reveal: VerbCommand {
+        /// What `kernova reveal --help` says.
+        static let configuration = CommandConfiguration(
+            commandName: "reveal",
+            abstract: "Bring a virtual machine to the front in Kernova, whatever state it is in.",
+            discussion: "The guest's display comes forward where `kernova open` would bring it; "
+                + "any other virtual machine is selected in the library.")
+
+        /// Which virtual machine, by name or identifier.
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
+        var vm: String
+
+        /// The options every subcommand carries.
+        @OptionGroup var options: GlobalOptions
+
+        /// The request this command line stands for.
+        func verb() throws -> VMCommandRequest.Verb {
+            .reveal(try SelectorParsing.selector(from: vm, forcingID: options.id))
+        }
+
+        /// Surfaces the VM's display, else its library row.
         func run() throws {
             try perform()
         }
