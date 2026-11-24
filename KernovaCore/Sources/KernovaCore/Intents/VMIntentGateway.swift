@@ -166,10 +166,13 @@ package final class VMIntentGateway {
         }
     }
 
-    func stop(_ id: UUID, disposition: StopDisposition, consent: Consent) async throws {
+    func stop(
+        _ id: UUID, disposition: StopDisposition, consent: Consent,
+        givingUpAfter timeout: TimeInterval?
+    ) async throws {
         try await perform(.stop, on: id) {
             try await self.commands.stop(
-                .id(id), disposition: disposition, consent: consent, timeout: nil)
+                .id(id), disposition: disposition, consent: consent, timeout: timeout)
         }
     }
 
@@ -187,10 +190,13 @@ package final class VMIntentGateway {
         try await perform(.suspend, on: id) { try await self.commands.suspend(.id(id)) }
     }
 
-    func restart(_ id: UUID, disposition: StopDisposition, consent: Consent) async throws {
+    func restart(
+        _ id: UUID, disposition: StopDisposition, consent: Consent,
+        givingUpAfter timeout: TimeInterval?
+    ) async throws {
         try await perform(.restart, on: id) {
             try await self.commands.restart(
-                .id(id), disposition: disposition, timeout: nil, consent: consent)
+                .id(id), disposition: disposition, timeout: timeout, consent: consent)
         }
     }
 

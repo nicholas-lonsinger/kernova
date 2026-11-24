@@ -125,11 +125,12 @@ struct StopAnywayTests {
             commands: fixture.harness.core, readiness: LibraryReadiness(awaitReady: {}), index: MockVMEntityIndex(),
             record: makeTestIndexRecord())
         let declined = try await #require(throws: CommandError.self) {
-            try await gateway.stop(fixture.instance.id, disposition: .anyway, consent: .none)
+            try await gateway.stop(fixture.instance.id, disposition: .anyway, consent: .none, givingUpAfter: nil)
         }
         #expect(declined.confirmationPrompt?.kind == .stopAnyway)
         #expect(fixture.probe.powerRequests.isEmpty)
-        try await gateway.stop(fixture.instance.id, disposition: .anyway, consent: Consent([.stopAnyway]))
+        try await gateway.stop(
+            fixture.instance.id, disposition: .anyway, consent: Consent([.stopAnyway]), givingUpAfter: nil)
         #expect(fixture.probe.powerRequestsIgnoringApps.map(\.action) == [.shutdown])
     }
 }

@@ -40,7 +40,7 @@ struct StartVMIntent: ConsentingIntent {
 struct StopVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Stop Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Stops a virtual machine. Confirm Before Stopping asks before a method that loses anything in the guest that isn’t saved to disk.",
+        "Stops a virtual machine. Give Up After makes the action wait for the guest to power off, and fail, leaving the virtual machine as it is, if it hasn’t within that time; without it, a Normal or Anyway stop finishes once the guest has been asked to shut down. Confirm Before Stopping asks before a method that loses anything in the guest that isn’t saved to disk.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
@@ -48,6 +48,9 @@ struct StopVMIntent: ConsentingIntent {
 
     @Parameter(title: "Stop Method", default: .graceful)
     var method: VMStopMethod
+
+    @Parameter(title: "Give Up After", defaultUnit: .seconds, supportsNegativeNumbers: false)
+    var giveUpAfter: Measurement<UnitDuration>?
 
     @Parameter(title: "Confirm Before Stopping", default: true)
     var confirmsFirst: Bool
@@ -57,6 +60,7 @@ struct StopVMIntent: ConsentingIntent {
     static var parameterSummary: some ParameterSummary {
         Summary("Stop \(\.$vm)") {
             \.$method
+            \.$giveUpAfter
             \.$confirmsFirst
         }
     }
@@ -64,7 +68,9 @@ struct StopVMIntent: ConsentingIntent {
     @MainActor
     func perform() async throws -> some IntentResult {
         try await runWithConsent { consent in
-            try await gateway.stop(vm.id, disposition: method.disposition, consent: consent)
+            try await gateway.stop(
+                vm.id, disposition: method.disposition, consent: consent,
+                givingUpAfter: giveUpAfter?.converted(to: .seconds).value)
         }
         return .result()
     }
@@ -146,7 +152,7 @@ struct SuspendVMIntent: AppIntent {
 struct RestartVMIntent: ConsentingIntent {
     static let title: LocalizedStringResource = "Restart Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
-        "Takes the guest down and starts it again once it has powered off. Confirm Before Restarting asks before a method that loses anything in the guest that isn’t saved to disk, and before starting it again beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.",
+        "Takes the guest down and starts it again once it has powered off. Give Up After limits how long the action waits for the power-off: a guest that hasn’t powered off by then is not started again. Confirm Before Restarting asks before a method that loses anything in the guest that isn’t saved to disk, and before starting it again beside an active virtual machine with the same machine ID, where Kernova’s Settings allow starting one anyway.",
         categoryName: "Virtual Machines")
 
     @Parameter(title: "Virtual Machine")
@@ -154,6 +160,9 @@ struct RestartVMIntent: ConsentingIntent {
 
     @Parameter(title: "Restart Method", default: .graceful)
     var method: VMStopMethod
+
+    @Parameter(title: "Give Up After", defaultUnit: .seconds, supportsNegativeNumbers: false)
+    var giveUpAfter: Measurement<UnitDuration>?
 
     @Parameter(title: "Confirm Before Restarting", default: true)
     var confirmsFirst: Bool
@@ -163,6 +172,7 @@ struct RestartVMIntent: ConsentingIntent {
     static var parameterSummary: some ParameterSummary {
         Summary("Restart \(\.$vm)") {
             \.$method
+            \.$giveUpAfter
             \.$confirmsFirst
         }
     }
@@ -170,7 +180,9 @@ struct RestartVMIntent: ConsentingIntent {
     @MainActor
     func perform() async throws -> some IntentResult {
         try await runWithConsent { consent in
-            try await gateway.restart(vm.id, disposition: method.disposition, consent: consent)
+            try await gateway.restart(
+                vm.id, disposition: method.disposition, consent: consent,
+                givingUpAfter: giveUpAfter?.converted(to: .seconds).value)
         }
         return .result()
     }
