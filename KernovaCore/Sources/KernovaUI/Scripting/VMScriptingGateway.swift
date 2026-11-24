@@ -789,8 +789,8 @@ final class VMScriptingGateway {
     /// read.
     func settings(of vm: UUID) -> [VMSettingScriptObject] {
         guard let entries = answeringRefusal({ try commands.configuration(.id(vm), keys: nil) }) else { return [] }
-        let summaries = settingSummaries()
-        return entries.map { setting($0, of: vm, summaries: summaries) }
+        let descriptors = settingDescriptors()
+        return entries.compactMap { setting($0, of: vm, descriptors: descriptors) }
     }
 
     /// The setting `key` names among the VM's — or `nil`, with the core's
@@ -798,37 +798,41 @@ final class VMScriptingGateway {
     /// doesn't hold or the VM's guest doesn't have.
     func setting(named key: String, of vm: UUID) -> VMSettingScriptObject? {
         guard let entry = answeringRefusal({ try commands.configuration(.id(vm), key: key) }) else { return nil }
-        return setting(entry, of: vm, summaries: settingSummaries())
+        return setting(entry, of: vm, descriptors: settingDescriptors())
     }
 
-    /// `entry`, one of the settings of the VM `vm` identifies, with its key's
-    /// line in `summaries`.
+    /// `entry`, one of the settings of the VM `vm` identifies, as its key's
+    /// descriptor in `descriptors` describes it.
+    ///
+    /// The core reads only keys of its keyspace, so a key without a
+    /// descriptor is a programming error, and is left out.
     private func setting(
-        _ entry: ConfigurationEntry, of vm: UUID, summaries: [String: String]
-    ) -> VMSettingScriptObject {
-        let summary = summaries[entry.key]
-        if summary == nil {
+        _ entry: ConfigurationEntry, of vm: UUID, descriptors: [String: ConfigurationKeyDescriptor]
+    ) -> VMSettingScriptObject? {
+        guard let descriptor = descriptors[entry.key] else {
             Self.logger.log(.fault, "Setting \(entry.key, privacy: .public) is not in the keyspace")
             assertionFailure("Setting \(entry.key) is not in the keyspace")
+            return nil
         }
-        return VMSettingScriptObject(entry, summary: summary ?? "", of: vm, gateway: self)
+        return VMSettingScriptObject(entry, describedBy: descriptor, of: vm, gateway: self)
     }
 
-    /// Each key of the keyspace's summary, by name.
-    private func settingSummaries() -> [String: String] {
-        Dictionary(uniqueKeysWithValues: commands.configurationKeys().map { ($0.name, $0.summary) })
+    /// The keyspace's descriptors, by key.
+    private func settingDescriptors() -> [String: ConfigurationKeyDescriptor] {
+        Dictionary(uniqueKeysWithValues: commands.configurationKeys().map { ($0.name, $0) })
     }
 
     /// Sets the setting `address` names to `value` — a script's `set value
-    /// of setting`.
+    /// of setting`, read as ``VMScriptSettingValue/text(of:for:)`` reads it.
     ///
     /// A `set` carries its value and nothing else, so it gives no consent: a
     /// change that asks for it is refused, naming `change` as the way to give
     /// it.
-    func setSetting(_ address: VMSettingAddress, to value: String) {
+    func setSetting(_ address: VMSettingAddress, to value: Any?) {
         run(.setConfiguration, on: address.vm, consenting: Self.changeGivesConsent) {
+            let text = try VMScriptSettingValue.text(of: value, for: address)
             try commands.setConfiguration(
-                .id(address.vm), assignments: [ConfigurationEntry(key: address.key, value: value)], consent: .none)
+                .id(address.vm), assignments: [ConfigurationEntry(key: address.key, value: text)], consent: .none)
         }
     }
 
@@ -840,16 +844,17 @@ final class VMScriptingGateway {
     nonisolated static let changeGivesConsent =
         "`set` can\u{2019}t give consent; `change \u{2026} with confirmation` does it anyway."
 
-    /// Changes each of `settings` to the value at its place in `values` — a
-    /// script's `change` — with `confirmation` as the consent a change refuses
-    /// without, answering the value each holds afterwards, in the order given.
+    /// Changes each of `settings` to the value at its place in `values`, in
+    /// the text the core takes — a script's `change` — with `confirmation` as
+    /// the consent a change refuses without, answering the value each holds
+    /// afterwards, typed as its kind is, in the order given.
     ///
     /// The settings of one VM are one write, all or none
     /// (``VMCommandCore/setConfiguration(_:assignments:consent:)``); the VMs
     /// are written in the order first named, and a refusal stops the rest.
     func change(
         _ settings: [VMSettingAddress], to values: [String], confirmation: Bool
-    ) async throws -> [String] {
+    ) async throws -> [VMScriptSettingValue] {
         var writes: [SettingsWrite] = []
         var places: [(write: Int, assignment: Int)] = []
         for (setting, value) in zip(settings, values) {
@@ -866,7 +871,9 @@ final class VMScriptingGateway {
             try self.commands.setConfiguration(
                 .id(write.vm), assignments: write.assignments, consent: Self.consent(confirmation))
         }
-        return places.map { held[$0.write][$0.assignment].value }
+        return zip(settings, places).map { setting, place in
+            VMScriptSettingValue(VMSettingScriptObject.value(held[place.write][place.assignment], as: setting.kind))
+        }
     }
 
     /// The assignments one `change` makes to one VM.

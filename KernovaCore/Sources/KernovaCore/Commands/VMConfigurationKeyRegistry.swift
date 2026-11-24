@@ -126,6 +126,9 @@ package struct VMConfigurationKey: Sendable {
     let name: String
     /// One line naming the unit or the accepted values.
     let summary: String
+    /// What its value is: its codec's kind, so the parser a write runs through
+    /// is the kind's.
+    let kind: ConfigurationValueKind
     /// When a write of this key is taken.
     let gate: VMConfigurationKeyGate
     /// Whether the key means anything for a guest of each OS at all. A key
@@ -133,15 +136,17 @@ package struct VMConfigurationKey: Sendable {
     private let appliesToGuest: @Sendable (VMGuestOS) -> Bool
     let field: Field
 
-    /// A key over the VM's configuration, taken under `gate`.
-    init(
+    /// A key over the VM's configuration, taken under `gate`, whose value is
+    /// `codec`'s: read as `read` answers it, written as `codec` parses it.
+    init<Value>(
         name: String,
         summary: String,
         gate: VMConfigurationKeyGate,
         applies: @escaping @Sendable (VMGuestOS) -> Bool = { _ in true },
-        read: @escaping @Sendable (VMConfiguration) -> String,
+        codec: ConfigurationCodec<Value>,
+        read: @escaping @Sendable (VMConfiguration) -> Value,
         write:
-            @escaping @Sendable (String, inout VMConfiguration, VMConfigurationWriteContext)
+            @escaping @Sendable (Value, inout VMConfiguration, VMConfigurationWriteContext)
             throws -> Void,
         refusalOnResult: @escaping @Sendable (VMConfiguration, VMConfigurationWriteContext) -> String? = {
             _, _ in nil
@@ -149,28 +154,34 @@ package struct VMConfigurationKey: Sendable {
     ) {
         self.name = name
         self.summary = summary
+        kind = codec.kind
         self.gate = gate
         self.appliesToGuest = applies
         field = .configuration(
-            ConfigurationField(read: read, write: write, refusalOnResult: refusalOnResult))
+            ConfigurationField(
+                read: { codec.text(read($0)) },
+                write: { text, config, context in try write(try codec.parse(text, name), &config, context) },
+                refusalOnResult: refusalOnResult))
     }
 
     /// A key over the VM's host state, gated on `gate` —
-    /// ``VMConfigurationKeyGate/live`` or ``VMConfigurationKeyGate/presentation``.
+    /// ``VMConfigurationKeyGate/live`` or ``VMConfigurationKeyGate/presentation``
+    /// — whose value is `codec`'s, as the configuration's keys are.
     ///
     /// Its gate is asked before either file is touched, whether or not the
     /// value moves: host state commits after the configuration, where a
     /// refusal would leave the configuration landed without it. So an
     /// assignment that leaves the value where it is is refused wherever the
     /// gate is, an operation holding the VM among them.
-    init(
+    init<Value>(
         name: String,
         summary: String,
         gate: VMConfigurationKeyGate = .live,
         applies: @escaping @Sendable (VMGuestOS) -> Bool = { _ in true },
-        readHostState: @escaping @Sendable (VMHostState) -> String,
+        codec: ConfigurationCodec<Value>,
+        readHostState: @escaping @Sendable (VMHostState) -> Value,
         changeHostState:
-            @escaping @Sendable (String, VMConfigurationWriteContext) throws
+            @escaping @Sendable (Value, VMConfigurationWriteContext) throws
             -> (inout VMHostState) -> Void,
         refusalOnResult: @escaping @Sendable (VMHostState, VMConfigurationWriteContext) -> String? = {
             _, _ in nil
@@ -178,10 +189,14 @@ package struct VMConfigurationKey: Sendable {
     ) {
         self.name = name
         self.summary = summary
+        kind = codec.kind
         self.gate = gate
         self.appliesToGuest = applies
         field = .hostState(
-            HostStateField(read: readHostState, change: changeHostState, refusalOnResult: refusalOnResult))
+            HostStateField(
+                read: { codec.text(readHostState($0)) },
+                change: { text, context in try changeHostState(try codec.parse(text, name), context) },
+                refusalOnResult: refusalOnResult))
     }
 
     /// Whether the key means anything for a `guestOS` guest.
@@ -262,7 +277,7 @@ package struct VMConfigurationKey: Sendable {
     /// names no VM: whether a running VM takes it, for each guest it applies to.
     var descriptor: ConfigurationKeyDescriptor {
         ConfigurationKeyDescriptor(
-            name: name, summary: summary,
+            name: name, summary: summary, kind: kind,
             editableWhileRunning: Dictionary(
                 uniqueKeysWithValues: VMGuestOS.allCases.filter(applies(to:)).map {
                     ($0.rawValue, gate.editableWhileRunning)
@@ -335,20 +350,21 @@ package enum VMConfigurationKeyRegistry {
         name: "cpus",
         summary: "Virtual CPU cores, within what Virtualization allows on this Mac.",
         gate: .atRest,
-        read: { String($0.cpuCount) },
-        write: { value, config, context in
-            config.cpuCount = try ConfigurationValue.integer(
-                value, key: "cpus", in: context.resourceLimits.cpuCount)
+        codec: .integer,
+        read: \.cpuCount,
+        write: { count, config, context in
+            config.cpuCount = try ConfigurationValue.require(count, key: "cpus", in: context.resourceLimits.cpuCount)
         })
 
     package static let memory = VMConfigurationKey(
         name: "memory",
         summary: "Guest memory in gigabytes, to the nearest megabyte: 8, or 1.5 for 1536 MB.",
         gate: .atRest,
-        read: { $0.memorySizeInGB.gibibytesText },
-        write: { value, config, context in
-            config.memorySizeInGB = try ConfigurationValue.memorySize(
-                value, key: "memory", in: context.resourceLimits.memorySize)
+        codec: .gigabytes,
+        read: \.memorySizeInGB,
+        write: { size, config, context in
+            config.memorySizeInGB = try ConfigurationValue.require(
+                size, key: "memory", in: context.resourceLimits.memorySize)
         })
 
     // MARK: - Display
@@ -357,10 +373,10 @@ package enum VMConfigurationKeyRegistry {
         name: "display.width",
         summary: "Display width the guest lays out at; a Retina guest boots at twice this.",
         gate: .atRest,
-        read: { String($0.displayBaseSize.width) },
-        write: { value, config, _ in
-            let width = try ConfigurationValue.integer(
-                value, key: "display.width", in: config.displayBaseSizeBounds)
+        codec: .integer,
+        read: \.displayBaseSize.width,
+        write: { width, config, _ in
+            let width = try ConfigurationValue.require(width, key: "display.width", in: config.displayBaseSizeBounds)
             config.setDisplayBaseSize(width: width, height: config.displayBaseSize.height)
         },
         refusalOnResult: sizedToWindowRefusal("display.width"))
@@ -369,10 +385,11 @@ package enum VMConfigurationKeyRegistry {
         name: "display.height",
         summary: "Display height the guest lays out at; a Retina guest boots at twice this.",
         gate: .atRest,
-        read: { String($0.displayBaseSize.height) },
-        write: { value, config, _ in
-            let height = try ConfigurationValue.integer(
-                value, key: "display.height", in: config.displayBaseSizeBounds)
+        codec: .integer,
+        read: \.displayBaseSize.height,
+        write: { height, config, _ in
+            let height = try ConfigurationValue.require(
+                height, key: "display.height", in: config.displayBaseSizeBounds)
             config.setDisplayBaseSize(width: config.displayBaseSize.width, height: height)
         },
         refusalOnResult: sizedToWindowRefusal("display.height"))
@@ -382,9 +399,9 @@ package enum VMConfigurationKeyRegistry {
         summary: "Boot the guest display Retina-sharp: true or false.",
         gate: .atRest,
         applies: { $0.supportsDisplayDensity },
-        read: { String($0.guestOS.supportsDisplayDensity && $0.displayHiDPI) },
-        write: { value, config, _ in
-            let hiDPI = try ConfigurationValue.boolean(value, key: "display.hidpi")
+        codec: .boolean,
+        read: { $0.guestOS.supportsDisplayDensity && $0.displayHiDPI },
+        write: { hiDPI, config, _ in
             guard hiDPI != config.displayHiDPI else { return }
             config.displayHiDPI = hiDPI
             // While the display is sized to the window the stored trio is
@@ -400,10 +417,9 @@ package enum VMConfigurationKeyRegistry {
         name: "display.sizeToWindow",
         summary: "Size the display to its window at each cold start: true or false.",
         gate: .atRest,
-        read: { String($0.displaySizesToWindow) },
-        write: { value, config, _ in
-            let sizesToWindow = try ConfigurationValue.boolean(
-                value, key: "display.sizeToWindow")
+        codec: .boolean,
+        read: \.displaySizesToWindow,
+        write: { sizesToWindow, config, _ in
             guard sizesToWindow != config.displaySizesToWindow else { return }
             config.displaySizesToWindow = sizesToWindow
             // Leaving the mode promotes the trio from the last boot's
@@ -420,22 +436,17 @@ package enum VMConfigurationKeyRegistry {
         name: "display.autoResize",
         summary: "Let the guest follow the window as it is resized: true or false.",
         gate: .live,
-        read: { String($0.displayAutoResizes) },
-        write: { value, config, _ in
-            config.displayAutoResizes = try ConfigurationValue.boolean(
-                value, key: "display.autoResize")
-        })
+        codec: .boolean,
+        read: \.displayAutoResizes,
+        write: { autoResizes, config, _ in config.displayAutoResizes = autoResizes })
 
     package static let displayPreference = VMConfigurationKey(
         name: "display.preference",
         summary: "Where the display opens: inline, popOut or fullscreen.",
         gate: .presentation,
-        readHostState: { $0.displayPreference.rawValue },
-        changeHostState: { value, _ in
-            let preference: VMDisplayPreference = try ConfigurationValue.choice(
-                value, key: "display.preference")
-            return { $0.displayPreference = preference }
-        })
+        codec: .choice(of: VMDisplayPreference.self),
+        readHostState: \.displayPreference,
+        changeHostState: { preference, _ in { $0.displayPreference = preference } })
 
     // MARK: - Audio and Input
 
@@ -443,50 +454,42 @@ package enum VMConfigurationKeyRegistry {
         name: "audio.input",
         summary: "Let the guest capture from this Mac's audio input: true or false.",
         gate: .atRest,
-        read: { String($0.audioInputEnabled) },
-        write: { value, config, _ in
-            config.audioInputEnabled = try ConfigurationValue.boolean(value, key: "audio.input")
-        })
+        codec: .boolean,
+        read: \.audioInputEnabled,
+        write: { enabled, config, _ in config.audioInputEnabled = enabled })
 
     package static let audioOutput = VMConfigurationKey(
         name: "audio.output",
         summary: "Play the guest's sound through this Mac: true or false.",
         gate: .atRest,
-        read: { String($0.audioOutputEnabled) },
-        write: { value, config, _ in
-            config.audioOutputEnabled = try ConfigurationValue.boolean(
-                value, key: "audio.output")
-        })
+        codec: .boolean,
+        read: \.audioOutputEnabled,
+        write: { enabled, config, _ in config.audioOutputEnabled = enabled })
 
     package static let inputDevices = VMConfigurationKey(
         name: "input.devices",
         summary: "The keyboard and pointer a macOS guest sees: automatic, mac or usb.",
         gate: .atRest,
         applies: { $0 == .macOS },
-        read: { $0.inputDeviceMode.rawValue },
-        write: { value, config, _ in
-            config.inputDeviceMode = try ConfigurationValue.choice(value, key: "input.devices")
-        })
+        codec: .choice(of: VMInputDeviceMode.self),
+        read: \.inputDeviceMode,
+        write: { mode, config, _ in config.inputDeviceMode = mode })
 
     package static let inputSystemKeys = VMConfigurationKey(
         name: "input.systemKeys",
         summary: "When system hot keys go to the guest: never, fullscreenOnly or always.",
         gate: .live,
-        read: { $0.systemKeyForwarding.rawValue },
-        write: { value, config, _ in
-            config.systemKeyForwarding = try ConfigurationValue.choice(
-                value, key: "input.systemKeys")
-        })
+        codec: .choice(of: VMSystemKeyForwarding.self),
+        read: \.systemKeyForwarding,
+        write: { forwarding, config, _ in config.systemKeyForwarding = forwarding })
 
     package static let serialSocket = VMConfigurationKey(
         name: "serial.socket",
         summary: "Expose the serial port over a local UNIX socket: true or false.",
         gate: .live,
-        read: { String($0.serialSocketRelayEnabled) },
-        write: { value, config, _ in
-            config.serialSocketRelayEnabled = try ConfigurationValue.boolean(
-                value, key: "serial.socket")
-        })
+        codec: .boolean,
+        read: \.serialSocketRelayEnabled,
+        write: { enabled, config, _ in config.serialSocketRelayEnabled = enabled })
 
     // MARK: - Network
 
@@ -494,16 +497,12 @@ package enum VMConfigurationKeyRegistry {
         name: "network.mode",
         summary: "The network the guest joins: none, nat, bridged or hostOnly.",
         gate: .networkMode,
-        read: { $0.effectiveNetworkMode?.rawValue ?? noNetworkValue },
-        write: { value, config, context in
-            guard value != noNetworkValue else {
-                config.applyNetworkMode(nil)
-                return
-            }
+        codec: .networkMode,
+        read: \.effectiveNetworkMode,
+        write: { mode, config, context in
             let before = config
-            config.applyNetworkMode(
-                try ConfigurationValue.choice(
-                    value, key: "network.mode", also: [noNetworkValue]))
+            config.applyNetworkMode(mode)
+            guard mode != nil else { return }
             try requireAttachableNetwork(movingFrom: before, to: config, context: context)
         },
         refusalOnResult: namedNetworkRefusal)
@@ -512,6 +511,7 @@ package enum VMConfigurationKeyRegistry {
         name: "network.bridgedInterface",
         summary: "BSD name of the interface a bridged guest attaches to; empty is automatic.",
         gate: .networkDevice,
+        codec: .text,
         read: { $0.bridgedInterfaceIdentifier ?? "" },
         write: { value, config, _ in
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -525,6 +525,7 @@ package enum VMConfigurationKeyRegistry {
             + "other guest in the mode joins; isolated, a network of its own; or a named "
             + "network, by name or identifier, which only the guests naming it join.",
         gate: .networkMembership,
+        codec: .text,
         read: { $0.networkMembership.rawValue },
         write: { value, config, context in
             let before = config
@@ -617,6 +618,7 @@ package enum VMConfigurationKeyRegistry {
             "The guest's MAC address as six colon-separated hex pairs, or \(newMACAddressValue) "
             + "for a fresh one; empty removes it.",
         gate: .atRest,
+        codec: .text,
         read: { $0.macAddress ?? "" },
         write: { value, config, _ in
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -649,18 +651,16 @@ package enum VMConfigurationKeyRegistry {
     package static let autoStart = VMConfigurationKey(
         name: "autoStart",
         summary: "Start the VM each time Kernova opens: true or false.",
-        readHostState: { String($0.startsAutomaticallyOnLaunch) },
-        changeHostState: { value, _ in
-            let enabled = try ConfigurationValue.boolean(value, key: "autoStart")
-            return { $0.startsAutomaticallyOnLaunch = enabled }
-        })
+        codec: .boolean,
+        readHostState: \.startsAutomaticallyOnLaunch,
+        changeHostState: { enabled, _ in { $0.startsAutomaticallyOnLaunch = enabled } })
 
     package static let ephemeral = VMConfigurationKey(
         name: "ephemeral",
         summary: "Return the VM to its baseline snapshot at every shutdown: true or false.",
-        readHostState: { String($0.ephemeralModeEnabled) },
-        changeHostState: { value, context in
-            let enabled = try ConfigurationValue.boolean(value, key: "ephemeral")
+        codec: .boolean,
+        readHostState: \.ephemeralModeEnabled,
+        changeHostState: { enabled, context in
             guard enabled else {
                 return { $0.applyEphemeralMode(enabled: false, baseline: nil) }
             }
@@ -684,6 +684,7 @@ package enum VMConfigurationKeyRegistry {
         summary:
             "The snapshot Ephemeral Mode returns to, by identifier or name; setting one turns "
             + "the mode on.",
+        codec: .text,
         readHostState: { $0.ephemeralBaselineSnapshotID?.uuidString ?? "" },
         changeHostState: { value, context in
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -711,11 +712,9 @@ package enum VMConfigurationKeyRegistry {
         summary: "Share the clipboard with the guest: true or false.",
         gate: .live,
         applies: { $0.guestAgentSettings.contains(.clipboard) },
-        read: { String($0.clipboardSharingEnabled) },
-        write: { value, config, _ in
-            config.clipboardSharingEnabled = try ConfigurationValue.boolean(
-                value, key: "clipboard.sharing")
-        })
+        codec: .boolean,
+        read: \.clipboardSharingEnabled,
+        write: { enabled, config, _ in config.clipboardSharingEnabled = enabled })
 
     package static let clipboardPassthrough = VMConfigurationKey(
         name: "clipboard.passthrough",
@@ -723,11 +722,9 @@ package enum VMConfigurationKeyRegistry {
             "Share one clipboard both ways, with no copy command, which needs sharing on.",
         gate: .live,
         applies: { $0.guestAgentSettings.contains(.clipboard) },
-        read: { String($0.clipboardPassthroughEnabled) },
-        write: { value, config, _ in
-            config.clipboardPassthroughEnabled = try ConfigurationValue.boolean(
-                value, key: "clipboard.passthrough")
-        },
+        codec: .boolean,
+        read: \.clipboardPassthroughEnabled,
+        write: { enabled, config, _ in config.clipboardPassthroughEnabled = enabled },
         refusalOnResult: { config, _ in
             guard config.clipboardPassthroughEnabled, !config.clipboardSharingEnabled
             else { return nil }
@@ -742,31 +739,26 @@ package enum VMConfigurationKeyRegistry {
             "Drag files onto the display into the guest's Downloads, and out of it onto this Mac: true or false.",
         gate: .live,
         applies: { $0.guestAgentSettings.contains(.dropFiles) },
-        read: { String($0.dropFilesEnabled) },
-        write: { value, config, _ in
-            config.dropFilesEnabled = try ConfigurationValue.boolean(value, key: "dropFiles")
-        })
+        codec: .boolean,
+        read: \.dropFilesEnabled,
+        write: { enabled, config, _ in config.dropFilesEnabled = enabled })
 
     package static let agentLogForwarding = VMConfigurationKey(
         name: "agent.logForwarding",
         summary: "Forward the guest agent's log records to this Mac: true or false.",
         gate: .live,
         applies: { $0.guestAgentSettings.contains(.forwardLogs) },
-        read: { String($0.agentLogForwardingEnabled) },
-        write: { value, config, _ in
-            config.agentLogForwardingEnabled = try ConfigurationValue.boolean(
-                value, key: "agent.logForwarding")
-        })
+        codec: .boolean,
+        read: \.agentLogForwardingEnabled,
+        write: { enabled, config, _ in config.agentLogForwardingEnabled = enabled })
 
     package static let agentInstallReminder = VMConfigurationKey(
         name: "agent.installReminder",
         summary: "Remind in the sidebar while the guest agent has not connected: true or false.",
         applies: { $0.guestAgentSettings.contains(.installReminder) },
-        readHostState: { String(!$0.agentInstallNudgeDismissed) },
-        changeHostState: { value, _ in
-            let reminds = try ConfigurationValue.boolean(value, key: "agent.installReminder")
-            return { $0.agentInstallNudgeDismissed = !reminds }
-        },
+        codec: .boolean,
+        readHostState: { !$0.agentInstallNudgeDismissed },
+        changeHostState: { reminds, _ in { $0.agentInstallNudgeDismissed = !reminds } },
         refusalOnResult: { _, context in
             context.agentInstallReminder.isOffForAllVMs ? agentInstallReminderOffForAllVMsRefusal : nil
         })
@@ -792,6 +784,108 @@ package enum VMConfigurationKeyRegistry {
     }
 }
 
+/// How one kind of configuration value is spelled: the parser every key of
+/// the kind writes through, and the spelling a read answers, which that parser
+/// takes back.
+///
+/// A key takes its ``VMConfigurationKey/kind`` from its codec, so a key's kind
+/// and the parser its writes run through are one choice.
+struct ConfigurationCodec<Value>: Sendable {
+    let kind: ConfigurationValueKind
+    /// `text` as a value, refusing with ``CommandError/invalidArgument(_:)``
+    /// text that spells none — `key` names the key in the refusal.
+    let parse: @Sendable (_ text: String, _ key: String) throws -> Value
+    /// `value` in the spelling ``parse`` takes back.
+    let text: @Sendable (Value) -> String
+}
+
+extension ConfigurationCodec where Value == Bool {
+    static var boolean: Self {
+        Self(kind: .boolean, parse: ConfigurationValue.boolean, text: { ConfigurationTypedValue.boolean($0).text })
+    }
+}
+
+extension ConfigurationCodec where Value == Int {
+    /// A whole number; the key's write holds it to its bounds
+    /// (``ConfigurationValue/require(_:key:in:)``).
+    static var integer: Self {
+        Self(kind: .integer, parse: ConfigurationValue.wholeNumber, text: { ConfigurationTypedValue.integer($0).text })
+    }
+}
+
+extension ConfigurationCodec where Value == VMMemorySize {
+    /// A number of gigabytes, rounded to the nearest megabyte: 8, or 1.5 for
+    /// 1536 MB. The key's write holds it to its bounds.
+    static var gigabytes: Self {
+        Self(
+            kind: .gigabytes, parse: ConfigurationValue.gigabytes, text: { ConfigurationTypedValue.gigabytes($0).text })
+    }
+}
+
+extension ConfigurationCodec where Value == VMNetworkMode? {
+    /// A network mode, or ``VMConfigurationKeyRegistry/noNetworkValue`` for no
+    /// network device.
+    static var networkMode: Self {
+        Self(
+            kind: .networkMode, parse: ConfigurationValue.networkMode,
+            text: { ConfigurationTypedValue.networkMode($0).text })
+    }
+}
+
+extension ConfigurationCodec where Value == String {
+    /// Text, which the key's write reads as it needs.
+    static var text: Self {
+        Self(kind: .text, parse: { text, _ in text }, text: { $0 })
+    }
+}
+
+extension ConfigurationCodec where Value: RawRepresentable & CaseIterable & Sendable, Value.RawValue == String {
+    /// One of `Value`'s cases, by its raw value.
+    static func choice(of _: Value.Type) -> Self {
+        Self(kind: .choice, parse: { try ConfigurationValue.choice($0, key: $1) }, text: \.rawValue)
+    }
+}
+
+/// A configuration value as its key's kind holds it — what a surface with
+/// types of its own reads and writes in place of the text.
+package enum ConfigurationTypedValue: Hashable, Sendable {
+    case boolean(Bool)
+    case integer(Int)
+    case gigabytes(VMMemorySize)
+    /// `nil` for no network device.
+    case networkMode(VMNetworkMode?)
+    /// A choice or text.
+    case text(String)
+
+    /// The spelling a read answers and a write takes back.
+    package var text: String {
+        switch self {
+        case .boolean(let value): String(value)
+        case .integer(let value): String(value)
+        case .gigabytes(let size): size.gibibytesText
+        case .networkMode(let mode): mode?.rawValue ?? VMConfigurationKeyRegistry.noNetworkValue
+        case .text(let text): text
+        }
+    }
+}
+
+extension ConfigurationValueKind {
+    /// `text`, spelled as a read answers it, as this kind's value — parsed by
+    /// the codec every key of the kind writes through.
+    ///
+    /// - Throws: ``CommandError/invalidArgument(_:)`` for text the kind's
+    ///   parser refuses, naming `key`.
+    package func value(_ text: String, key: String) throws -> ConfigurationTypedValue {
+        switch self {
+        case .boolean: .boolean(try ConfigurationCodec.boolean.parse(text, key))
+        case .integer: .integer(try ConfigurationCodec.integer.parse(text, key))
+        case .gigabytes: .gigabytes(try ConfigurationCodec.gigabytes.parse(text, key))
+        case .networkMode: .networkMode(try ConfigurationCodec.networkMode.parse(text, key))
+        case .choice, .text: .text(text)
+        }
+    }
+}
+
 /// Turning a written value into a typed one, refusing rather than clamping —
 /// a command line states what it would not do instead of doing something else.
 enum ConfigurationValue {
@@ -807,32 +901,49 @@ enum ConfigurationValue {
             "\(key) takes true or false, not \u{201C}\(text)\u{201D}.")
     }
 
-    static func integer(_ text: String, key: String, in bounds: InclusiveBounds<Int>) throws -> Int {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let value = Int(trimmed) else {
+    static func wholeNumber(_ text: String, key: String) throws -> Int {
+        guard let value = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             throw CommandError.invalidArgument(
                 "\(key) takes a whole number, not \u{201C}\(text)\u{201D}.")
-        }
-        guard bounds.contains(value) else {
-            throw outOfBounds(key: key, lower: String(bounds.lower), upper: String(bounds.upper), value: trimmed)
         }
         return value
     }
 
     /// `text` as a decimal count of gigabytes, rounded to the nearest megabyte.
-    static func memorySize(
-        _ text: String, key: String, in bounds: InclusiveBounds<VMMemorySize>
-    ) throws -> VMMemorySize {
+    static func gigabytes(_ text: String, key: String) throws -> VMMemorySize {
         guard let value = VMMemorySize(gibibytesText: text) else {
             throw CommandError.invalidArgument(
                 "\(key) takes a number of gigabytes, not \u{201C}\(text)\u{201D}.")
         }
+        return value
+    }
+
+    /// `text` as a network mode, `nil` for
+    /// ``VMConfigurationKeyRegistry/noNetworkValue``.
+    static func networkMode(_ text: String, key: String) throws -> VMNetworkMode? {
+        guard text != VMConfigurationKeyRegistry.noNetworkValue else { return nil }
+        let mode: VMNetworkMode = try choice(text, key: key, also: [VMConfigurationKeyRegistry.noNetworkValue])
+        return mode
+    }
+
+    /// `value`, refusing one outside `bounds`.
+    static func require(_ value: Int, key: String, in bounds: InclusiveBounds<Int>) throws -> Int {
         guard bounds.contains(value) else {
-            throw outOfBounds(
-                key: key, lower: bounds.lower.gibibytesText, upper: bounds.upper.gibibytesText,
-                value: value.gibibytesText)
+            throw outOfBounds(key: key, lower: String(bounds.lower), upper: String(bounds.upper), value: String(value))
         }
         return value
+    }
+
+    /// `size`, refusing one outside `bounds`.
+    static func require(
+        _ size: VMMemorySize, key: String, in bounds: InclusiveBounds<VMMemorySize>
+    ) throws -> VMMemorySize {
+        guard bounds.contains(size) else {
+            throw outOfBounds(
+                key: key, lower: bounds.lower.gibibytesText, upper: bounds.upper.gibibytesText,
+                value: size.gibibytesText)
+        }
+        return size
     }
 
     private static func outOfBounds(key: String, lower: String, upper: String, value: String) -> CommandError {

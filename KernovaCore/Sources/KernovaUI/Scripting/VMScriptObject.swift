@@ -368,12 +368,28 @@ enum VMScriptNetworkMode {
         }
     }
 
+    /// The mode an Apple event naming `code` names, `nil` for a code from no
+    /// vocabulary this app writes.
+    init?(code: FourCharCode) {
+        guard let mode = VMNetworkMode.allCases.first(where: { Self($0).code == code }) else { return nil }
+        self.init(mode)
+    }
+
     /// The Apple event code the dictionary gives this case's term.
     var code: FourCharCode {
         switch self {
         case .nat: VMScriptNetworkKind.nat.code
         case .bridged: FourCharCode(scriptingCode: "KnBr")
         case .hostOnly: VMScriptNetworkKind.hostOnly.code
+        }
+    }
+
+    /// The mode this term names.
+    var mode: VMNetworkMode {
+        switch self {
+        case .nat: .nat
+        case .bridged: .bridged
+        case .hostOnly: .hostOnly
         }
     }
 }

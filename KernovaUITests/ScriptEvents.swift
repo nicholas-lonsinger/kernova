@@ -216,23 +216,11 @@ struct ScriptReply {
     }
 
     /// The result as a descriptor, which is what the script reads.
-    var descriptor: NSAppleEventDescriptor? { Self.descriptor(of: result) }
-
-    /// `value` — a descriptor, or what a command is resumed with — as the
-    /// descriptor the script reads.
-    private static func descriptor(of value: Any?) -> NSAppleEventDescriptor? {
-        switch value {
-        case let descriptor as NSAppleEventDescriptor: return descriptor
-        case let specifier as NSScriptObjectSpecifier: return specifier.descriptor
-        case let text as String: return NSAppleEventDescriptor(string: text)
-        case let items as [Any]:
-            let list = NSAppleEventDescriptor.list()
-            for item in items {
-                guard let descriptor = descriptor(of: item) else { return nil }
-                list.insert(descriptor, at: list.numberOfItems + 1)
-            }
-            return list
-        default: return nil
+    var descriptor: NSAppleEventDescriptor? {
+        switch result {
+        case let descriptor as NSAppleEventDescriptor: descriptor
+        case let specifier as NSScriptObjectSpecifier: specifier.descriptor
+        default: nil
         }
     }
 
@@ -292,6 +280,24 @@ final class ScriptHost {
         return resumptions[index]
     }
 
+    /// Compiles `body` inside a `tell` to the test host and runs it, its
+    /// events answered by `gateway`, and returns what it answers — real
+    /// AppleScript, which compares in an `if` and builds every reference
+    /// itself. A command the gateway suspends answers its in-process sender at
+    /// once with a timeout, so `body` is reads and `set`s.
+    ///
+    /// - Throws: ``ScriptFailure`` when it doesn't compile or stops with an
+    ///   error.
+    func run(_ body: String, on gateway: VMScriptingGateway) throws -> NSAppleEventDescriptor {
+        let source = "tell application \"\(Bundle.main.bundlePath)\"\n\(body)\nend tell"
+        guard let script = NSAppleScript(source: source) else { throw ScriptFailure(number: 0, message: source) }
+        var error: NSDictionary?
+        guard script.compileAndReturnError(&error) else { throw ScriptFailure(error) }
+        let result = TestScriptingRoot.serving(gateway) { script.executeAndReturnError(&error) }
+        if let error { throw ScriptFailure(error) }
+        return result
+    }
+
     /// Dispatches `event`, answered by `gateway`, and returns what the script
     /// reads back — the reply, or what the gateway answered a command it
     /// suspended with.
@@ -300,6 +306,24 @@ final class ScriptHost {
         if let reply = try dispatch(event, to: gateway) { return reply }
         return try await answer(answered)
     }
+}
+
+/// The error a script ``ScriptHost/run(_:on:)`` ran stopped with.
+struct ScriptFailure: Error, CustomStringConvertible {
+    let number: Int
+    let message: String
+
+    init(number: Int, message: String) {
+        self.number = number
+        self.message = message
+    }
+
+    init(_ error: NSDictionary?) {
+        number = error?[NSAppleScript.errorNumber] as? Int ?? 0
+        message = error?[NSAppleScript.errorMessage] as? String ?? ""
+    }
+
+    var description: String { "\(number) \(message)" }
 }
 
 /// A command a test stands in for the one Cocoa is executing, for a gateway

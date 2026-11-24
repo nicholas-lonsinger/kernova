@@ -339,7 +339,7 @@ final class VMChangeScriptCommand: VMScriptCommand {
         guard let addressed = gateway.settings(addressedBy: self) else { return nil }
         let values: [String]
         do {
-            values = try self.values(for: addressed.settings.count)
+            values = try self.values(for: addressed.settings)
         } catch let refusal as CommandError {
             refuse(refusal)
             return nil
@@ -350,32 +350,36 @@ final class VMChangeScriptCommand: VMScriptCommand {
         let confirmation = flag(Self.confirmationKey)
         return {
             let held = try await gateway.change(addressed.settings, to: values, confirmation: confirmation)
-            return addressed.isList ? held : held.first
+            guard addressed.isList else { return held.first }
+            let list = NSAppleEventDescriptor.list()
+            for value in held { list.insert(value, at: list.numberOfItems + 1) }
+            return list
         }
     }
 
-    /// The value `to` gives each of `count` settings: one for all of them, or
-    /// a list with one for each, in order.
+    /// The text the core takes for each of `settings`, from the value `to`
+    /// gives: one for all of them, or a list with one for each, in order —
+    /// each read as ``VMScriptSettingValue/text(of:for:)`` reads it.
     ///
     /// - Throws: ``CommandError/invalidArgument(_:)`` for a list of another
-    ///   length, or a value that isn't text.
-    private func values(for count: Int) throws -> [String] {
+    ///   length, and for a value its setting can't read.
+    private func values(for settings: [VMSettingAddress]) throws -> [String] {
         let given = arguments?[Self.valueKey]
-        guard let list = given as? [Any] else { return Array(repeating: try Self.text(given), count: count) }
-        guard list.count == count else {
-            throw CommandError.invalidArgument(
-                "Give one value, or one for each of the \(count) settings named; this gives \(list.count).")
+        guard let list = Self.items(given) else {
+            return try settings.map { try VMScriptSettingValue.text(of: given, for: $0) }
         }
-        return try list.map(Self.text)
+        guard list.count == settings.count else {
+            throw CommandError.invalidArgument(
+                "Give one value, or one for each of the \(settings.count) settings named; this gives \(list.count).")
+        }
+        return try zip(list, settings).map { try VMScriptSettingValue.text(of: $0, for: $1) }
     }
 
-    /// `value` as the text a setting holds: AppleScript sends a value as the
-    /// script wrote it.
-    private static func text(_ value: Any?) throws -> String {
-        guard let value,
-            let text = NSScriptCoercionHandler.shared().coerceValue(value, to: NSString.self) as? String
-        else { throw CommandError.invalidArgument("A setting\u{2019}s value is text.") }
-        return text
+    /// `value`'s items, when it is a list; `nil` for one value.
+    private static func items(_ value: Any?) -> [Any]? {
+        if let list = value as? [Any] { return list }
+        guard let list = value as? NSAppleEventDescriptor, list.descriptorType == typeAEList else { return nil }
+        return stride(from: 1, through: list.numberOfItems, by: 1).compactMap { list.atIndex($0) }
     }
 }
 

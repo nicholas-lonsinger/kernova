@@ -9,8 +9,9 @@ import Testing
 @testable import KernovaCoreTestSupport
 @testable import KernovaUI
 
-/// The dictionary's `setting`: what a script reads of a VM's settings, which
-/// setting `set value of` and `change` write, and with what consent.
+/// The dictionary's `setting`: what a script reads of a VM's settings and how
+/// it compares, which setting `set value of` and `change` write, and with what
+/// consent.
 ///
 /// A script's own events are dispatched to the test host (``ScriptHost``) and
 /// answered by the gateway under test.
@@ -47,17 +48,22 @@ struct VMSettingScriptingTests {
         list(texts.map(NSAppleEventDescriptor.init(string:)))
     }
 
+    /// `{<number>, …}`.
+    fileprivate static func numbers(_ numbers: [Double]) -> NSAppleEventDescriptor {
+        list(numbers.map(NSAppleEventDescriptor.init(double:)))
+    }
+
     // MARK: - Reads
 
     /// One `setting` as `get properties` answers it.
-    private struct SettingRow: Equatable {
+    private struct SettingRow {
         let name: String?
-        let value: String?
+        let value: NSAppleEventDescriptor?
         let summary: String?
 
         init(_ record: NSAppleEventDescriptor) {
             name = record.forKeyword(ScriptEvent.code("pnam"))?.stringValue
-            value = record.forKeyword(ScriptEvent.code("valL"))?.stringValue
+            value = record.forKeyword(ScriptEvent.code("valL"))
             summary = record.forKeyword(ScriptEvent.code("KvSy"))?.stringValue
         }
     }
@@ -88,8 +94,10 @@ struct VMSettingScriptingTests {
         let rows = mac.items.map(SettingRow.init)
         let byName = Dictionary(rows.map { ($0.name ?? "", $0) }, uniquingKeysWith: { first, _ in first })
         #expect(rows.count == byName.count)
-        #expect(byName["cpus"]?.value == "6")
-        #expect(byName["memory"]?.value == "8")
+        #expect(byName["cpus"]?.value?.descriptorType == typeSInt32)
+        #expect(byName["cpus"]?.value?.int32Value == 6)
+        #expect(byName["memory"]?.value?.descriptorType == typeIEEE64BitFloatingPoint)
+        #expect(byName["memory"]?.value?.doubleValue == 8)
         #expect(byName["cpus"]?.summary == VMConfigurationKeyRegistry.cpus.summary)
         #expect(byName["input.devices"] != nil)
         #expect(byName["display.hidpi"] != nil)
@@ -105,23 +113,23 @@ struct VMSettingScriptingTests {
 
     /// The ways a script writes one VM's setting, and another's beside it.
     enum WriteForm: CaseIterable, Sendable {
-        /// `set value of setting "cpus" of virtual machine "Beta" to "3"`
+        /// `set value of setting "cpus" of virtual machine "Beta" to 3`
         case set
-        /// `change setting "cpus" of virtual machine "Beta" to "3"`
+        /// `change setting "cpus" of virtual machine "Beta" to 3`
         case change
         /// `change {setting "cpus" of virtual machine "Beta", setting "memory"
         /// of virtual machine "Alpha", setting "memory" of virtual machine
-        /// "Beta"} to {"3", "5", "6"}`
+        /// "Beta"} to {3, 5, 6}`
         case changeList
 
         /// The event, and what it answers.
         @MainActor
-        func event() -> (event: NSAppleEventDescriptor, answers: [String]?) {
+        func event() -> (event: NSAppleEventDescriptor, answers: [Double]?) {
             let cpus = VMSettingScriptingTests.setting("cpus", of: "Beta")
             return switch self {
             case .set:
-                (ScriptEvent.set(ScriptEvent.property("valL", of: cpus), to: NSAppleEventDescriptor(string: "3")), nil)
-            case .change: (ScriptEvent.change(cpus, to: NSAppleEventDescriptor(string: "3")), ["3"])
+                (ScriptEvent.set(ScriptEvent.property("valL", of: cpus), to: NSAppleEventDescriptor(int32: 3)), nil)
+            case .change: (ScriptEvent.change(cpus, to: NSAppleEventDescriptor(int32: 3)), [3])
             case .changeList:
                 (
                     ScriptEvent.change(
@@ -129,8 +137,8 @@ struct VMSettingScriptingTests {
                             cpus, VMSettingScriptingTests.setting("memory", of: "Alpha"),
                             VMSettingScriptingTests.setting("memory", of: "Beta"),
                         ]),
-                        to: VMSettingScriptingTests.texts(["3", "5", "6"])),
-                    ["3", "5", "6"]
+                        to: VMSettingScriptingTests.numbers([3, 5, 6])),
+                    [3, 5, 6]
                 )
             }
         }
@@ -161,7 +169,7 @@ struct VMSettingScriptingTests {
         #expect(alpha.configuration.memorySizeInGB == .gibibytes(form == .changeList ? 5 : 4))
         #expect(beta.configuration.memorySizeInGB == .gibibytes(form == .changeList ? 6 : 4))
         if let answers {
-            #expect(reply.items.map(\.stringValue) == answers)
+            #expect(reply.items.map(\.doubleValue) == answers)
         }
     }
 
@@ -174,7 +182,7 @@ struct VMSettingScriptingTests {
         let host = ScriptHost()
         let gateway = await makeGateway(wired, host: host)
         let ephemeral = Self.setting("ephemeral", of: "Alpha")
-        let on = NSAppleEventDescriptor(string: "true")
+        let on = NSAppleEventDescriptor(boolean: true)
         let refusal = CommandError.confirmationRequired(
             VMCommandCore.ephemeralBaselinePrompt(clean, on: alpha, turningOn: true))
 
@@ -190,7 +198,8 @@ struct VMSettingScriptingTests {
         let confirmed = try await host.send(ScriptEvent.change(ephemeral, to: on, confirmation: true), to: gateway)
 
         #expect(confirmed.errorNumber == 0, "\(confirmed.errorString ?? "")")
-        #expect(confirmed.descriptor?.stringValue == "true")
+        #expect(confirmed.descriptor?.descriptorType == typeBoolean)
+        #expect(confirmed.descriptor?.booleanValue == true)
         #expect(alpha.hostState.ephemeralModeEnabled)
         #expect(alpha.hostState.ephemeralBaselineSnapshotID == clean.id)
     }
@@ -211,5 +220,59 @@ struct VMSettingScriptingTests {
         #expect(reply.errorNumber == Int(errAETypeError))
         #expect(reply.errorString?.contains("memory") == true)
         #expect(alpha.configuration.cpuCount == 2)
+    }
+
+    // MARK: - Comparisons
+
+    @Test(
+        "A value compares as the type its setting takes, in an if and in a whose, and network.mode reads and takes its constants"
+    )
+    func aValueComparesAsItsType() async throws {
+        let wired = WiredCommandCore()
+        wired.register(name: "Alpha", guestOS: .macOS) {
+            $0.cpuCount = 16
+            $0.audioOutputEnabled = true
+            $0.networkEnabled = true
+            $0.networkMode = .nat
+            $0.macAddress = "02:4b:4e:56:0c:01"
+        }
+        let beta = wired.register(name: "Beta") {
+            $0.cpuCount = 4
+            $0.audioOutputEnabled = false
+            $0.networkEnabled = true
+            $0.networkMode = .bridged
+            $0.macAddress = "02:4b:4e:56:0c:02"
+        }
+        let gamma = wired.register(name: "Gamma") {
+            $0.cpuCount = 2
+            $0.audioOutputEnabled = false
+            $0.networkEnabled = false
+        }
+        let host = ScriptHost()
+        let gateway = await makeGateway(wired, host: host)
+        func answer(_ body: String) throws -> NSAppleEventDescriptor { try host.run(body, on: gateway) }
+        func names(_ body: String) throws -> [String] { try answer(body).items.compactMap(\.stringValue) }
+
+        // As text, "16" > 8 compares as "16" > "8", and is false.
+        #expect(try answer(#"value of setting "cpus" of virtual machine "Alpha" > 8"#).booleanValue)
+        #expect(
+            try answer(
+                #"processor count of virtual machine "Alpha" = value of setting "cpus" of virtual machine "Alpha""#
+            )
+            .booleanValue)
+        #expect(try answer(#"value of setting "audio.output" of virtual machine "Alpha" is true"#).booleanValue)
+        #expect(try answer(#"value of setting "network.mode" of virtual machine "Alpha" is nat"#).booleanValue)
+        #expect(
+            try answer(#"value of setting "network.mode" of virtual machine "Gamma" is missing value"#).booleanValue)
+        #expect(try names(#"name of every virtual machine whose value of setting "cpus" > 8"#) == ["Alpha"])
+        #expect(try names(#"name of every virtual machine whose value of setting "audio.output" is true"#) == ["Alpha"])
+        #expect(
+            try names(#"name of every virtual machine whose value of setting "network.mode" is bridged"#) == ["Beta"])
+
+        _ = try answer(#"set value of setting "network.mode" of virtual machine "Gamma" to host only"#)
+        _ = try answer(#"set value of setting "network.mode" of virtual machine "Beta" to missing value"#)
+
+        #expect(gamma.configuration.effectiveNetworkMode == .hostOnly)
+        #expect(beta.configuration.effectiveNetworkMode == nil)
     }
 }

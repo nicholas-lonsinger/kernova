@@ -254,7 +254,7 @@
 			<property name="name" code="pnam" type="text" access="r" description="Its key.">
 				<cocoa key="name"/>
 			</property>
-			<property name="value" code="valL" type="text" description="What it holds, as text in the spelling setting it takes back, so a value read and set back changes nothing. Compare it with text: value of setting &quot;audio.input&quot; is &quot;true&quot;. True, false, numbers and constants such as nat aren&#8217;t text, and never equal it. Setting it is refused for a change that asks for consent first, such as turning on Ephemeral Mode; change &#8230; with confirmation makes that change.">
+			<property name="value" code="valL" type="any" description="What it holds, of the type the setting takes: true or false; an integer; a real number of gigabytes, for &quot;memory&quot;; nat, bridged or host only, or missing value for no network, for &quot;network.mode&quot;; or text. It compares as that type does, in a whose test too. A value read and set back changes nothing, and any setting also takes text spelled as its summary spells its values. Setting it is refused for a change that asks for consent first, such as turning on Ephemeral Mode; change &#8230; with confirmation makes that change.">
 				<cocoa key="value"/>
 			</property>
 			<property name="summary" code="KvSy" type="text" access="r" description="What it holds and the values it takes, in one line.">
@@ -453,18 +453,13 @@
 				<type type="setting"/>
 				<type type="setting" list="yes"/>
 			</direct-parameter>
-			<parameter name="to" code="data" description="The value, as text in the spelling the setting&#8217;s value reads, or a list of them, one for each setting in the order named.">
+			<parameter name="to" code="data" type="any" description="The value, as a setting&#8217;s value takes it, or a list of them, one for each setting in the order named.">
 				<cocoa key="Value"/>
-				<type type="text"/>
-				<type type="text" list="yes"/>
 			</parameter>
 			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent a change refuses without: turning on Ephemeral Mode or changing its baseline, and turning on automatic clipboard passthrough.">
 				<cocoa key="Confirmation"/>
 			</parameter>
-			<result description="The value each setting holds afterwards, which can differ from the one given: network.mac set to &quot;new&quot; answers the address it got.">
-				<type type="text"/>
-				<type type="text" list="yes"/>
-			</result>
+			<result type="any" description="The value each setting holds afterwards, or a list of them for several, which can differ from the one given: network.mac set to &quot;new&quot; answers the address it got."/>
 		</command>
 
 		<command name="cancel guest setup" code="KrnvCnGs" description="Interrupt the download, verification or install a virtual machine&#8217;s first start is running. The virtual machine and its bundle are kept, and its next start begins its guest setup again.">

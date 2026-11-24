@@ -233,16 +233,16 @@ struct CLIRenderingTests {
 
     private let keyspace = [
         ConfigurationKeyDescriptor(
-            name: "cpus", summary: "Virtual CPU cores, within what the guest allows.",
+            name: "cpus", summary: "Virtual CPU cores, within what the guest allows.", kind: .integer,
             editableWhileRunning: ["macOS": false, "linux": false]),
         ConfigurationKeyDescriptor(
-            name: "ephemeral", summary: "Return the VM to its baseline snapshot.",
+            name: "ephemeral", summary: "Return the VM to its baseline snapshot.", kind: .boolean,
             editableWhileRunning: ["macOS": true, "linux": true]),
         ConfigurationKeyDescriptor(
-            name: "clipboard.sharing", summary: "Exchange clipboard text with the guest.",
+            name: "clipboard.sharing", summary: "Exchange clipboard text with the guest.", kind: .boolean,
             editableWhileRunning: ["macOS": true, "linux": false]),
         ConfigurationKeyDescriptor(
-            name: "dropFiles", summary: "Send dropped files to the guest.",
+            name: "dropFiles", summary: "Send dropped files to the guest.", kind: .boolean,
             editableWhileRunning: ["macOS": true]),
     ]
 
@@ -271,7 +271,7 @@ struct CLIRenderingTests {
                 == keyspace)
         let objects = try #require(
             try JSONSerialization.jsonObject(with: Data(descriptors.utf8)) as? [[String: Any]])
-        for field in ["name", "summary", "editableWhileRunning"] {
+        for field in ["name", "summary", "kind", "editableWhileRunning"] {
             #expect(objects.first?[field] != nil, "missing \(field)")
         }
         // One answer per guest, keyed by the guest's wire name.

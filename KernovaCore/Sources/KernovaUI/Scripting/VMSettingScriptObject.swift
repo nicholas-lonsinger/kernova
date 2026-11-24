@@ -1,18 +1,21 @@
 import Cocoa
+import CoreServices
 import KernovaCommandModel
 import KernovaCore
 import KernovaLogging
 
-/// One setting, as a verb a script runs names it: the VM it belongs to, and
-/// its key.
+/// One setting, as a verb a script runs names it: the VM it belongs to, its
+/// key, and what its value is.
 struct VMSettingAddress: Hashable, Sendable {
     let vm: UUID
     let key: String
+    let kind: ConfigurationValueKind
 }
 
 /// One of a VM's settings, as the scripting dictionary's `setting`: a key of
-/// the keyspace and its value as ``VMCommandCore/configuration(_:keys:)``
-/// reads it, and the key's summary.
+/// the keyspace, its value as ``VMCommandCore/configuration(_:keys:)`` reads
+/// it, typed as the key's kind is (``VMScriptSettingValue``), and the key's
+/// summary.
 ///
 /// A copy of one read, like ``VMScriptObject``: the VM reads its settings
 /// afresh on every specifier evaluation. Setting `value` is the settings
@@ -23,8 +26,8 @@ package final class VMSettingScriptObject: NSObject {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMSettingScriptObject")
 
-    /// The key and the value it held when read.
-    private let entry: ConfigurationEntry
+    /// What the setting held when read.
+    private let held: ConfigurationTypedValue
     /// Which setting it is.
     let address: VMSettingAddress
     /// Where a write runs.
@@ -33,19 +36,42 @@ package final class VMSettingScriptObject: NSObject {
     /// What the key holds and the values it takes, in one line.
     @objc let summary: String
 
-    init(_ entry: ConfigurationEntry, summary: String, of vm: UUID, gateway: VMScriptingGateway) {
-        self.entry = entry
-        self.summary = summary
-        address = VMSettingAddress(vm: vm, key: entry.key)
+    /// `entry`, a setting of the VM `vm` identifies, as `descriptor` — its
+    /// key's — describes it.
+    init(
+        _ entry: ConfigurationEntry, describedBy descriptor: ConfigurationKeyDescriptor, of vm: UUID,
+        gateway: VMScriptingGateway
+    ) {
+        held = Self.value(entry, as: descriptor.kind)
+        summary = descriptor.summary
+        address = VMSettingAddress(vm: vm, key: entry.key, kind: descriptor.kind)
         self.gateway = gateway
+    }
+
+    /// `entry`'s value as `kind` reads it.
+    ///
+    /// The core wrote the text with the codec `kind` names, so it parses; a
+    /// value that doesn't is a programming error, answered as the text.
+    static func value(_ entry: ConfigurationEntry, as kind: ConfigurationValueKind) -> ConfigurationTypedValue {
+        do {
+            return try kind.value(entry.value, key: entry.key)
+        } catch {
+            logger.log(
+                .fault,
+                "Setting \(entry.key, privacy: .public) read \(entry.value, privacy: .public), which its kind \(kind.rawValue, privacy: .public) refuses"
+            )
+            assertionFailure("Setting \(entry.key) read \(entry.value), which its kind \(kind) refuses")
+            return .text(entry.value)
+        }
     }
 
     // MARK: - Properties
 
-    @objc var name: String { entry.key }
+    @objc var name: String { address.key }
 
-    @objc var value: String {
-        get { entry.value }
+    /// ``VMScriptSettingValue``: the dictionary declares `value` as `any`.
+    @objc var value: Any? {
+        get { VMScriptSettingValue(held) }
         set { gateway?.setSetting(address, to: newValue) }
     }
 
@@ -70,5 +96,209 @@ package final class VMSettingScriptObject: NSObject {
             containerSpecifier: VMScriptObject.specifier(for: address.vm),
             key: VMScriptObject.settingsKey,
             name: address.key)
+    }
+}
+
+// MARK: - Value
+
+/// A setting's value as a script reads it: a boolean, an integer, a real
+/// number of gigabytes, a `VM network mode` constant or missing value, or
+/// text, as its key's kind is — compared in a `whose` test as AppleScript
+/// compares it in an `if`.
+///
+/// Two documented behaviors carry it. The dictionary's `any` is
+/// NSAppleEventDescriptor (Cocoa Scripting Guide, "Support for basic
+/// AppleScript types"), so a value of any of those types reaches the script as
+/// itself. A `whose` test asks the value it reads to compare itself when it
+/// implements `NSScriptingComparisonMethods` (NSScriptWhoseTests.h), which
+/// NSAppleEventDescriptor doesn't, so this does: a number with a number, text
+/// with text ignoring case, and a boolean, constant or missing value with its
+/// equal, and nothing of another type.
+final class VMScriptSettingValue: NSAppleEventDescriptor {
+    /// What the descriptor holds.
+    let held: ConfigurationTypedValue
+
+    init(_ held: ConfigurationTypedValue) {
+        self.held = held
+        var desc = AEDesc()
+        if let plain = Self.descriptor(held).aeDesc {
+            AEDuplicateDesc(plain, &desc)
+        }
+        super.init(aeDescNoCopy: &desc)
+    }
+
+    /// Unarchiving one is not supported: nothing archives a script's value.
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    /// `held` as a plain descriptor of its type.
+    private static func descriptor(_ held: ConfigurationTypedValue) -> NSAppleEventDescriptor {
+        switch held {
+        case .boolean(let value): NSAppleEventDescriptor(boolean: value)
+        case .integer(let value): NSAppleEventDescriptor(int32: Int32(clamping: value))
+        case .gigabytes(let size): NSAppleEventDescriptor(double: size.gibibytes)
+        case .networkMode(let mode?): NSAppleEventDescriptor(enumCode: VMScriptNetworkMode(mode).code)
+        case .networkMode(nil): missingValue
+        case .text(let text): NSAppleEventDescriptor(string: text)
+        }
+    }
+
+    /// AppleScript's `missing value`.
+    private static var missingValue: NSAppleEventDescriptor {
+        NSAppleEventDescriptor(typeCode: FourCharCode(scriptingCode: "msng"))
+    }
+
+    // MARK: Comparison
+
+    /// What a test's value is, as these comparisons read it.
+    private enum Operand {
+        case number(Double)
+        case boolean(Bool)
+        case text(String)
+        case constant(FourCharCode)
+        case missing
+        case other
+
+        init(_ value: Any) {
+            switch value {
+            case let descriptor as NSAppleEventDescriptor: self.init(descriptor)
+            case let number as NSNumber where CFGetTypeID(number) == CFBooleanGetTypeID():
+                self = .boolean(number.boolValue)
+            case let number as NSNumber: self = .number(number.doubleValue)
+            case let text as String: self = .text(text)
+            case is NSNull: self = .missing
+            default: self = .other
+            }
+        }
+
+        init(_ descriptor: NSAppleEventDescriptor) {
+            switch descriptor.descriptorType {
+            case typeTrue, typeFalse, typeBoolean: self = .boolean(descriptor.booleanValue)
+            case typeSInt16, typeSInt32, typeSInt64, typeUInt16, typeUInt32, typeUInt64,
+                typeIEEE32BitFloatingPoint, typeIEEE64BitFloatingPoint:
+                self = .number(descriptor.doubleValue)
+            case typeUnicodeText, typeUTF8Text, typeUTF16ExternalRepresentation, typeChar:
+                self = descriptor.stringValue.map(Operand.text) ?? .other
+            case typeEnumerated: self = .constant(descriptor.enumCodeValue)
+            case typeType where descriptor.typeCodeValue == FourCharCode(scriptingCode: "msng"): self = .missing
+            default: self = .other
+            }
+        }
+    }
+
+    /// How this value orders against `value`, `nil` when the two don't
+    /// order: they are of different types, or of one that has no order.
+    private func order(against value: Any) -> ComparisonResult? {
+        switch (held, Operand(value)) {
+        case (.integer(let held), .number(let other)): Self.order(Double(held), other)
+        case (.gigabytes(let size), .number(let other)): Self.order(size.gibibytes, other)
+        case (.text(let held), .text(let other)): held.compare(other, options: .caseInsensitive)
+        default: nil
+        }
+    }
+
+    private static func order(_ lhs: Double, _ rhs: Double) -> ComparisonResult {
+        lhs < rhs ? .orderedAscending : lhs > rhs ? .orderedDescending : .orderedSame
+    }
+
+    override func scriptingIsEqual(to object: Any) -> Bool {
+        switch (held, Operand(object)) {
+        case (.boolean(let held), .boolean(let other)): held == other
+        case (.networkMode(let mode?), .constant(let code)): VMScriptNetworkMode(mode).code == code
+        case (.networkMode(nil), .missing): true
+        default: order(against: object) == .orderedSame
+        }
+    }
+
+    override func scriptingIsLessThan(_ object: Any) -> Bool {
+        order(against: object) == .orderedAscending
+    }
+
+    override func scriptingIsLessThanOrEqual(to object: Any) -> Bool {
+        [.orderedAscending, .orderedSame].contains(order(against: object))
+    }
+
+    override func scriptingIsGreaterThan(_ object: Any) -> Bool {
+        order(against: object) == .orderedDescending
+    }
+
+    override func scriptingIsGreaterThanOrEqual(to object: Any) -> Bool {
+        [.orderedDescending, .orderedSame].contains(order(against: object))
+    }
+
+    // MARK: Writing
+
+    /// `value`, what a script wrote to the setting `address` names, as the
+    /// text the core takes: a value of the setting's type spelled as its
+    /// codec spells it, a `VM network mode` constant as its mode's name, and
+    /// text as written, for the core to parse.
+    ///
+    /// A reference is evaluated first: `set value of s to value of s` sends
+    /// the property it names, not what that holds, because `value` is `any`.
+    ///
+    /// - Throws: ``CommandError/invalidArgument(_:)`` for missing value
+    ///   anywhere but `network.mode`, another constant, and anything that is
+    ///   no single value.
+    static func text(of value: Any?, for address: VMSettingAddress) throws -> String {
+        guard let reference = value as? NSAppleEventDescriptor, reference.descriptorType == typeObjectSpecifier else {
+            return try text(ofValue: value, for: address)
+        }
+        guard let evaluated = NSScriptObjectSpecifier(descriptor: reference)?.objectsByEvaluatingSpecifier else {
+            throw notAValue(for: address)
+        }
+        return try text(ofValue: evaluated, for: address)
+    }
+
+    /// ``text(of:for:)`` for a value that is no reference.
+    private static func text(ofValue value: Any?, for address: VMSettingAddress) throws -> String {
+        switch value {
+        case let descriptor as NSAppleEventDescriptor: return try text(of: descriptor, for: address)
+        case let text as String: return text
+        case let number as NSNumber where CFGetTypeID(number) == CFBooleanGetTypeID():
+            return ConfigurationTypedValue.boolean(number.boolValue).text
+        case let number as NSNumber: return text(ofNumber: number.doubleValue, for: address)
+        case nil, is NSNull: return try missing(for: address)
+        default: throw notAValue(for: address)
+        }
+    }
+
+    private static func text(of descriptor: NSAppleEventDescriptor, for address: VMSettingAddress) throws -> String {
+        switch Operand(descriptor) {
+        case .boolean(let value): return ConfigurationTypedValue.boolean(value).text
+        case .number(let value): return text(ofNumber: value, for: address)
+        case .text(let text): return text
+        case .constant(let code):
+            guard let mode = VMScriptNetworkMode(code: code) else {
+                throw CommandError.invalidArgument(
+                    "The constants a setting takes are nat, bridged and host only, which network.mode takes.")
+            }
+            return ConfigurationTypedValue.networkMode(mode.mode).text
+        case .missing: return try missing(for: address)
+        case .other: throw notAValue(for: address)
+        }
+    }
+
+    /// A number written to the setting `address` names: gigabytes to the
+    /// megabyte where it holds a size, a whole number without decimals.
+    private static func text(ofNumber value: Double, for address: VMSettingAddress) -> String {
+        if address.kind == .gigabytes, let size = VMMemorySize(gibibytes: value) {
+            return ConfigurationTypedValue.gigabytes(size).text
+        }
+        if let whole = Int(exactly: value) { return ConfigurationTypedValue.integer(whole).text }
+        return String(value)
+    }
+
+    /// `missing value` written to the setting `address` names: no network
+    /// device, for the one setting whose missing value is that.
+    private static func missing(for address: VMSettingAddress) throws -> String {
+        guard address.kind == .networkMode else {
+            throw CommandError.invalidArgument("\(address.key) takes a value, not missing value.")
+        }
+        return ConfigurationTypedValue.networkMode(nil).text
+    }
+
+    private static func notAValue(for address: VMSettingAddress) -> CommandError {
+        .invalidArgument("\(address.key) takes one value.")
     }
 }

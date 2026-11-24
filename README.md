@@ -171,16 +171,17 @@ tell application "Kernova"
     set name of build to "Build 42"
     set checkpoint to make new snapshot at build with properties {name:"Before the run"}
 
-    -- A setting's value is text, so compare it with text; `change` sets several
-    -- of a VM's settings together, or none of them.
-    set value of setting "cpus" of build to "4"
-    change {setting "memory" of build, setting "audio.input" of build} to {"8", "true"}
-    if value of setting "audio.input" of build is "true" then beep
+    -- A setting's value is a number, a boolean, a constant or text, as the
+    -- setting takes; `change` sets several of a VM's settings together, or none.
+    set value of setting "cpus" of build to 4
+    change {setting "memory" of build, setting "audio.input" of build} to {8, true}
+    if value of setting "memory" of build ≥ 8 then beep
 
     -- A revert, a delete, a cancel, a stop that discards guest state, and a
     -- change that asks first, such as turning on Ephemeral Mode, refuse without
-    -- `with confirmation`, which `set` can't carry.
-    change setting "ephemeral" of build to "true" with confirmation
+    -- `with confirmation`, which `set` can't carry. Once compiled, AppleScript
+    -- shows `to true` as `with to`.
+    change setting "ephemeral" of build to true with confirmation
     revert to checkpoint with confirmation
     delete build with confirmation
 
