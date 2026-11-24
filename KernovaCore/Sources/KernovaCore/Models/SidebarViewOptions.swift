@@ -58,16 +58,11 @@ extension LibraryEntry {
         VMLibrarySort.Keys(name: name, createdAt: configuration?.createdAt, lastRun: lastRun)
     }
 
-    /// When this entry last ran: live while it is in a session, or held by
-    /// another copy, which may be running it — ``VMHostState/lastRunAt`` then
-    /// holds a session's start. An arrival, or a bundle Kernova can't read,
+    /// When this entry last ran. An arrival, or a bundle Kernova can't read,
     /// has no run recorded.
     var lastRun: VMLibrarySort.LastRun {
         guard case .vm(let instance) = self else { return .unrecorded }
-        switch instance.stateBucket {
-        case .running, .heldByAnotherCopy: return .live
-        case .stopped, .suspended, .preparing: return instance.hostState.lastRunAt.map { .ended($0) } ?? .unrecorded
-        }
+        return VMLibrarySort.LastRun(state: instance.stateBucket, lastRunAt: instance.hostState.lastRunAt)
     }
 
     /// What a person reads for this entry's status.

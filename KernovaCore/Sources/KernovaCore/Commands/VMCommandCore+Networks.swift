@@ -17,6 +17,21 @@ extension VMCommandCore {
         return try library.networks.listedNetworks(verb: .networks).map(summary)
     }
 
+    /// ``VMNetworkDirectory/requireNetwork(named:verb:)`` against the
+    /// library's list of networks as its file holds it now.
+    func namedNetwork(_ text: String, verb: VMVerb) throws -> VMNamedNetwork {
+        library.networks.reload()
+        return try library.networks.requireNetwork(named: text, verb: verb)
+    }
+
+    /// The membership `text` spells as `network.membership` takes one
+    /// (``VMConfigurationKeyRegistry/membership(_:networks:)``), against the
+    /// library's list of networks as its file holds it now.
+    func networkMembership(spelledBy text: String) throws -> VMNetworkMembership {
+        library.networks.reload()
+        return try VMConfigurationKeyRegistry.membership(text, networks: library.networks.state)
+    }
+
     /// `network` as every read surface reports it, with the VMs on it.
     func summary(_ network: VMNamedNetwork) -> NetworkSummary {
         NetworkSummary(
@@ -50,8 +65,7 @@ extension VMCommandCore {
     /// Renames the network `network` names, by identifier or by name. A VM
     /// names its network by identifier, so no VM changes.
     package func renameNetwork(_ network: String, to newName: String) throws {
-        library.networks.reload()
-        let network = try library.networks.requireNetwork(named: network, verb: .renameNetwork)
+        let network = try namedNetwork(network, verb: .renameNetwork)
         try library.networks.rename(network.id, to: newName, verb: .renameNetwork)
         logger.log(.notice, "Renamed the network \(network.id.uuidString, privacy: .public)")
     }
@@ -65,8 +79,7 @@ extension VMCommandCore {
     /// (docs/NETWORKING.md). An inert VM whose state takes no such change, and
     /// a snapshot taken on the network, keep naming it, unlisted.
     package func deleteNetwork(_ network: String) throws {
-        library.networks.reload()
-        let network = try library.networks.requireNetwork(named: network, verb: .deleteNetwork)
+        let network = try namedNetwork(network, verb: .deleteNetwork)
         let key = VMConfigurationKeyRegistry.networkMembership
         let isolated = VMNetworkMembership.isolated.rawValue
         let naming = library.instances.filter {

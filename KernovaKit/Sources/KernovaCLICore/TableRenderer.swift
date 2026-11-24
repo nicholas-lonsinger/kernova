@@ -64,6 +64,8 @@ enum TableRenderer {
         case ephemeral = "Ephemeral"
         case snapshots = "Snapshots"
         case tags = "Tags"
+        case created = "Created"
+        case lastRun = "Last Run"
         case bundle = "Bundle"
     }
 
@@ -79,7 +81,7 @@ enum TableRenderer {
         case .heldByAnotherCopy: nil
         // Status names the state the group coarsens.
         case .stateBucket: nil
-        case .guestOS: (.guest, [info.guestOS])
+        case .guestOS: (.guest, [info.guestOS.rawValue])
         case .cpuCount: (.cpus, [String(info.cpuCount)])
         case .memoryBytes: (.memory, [memory(info.memoryBytes)])
         case .networkMode:
@@ -87,7 +89,7 @@ enum TableRenderer {
                 .network,
                 [
                     info.networkMode.map { mode in
-                        [mode, info.networkName?.title ?? info.networkMembership].compactMap(\.self)
+                        [mode.rawValue, info.networkName?.title ?? info.networkMembership].compactMap(\.self)
                             .joined(separator: ", ")
                     } ?? "Off"
                 ]
@@ -109,6 +111,8 @@ enum TableRenderer {
         case .hasSnapshots: nil
         case .tags:
             (.tags, [info.tags.map { $0.isEmpty ? "\u{2013}" : $0.joined(separator: ", ") } ?? "Can\u{2019}t be read"])
+        case .createdAt: (.created, [moment(info.createdAt)])
+        case .lastRunAt: (.lastRun, [info.lastRunAt.map(moment) ?? "No run recorded"])
         case .bundlePath: (.bundle, [info.bundlePath])
         }
     }
@@ -180,7 +184,7 @@ enum TableRenderer {
         case .name: (.name, snapshot.name)
         case .isCurrent: (.current, snapshot.isCurrent ? "*" : "")
         case .kind: (.kind, snapshot.kind)
-        case .createdAt: (.taken, taken(snapshot.createdAt))
+        case .createdAt: (.taken, moment(snapshot.createdAt))
         case .id: (.id, snapshot.id.uuidString)
         // Free text, possibly several lines, which a row can't hold.
         case .notes: nil
@@ -340,8 +344,8 @@ enum TableRenderer {
         }
     }
 
-    /// When a capture was taken, in this Mac's own locale and time zone.
-    private static func taken(_ date: Date) -> String {
+    /// A moment, in this Mac's own locale and time zone.
+    private static func moment(_ date: Date) -> String {
         date.formatted(date: .abbreviated, time: .shortened)
     }
 

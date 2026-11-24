@@ -52,6 +52,6 @@ struct SidebarFilterSortGroupTests {
 
         #expect(info.status == VMStatus.snapshotting.rawValue)
         #expect(info.stateBucket == .stopped)
-        #expect(VMEntity(info).stateGroup == "stopped")
+        #expect(VMEntity(info).stateGroup == .stopped)
     }
 }

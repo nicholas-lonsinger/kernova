@@ -51,6 +51,16 @@ public enum VMLibrarySort: String, Codable, CaseIterable, Sendable {
         /// No run recorded: never run, or last run only by a build that
         /// recorded none.
         case unrecorded
+
+        /// How a VM in `state`, whose run was last recorded at `lastRunAt`,
+        /// reads: ``live`` for a state a session may be live in, else when it
+        /// last ran.
+        public init(state: VMStateBucket, lastRunAt: Date?) {
+            switch state {
+            case .running, .heldByAnotherCopy: self = .live
+            case .stopped, .suspended, .preparing: self = lastRunAt.map { .ended($0) } ?? .unrecorded
+            }
+        }
     }
 
     /// `elements`, given in their manual order, in this order; elements the

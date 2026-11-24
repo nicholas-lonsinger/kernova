@@ -99,14 +99,14 @@ public struct VMInfo: Codable, Sendable, Hashable {
     /// still being written by a create, clone or import reports `preparing`,
     /// which is not a ``VMStatus`` value.
     public let status: String
-    /// Which guest the VM runs, as its stable wire name.
-    public let guestOS: String
+    /// Which guest the VM runs.
+    public let guestOS: VMGuestOS
     /// Virtual CPUs the guest is configured with.
     public let cpuCount: Int
     /// Guest memory in bytes.
     public let memoryBytes: UInt64
-    /// The network the VM joins, `nil` when networking is off.
-    public let networkMode: String?
+    /// The mode of the network the VM joins, `nil` when networking is off.
+    public let networkMode: VMNetworkMode?
     /// Which network of its mode the VM joins — `common`, `isolated`, or a
     /// named network's identifier, as `network.membership` reads it — `nil`
     /// where it joins no app-managed network (networking off, or bridged).
@@ -153,6 +153,11 @@ public struct VMInfo: Codable, Sendable, Hashable {
     /// The names of the tags the VM carries, in the order the library lists
     /// its tags; `nil` while Kernova can't read its tags.
     public let tags: [String]?
+    /// When the VM was created.
+    public let createdAt: Date
+    /// The last moment the VM was recorded running — written as a session
+    /// settles running and again as it ends — `nil` when no run is recorded.
+    public let lastRunAt: Date?
 
     /// Every field, by the key the JSON names it with: what a surface
     /// switches over, with no `default:`, to show each field or say why it
@@ -164,6 +169,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         case id, name, status, guestOS, cpuCount, memoryBytes, networkMode, networkMembership, networkName
         case macAddress, ipAddress, agentStatus, hasSavedState, savedStateKernovaVersion, isEphemeral
         case snapshotCount, hasSnapshots, guestAgent, stateBucket, bundlePath, heldByAnotherCopy, agents, tags
+        case createdAt, lastRunAt
     }
 
     private typealias CodingKeys = Field
@@ -173,10 +179,10 @@ public struct VMInfo: Codable, Sendable, Hashable {
         id: UUID,
         name: String,
         status: String,
-        guestOS: String,
+        guestOS: VMGuestOS,
         cpuCount: Int,
         memoryBytes: UInt64,
-        networkMode: String?,
+        networkMode: VMNetworkMode?,
         networkMembership: String?,
         networkName: VMNetworkName?,
         macAddress: String?,
@@ -192,7 +198,9 @@ public struct VMInfo: Codable, Sendable, Hashable {
         bundlePath: String,
         heldByAnotherCopy: Bool,
         agents: [VMAgentLine],
-        tags: [String]?
+        tags: [String]?,
+        createdAt: Date,
+        lastRunAt: Date?
     ) {
         self.id = id
         self.name = name
@@ -217,6 +225,8 @@ public struct VMInfo: Codable, Sendable, Hashable {
         self.heldByAnotherCopy = heldByAnotherCopy
         self.agents = agents
         self.tags = tags
+        self.createdAt = createdAt
+        self.lastRunAt = lastRunAt
     }
 }
 

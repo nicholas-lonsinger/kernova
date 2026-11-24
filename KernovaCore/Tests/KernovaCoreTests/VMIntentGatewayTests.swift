@@ -11,9 +11,9 @@ import Testing
 /// The App Intents front door: what Shortcuts and Spotlight see, how it
 /// waits for the library, and how it addresses VMs.
 ///
-/// Driven through the gateway rather than through `VMEntityQuery`, which holds
-/// no logic of its own — it forwards, and the `@Dependency` it forwards through
-/// resolves only inside a live intent session.
+/// Driven through the gateway rather than through `VMEntityQuery`'s methods,
+/// which forward through a `@Dependency` that resolves only inside a live
+/// intent session.
 @Suite("VM Intent Gateway Tests", .caseScoped)
 @MainActor
 struct VMIntentGatewayTests {
@@ -83,5 +83,72 @@ struct VMIntentGatewayTests {
         }
         #expect(verb == .stop)
         #expect(seconds == 45)
+    }
+
+    // MARK: - Find
+
+    /// A shortcut acts on every VM its Find answers, so a condition answering
+    /// another set hands its next action VMs nobody asked for.
+    @Test("Find's negated conditions answer every VM kernova list does not list, and a name it doesn't list is refused")
+    func findNegatesAndRefusesAsTheListingDoes() async throws {
+        let harness = WiredCommandCore()
+        let lab = try harness.core.createNetwork(name: "Lab", kind: .hostOnly)
+        let gone = try harness.core.createNetwork(name: "Gone", kind: .nat)
+        try harness.core.deleteNetwork(gone.id.uuidString)
+        let prod = try harness.library.createTag(named: "Prod", color: .blue)
+        harness.register(name: "On Lab") {
+            $0.applyNetworkMode(.hostOnly)
+            $0.networkMembership = .network(lab.id)
+        }
+        harness.register(name: "Common", hostState: VMHostState(tags: [prod.id])) { $0.applyNetworkMode(.nat) }
+        harness.register(name: "Off", guestOS: .macOS)
+        // Brought from another Mac, or back by a snapshot taken before its
+        // network was deleted: no other condition finds it.
+        harness.register(name: "Unlisted") {
+            $0.applyNetworkMode(.nat)
+            $0.networkMembership = .network(gone.id)
+        }
+        let gateway = makeGateway(over: harness)
+
+        func found(_ condition: VMEntityQuery.Condition) async throws -> [String] {
+            try await gateway.vms(meeting: [condition], mode: .and).map(\.name)
+        }
+
+        #expect(try await found(.onNetwork("lab").negated) == ["Common", "Off", "Unlisted"])
+        #expect(try await found(.inMembership("Lab").negated) == ["Common", "Off", "Unlisted"])
+        #expect(try await found(.inMembership(gone.id.uuidString)) == ["Unlisted"])
+        #expect(try await found(.carrying(tag: "prod").negated) == ["On Lab", "Off", "Unlisted"])
+        #expect(try await found(.admitted(by: VMLibraryFilter(guestOSes: [.linux]), holding: false)) == ["Off"])
+        // Refused rather than answering every VM: a network since deleted, a
+        // mode's word, which names no network, a membership nothing spells,
+        // and a tag the library doesn't define.
+        let refused: [VMEntityQuery.Condition] = [
+            .onNetwork("Gone"), .onNetwork("nat"), .inMembership("comon"), .carrying(tag: "Staging"),
+        ]
+        for condition in refused {
+            await #expect(throws: CommandError.self) { try await found(condition.negated) }
+        }
+    }
+
+    /// A Find whose picker value stands for another library value answers
+    /// that value's VMs, which the shortcut's next action takes as the ones
+    /// it asked for.
+    @Test("Each Shortcuts picker value stands for the library value of its own name, both ways")
+    func pickerValuesStandForTheirLibraryValues() {
+        for bucket in VMStateBucket.allCases {
+            #expect(VMStateGroup(bucket).rawValue == bucket.rawValue)
+            #expect(VMStateGroup(bucket).bucket == bucket)
+        }
+        for os in VMGuestOS.allCases {
+            #expect(VMGuestOperatingSystem(os).rawValue == os.rawValue)
+            #expect(VMGuestOperatingSystem(os).os == os)
+        }
+        for mode in VMNetworkMode.allCases {
+            #expect(VMNetworkModeOption(mode).rawValue == mode.rawValue)
+        }
+        for bucket in VMGuestAgentBucket.allCases {
+            #expect(VMGuestAgentVersion(bucket).rawValue == bucket.rawValue)
+            #expect(VMGuestAgentVersion(bucket).bucket == bucket)
+        }
     }
 }

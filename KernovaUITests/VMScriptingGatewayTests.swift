@@ -3,6 +3,7 @@ import CoreServices
 import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
+import KernovaCommandModel
 import KernovaKit
 import KernovaTestSupport
 import Testing

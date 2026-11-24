@@ -131,6 +131,12 @@
 				<cocoa key="tags"/>
 				<type type="text" list="yes"/>
 			</property>
+			<property name="creation date" code="ascd" type="date" access="r" description="When it was created.">
+				<cocoa key="creationDate"/>
+			</property>
+			<property name="last run date" code="KvLr" type="date" access="r" description="The last moment Kernova recorded it running, written as a session settles running and again as it ends, or missing value when no run is recorded.">
+				<cocoa key="lastRunDate"/>
+			</property>
 			<property name="bundle path" code="KvBp" type="text" access="r" description="Where its bundle lives.">
 				<cocoa key="bundlePath"/>
 			</property>
