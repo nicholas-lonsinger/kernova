@@ -52,11 +52,16 @@ struct VMGroupEntity: AppEntity {
 
 /// How Shortcuts finds the group an intent acts on.
 ///
-/// Forwards to ``VMIntentGateway`` as ``NetworkEntityQuery`` does: the groups
-/// are few and fully enumerable, so `allEntities()` gives Shortcuts a picker
-/// and a Find VM Groups action, and a typed name resolves as a typed VM name
-/// does (``VMIntentGateway/groups(matching:)``).
-struct VMGroupEntityQuery: EntityStringQuery, EnumerableEntityQuery {
+/// Forwards to ``VMIntentGateway`` as ``NetworkEntityQuery`` does:
+/// `suggestedEntities()` lists every group for a picker, and a typed name
+/// resolves as a typed VM name does (``VMIntentGateway/groups(matching:)``).
+///
+/// Find VM Groups runs as this property query (``FindQuery``), which filters
+/// and sorts the groups in memory, in the order the sidebar lists them until
+/// a sort is chosen.
+struct VMGroupEntityQuery: EntityStringQuery, FindQuery {
+    typealias ComparatorMappingType = FindPredicate<VMGroupEntity>
+
     static let findIntentDescription: IntentDescription? = IntentDescription(
         "Finds the library's smart groups and folders, each with the virtual machines in it.",
         categoryName: "Groups",
@@ -73,8 +78,40 @@ struct VMGroupEntityQuery: EntityStringQuery, EnumerableEntityQuery {
         try await gateway.groups(matching: string)
     }
 
-    func allEntities() async throws -> [VMGroupEntity] {
+    func suggestedEntities() async throws -> [VMGroupEntity] {
         try await gateway.groups()
+    }
+
+    func entities(
+        matching comparators: [ComparatorMappingType],
+        mode: ComparatorMode,
+        sortedBy: [EntityQuerySort<VMGroupEntity>],
+        limit: Int?
+    ) async throws -> [VMGroupEntity] {
+        try Self.ordered(try await gateway.groups(meeting: comparators, mode: mode), by: sortedBy, limit: limit)
+    }
+
+    nonisolated(unsafe) static let properties = QueryProperties {
+        Property(\VMGroupEntity.$name) {
+            EqualToComparator { value in { @Sendable in VMCommandCore.name($0.name, isNamedBy: value) } }
+            NotEqualToComparator { value in { @Sendable in !VMCommandCore.name($0.name, isNamedBy: value) } }
+            ContainsComparator { value in { @Sendable in SidebarNameSearch(text: value).admits($0.name) } }
+        }
+        Property(\VMGroupEntity.$kind) {
+            EqualToComparator { value in { @Sendable in $0.kind == value } }
+            NotEqualToComparator { value in { @Sendable in $0.kind != value } }
+        }
+    }
+
+    nonisolated(unsafe) static let sortingOptions = SortingOptions {
+        SortableBy(\VMGroupEntity.$name)
+    }
+
+    static func sorted(
+        _ entities: [VMGroupEntity], by key: PartialKeyPath<VMGroupEntity>, ascending: Bool
+    ) -> [VMGroupEntity] {
+        let name: PartialKeyPath<VMGroupEntity> = \VMGroupEntity.$name
+        return key == name ? sorted(byName: entities, \.name, ascending: ascending) : entities
     }
 }
 
