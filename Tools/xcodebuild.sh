@@ -24,7 +24,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 . Tools/lib/xcodebuild-flags.sh
 if [ "${1:-}" = -resolvePackageDependencies ]; then
     [ $# -eq 1 ] || usage
-    command=(xcodebuild -project "$kernova_project" -derivedDataPath "$kernova_derived_data" -resolvePackageDependencies)
+    command=(xcodebuild -project "$kernova_project" -scheme "$kernova_scheme" -derivedDataPath "$kernova_derived_data" -resolvePackageDependencies)
 else
     [ $# -ge 2 ] || usage
     command=(xcodebuild)
