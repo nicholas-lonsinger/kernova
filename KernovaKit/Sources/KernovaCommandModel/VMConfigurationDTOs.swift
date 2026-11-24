@@ -9,16 +9,37 @@ public struct ConfigurationKeyDescriptor: Codable, Sendable, Hashable {
     public let name: String
     /// One line naming the unit or the accepted values.
     public let summary: String
+    /// What its value is.
+    public let kind: ConfigurationValueKind
     /// Whether a running VM takes a write of this key, for each guest the key
     /// applies to, keyed by the guest's wire name (``VMInfo/guestOS``).
     public let editableWhileRunning: [String: Bool]
 
     /// Describes one key.
-    public init(name: String, summary: String, editableWhileRunning: [String: Bool]) {
+    public init(
+        name: String, summary: String, kind: ConfigurationValueKind, editableWhileRunning: [String: Bool]
+    ) {
         self.name = name
         self.summary = summary
+        self.kind = kind
         self.editableWhileRunning = editableWhileRunning
     }
+}
+
+/// What a configuration key's value is — the kind its text spells.
+public enum ConfigurationValueKind: String, Codable, Sendable, Hashable, CaseIterable {
+    /// `true` or `false`.
+    case boolean
+    /// A whole number.
+    case integer
+    /// A number of gigabytes, with decimals where it isn't whole.
+    case gigabytes
+    /// A network mode — `nat`, `bridged` or `hostOnly` — or `none`.
+    case networkMode
+    /// One of a fixed set of words.
+    case choice
+    /// Text.
+    case text
 }
 
 /// One configuration key and the value it holds, in the spelling a `set`

@@ -51,7 +51,7 @@ struct KernovaScriptingDefinitionTests {
             "start": "virtual machine", "stop": "virtual machine", "restart": "virtual machine",
             "pause": "virtual machine", "resume": "virtual machine", "suspend": "virtual machine",
             "reveal": "virtual machine", "revert to": "snapshot", "cancel guest setup": "virtual machine",
-            "cancel copy": "virtual machine",
+            "cancel copy": "virtual machine", "change": "setting",
         ]
         #expect(Set(try values("command", "name", in: suite)) == Set(addressed.keys).union(["import"]))
 
@@ -77,7 +77,17 @@ struct KernovaScriptingDefinitionTests {
             (
                 "virtual machine", VMScriptObject.self,
                 VMInfo.Field.allCases.compactMap(VMScriptObject.key(carrying:))
-                    + [VMScriptObject.storageDisksKey, VMScriptObject.snapshotsKey]
+                    + [VMScriptObject.storageDisksKey, VMScriptObject.snapshotsKey, VMScriptObject.settingsKey]
+            ),
+            (
+                // The keyspace's entry and its key's descriptor, but for
+                // whether a running VM takes the key, which a refused write
+                // names.
+                "setting", VMSettingScriptObject.self,
+                [
+                    #keyPath(VMSettingScriptObject.name), #keyPath(VMSettingScriptObject.value),
+                    #keyPath(VMSettingScriptObject.summary),
+                ]
             ),
             (
                 "snapshot", VMSnapshotScriptObject.self,
@@ -108,29 +118,33 @@ struct KernovaScriptingDefinitionTests {
         }
     }
 
-    @Test("A virtual machine's name, network membership, network mode and MAC address are writable; the rest read only")
+    @Test("A virtual machine's name and a setting's value are writable, through a setter; the rest read only")
     func theWritablePropertiesHaveSetters() throws {
-        let classes = try loadSuite().nodes(forXPath: "class[@name='virtual machine']")
-        let vm = try #require(classes.first as? XMLElement)
-        let properties = try vm.nodes(forXPath: "property").compactMap { $0 as? XMLElement }
-        let writable: Set = ["name", "network membership", "network mode", "MAC address"]
+        let classes: [(name: String, object: NSObject.Type, writable: Set<String>)] = [
+            ("virtual machine", VMScriptObject.self, ["name"]),
+            ("setting", VMSettingScriptObject.self, ["value"]),
+        ]
 
-        for property in properties {
-            let name = try #require(property.attribute(forName: "name")?.stringValue)
-            let access = property.attribute(forName: "access")?.stringValue
-            if writable.contains(name) {
-                #expect(access == nil, "\(name) is read only")
-                let key = try #require(try values("cocoa", "key", in: property).first)
-                let setter = "set" + key.prefix(1).uppercased() + key.dropFirst() + ":"
-                #expect(
-                    VMScriptObject.instancesRespond(to: NSSelectorFromString(setter)),
-                    "VMScriptObject answers to no \(setter)")
-            } else {
-                #expect(access == "r", "\(name) is writable")
+        for (className, object, writable) in classes {
+            let nodes = try loadSuite().nodes(forXPath: "class[@name='\(className)']")
+            let element = try #require(nodes.first as? XMLElement)
+            let properties = try element.nodes(forXPath: "property").compactMap { $0 as? XMLElement }
+            for property in properties {
+                let name = try #require(property.attribute(forName: "name")?.stringValue)
+                let access = property.attribute(forName: "access")?.stringValue
+                if writable.contains(name) {
+                    #expect(access == nil, "\(className) \(name) is read only")
+                    let key = try #require(try values("cocoa", "key", in: property).first)
+                    let setter = "set" + key.prefix(1).uppercased() + key.dropFirst() + ":"
+                    #expect(
+                        object.instancesRespond(to: NSSelectorFromString(setter)), "\(object) answers to no \(setter)")
+                } else {
+                    #expect(access == "r", "\(className) \(name) is writable")
+                }
             }
+            let names = Set(properties.compactMap { $0.attribute(forName: "name")?.stringValue })
+            #expect(writable.isSubset(of: names), "\(className)")
         }
-        let names = Set(properties.compactMap { $0.attribute(forName: "name")?.stringValue })
-        #expect(writable.isSubset(of: names))
     }
 
     @Test("A network's name is writable and its kind and identifier read only")
@@ -329,6 +343,27 @@ struct KernovaScriptingDefinitionTests {
         }
         let suite = try loadSuite()
         #expect(try values("class[@name='network']/property[@name='kind']", "type", in: suite) == ["network kind"])
+    }
+
+    @Test(
+        "Every mode a VM's network runs in has a term a script compares against, network kind's own where it shares the word"
+    )
+    func everyNetworkModeHasAnEnumerator() throws {
+        let declared = try enumerators("VM network mode")
+        let kinds = try enumerators("network kind")
+
+        let terms: [VMNetworkMode: String] = [.nat: "nat", .bridged: "bridged", .hostOnly: "host only"]
+
+        #expect(declared.count == VMNetworkMode.allCases.count)
+        for mode in VMNetworkMode.allCases {
+            let term = try #require(terms[mode], "No term for \(mode)")
+            #expect(declared[term] == VMScriptNetworkMode(mode).code, "No \(term) enumerator")
+            if let kind = kinds[term] { #expect(declared[term] == kind, "\(term) carries two codes") }
+        }
+        let suite = try loadSuite()
+        #expect(
+            try values("class[@name='virtual machine']/property[@name='network mode']", "type", in: suite)
+                == ["VM network mode"])
     }
 
     @Test("Every bus a storage disk attaches on has a term a script can compare against")

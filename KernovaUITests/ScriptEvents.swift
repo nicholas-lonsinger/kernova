@@ -158,6 +158,15 @@ enum ScriptEvent {
         return duplicate
     }
 
+    /// `change <reference> to <value> [with confirmation]`.
+    static func change(
+        _ reference: NSAppleEventDescriptor, to value: NSAppleEventDescriptor, confirmation: Bool = false
+    ) -> NSAppleEventDescriptor {
+        let change = verb("Chng", reference, confirmation: confirmation)
+        change.setParam(value, forKeyword: code("data"))
+        return change
+    }
+
     /// One of Kernova's own verbs, `<verb> <reference> [with confirmation]`.
     static func verb(
         _ verb: String, _ reference: NSAppleEventDescriptor, confirmation: Bool = false
@@ -271,6 +280,24 @@ final class ScriptHost {
         return resumptions[index]
     }
 
+    /// Compiles `body` inside a `tell` to the test host and runs it, its
+    /// events answered by `gateway`, and returns what it answers — real
+    /// AppleScript, which compares in an `if` and builds every reference
+    /// itself. A command the gateway suspends answers its in-process sender at
+    /// once with a timeout, so `body` is reads and `set`s.
+    ///
+    /// - Throws: ``ScriptFailure`` when it doesn't compile or stops with an
+    ///   error.
+    func run(_ body: String, on gateway: VMScriptingGateway) throws -> NSAppleEventDescriptor {
+        let source = "tell application \"\(Bundle.main.bundlePath)\"\n\(body)\nend tell"
+        guard let script = NSAppleScript(source: source) else { throw ScriptFailure(number: 0, message: source) }
+        var error: NSDictionary?
+        guard script.compileAndReturnError(&error) else { throw ScriptFailure(error) }
+        let result = TestScriptingRoot.serving(gateway) { script.executeAndReturnError(&error) }
+        if let error { throw ScriptFailure(error) }
+        return result
+    }
+
     /// Dispatches `event`, answered by `gateway`, and returns what the script
     /// reads back — the reply, or what the gateway answered a command it
     /// suspended with.
@@ -279,6 +306,24 @@ final class ScriptHost {
         if let reply = try dispatch(event, to: gateway) { return reply }
         return try await answer(answered)
     }
+}
+
+/// The error a script ``ScriptHost/run(_:on:)`` ran stopped with.
+struct ScriptFailure: Error, CustomStringConvertible {
+    let number: Int
+    let message: String
+
+    init(number: Int, message: String) {
+        self.number = number
+        self.message = message
+    }
+
+    init(_ error: NSDictionary?) {
+        number = error?[NSAppleScript.errorNumber] as? Int ?? 0
+        message = error?[NSAppleScript.errorMessage] as? String ?? ""
+    }
+
+    var description: String { "\(number) \(message)" }
 }
 
 /// A command a test stands in for the one Cocoa is executing, for a gateway

@@ -110,9 +110,6 @@ class VMScriptCommand: NSScriptCommand {
     /// What a script reads back before the app has a gateway to answer it.
     nonisolated static let notReady = "Kernova is not ready to answer scripts."
 
-    /// The Cocoa key of `with confirmation`, on every command that takes it.
-    nonisolated static let confirmationKey = "Confirmation"
-
     /// The Cocoa key of `waiting`, on every command that takes it.
     nonisolated static let waitingKey = "Waiting"
 
@@ -326,6 +323,63 @@ final class VMRevertScriptCommand: VMScriptCommand {
             try await gateway.revert(to: snapshots, confirmation: confirmation)
             return nil
         }
+    }
+}
+
+/// `change setting … to <value or list of values> [with confirmation]`
+///
+/// What the Standard Suite's `set value of setting …` writes, with the consent
+/// a `set` can't carry, and several settings in one write.
+@objc(VMChangeScriptCommand)
+final class VMChangeScriptCommand: VMScriptCommand {
+    /// The Cocoa key of `change`'s `to`, as the dictionary declares it.
+    nonisolated private static let valueKey = "Value"
+
+    override func work(on gateway: VMScriptingGateway) -> VMScriptingGateway.Work? {
+        guard let addressed = gateway.settings(addressedBy: self) else { return nil }
+        let values: [String]
+        do {
+            values = try self.values(for: addressed.settings)
+        } catch let refusal as CommandError {
+            refuse(refusal)
+            return nil
+        } catch {
+            refuse(Int(errAEEventFailed), error.localizedDescription)
+            return nil
+        }
+        let confirmation = flag(Self.confirmationKey)
+        return {
+            let held = try await gateway.change(addressed.settings, to: values, confirmation: confirmation)
+            guard addressed.isList else { return held.first }
+            let list = NSAppleEventDescriptor.list()
+            for value in held { list.insert(value, at: list.numberOfItems + 1) }
+            return list
+        }
+    }
+
+    /// The text the core takes for each of `settings`, from the value `to`
+    /// gives: one for all of them, or a list with one for each, in order —
+    /// each read as ``VMScriptSettingValue/text(of:for:)`` reads it.
+    ///
+    /// - Throws: ``CommandError/invalidArgument(_:)`` for a list of another
+    ///   length, and for a value its setting can't read.
+    private func values(for settings: [VMSettingAddress]) throws -> [String] {
+        let given = arguments?[Self.valueKey]
+        guard let list = Self.items(given) else {
+            return try settings.map { try VMScriptSettingValue.text(of: given, for: $0) }
+        }
+        guard list.count == settings.count else {
+            throw CommandError.invalidArgument(
+                "Give one value, or one for each of the \(settings.count) settings named; this gives \(list.count).")
+        }
+        return try zip(list, settings).map { try VMScriptSettingValue.text(of: $0, for: $1) }
+    }
+
+    /// `value`'s items, when it is a list; `nil` for one value.
+    private static func items(_ value: Any?) -> [Any]? {
+        if let list = value as? [Any] { return list }
+        guard let list = value as? NSAppleEventDescriptor, list.descriptorType == typeAEList else { return nil }
+        return stride(from: 1, through: list.numberOfItems, by: 1).compactMap { list.atIndex($0) }
     }
 }
 

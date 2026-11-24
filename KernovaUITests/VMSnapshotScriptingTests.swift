@@ -142,7 +142,10 @@ struct VMSnapshotScriptingTests {
         ]
         for (reply, prompt) in zip(unconsented, prompts) {
             #expect(reply.errorNumber == Int(errAEEventFailed))
-            #expect(reply.errorString == CommandError.confirmationRequired(prompt).appleEventErrorString)
+            #expect(
+                reply.errorString
+                    == CommandError.confirmationRequired(prompt).appleEventErrorString(
+                        consenting: CommandError.withConfirmation))
             #expect(reply.errorString?.contains("with confirmation") == true)
         }
         #expect(virtualization.revertedSnapshots.isEmpty)
