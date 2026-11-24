@@ -105,6 +105,10 @@ package final class VMScriptObject: NSObject {
 
     @objc var tags: [String]? { info.tags }
 
+    @objc var creationDate: Date { info.createdAt }
+
+    @objc var lastRunDate: Date? { info.lastRunAt }
+
     @objc var bundlePath: String { info.bundlePath }
 
     private func write(_ key: VMConfigurationKey, _ value: String) {
@@ -141,6 +145,8 @@ package final class VMScriptObject: NSObject {
         case .heldByAnotherCopy: nil
         case .agents: Self.guestAgentsKey
         case .tags: #keyPath(VMScriptObject.tags)
+        case .createdAt: #keyPath(VMScriptObject.creationDate)
+        case .lastRunAt: #keyPath(VMScriptObject.lastRunDate)
         }
     }
 

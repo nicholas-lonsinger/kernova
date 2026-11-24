@@ -692,13 +692,16 @@ package final class VMCommandCore {
             bundlePath: instance.bundleURL.path(percentEncoded: false),
             heldByAnotherCopy: instance.heldByAnotherCopy,
             agents: Self.agentLines(of: instance),
-            tags: context.tagNames(of: instance.hostState)
+            tags: context.tagNames(of: instance.hostState),
+            createdAt: config.createdAt,
+            lastRunAt: instance.hostState.lastRunAt
         )
     }
 
     /// An arrival described from what its write was asked for: no session, no
-    /// saved state, no snapshots counted while ``VMInfo/hasSnapshots`` reads
-    /// whether its source has any, and the bundle path it publishes at.
+    /// saved state, no run recorded, no snapshots counted while
+    /// ``VMInfo/hasSnapshots`` reads whether its source has any, and the
+    /// bundle path it publishes at.
     private func info(_ arrival: VMArrival) -> VMInfo {
         let config = arrival.configuration
         let context = library.sidebarContext
@@ -726,7 +729,9 @@ package final class VMCommandCore {
             bundlePath: arrival.destinationURL.path(percentEncoded: false),
             heldByAnotherCopy: false,
             agents: [],
-            tags: context.tagNames(of: arrival.starting.hostState)
+            tags: context.tagNames(of: arrival.starting.hostState),
+            createdAt: config.createdAt,
+            lastRunAt: nil
         )
     }
 

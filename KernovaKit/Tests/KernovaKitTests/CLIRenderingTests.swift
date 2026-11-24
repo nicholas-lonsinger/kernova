@@ -29,7 +29,8 @@ struct CLIRenderingTests {
             hasSavedState: hasSavedState, savedStateKernovaVersion: savedStateKernovaVersion, isEphemeral: true,
             snapshotCount: 2, hasSnapshots: false, guestAgent: nil, stateBucket: .stopped,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false, agents: agents,
-            tags: ["Lab", "CI"])
+            tags: ["Lab", "CI"], createdAt: Date(timeIntervalSince1970: 1_760_000_000),
+            lastRunAt: Date(timeIntervalSince1970: 1_765_000_000))
     }
 
     private let mainDisk = StorageDiskSummary(
@@ -70,7 +71,8 @@ struct CLIRenderingTests {
             isEphemeral: base.isEphemeral,
             snapshotCount: base.snapshotCount, hasSnapshots: base.hasSnapshots, guestAgent: base.guestAgent,
             stateBucket: .heldByAnotherCopy,
-            bundlePath: base.bundlePath, heldByAnotherCopy: true, agents: [], tags: [])
+            bundlePath: base.bundlePath, heldByAnotherCopy: true, agents: [], tags: [],
+            createdAt: base.createdAt, lastRunAt: base.lastRunAt)
         let status = try #require(
             TableRenderer.render(report(heldInfo)).components(separatedBy: "\n")
                 .first { $0.hasPrefix("Status") })
@@ -97,7 +99,9 @@ struct CLIRenderingTests {
         let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         let disks = try #require(object["storageDisks"] as? [[String: Any]])
 
-        #expect(try JSONDecoder().decode(VMInfo.self, from: data) == info())
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        #expect(try decoder.decode(VMInfo.self, from: data) == info())
         #expect(disks.compactMap { $0["label"] as? String } == ["Main Disk", installer.label, "Scratch"])
         #expect(disks[2]["capacityBytes"] == nil)
         #expect(disks[2]["usedBytes"] == nil)

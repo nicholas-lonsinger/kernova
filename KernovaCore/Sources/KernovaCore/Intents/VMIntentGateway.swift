@@ -80,16 +80,54 @@ package final class VMIntentGateway {
 
     // MARK: - Reads
 
-    /// Every VM in the library, each read in full.
+    /// ``everyVM()``, once the library's first read has landed.
+    func vms() async -> [VMEntity] {
+        await ready()
+        return everyVM()
+    }
+
+    /// The VMs a Find's `conditions` admit as `mode` combines them, in
+    /// library order.
+    ///
+    /// Each condition is resolved, a listing's refusal included, in the same
+    /// main-actor step as the read it narrows, so it answers for exactly the
+    /// VMs read. An `or` over no conditions keeps every VM: a Shortcut that
+    /// names no filter is asking for the library, not for nothing.
+    func vms(
+        meeting conditions: [VMEntityQuery.Condition], mode: EntityQueryComparatorMode
+    ) async throws -> [VMEntity] {
+        try await perform(.list, on: nil) {
+            let predicates = try conditions.map(self.predicate(for:))
+            return self.everyVM().filter { vm in
+                switch mode {
+                case .and: predicates.allSatisfy { $0(vm) }
+                case .or: predicates.isEmpty || predicates.contains { $0(vm) }
+                @unknown default: true
+                }
+            }
+        }
+    }
+
+    /// What `condition` admits.
+    private func predicate(for condition: VMEntityQuery.Condition) throws -> (VMEntity) -> Bool {
+        switch condition {
+        case .admits(let admits):
+            return admits
+        case .listed(let query, let negated):
+            let listed = Set(commands.list(try commands.selection(for: query, verb: .list)).map(\.id))
+            return { listed.contains($0.id) != negated }
+        }
+    }
+
+    /// Every VM in the library, in library order, each read in full.
     ///
     /// A ``VMEntity`` carries the whole `info` read, so the listing pairs each
     /// row with its own. Both calls are synchronous main-actor reads of state
     /// already in memory, with no suspension between them — a row that lists
     /// and then fails to read is a programming error, not a race, so it is
     /// asserted and skipped rather than being taken for a VM that left.
-    func vms() async -> [VMEntity] {
-        await ready()
-        return commands.list(.all).compactMap { entity(for: $0.id) }
+    private func everyVM() -> [VMEntity] {
+        commands.list(.all).compactMap { entity(for: $0.id) }
     }
 
     /// When the id a VM is read by was named, against when it is read.
