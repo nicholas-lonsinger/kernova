@@ -33,7 +33,7 @@ struct VMInstanceAgentHubTests {
         #expect(instance.agentPresentation?.windowLines == [.init(title: "Session agent", state: "Disconnected")])
         #expect(
             VMCommandCore.agentLines(of: instance) == [
-                VMAgentLine(role: "session", user: nil, version: "1.0", status: "disconnected")
+                VMAgentLine(role: .session, user: nil, version: "1.0", status: "disconnected")
             ])
         #expect(instance.missingAgentNoticesForTesting.isEmpty)
         #expect(instance.agentExpectedButMissing == false)
@@ -135,11 +135,11 @@ struct VMInstanceAgentHubTests {
             ])
         #expect(
             VMCommandCore.agentLines(of: instance) == [
-                VMAgentLine(role: "session", user: "erin", version: "1.0", status: "current"),
-                VMAgentLine(role: "session", user: "pbear", version: "1.0", status: "current"),
-                VMAgentLine(role: "session", user: "bob", version: "1.0", status: "connecting"),
-                VMAgentLine(role: "session", user: "alice", version: "0.9", status: "updating"),
-                VMAgentLine(role: "system", user: nil, version: "1.0", status: "expectedMissing"),
+                VMAgentLine(role: .session, user: "erin", version: "1.0", status: "current"),
+                VMAgentLine(role: .session, user: "pbear", version: "1.0", status: "current"),
+                VMAgentLine(role: .session, user: "bob", version: "1.0", status: "connecting"),
+                VMAgentLine(role: .session, user: "alice", version: "0.9", status: "updating"),
+                VMAgentLine(role: .system, user: nil, version: "1.0", status: "expectedMissing"),
             ])
     }
 }

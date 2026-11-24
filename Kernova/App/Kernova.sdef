@@ -71,6 +71,12 @@
 			<property name="state" code="KvSt" type="VM state" access="r" description="What it is doing right now.">
 				<cocoa key="state"/>
 			</property>
+			<property name="state group" code="KvSg" type="text" access="r" description="Its coarse state, as the library&#8217;s filter groups it: running while a session is live, paused or mid-operation included; suspended or stopped at rest; heldByAnotherCopy; or preparing while a create, clone or import writes its bundle.">
+				<cocoa key="stateGroup"/>
+			</property>
+			<property name="held by another copy" code="KvHc" type="boolean" access="r" description="Whether Kernova last found another running copy of Kernova holding it.">
+				<cocoa key="heldByAnotherCopy"/>
+			</property>
 			<property name="guest operating system" code="KvOS" type="text" access="r" description="Which guest it runs.">
 				<cocoa key="guestOperatingSystem"/>
 			</property>
@@ -98,14 +104,27 @@
 			<property name="agent status" code="KvAg" type="text" access="r" description="The guest agent's install and connectivity state, or missing value when Kernova has no channel to the agent, such as while the virtual machine is stopped or suspended.">
 				<cocoa key="agentStatus"/>
 			</property>
+			<property name="agent version" code="KvAv" type="text" access="r" description="How the guest agents it last reached stand against the ones Kernova bundles: upToDate, olderVersion, or neverConnected; missing value when one has connected and Kernova bundles none for its guest to compare against.">
+				<cocoa key="agentVersion"/>
+			</property>
 			<property name="has saved state" code="KvSs" type="boolean" access="r" description="Whether the bundle holds a suspended session.">
 				<cocoa key="hasSavedState"/>
+			</property>
+			<property name="saved state version" code="KvSb" type="text" access="r" description="The Kernova version and build that wrote its saved state, such as 0.10.0 (412), or missing value when the bundle holds none or one saved before Kernova recorded its version.">
+				<cocoa key="savedStateVersion"/>
 			</property>
 			<property name="ephemeral" code="KvEp" type="boolean" access="r" description="Whether it returns to a baseline snapshot every time it shuts down. A restart keeps its session.">
 				<cocoa key="ephemeral"/>
 			</property>
 			<property name="snapshot count" code="KvSc" type="integer" access="r" description="How many named restore points the bundle holds.">
 				<cocoa key="snapshotCount"/>
+			</property>
+			<property name="has snapshots" code="KvHs" type="boolean" access="r" description="Whether the bundle holds any snapshot; for a virtual machine a clone or import is still writing, whose snapshot count is 0, whether its source does.">
+				<cocoa key="hasSnapshots"/>
+			</property>
+			<property name="tags" code="KvTg" access="r" description="The names of the tags it carries, in the order Kernova lists its tags, or missing value while Kernova can&#8217;t read its tags.">
+				<cocoa key="tags"/>
+				<type type="text" list="yes"/>
 			</property>
 			<property name="bundle path" code="KvBp" type="text" access="r" description="Where its bundle lives.">
 				<cocoa key="bundlePath"/>
@@ -118,6 +137,28 @@
 				<accessor style="range"/>
 				<accessor style="test"/>
 			</element>
+			<element type="guest agent" access="r" description="The guest agents Virtual Machine &#9656; Guest Agent Status lists for it, in that order; none while Kernova has no channel to them, such as while it is stopped or suspended.">
+				<cocoa key="guestAgents"/>
+				<accessor style="index"/>
+				<accessor style="range"/>
+				<accessor style="test"/>
+			</element>
+		</class>
+
+		<class name="guest agent" code="KvGA" plural="guest agents" description="A Kernova guest agent in a virtual machine&#8217;s guest.">
+			<cocoa class="VMGuestAgentScriptObject"/>
+			<property name="role" code="KvRl" type="text" access="r" description="session for a session agent, which runs for one user, or system for the system service.">
+				<cocoa key="role"/>
+			</property>
+			<property name="user" code="KvUr" type="text" access="r" description="The user a session agent runs for, or missing value for the system service or a session agent that names none.">
+				<cocoa key="user"/>
+			</property>
+			<property name="status" code="KvSu" type="text" access="r" description="How it stands, in the terms agent status uses: current, connected, outdated, updating or unresponsive while connected; updating while it relaunches into an update and connecting while it is otherwise away; expectedMissing when it didn&#8217;t reconnect, and disconnected when it left and its wait passed.">
+				<cocoa key="status"/>
+			</property>
+			<property name="version" code="vers" type="text" access="r" description="The version it reports, or last reported while away, empty when it reports none.">
+				<cocoa key="version"/>
+			</property>
 		</class>
 
 		<class name="storage disk" code="KvSD" plural="storage disks" description="A disk a virtual machine attaches. Its sizes are measured from its image file each time a script reads them.">

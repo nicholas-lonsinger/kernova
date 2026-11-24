@@ -22,7 +22,7 @@ struct CLIVerbWireTests {
             agentStatus: "current", hasSavedState: false, savedStateKernovaVersion: nil, isEphemeral: true,
             snapshotCount: 2, hasSnapshots: false,
             guestAgent: nil, stateBucket: .stopped,
-            bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false)
+            bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false, agents: [], tags: [])
     }
 
     /// The answer the verbs that print nothing are given.

@@ -19,14 +19,6 @@ package struct GuestAgentPresentation: Equatable, Sendable {
 
     /// One agent, which the status window and `kernova info` both show.
     package struct AgentLine: Equatable, Sendable {
-        /// Which agent it is.
-        package enum Role: Equatable, Sendable {
-            /// One GUI session's.
-            case session
-            /// The guest's as a whole.
-            case system
-        }
-
         /// Where the agent is, and how it stands while connected.
         package enum Standing: Equatable, Sendable {
             /// Connected: how it compares with the agent Kernova bundles, and
@@ -42,7 +34,7 @@ package struct GuestAgentPresentation: Equatable, Sendable {
             case disconnected
         }
 
-        package var role: Role
+        package var role: VMAgentRole
         /// The user a session agent runs for; `nil` for the system agent, one
         /// that names none, or a scope that didn't reconnect.
         package var user: String?
@@ -51,7 +43,7 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         package var version: String
         package var standing: Standing
 
-        package init(role: Role, user: String?, version: String, standing: Standing) {
+        package init(role: VMAgentRole, user: String?, version: String, standing: Standing) {
             self.role = role
             self.user = user
             self.version = version
@@ -74,13 +66,8 @@ package struct GuestAgentPresentation: Equatable, Sendable {
                 version: presence.lastSeenVersion ?? "", standing: standing)
         }
 
-        /// Which agent: "Session agent — pbear", "System service".
-        package var title: String {
-            switch role {
-            case .system: "System service"
-            case .session: user.map { "Session agent — \($0)" } ?? "Session agent"
-            }
-        }
+        /// Which agent: ``VMAgentRole/title(user:)``.
+        package var title: String { role.title(user: user) }
 
         /// What the line shows of it: whether it answers, then whether it is
         /// the agent Kernova bundles, or only its version where Kernova bundles

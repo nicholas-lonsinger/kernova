@@ -131,7 +131,8 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let isEphemeral: Bool
     /// How many named restore points the bundle holds.
     public let snapshotCount: Int
-    /// Whether the bundle holds any snapshot — ``snapshotCount`` is not zero.
+    /// Whether the bundle holds any snapshot; for a VM a clone or import is
+    /// still writing, whose ``snapshotCount`` is zero, whether its source does.
     public let hasSnapshots: Bool
     /// How the guest's agents stand against the ones the app bundles, `nil`
     /// when an agent has connected and nothing is bundled to judge it against.
@@ -149,6 +150,23 @@ public struct VMInfo: Codable, Sendable, Hashable {
     /// gone first, then each scope the session warns didn't reconnect; empty
     /// for a guest whose agents the hub doesn't serve.
     public let agents: [VMAgentLine]
+    /// The names of the tags the VM carries, in the order the library lists
+    /// its tags; `nil` while Kernova can't read its tags.
+    public let tags: [String]?
+
+    /// Every field, by the key the JSON names it with: what a surface
+    /// switches over, with no `default:`, to show each field or say why it
+    /// doesn't.
+    ///
+    /// Codable synthesis binds the cases to the stored properties both ways
+    /// only while each property is a `let` with no default value.
+    public enum Field: String, CodingKey, CaseIterable, Sendable {
+        case id, name, status, guestOS, cpuCount, memoryBytes, networkMode, networkMembership, networkName
+        case macAddress, ipAddress, agentStatus, hasSavedState, savedStateKernovaVersion, isEphemeral
+        case snapshotCount, hasSnapshots, guestAgent, stateBucket, bundlePath, heldByAnotherCopy, agents, tags
+    }
+
+    private typealias CodingKeys = Field
 
     /// Describes one VM.
     public init(
@@ -173,7 +191,8 @@ public struct VMInfo: Codable, Sendable, Hashable {
         stateBucket: VMStateBucket,
         bundlePath: String,
         heldByAnotherCopy: Bool,
-        agents: [VMAgentLine] = []
+        agents: [VMAgentLine],
+        tags: [String]?
     ) {
         self.id = id
         self.name = name
@@ -197,30 +216,56 @@ public struct VMInfo: Codable, Sendable, Hashable {
         self.bundlePath = bundlePath
         self.heldByAnotherCopy = heldByAnotherCopy
         self.agents = agents
+        self.tags = tags
     }
 }
 
 /// One guest agent the agent hub serves.
 public struct VMAgentLine: Codable, Sendable, Hashable {
-    /// Which agent: `session`, one GUI session's, or `system`, the guest's as a whole.
-    public let role: String
+    /// Which agent.
+    public let role: VMAgentRole
     /// The user a session agent runs for, `nil` for the system agent or one that names none.
     public let user: String?
-    /// The version the agent reports, empty when it reports none.
-    public let version: String
     /// How it stands, in ``VMInfo/agentStatus``'s vocabulary: `current`, `connected`, `outdated`,
     /// `updating` or `unresponsive` for a connected agent; `updating` for one away relaunching into an
     /// update and `connecting` for any other away agent; `expectedMissing` for one the session warns
     /// didn't reconnect, and `disconnected` for one that left this session and whose grace passed, each
     /// at the version it last reported.
     public let status: String
+    /// The version the agent reports, empty when it reports none.
+    public let version: String
+
+    /// Every field, by the key the JSON names it with, as ``VMInfo/Field``
+    /// is for a ``VMInfo``.
+    public enum Field: String, CodingKey, CaseIterable, Sendable {
+        case role, user, status, version
+    }
+
+    private typealias CodingKeys = Field
 
     /// Describes one agent.
-    public init(role: String, user: String?, version: String, status: String) {
+    public init(role: VMAgentRole, user: String?, version: String, status: String) {
         self.role = role
         self.user = user
         self.version = version
         self.status = status
+    }
+}
+
+/// Which of a guest's Kernova agents one is.
+public enum VMAgentRole: String, Codable, Sendable {
+    /// One GUI session's.
+    case session
+    /// The guest's as a whole.
+    case system
+
+    /// The agent as a person reads it: "System service", or "Session agent —
+    /// pbear" for the session agent of `user`, which a system agent ignores.
+    public func title(user: String?) -> String {
+        switch self {
+        case .system: "System service"
+        case .session: user.map { "Session agent \u{2014} \($0)" } ?? "Session agent"
+        }
     }
 }
 

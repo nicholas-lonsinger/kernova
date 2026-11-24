@@ -63,18 +63,28 @@ struct KernovaScriptingDefinitionTests {
         }
     }
 
-    @Test("Every property of a virtual machine reads a key the object answers to")
-    func everyPropertyKeyResolves() throws {
-        let classes = try loadSuite().nodes(forXPath: "class[@name='virtual machine']")
-        let vm = try #require(classes.first as? XMLElement)
-        let properties = try vm.nodes(forXPath: "property").compactMap { $0 as? XMLElement }
+    @Test(
+        "A virtual machine and a guest agent read each field of their record by the key its accounting names, and no other"
+    )
+    @MainActor
+    func everyFieldHasItsTerm() throws {
+        let suite = try loadSuite()
+        let vmKeys = try values(
+            "class[@name='virtual machine']/*[self::property or self::element]/cocoa", "key", in: suite)
+        let agentKeys = try values("class[@name='guest agent']/property/cocoa", "key", in: suite)
 
-        #expect(properties.count == 16, "One property per VMInfo field")
-        for property in properties {
-            let key = try #require(try values("cocoa", "key", in: property).first)
+        #expect(
+            Set(vmKeys)
+                == Set(VMInfo.Field.allCases.map(VMScriptObject.key(carrying:)) + [VMScriptObject.storageDisksKey]))
+        #expect(Set(agentKeys) == Set(VMAgentLine.Field.allCases.map(VMGuestAgentScriptObject.key(carrying:))))
+        for key in vmKeys {
             #expect(
-                VMScriptObject.instancesRespond(to: NSSelectorFromString(key)),
-                "VMScriptObject answers to no \(key)")
+                VMScriptObject.instancesRespond(to: NSSelectorFromString(key)), "VMScriptObject answers to no \(key)")
+        }
+        for key in agentKeys {
+            #expect(
+                VMGuestAgentScriptObject.instancesRespond(to: NSSelectorFromString(key)),
+                "VMGuestAgentScriptObject answers to no \(key)")
         }
     }
 

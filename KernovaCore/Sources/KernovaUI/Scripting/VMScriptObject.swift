@@ -3,8 +3,8 @@ import KernovaCommandModel
 import KernovaCore
 import KernovaLogging
 
-/// One VM as the scripting dictionary's `virtual machine`, one property per
-/// ``VMInfo`` field.
+/// One VM as the scripting dictionary's `virtual machine`, each ``VMInfo``
+/// field read by the key ``key(carrying:)`` names.
 ///
 /// A snapshot, not a handle: the container rebuilds the whole list on every
 /// specifier evaluation, so a script always reads a VM as it stands now and
@@ -86,16 +86,61 @@ package final class VMScriptObject: NSObject {
 
     @objc var agentStatus: String? { info.agentStatus }
 
+    /// ``VMInfo/guestAgent`` as its wire name.
+    @objc var agentVersion: String? { info.guestAgent?.rawValue }
+
     @objc var hasSavedState: Bool { info.hasSavedState }
+
+    @objc var savedStateVersion: String? { info.savedStateKernovaVersion }
 
     @objc var ephemeral: Bool { info.isEphemeral }
 
     @objc var snapshotCount: Int { info.snapshotCount }
 
+    @objc var hasSnapshots: Bool { info.hasSnapshots }
+
+    /// ``VMInfo/stateBucket`` as its wire name.
+    @objc var stateGroup: String { info.stateBucket.rawValue }
+
+    @objc var heldByAnotherCopy: Bool { info.heldByAnotherCopy }
+
+    @objc var tags: [String]? { info.tags }
+
     @objc var bundlePath: String { info.bundlePath }
 
     private func write(_ key: VMConfigurationKey, _ value: String) {
         gateway?.setConfiguration(info.id, key: key, value: value)
+    }
+
+    /// The Cocoa key of the property or element the dictionary reads `field`
+    /// by — the key `Kernova.sdef` gives that term, which
+    /// `KernovaScriptingDefinitionTests` checks.
+    static func key(carrying field: VMInfo.Field) -> String {
+        switch field {
+        case .id: #keyPath(VMScriptObject.uniqueID)
+        case .name: #keyPath(VMScriptObject.name)
+        case .status: #keyPath(VMScriptObject.state)
+        case .guestOS: #keyPath(VMScriptObject.guestOperatingSystem)
+        case .cpuCount: #keyPath(VMScriptObject.processorCount)
+        case .memoryBytes: #keyPath(VMScriptObject.memory)
+        case .networkMode: #keyPath(VMScriptObject.networkMode)
+        case .networkMembership: #keyPath(VMScriptObject.networkMembership)
+        case .networkName: #keyPath(VMScriptObject.networkName)
+        case .macAddress: #keyPath(VMScriptObject.macAddress)
+        case .ipAddress: #keyPath(VMScriptObject.ipAddress)
+        case .agentStatus: #keyPath(VMScriptObject.agentStatus)
+        case .hasSavedState: #keyPath(VMScriptObject.hasSavedState)
+        case .savedStateKernovaVersion: #keyPath(VMScriptObject.savedStateVersion)
+        case .isEphemeral: #keyPath(VMScriptObject.ephemeral)
+        case .snapshotCount: #keyPath(VMScriptObject.snapshotCount)
+        case .hasSnapshots: #keyPath(VMScriptObject.hasSnapshots)
+        case .guestAgent: #keyPath(VMScriptObject.agentVersion)
+        case .stateBucket: #keyPath(VMScriptObject.stateGroup)
+        case .bundlePath: #keyPath(VMScriptObject.bundlePath)
+        case .heldByAnotherCopy: #keyPath(VMScriptObject.heldByAnotherCopy)
+        case .agents: Self.guestAgentsKey
+        case .tags: #keyPath(VMScriptObject.tags)
+        }
     }
 
     // MARK: - Elements
@@ -104,6 +149,10 @@ package final class VMScriptObject: NSObject {
     /// with.
     nonisolated static let storageDisksKey = "storageDisks"
 
+    /// The literal KVC key the dictionary's `guest agent` element is declared
+    /// with.
+    nonisolated static let guestAgentsKey = "guestAgents"
+
     /// Every disk the VM attaches, in attachment order, measured
     /// for the command being answered — see
     /// ``VMScriptingGateway/storageDisks(of:)``.
@@ -111,16 +160,25 @@ package final class VMScriptObject: NSObject {
         gateway?.storageDisks(of: info.id) ?? []
     }
 
-    /// Refuses `make new storage disk at` a VM: a script adds no disk.
+    /// ``VMInfo/agents``, in its order.
+    @objc var guestAgents: [VMGuestAgentScriptObject] {
+        info.agents.enumerated().map { VMGuestAgentScriptObject($0.element, at: $0.offset, of: info.id) }
+    }
+
+    /// Refuses `make new storage disk at` or `make new guest agent at` a VM:
+    /// a script adds neither.
     ///
     /// Cocoa's own answer allocates the element's class with `init()`, which
-    /// ``VMStorageDiskScriptObject`` does not have — so it would trap.
+    /// neither ``VMStorageDiskScriptObject`` nor ``VMGuestAgentScriptObject``
+    /// has — so it would trap.
     package nonisolated override func newScriptingObject(
         of objectClass: AnyClass, forValueForKey key: String, withContentsValue contentsValue: Any?,
         properties: [String: Any]
     ) -> Any? {
         MainActor.assumeIsolated {
-            gateway?.refuseToMake(VMScriptingGateway.cannotMakeStorageDisk)
+            gateway?.refuseToMake(
+                key == Self.guestAgentsKey
+                    ? VMScriptingGateway.cannotMakeGuestAgent : VMScriptingGateway.cannotMakeStorageDisk)
         }
         return nil
     }

@@ -33,34 +33,14 @@ enum TableRenderer {
     /// The disks are one field of a line per disk, in attachment order; the
     /// lines after the first start at the value column.
     static func render(_ report: VMInfoReport) -> String {
-        let info = report.info
-        let network =
-            info.networkMode.map { mode in
-                let joined: String? = info.networkName?.title ?? info.networkMembership
-                return [mode, joined].compactMap(\.self).joined(separator: ", ")
-            } ?? "Off"
-        var fields: [(String, [String])] = [
-            ("Name", [info.name]),
-            ("Identifier", [info.id.uuidString]),
-            ("Status", [VMStatus.displayName(forWireName: info.status, heldByAnotherCopy: info.heldByAnotherCopy)]),
-            ("Guest", [info.guestOS]),
-            ("CPUs", [String(info.cpuCount)]),
-            ("Memory", [memory(info.memoryBytes)]),
-            ("Disks", report.storageDisks.isEmpty ? ["\u{2013}"] : report.storageDisks.map(disk)),
-            ("Network", [network]),
+        var lines: [InfoRow: [String]] = [
+            .disks: report.storageDisks.isEmpty ? ["\u{2013}"] : report.storageDisks.map(disk)
         ]
-        if let mac = info.macAddress { fields.append(("MAC Address", [mac])) }
-        fields.append(("IP Address", [render(info.ipAddress)]))
-        fields.append(contentsOf: [
-            ("Guest Agent", [info.agentStatus ?? "\u{2013}"] + info.agents.map(render)),
-            ("Saved State", [info.hasSavedState ? "Yes" : "No"]),
-        ])
-        if let version = info.savedStateKernovaVersion { fields.append(("Saved By", ["Kernova \(version)"])) }
-        fields.append(contentsOf: [
-            ("Ephemeral", [info.isEphemeral ? "Yes" : "No"]),
-            ("Snapshots", [String(info.snapshotCount)]),
-            ("Bundle", [info.bundlePath]),
-        ])
+        for field in VMInfo.Field.allCases {
+            guard let (row, rowLines) = row(showing: field, of: report.info) else { continue }
+            lines[row] = rowLines
+        }
+        let fields = InfoRow.allCases.compactMap { row in lines[row].map { (row.rawValue, $0) } }
         let width = fields.map(\.0.count).max() ?? 0
         return
             fields
@@ -68,6 +48,73 @@ enum TableRenderer {
                 lines.enumerated().map { "\(padded($0.offset == 0 ? key : "", to: width))  \($0.element)" }
             }
             .joined(separator: "\n")
+    }
+
+    /// The rows of a VM's description, titled, in the order they print.
+    private enum InfoRow: String, CaseIterable {
+        case name = "Name"
+        case identifier = "Identifier"
+        case status = "Status"
+        case guest = "Guest"
+        case cpus = "CPUs"
+        case memory = "Memory"
+        case disks = "Disks"
+        case network = "Network"
+        case macAddress = "MAC Address"
+        case ipAddress = "IP Address"
+        case guestAgent = "Guest Agent"
+        case agentVersion = "Agent Version"
+        case savedState = "Saved State"
+        case savedBy = "Saved By"
+        case ephemeral = "Ephemeral"
+        case snapshots = "Snapshots"
+        case tags = "Tags"
+        case bundle = "Bundle"
+    }
+
+    /// The row `field` of `info` prints, and its lines; `nil` for a field
+    /// another row reads, or one with no value to print.
+    private static func row(showing field: VMInfo.Field, of info: VMInfo) -> (InfoRow, [String])? {
+        switch field {
+        case .name: (.name, [info.name])
+        case .id: (.identifier, [info.id.uuidString])
+        case .status:
+            (.status, [VMStatus.displayName(forWireName: info.status, heldByAnotherCopy: info.heldByAnotherCopy)])
+        // Status reads it.
+        case .heldByAnotherCopy: nil
+        // Status names the state the group coarsens.
+        case .stateBucket: nil
+        case .guestOS: (.guest, [info.guestOS])
+        case .cpuCount: (.cpus, [String(info.cpuCount)])
+        case .memoryBytes: (.memory, [memory(info.memoryBytes)])
+        case .networkMode:
+            (
+                .network,
+                [
+                    info.networkMode.map { mode in
+                        [mode, info.networkName?.title ?? info.networkMembership].compactMap(\.self)
+                            .joined(separator: ", ")
+                    } ?? "Off"
+                ]
+            )
+        // Network reads them beside the mode.
+        case .networkMembership, .networkName: nil
+        case .macAddress: info.macAddress.map { (.macAddress, [$0]) }
+        case .ipAddress: (.ipAddress, [render(info.ipAddress)])
+        case .agentStatus: (.guestAgent, [info.agentStatus ?? "\u{2013}"] + info.agents.map(render))
+        // Guest Agent lists them under the status.
+        case .agents: nil
+        case .guestAgent: info.guestAgent.map { (.agentVersion, [$0.displayName]) }
+        case .hasSavedState: (.savedState, [info.hasSavedState ? "Yes" : "No"])
+        case .savedStateKernovaVersion: info.savedStateKernovaVersion.map { (.savedBy, ["Kernova \($0)"]) }
+        case .isEphemeral: (.ephemeral, [info.isEphemeral ? "Yes" : "No"])
+        case .snapshotCount: (.snapshots, [String(info.snapshotCount)])
+        // Snapshots counts them.
+        case .hasSnapshots: nil
+        case .tags:
+            (.tags, [info.tags.map { $0.isEmpty ? "\u{2013}" : $0.joined(separator: ", ") } ?? "Can\u{2019}t be read"])
+        case .bundlePath: (.bundle, [info.bundlePath])
+        }
     }
 
     /// One storage disk as its line of the `Disks` field: its label and
@@ -285,11 +332,21 @@ enum TableRenderer {
         return ([line(headings)] + rows.map(line)).joined(separator: "\n")
     }
 
-    /// One hub agent's line under the agent status: which agent, how it stands, and its version.
+    /// One hub agent's line under the agent status: its title, then what
+    /// ``part(showing:of:)`` shows of each field, in ``VMAgentLine/Field``
+    /// order.
     private static func render(_ agent: VMAgentLine) -> String {
-        let name =
-            agent.role == "system"
-            ? "System service" : agent.user.map { "Session agent \u{2014} \($0)" } ?? "Session agent"
-        return agent.version.isEmpty ? "\(name): \(agent.status)" : "\(name): \(agent.status), \(agent.version)"
+        let parts = VMAgentLine.Field.allCases.compactMap { part(showing: $0, of: agent) }
+        return "\(agent.role.title(user: agent.user)): " + parts.joined(separator: ", ")
+    }
+
+    /// What an agent's line shows of `field`; `nil` for one its title reads,
+    /// or one with no value to show.
+    private static func part(showing field: VMAgentLine.Field, of agent: VMAgentLine) -> String? {
+        switch field {
+        case .role, .user: nil
+        case .status: agent.status
+        case .version: agent.version.isEmpty ? nil : agent.version
+        }
     }
 }
