@@ -564,11 +564,20 @@ final class VMScriptingGateway {
         addressed(by: verb, unnamed: unnamed, { try VMScriptSelector.snapshots(addressing: $0) })
     }
 
+    /// The settings `verb` addresses, each evaluated, and whether it
+    /// addresses them as a list (``VMScriptSelector/settings(addressing:)``),
+    /// or `nil` with the refusal recorded on it.
+    func settings(addressedBy verb: VMScriptCommand) -> (settings: [VMSettingAddress], isList: Bool)? {
+        addressed(
+            by: verb, unnamed: "Name the setting to \(verb.commandDescription.commandName).",
+            { try VMScriptSelector.settings(addressing: $0) })
+    }
+
     /// What `read` makes of what `verb` addresses, or `nil` with the refusal
     /// recorded on it — `unnamed` for one that addresses nothing.
     private func addressed<Addressed>(
-        by verb: VMScriptCommand, unnamed: String, _ read: (Any) throws -> [Addressed]
-    ) -> [Addressed]? {
+        by verb: VMScriptCommand, unnamed: String, _ read: (Any) throws -> Addressed
+    ) -> Addressed? {
         guard let addressed = verb.directParameter ?? verb.receiversSpecifier else {
             verb.refuse(Int(errAEWrongNumberArgs), unnamed)
             return nil
@@ -772,17 +781,111 @@ final class VMScriptingGateway {
         }
     }
 
-    // MARK: - Configuration
+    // MARK: - Settings
 
-    /// Sets `key` of the VM `id` identifies to `value` — a script's `set` of a
-    /// writable `virtual machine` property.
-    ///
-    /// A script's `set` carries no `with confirmation`, so nothing it writes
-    /// is given consent.
-    func setConfiguration(_ id: UUID, key: VMConfigurationKey, value: String) {
-        run(.setConfiguration, on: id) {
-            try commands.setConfiguration(.id(id), assignments: [key.assigning(value)], consent: .none)
+    /// The settings of the VM `vm` identifies that its guest has, as
+    /// ``VMCommandCore/configuration(_:keys:)`` reads them — none, with the
+    /// refusal recorded on the command being answered, when the VM can't be
+    /// read.
+    func settings(of vm: UUID) -> [VMSettingScriptObject] {
+        guard let entries = answeringRefusal({ try commands.configuration(.id(vm), keys: nil) }) else { return [] }
+        let summaries = settingSummaries()
+        return entries.map { setting($0, of: vm, summaries: summaries) }
+    }
+
+    /// The setting `key` names among the VM's — or `nil`, with the core's
+    /// refusal recorded on the command being answered, for a key the keyspace
+    /// doesn't hold or the VM's guest doesn't have.
+    func setting(named key: String, of vm: UUID) -> VMSettingScriptObject? {
+        guard let entry = answeringRefusal({ try commands.configuration(.id(vm), key: key) }) else { return nil }
+        return setting(entry, of: vm, summaries: settingSummaries())
+    }
+
+    /// `entry`, one of the settings of the VM `vm` identifies, with its key's
+    /// line in `summaries`.
+    private func setting(
+        _ entry: ConfigurationEntry, of vm: UUID, summaries: [String: String]
+    ) -> VMSettingScriptObject {
+        let summary = summaries[entry.key]
+        if summary == nil {
+            Self.logger.log(.fault, "Setting \(entry.key, privacy: .public) is not in the keyspace")
+            assertionFailure("Setting \(entry.key) is not in the keyspace")
         }
+        return VMSettingScriptObject(entry, summary: summary ?? "", of: vm, gateway: self)
+    }
+
+    /// Each key of the keyspace's summary, by name.
+    private func settingSummaries() -> [String: String] {
+        Dictionary(uniqueKeysWithValues: commands.configurationKeys().map { ($0.name, $0.summary) })
+    }
+
+    /// Sets the setting `address` names to `value` — a script's `set value
+    /// of setting`.
+    ///
+    /// A `set` carries its value and nothing else, so it gives no consent: a
+    /// change that asks for it is refused, naming `change` as the way to give
+    /// it.
+    func setSetting(_ address: VMSettingAddress, to value: String) {
+        run(.setConfiguration, on: address.vm, consenting: Self.changeGivesConsent) {
+            try commands.setConfiguration(
+                .id(address.vm), assignments: [ConfigurationEntry(key: address.key, value: value)], consent: .none)
+        }
+    }
+
+    /// How a script gives the consent a `set` of a setting's value was
+    /// refused for.
+    ///
+    /// AppleScript compiles no parameter after a `set`'s value ("A
+    /// confirmation:true can't go after this …", observed on macOS 27).
+    nonisolated static let changeGivesConsent =
+        "`set` can\u{2019}t give consent; `change \u{2026} with confirmation` does it anyway."
+
+    /// Changes each of `settings` to the value at its place in `values` — a
+    /// script's `change` — with `confirmation` as the consent a change refuses
+    /// without, answering the value each holds afterwards, in the order given.
+    ///
+    /// The settings of one VM are one write, all or none
+    /// (``VMCommandCore/setConfiguration(_:assignments:consent:)``); the VMs
+    /// are written in the order first named, and a refusal stops the rest.
+    func change(
+        _ settings: [VMSettingAddress], to values: [String], confirmation: Bool
+    ) async throws -> [String] {
+        var writes: [SettingsWrite] = []
+        var places: [(write: Int, assignment: Int)] = []
+        for (setting, value) in zip(settings, values) {
+            let write =
+                writes.firstIndex { $0.vm == setting.vm }
+                ?? {
+                    writes.append(SettingsWrite(vm: setting.vm, assignments: []))
+                    return writes.count - 1
+                }()
+            places.append((write, writes[write].assignments.count))
+            writes[write].assignments.append(ConfigurationEntry(key: setting.key, value: value))
+        }
+        let held = try await perform(.setConfiguration, on: writes, naming: \.vm.uuidString) { write in
+            try self.commands.setConfiguration(
+                .id(write.vm), assignments: write.assignments, consent: Self.consent(confirmation))
+        }
+        return places.map { held[$0.write][$0.assignment].value }
+    }
+
+    /// The assignments one `change` makes to one VM.
+    private struct SettingsWrite: Sendable {
+        let vm: UUID
+        var assignments: [ConfigurationEntry]
+    }
+
+    /// What `read` answers, or `nil` with its refusal recorded on the command
+    /// being answered.
+    private func answeringRefusal<Read>(_ read: () throws -> Read) -> Read? {
+        do {
+            return try read()
+        } catch let refusal as CommandError {
+            answering?.refuse(refusal)
+        } catch {
+            answering?.refuse(Int(errAEEventFailed), error.localizedDescription)
+        }
+        return nil
     }
 
     // MARK: - Snapshots
@@ -822,14 +925,7 @@ final class VMScriptingGateway {
     /// The core's listing of the VM `vm` identifies, or `nil` with the refusal
     /// recorded on the command being answered.
     private func listedSnapshots(of vm: UUID) -> [SnapshotSummary]? {
-        do {
-            return try commands.snapshots(of: .id(vm))
-        } catch let refusal as CommandError {
-            answering?.refuse(refusal)
-        } catch {
-            answering?.refuse(Int(errAEEventFailed), error.localizedDescription)
-        }
-        return nil
+        answeringRefusal { try commands.snapshots(of: .id(vm)) }
     }
 
     /// Takes a snapshot of the VM `vm` identifies, called `name` and noted
@@ -893,6 +989,9 @@ final class VMScriptingGateway {
 
     /// What a script that asks to make a guest agent reads back.
     nonisolated static let cannotMakeGuestAgent = "A script can\u{2019}t make a guest agent."
+
+    /// What a script that asks to make a setting reads back.
+    nonisolated static let cannotMakeSetting = "A script can\u{2019}t make a setting."
 
     /// Every named network, ordered by name — or nothing, with the command
     /// asking deferred, until the library has landed, and with the command
@@ -985,9 +1084,13 @@ final class VMScriptingGateway {
     /// does: Cocoa carries on setting or removing the rest, a later refusal
     /// would overwrite the first, and a script could not tell how far it got.
     ///
-    /// `id` names the network or VM the verb addresses, `nil` for a create.
+    /// `id` names the network or VM the verb addresses, `nil` for a create;
+    /// `consenting`, how a script gives a consent the verb refuses without,
+    /// where the command being answered can't take `with confirmation`.
     @discardableResult
-    private func run<T>(_ verb: VMVerb, on id: UUID?, _ body: () throws -> T) -> T? {
+    private func run<T>(
+        _ verb: VMVerb, on id: UUID?, consenting: String? = nil, _ body: () throws -> T
+    ) -> T? {
         if let answering, answering.scriptErrorNumber != 0 { return nil }
         do {
             return try body()
@@ -997,7 +1100,11 @@ final class VMScriptingGateway {
                 .notice,
                 "Script \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(refusal.message(in: .log), privacy: .public)"
             )
-            answering?.refuse(refusal)
+            if let consenting {
+                answering?.refuse(refusal, consenting: consenting)
+            } else {
+                answering?.refuse(refusal)
+            }
             return nil
         } catch {
             answering?.refuse(Int(errAEEventFailed), error.localizedDescription)

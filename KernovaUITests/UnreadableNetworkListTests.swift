@@ -101,7 +101,7 @@ struct UnreadableNetworkListTests {
 
         #expect(gateway.networks().isEmpty)
         #expect(command.scriptErrorNumber == refusal.appleEventErrorNumber)
-        #expect(command.scriptErrorString == refusal.appleEventErrorString)
+        #expect(command.scriptErrorString == refusal.appleEventErrorString(consenting: nil))
     }
 
     @Test("Use Defaults puts the default kind in place, trashes the original, and lists the network")

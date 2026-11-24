@@ -19,7 +19,7 @@ extension VMCommandCore {
     /// Addresses no VM: the keyspace is the same for all of them, and which
     /// keys a particular VM answers for is what ``configuration(_:keys:)``
     /// reports.
-    func configurationKeys() -> [ConfigurationKeyDescriptor] {
+    package func configurationKeys() -> [ConfigurationKeyDescriptor] {
         VMConfigurationKeyRegistry.keys.map(\.descriptor)
     }
 
@@ -30,7 +30,7 @@ extension VMCommandCore {
     ///
     /// Each value is written the way ``setConfiguration(_:assignments:consent:)``
     /// parses it back.
-    func configuration(_ selector: VMSelector, keys: [String]?) throws -> [ConfigurationEntry] {
+    package func configuration(_ selector: VMSelector, keys: [String]?) throws -> [ConfigurationEntry] {
         let settings = try currentSettings(of: selector)
         guard let keys else {
             // A key the guest cannot have is left out rather than reported with
@@ -47,7 +47,7 @@ extension VMCommandCore {
     ///
     /// The value is written the way ``setConfiguration(_:assignments:consent:)``
     /// parses it back.
-    func configuration(_ selector: VMSelector, key: String) throws -> ConfigurationEntry {
+    package func configuration(_ selector: VMSelector, key: String) throws -> ConfigurationEntry {
         try entry(named: key, in: currentSettings(of: selector))
     }
 

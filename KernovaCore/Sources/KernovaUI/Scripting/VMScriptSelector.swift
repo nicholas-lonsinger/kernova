@@ -2,7 +2,8 @@ import Cocoa
 import KernovaCommandModel
 import KernovaCore
 
-/// How one Apple event addresses the VMs or snapshots its verb runs on.
+/// How one Apple event addresses the VMs, snapshots or settings its verb runs
+/// on.
 ///
 /// A specifier that names a VM on its own — by name or by identifier, as an
 /// element of the application — is read *unevaluated*: the name reaches the
@@ -70,6 +71,22 @@ enum VMScriptSelector {
         }
         return try objects(evaluating: specifier, in: containers, as: VMSnapshotScriptObject.self).elements
             .map(\.address)
+    }
+
+    /// The settings `parameter` addresses — one specifier, or a list of them
+    /// — each evaluated, in the order it named them, and whether it addresses
+    /// them as a list, as ``virtualMachines(addressing:in:)`` answers it.
+    ///
+    /// Evaluated whole, as ``snapshots(addressing:in:)`` reads a snapshot.
+    ///
+    /// - Throws: As ``selectors(addressing:in:)`` does.
+    static func settings(addressing parameter: Any) throws -> (settings: [VMSettingAddress], isList: Bool) {
+        guard let specifier = parameter as? NSScriptObjectSpecifier else {
+            let listed = try specifiers(in: parameter, naming: "setting", key: VMScriptObject.settingsKey)
+            return (try listed.flatMap { try settings(addressing: $0).settings }, true)
+        }
+        let evaluated = try objects(evaluating: specifier, in: nil, as: VMSettingScriptObject.self)
+        return (evaluated.elements.map(\.address), evaluated.isList)
     }
 
     /// The element key `parameter` addresses: its specifier's, or for a list,
@@ -198,8 +215,12 @@ struct VMScriptEvaluationFailure: Error {
     /// Records the failure as what `command` answers with, naming the specifier
     /// at fault in `addressed` — one specifier, or a list of them — as the
     /// object the script could not get.
+    ///
+    /// A refusal the evaluation recorded in words of its own — the core's, for
+    /// a name it resolves — keeps its number, as Cocoa's own `get` of the same
+    /// reference answers it.
     func record(on command: NSScriptCommand, addressing addressed: Any?) {
-        command.scriptErrorNumber = number
+        if command.scriptErrorString == nil { command.scriptErrorNumber = number }
         command.scriptErrorOffendingObjectDescriptor = addressed.flatMap {
             VMScriptSelector.specifierAtFault(in: $0)?.descriptor
         }

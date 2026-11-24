@@ -111,7 +111,10 @@ struct VMLibraryScriptingTests {
             ScriptEvent.delete(reference, confirmation: false, immediateDeletion: immediately), to: gateway)
 
         #expect(unconsented.errorNumber == Int(errAEEventFailed))
-        #expect(unconsented.errorString == CommandError.confirmationRequired(prompt).appleEventErrorString)
+        #expect(
+            unconsented.errorString
+                == CommandError.confirmationRequired(prompt).appleEventErrorString(
+                    consenting: CommandError.withConfirmation))
         #expect(unconsented.errorString?.contains("with confirmation") == true)
         #expect(wired.library.instances.map(\.name) == ["Alpha", "Beta", "Gamma"])
         #expect(wired.storage.deleteVMBundleCallCount + wired.storage.permanentlyDeleteVMBundleCallCount == 0)

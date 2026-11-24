@@ -57,7 +57,7 @@ struct CommandErrorAppleEventsTests {
 
         #expect(outcome.appleEventErrorNumber == Int(errAEEventFailed))
         #expect(
-            outcome.appleEventErrorString
+            outcome.appleEventErrorString(consenting: nil)
                 == "\u{201C}Data\u{201D} was removed from \u{201C}Alpha\u{201D}. "
                 + "\u{201C}/Volumes/Archive/data.img\u{201D} was not moved to the Trash: Locked.")
         #expect(outcome.alertTitle == "Couldn\u{2019}t Move a File to the Trash")

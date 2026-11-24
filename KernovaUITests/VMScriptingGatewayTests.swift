@@ -92,15 +92,6 @@ struct VMScriptingGatewayTests {
         return description.createCommandInstance()
     }
 
-    /// Cocoa's own `set`, as the command a property write is answered for.
-    private func makeSetCommand() throws -> NSScriptCommand {
-        let description = try #require(
-            NSScriptSuiteRegistry.shared().commandDescription(
-                withAppleEventClass: FourCharCode(scriptingCode: "core"),
-                andAppleEventCode: FourCharCode(scriptingCode: "setd")))
-        return description.createCommandInstance()
-    }
-
     // MARK: - Script references
 
     /// `virtual machine "<name>"`.
@@ -173,7 +164,7 @@ struct VMScriptingGatewayTests {
         #expect(vm.guestOperatingSystem == "macOS")
         #expect(vm.processorCount == 6)
         #expect(vm.memory == 8)
-        #expect(vm.networkMode == "nat")
+        #expect(vm.networkMode == NSNumber(value: VMScriptNetworkMode.nat.code))
         #expect(vm.networkMembership == "common")
         #expect(vm.networkName == nil)
         #expect(vm.macAddress == "aa:bb:cc:dd:ee:ff")
@@ -252,25 +243,6 @@ struct VMScriptingGatewayTests {
             $0.macAddress = "02:4b:4e:56:0c:01"
             $0.storageDisks = disks.isEmpty ? nil : disks
         }
-    }
-
-    @Test("A scripted write carries no consent, so one that asks for it is refused and changes nothing")
-    func scriptedWriteCarriesNoConsent() async throws {
-        let wired = WiredCommandCore()
-        let alpha = wired.register(name: "Alpha", guestOS: .macOS) { $0.clipboardSharingEnabled = true }
-        let standIn = ScriptCommandStandIn()
-        let gateway = await makeLandedGateway(wired, runtime: standIn.runtime)
-        let command = try makeSetCommand()
-        standIn.command = command
-
-        gateway.setConfiguration(
-            alpha.id, key: VMConfigurationKeyRegistry.clipboardPassthrough, value: "true")
-
-        let refusal = CommandError.confirmationRequired(
-            ClipboardPassthroughConsent.prompt(vmName: "Alpha"))
-        #expect(command.scriptErrorNumber == refusal.appleEventErrorNumber)
-        #expect(command.scriptErrorString == refusal.appleEventErrorString)
-        #expect(!alpha.configuration.clipboardPassthroughEnabled)
     }
 
     // MARK: - Stop methods
@@ -352,7 +324,8 @@ struct VMScriptingGatewayTests {
 
         _ = try host.dispatch(
             ScriptEvent.set(
-                ScriptEvent.property("KvNm", of: Self.vm(named: "Alpha")),
+                ScriptEvent.property(
+                    "valL", of: ScriptEvent.element("KvCf", named: "network.mode", of: Self.vm(named: "Alpha"))),
                 to: NSAppleEventDescriptor(string: "hostOnly")),
             to: gateway)
         #expect(alpha.configuration.networkMode == .nat)
@@ -489,9 +462,11 @@ struct VMScriptingGatewayTests {
         #expect(host.suspensions == 1)
     }
 
-    /// `set network membership of <reference> to "isolated"`.
+    /// `set value of setting "network.membership" of <reference> to "isolated"`.
     private static func isolate(_ reference: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
-        ScriptEvent.set(ScriptEvent.property("KvMb", of: reference), to: NSAppleEventDescriptor(string: "isolated"))
+        ScriptEvent.set(
+            ScriptEvent.property("valL", of: ScriptEvent.element("KvCf", named: "network.membership", of: reference)),
+            to: NSAppleEventDescriptor(string: "isolated"))
     }
 
     @Test("A set filtering on disks writes only to the VMs whose first disk is the one it names")

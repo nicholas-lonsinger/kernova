@@ -158,6 +158,15 @@ enum ScriptEvent {
         return duplicate
     }
 
+    /// `change <reference> to <value> [with confirmation]`.
+    static func change(
+        _ reference: NSAppleEventDescriptor, to value: NSAppleEventDescriptor, confirmation: Bool = false
+    ) -> NSAppleEventDescriptor {
+        let change = verb("Chng", reference, confirmation: confirmation)
+        change.setParam(value, forKeyword: code("data"))
+        return change
+    }
+
     /// One of Kernova's own verbs, `<verb> <reference> [with confirmation]`.
     static func verb(
         _ verb: String, _ reference: NSAppleEventDescriptor, confirmation: Bool = false
@@ -207,11 +216,23 @@ struct ScriptReply {
     }
 
     /// The result as a descriptor, which is what the script reads.
-    var descriptor: NSAppleEventDescriptor? {
-        switch result {
-        case let descriptor as NSAppleEventDescriptor: descriptor
-        case let specifier as NSScriptObjectSpecifier: specifier.descriptor
-        default: nil
+    var descriptor: NSAppleEventDescriptor? { Self.descriptor(of: result) }
+
+    /// `value` — a descriptor, or what a command is resumed with — as the
+    /// descriptor the script reads.
+    private static func descriptor(of value: Any?) -> NSAppleEventDescriptor? {
+        switch value {
+        case let descriptor as NSAppleEventDescriptor: return descriptor
+        case let specifier as NSScriptObjectSpecifier: return specifier.descriptor
+        case let text as String: return NSAppleEventDescriptor(string: text)
+        case let items as [Any]:
+            let list = NSAppleEventDescriptor.list()
+            for item in items {
+                guard let descriptor = descriptor(of: item) else { return nil }
+                list.insert(descriptor, at: list.numberOfItems + 1)
+            }
+            return list
+        default: return nil
         }
     }
 

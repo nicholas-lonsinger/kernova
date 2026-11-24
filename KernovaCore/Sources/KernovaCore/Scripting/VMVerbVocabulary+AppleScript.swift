@@ -19,7 +19,9 @@ extension VMVerbVocabulary {
         case .list: "get virtual machines"
         case .info: "get virtual machine"
         case .storageDisks: "get storage disks"
-        case .setConfiguration: "set"
+        case .configuration: "get settings"
+        case .configurationKeys: "get summary of setting"
+        case .setConfiguration: "change"
         case .networks: "get networks"
         case .createNetwork: "make new network"
         case .renameNetwork: "set name of network"
@@ -42,7 +44,7 @@ extension VMVerbVocabulary {
         case .quit, .groups, .ipAddress, .sharedDirectories, .usbAccessories,
             .availableUSBAccessories, .usbPairings, .forgetUSBPairing, .wait, .open, .showInFinder,
             .create, .editStorageDisk, .editRemovableMedia, .editSharedDirectory, .editUSBAccessory,
-            .configurationKeys, .configuration, .guestAgentDisk:
+            .guestAgentDisk:
             nil
         }
     }

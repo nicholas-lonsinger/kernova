@@ -110,9 +110,6 @@ class VMScriptCommand: NSScriptCommand {
     /// What a script reads back before the app has a gateway to answer it.
     nonisolated static let notReady = "Kernova is not ready to answer scripts."
 
-    /// The Cocoa key of `with confirmation`, on every command that takes it.
-    nonisolated static let confirmationKey = "Confirmation"
-
     /// The Cocoa key of `waiting`, on every command that takes it.
     nonisolated static let waitingKey = "Waiting"
 
@@ -326,6 +323,59 @@ final class VMRevertScriptCommand: VMScriptCommand {
             try await gateway.revert(to: snapshots, confirmation: confirmation)
             return nil
         }
+    }
+}
+
+/// `change setting … to <value or list of values> [with confirmation]`
+///
+/// What the Standard Suite's `set value of setting …` writes, with the consent
+/// a `set` can't carry, and several settings in one write.
+@objc(VMChangeScriptCommand)
+final class VMChangeScriptCommand: VMScriptCommand {
+    /// The Cocoa key of `change`'s `to`, as the dictionary declares it.
+    nonisolated private static let valueKey = "Value"
+
+    override func work(on gateway: VMScriptingGateway) -> VMScriptingGateway.Work? {
+        guard let addressed = gateway.settings(addressedBy: self) else { return nil }
+        let values: [String]
+        do {
+            values = try self.values(for: addressed.settings.count)
+        } catch let refusal as CommandError {
+            refuse(refusal)
+            return nil
+        } catch {
+            refuse(Int(errAEEventFailed), error.localizedDescription)
+            return nil
+        }
+        let confirmation = flag(Self.confirmationKey)
+        return {
+            let held = try await gateway.change(addressed.settings, to: values, confirmation: confirmation)
+            return addressed.isList ? held : held.first
+        }
+    }
+
+    /// The value `to` gives each of `count` settings: one for all of them, or
+    /// a list with one for each, in order.
+    ///
+    /// - Throws: ``CommandError/invalidArgument(_:)`` for a list of another
+    ///   length, or a value that isn't text.
+    private func values(for count: Int) throws -> [String] {
+        let given = arguments?[Self.valueKey]
+        guard let list = given as? [Any] else { return Array(repeating: try Self.text(given), count: count) }
+        guard list.count == count else {
+            throw CommandError.invalidArgument(
+                "Give one value, or one for each of the \(count) settings named; this gives \(list.count).")
+        }
+        return try list.map(Self.text)
+    }
+
+    /// `value` as the text a setting holds: AppleScript sends a value as the
+    /// script wrote it.
+    private static func text(_ value: Any?) throws -> String {
+        guard let value,
+            let text = NSScriptCoercionHandler.shared().coerceValue(value, to: NSString.self) as? String
+        else { throw CommandError.invalidArgument("A setting\u{2019}s value is text.") }
+        return text
     }
 }
 

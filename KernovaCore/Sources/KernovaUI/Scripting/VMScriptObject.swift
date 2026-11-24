@@ -9,9 +9,8 @@ import KernovaLogging
 /// A copy of one read, not a handle: the container rebuilds the whole list on
 /// every specifier evaluation, so a script always reads a VM as it stands now
 /// and nothing here has to be kept current. Setting `name` is the rename verb,
-/// and its other writable properties are configuration keys, which setting
-/// writes through the `setConfiguration` verb; the gateway runs either and
-/// records a refusal on the command being answered.
+/// which the gateway runs, recording a refusal on the command being answered;
+/// its settings are written through its `setting` elements.
 @MainActor
 @objc(VMScriptObject)
 package final class VMScriptObject: NSObject {
@@ -64,27 +63,17 @@ package final class VMScriptObject: NSObject {
     /// reads and writes, so one number means one thing on every surface.
     @objc var memory: Double { Double(info.memoryBytes) / Double(1 << 30) }
 
-    /// `missing value` written is networking turned off, as a read answers it.
-    @objc var networkMode: String? {
-        get { info.networkMode?.rawValue }
-        set {
-            write(
-                VMConfigurationKeyRegistry.networkMode,
-                newValue ?? VMConfigurationKeyRegistry.noNetworkValue)
-        }
+    /// The `VM network mode` enumerator for ``VMInfo/networkMode``, as the
+    /// Apple event code the dictionary gives it.
+    @objc var networkMode: NSNumber? {
+        info.networkMode.map { NSNumber(value: VMScriptNetworkMode($0).code) }
     }
 
-    @objc var networkMembership: String? {
-        get { info.networkMembership }
-        set { write(VMConfigurationKeyRegistry.networkMembership, newValue ?? "") }
-    }
+    @objc var networkMembership: String? { info.networkMembership }
 
     @objc var networkName: String? { info.networkName?.title }
 
-    @objc var macAddress: String? {
-        get { info.macAddress }
-        set { write(VMConfigurationKeyRegistry.networkMAC, newValue ?? "") }
-    }
+    @objc var macAddress: String? { info.macAddress }
 
     @objc var ipAddress: String? { info.ipAddress.address }
 
@@ -114,10 +103,6 @@ package final class VMScriptObject: NSObject {
     @objc var lastRunDate: Date? { info.lastRunAt }
 
     @objc var bundlePath: String { info.bundlePath }
-
-    private func write(_ key: VMConfigurationKey, _ value: String) {
-        gateway?.setConfiguration(info.id, key: key, value: value)
-    }
 
     /// The Cocoa key of the property or element the dictionary reads `field`
     /// by — the key `Kernova.sdef` gives that term, which
@@ -168,6 +153,10 @@ package final class VMScriptObject: NSObject {
     /// with.
     nonisolated static let snapshotsKey = "snapshots"
 
+    /// The literal KVC key the dictionary's `setting` element is declared
+    /// with.
+    nonisolated static let settingsKey = "settings"
+
     /// Every disk the VM attaches, in attachment order, measured
     /// for the command being answered — see
     /// ``VMScriptingGateway/storageDisks(of:)``.
@@ -196,28 +185,43 @@ package final class VMScriptObject: NSObject {
         gateway?.snapshot(named: name, of: info.id)
     }
 
+    /// The settings the VM's guest has — see
+    /// ``VMScriptingGateway/settings(of:)``.
+    @objc var settings: [VMSettingScriptObject] {
+        gateway?.settings(of: info.id) ?? []
+    }
+
+    /// The named-element accessor Cocoa resolves `setting "…"` through, which
+    /// refuses a key in the core's words — see
+    /// ``VMScriptingGateway/setting(named:of:)``.
+    @objc(valueInSettingsWithName:)
+    func valueInSettings(withName name: String) -> VMSettingScriptObject? {
+        gateway?.setting(named: name, of: info.id)
+    }
+
     /// Takes a snapshot of the VM for `make new snapshot at` it — see
     /// ``VMScriptingGateway/makeSnapshot(of:name:notes:)``.
     func makeSnapshot(name: String?, notes: String?) {
         gateway?.makeSnapshot(of: info.id, name: name, notes: notes)
     }
 
-    /// Refuses `make new storage disk at` or `make new guest agent at` a VM:
-    /// a script adds neither. A snapshot's make never reaches this
-    /// (``VMCreateScriptCommand``).
+    /// Refuses `make new storage disk at`, `make new guest agent at` or
+    /// `make new setting at` a VM: a script adds none of them. A snapshot's
+    /// make never reaches this (``VMCreateScriptCommand``).
     ///
     /// Cocoa's own answer allocates the element's class with `init()`, which
-    /// neither ``VMStorageDiskScriptObject`` nor ``VMGuestAgentScriptObject``
-    /// has — so it would trap.
+    /// none of their classes has — so it would trap.
     package nonisolated override func newScriptingObject(
         of objectClass: AnyClass, forValueForKey key: String, withContentsValue contentsValue: Any?,
         properties: [String: Any]
     ) -> Any? {
-        MainActor.assumeIsolated {
-            gateway?.refuseToMake(
-                key == Self.guestAgentsKey
-                    ? VMScriptingGateway.cannotMakeGuestAgent : VMScriptingGateway.cannotMakeStorageDisk)
-        }
+        let refusal =
+            switch key {
+            case Self.guestAgentsKey: VMScriptingGateway.cannotMakeGuestAgent
+            case Self.settingsKey: VMScriptingGateway.cannotMakeSetting
+            default: VMScriptingGateway.cannotMakeStorageDisk
+            }
+        MainActor.assumeIsolated { gateway?.refuseToMake(refusal) }
         return nil
     }
 
@@ -336,6 +340,40 @@ enum VMScriptState: CaseIterable {
         case .initialBoot: FourCharCode(scriptingCode: "KsIb")
         case .failed: FourCharCode(scriptingCode: "KsEr")
         case .preparing: FourCharCode(scriptingCode: "KsPr")
+        }
+    }
+}
+
+// MARK: - VM network mode
+
+/// The dictionary's `VM network mode` enumeration, in Swift — the other half
+/// of its enumerators in `Kernova.sdef`, which `KernovaScriptingDefinitionTests`
+/// checks.
+///
+/// A mode whose word is also a `network kind` term takes that enumerator's
+/// code, so `network mode of virtual machine 1 is nat` compares the one
+/// constant `nat` names.
+enum VMScriptNetworkMode {
+    case nat
+    case bridged
+    case hostOnly
+
+    /// The term `mode` is named by. Exhaustive, so a new mode has to be given
+    /// a term before it compiles.
+    init(_ mode: VMNetworkMode) {
+        switch mode {
+        case .nat: self = .nat
+        case .bridged: self = .bridged
+        case .hostOnly: self = .hostOnly
+        }
+    }
+
+    /// The Apple event code the dictionary gives this case's term.
+    var code: FourCharCode {
+        switch self {
+        case .nat: VMScriptNetworkKind.nat.code
+        case .bridged: FourCharCode(scriptingCode: "KnBr")
+        case .hostOnly: VMScriptNetworkKind.hostOnly.code
         }
     }
 }

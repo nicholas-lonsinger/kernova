@@ -135,7 +135,7 @@ Four surfaces, one library, the same verbs.
 | Surface | What it offers |
 |---|---|
 | **Shortcuts & Spotlight** | App Intents for the lifecycle (start, stop, pause, resume, suspend, restart, wait for a state, open, cancel guest setup), the library (search, import, clone, cancel a copy, rename, delete), snapshots (take, find, revert, rename, notes, delete), named networks (create, find, rename, delete), shared directories (find, add, remove), USB accessories (find, attach, detach, and find or forget the ones a VM remembers), reading or changing any of a VM's settings, starting, suspending, stopping or restarting every VM in a smart group or folder, reading state, IP, or disks, and quitting Kernova — each VM and group a typed entity you pick by name. |
-| **AppleScript** | A scripting dictionary for Script Editor and Automator: the lifecycle verbs, `reveal`, and cancelling guest setup; the library (clone with `duplicate`, import, cancel a copy, rename, delete); each VM's state, resources, storage disks, guest agents, tags, and IP address, with its name, network mode, membership, and MAC address settable; each VM's snapshots (take, read, revert, rename, notes, delete); and named networks to make, rename, and delete. |
+| **AppleScript** | A scripting dictionary for Script Editor and Automator: the lifecycle verbs, `reveal`, and cancelling guest setup; the library (clone with `duplicate`, import, cancel a copy, rename, delete); each VM's state, resources, storage disks, guest agents, tags, and IP address, with its name settable; reading or changing any of a VM's settings, several at once with `change`; each VM's snapshots (take, read, revert, rename, notes, delete); and named networks to make, rename, and delete. |
 | **Kernova CLI** | Bundled at `Contents/Helpers/kernova`; **Settings → Advanced → Install…** links it into a folder on your `PATH`. Lifecycle — `start`, `stop`, `suspend`, and `restart` also for every VM in a smart group or folder — cancelling guest setup, `open` and `reveal` to bring a VM forward, the library (list with filters and sorting, groups, info, clone, import, cancel a clone or import still being written, rename, delete, show in the Finder), settings read/write, snapshots (list, take, revert, rename, notes, delete), shared folders, USB accessories, named networks, `wait`, and `--format json` for scripts. Shell completions for zsh, bash, and fish. |
 | **URL scheme** | Clickable links from a browser, a note, or a script. `kernova://open/<name>` brings a running VM's display forward and refuses when it has none; `kernova://reveal/<name>` never refuses — the display when there is one, the VM's library row otherwise. |
 
@@ -171,8 +171,16 @@ tell application "Kernova"
     set name of build to "Build 42"
     set checkpoint to make new snapshot at build with properties {name:"Before the run"}
 
-    -- A revert, a delete, a cancel, and a stop that discards guest state
-    -- refuse without `with confirmation`.
+    -- A setting's value is text, so compare it with text; `change` sets several
+    -- of a VM's settings together, or none of them.
+    set value of setting "cpus" of build to "4"
+    change {setting "memory" of build, setting "audio.input" of build} to {"8", "true"}
+    if value of setting "audio.input" of build is "true" then beep
+
+    -- A revert, a delete, a cancel, a stop that discards guest state, and a
+    -- change that asks first, such as turning on Ephemeral Mode, refuse without
+    -- `with confirmation`, which `set` can't carry.
+    change setting "ephemeral" of build to "true" with confirmation
     revert to checkpoint with confirmation
     delete build with confirmation
 
