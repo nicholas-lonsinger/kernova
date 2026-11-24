@@ -3,11 +3,6 @@ import Foundation
 import KernovaCommandModel
 
 /// Copies a bundle a workflow holds into the library.
-///
-/// The one action here that waits for its copy. A clone reads a bundle the app
-/// already owns and can carry on writing after the action reports; an import
-/// reads a file outside the container, through an authority that lasts only as
-/// long as this call — so the VM it answers is the settled one.
 struct ImportVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Import Virtual Machine"
     static let description: IntentDescription? = IntentDescription(
@@ -45,10 +40,8 @@ struct ImportVMIntent: AppIntent {
 
 struct CloneVMIntent: AppIntent {
     static let title: LocalizedStringResource = "Clone Virtual Machine"
-    // The copy is dispatched and the new row answered immediately, so this
-    // action reports while the bundle is still being written, and says so.
     static let description: IntentDescription? = IntentDescription(
-        "Copies a virtual machine's bundle into a new one — a copy that carries on after this reports.",
+        "Copies a virtual machine's bundle into a new one. With Wait for Copy on, returns the new virtual machine once the copy is complete, and fails if the copy fails or is cancelled; with it off, returns the new virtual machine while its copy is still being written.",
         categoryName: "Virtual Machines",
         resultValueName: "Virtual Machine")
 
@@ -58,17 +51,23 @@ struct CloneVMIntent: AppIntent {
     @Parameter(title: "As", default: .followPreference)
     var outcome: VMCloneOutcome
 
+    @Parameter(title: "Wait for Copy", default: true)
+    var waitsForCopy: Bool
+
     @Dependency private var gateway: VMIntentGateway
 
     static var parameterSummary: some ParameterSummary {
         Summary("Clone \(\.$vm)") {
             \.$outcome
+            \.$waitsForCopy
         }
     }
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<VMEntity> {
-        .result(value: try await gateway.clone(vm.id, outcome: outcome.outcome))
+        .result(
+            value: try await gateway.clone(
+                vm.id, outcome: outcome.outcome, waitForOutcome: waitsForCopy))
     }
 }
 
