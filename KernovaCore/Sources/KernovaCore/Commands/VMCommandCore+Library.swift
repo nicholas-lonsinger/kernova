@@ -71,8 +71,7 @@ extension VMCommandCore {
     /// unless the waiter has gone by the time it settles or the arrival was
     /// begun unawaited (``VMArrival/isAwaited``), whose failure is reported as
     /// it settles — either way, unless the config check is its report
-    /// (``VMArrival/isReportedByTheCheck(_:)``). The event stream already
-    /// carries the failure (``arrivalFailed(_:with:)``).
+    /// (``VMArrival/isReportedByTheCheck(_:)``).
     ///
     /// Awaiting ``VMArrival/settled`` does not return early when the waiting
     /// task is cancelled, so whether the waiter is still there is read after

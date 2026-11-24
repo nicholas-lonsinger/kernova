@@ -61,19 +61,6 @@ package struct VMCommandEnvelopeRouter {
         }
     }
 
-    // MARK: - Subscription
-
-    /// The library as it stands, and every change from that instant on.
-    ///
-    /// Subscribes *before* it lists, both inside this one main-actor call, so
-    /// no event can land between the two and be lost. That is what makes a
-    /// client waiting for a state race-free against a VM already in it.
-    func snapshotAndEvents() -> (VMCommandResponse, AsyncStream<VMCommandResponse>) {
-        let events = eventResponses()
-        let snapshot = VMCommandResponse(result: .summaries(commands.list(.all)))
-        return (snapshot, events)
-    }
-
     // MARK: - Dispatch
 
     /// Runs one request against the core.
@@ -101,6 +88,15 @@ package struct VMCommandEnvelopeRouter {
             return try await dispatch(request.verb)
         } catch let error as CommandError {
             return .failure(error.dto)
+        } catch is CancellationError where Task.isCancelled {
+            // The transport cancels a verb whose caller hung up, so there is
+            // nobody left to read this answer.
+            Self.logger.log(
+                .notice, "\(request.verb.verb.rawValue, privacy: .public) ended: its caller hung up")
+            return .failure(
+                .operationFailed(
+                    verb: request.verb.verb, title: nil, message: "The request was cancelled.",
+                    recovery: nil))
         } catch {
             Self.logger.log(
                 .error,
@@ -150,15 +146,8 @@ package struct VMCommandEnvelopeRouter {
         case .deleteNetwork(let network):
             try commands.deleteNetwork(network)
             return .ok
-        case .events:
-            // Streaming, not unary: a transport answers `.events` through
-            // `snapshotAndEvents()` and never reaches here.
-            assertionFailure("The events verb was dispatched as a unary request")
-            return .failure(
-                .operationFailed(
-                    verb: .events, title: nil,
-                    message: "This transport does not deliver event subscriptions.",
-                    recovery: nil))
+        case .wait(let selector, let condition, let timeout):
+            return .info(try await commands.wait(selector, until: condition, timeout: timeout))
 
         case .start(let selector, let recovery, let consent):
             try await commands.start(selector, recovery: recovery, consent: consent)
@@ -325,25 +314,6 @@ package struct VMCommandEnvelopeRouter {
                 selector, directory: directory, readOnly: readOnly)
         }
     }
-
-    // MARK: - Events
-
-    /// Every library change as an encoded response, for a transport that
-    /// streams them.
-    func eventResponses() -> AsyncStream<VMCommandResponse> {
-        let events = commands.events()
-        return AsyncStream { continuation in
-            let task = Task {
-                for await batch in events {
-                    for event in batch {
-                        continuation.yield(VMCommandResponse(result: .event(event)))
-                    }
-                }
-                continuation.finish()
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
-    }
 }
 
 extension VMCommandRequest.Verb {
@@ -360,7 +330,7 @@ extension VMCommandRequest.Verb {
             true
         case .list, .groups, .info, .ipAddress, .snapshots, .snapshotSizes, .sharedDirectories,
             .storageDisks, .usbAccessories, .availableUSBAccessories, .usbPairings, .networks,
-            .events, .configurationKeys, .configuration,
+            .wait, .configurationKeys, .configuration,
             .start, .cancelGuestSetup, .stop, .pause, .resume, .suspend, .restart, .groupAction,
             .guestAgentDisk, .open, .reveal, .showInFinder,
             .takeSnapshot, .revertToSnapshot, .deleteSnapshot, .renameSnapshot, .setSnapshotNotes,

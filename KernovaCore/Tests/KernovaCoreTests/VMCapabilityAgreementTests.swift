@@ -163,7 +163,7 @@ struct VMCapabilityAgreementTests {
             true
         case .itemNotFound, .itemNotFoundOnHost, .ambiguous, .confirmationRequired,
             .guestAccountPasswordRequired, .invalidArgument, .stepRequired,
-            .unsupported, .timedOut,
+            .unsupported, .timedOut, .waitEnded,
             .operationFailed, .filesKept, .shutdownNotCarriedOut, .restartCancelledByStop:
             false
         }

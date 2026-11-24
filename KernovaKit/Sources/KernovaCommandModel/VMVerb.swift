@@ -19,7 +19,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     case availableUSBAccessories
     case usbPairings
     case forgetUSBPairing
-    case events
+    case wait
     case start
     case cancelGuestSetup
     case stop
@@ -58,10 +58,10 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
     /// Whether every state admits the verb, so naming it among the verbs a VM
     /// "accepts now" tells a user nothing.
     ///
-    /// The reads, which only answer a question, the reveal that brings a VM in
-    /// front of the user whatever state it is in, the Finder reveal, which
-    /// addresses the bundle rather than the guest, and the quit and the
-    /// network verbs, which address no VM at all.
+    /// The reads and the wait, which only answer a question, the reveal that
+    /// brings a VM in front of the user whatever state it is in, the Finder
+    /// reveal, which addresses the bundle rather than the guest, and the quit
+    /// and the network verbs, which address no VM at all.
     ///
     /// The settings write is here too, for a different reason: every state
     /// takes a write of *some* key — the clipboard and Ephemeral Mode flags are
@@ -72,7 +72,7 @@ public enum VMVerb: String, Codable, Sendable, Hashable, CaseIterable {
         switch self {
         case .list, .info, .ipAddress, .snapshots, .snapshotSizes, .sharedDirectories, .storageDisks,
             .usbAccessories, .availableUSBAccessories, .usbPairings,
-            .forgetUSBPairing, .events, .reveal,
+            .forgetUSBPairing, .wait, .reveal,
             .showInFinder, .configurationKeys, .configuration, .setConfiguration,
             .groups, .networks, .createNetwork, .renameNetwork, .deleteNetwork, .quit:
             true

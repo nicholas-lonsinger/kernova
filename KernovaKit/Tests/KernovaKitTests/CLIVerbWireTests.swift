@@ -59,7 +59,7 @@ struct CLIVerbWireTests {
                 path: "/Users/somebody/VMs/Alpha.kernova/Disk.asif", notes: "",
                 capacityBytes: 100_000_000_000, usedBytes: 10_100_000_000)
         ]
-        let answers = [[VMCommandResponse(result: .info(info))], [VMCommandResponse(result: .storageDisks(disks))]]
+        let answers = [VMCommandResponse(result: .info(info)), VMCommandResponse(result: .storageDisks(disks))]
 
         let named = try await infoExchange(["info", "Alpha"], answering: answers)
         #expect(named.sent == [.info(.idOrName("Alpha")), .storageDisks(.id(alpha.id))])
@@ -76,7 +76,7 @@ struct CLIVerbWireTests {
     @Test("--quiet on info prints the name alone, and reads no disks for it")
     func quietInfoIsTheNameAlone() async throws {
         let quiet = try await infoExchange(
-            ["info", "Alpha", "--quiet"], answering: [[VMCommandResponse(result: .info(info))]])
+            ["info", "Alpha", "--quiet"], answering: [VMCommandResponse(result: .info(info))])
 
         #expect(quiet.sent == [.info(.idOrName("Alpha"))])
         #expect(quiet.printed == "Alpha")
@@ -85,7 +85,7 @@ struct CLIVerbWireTests {
     /// What `info` with `arguments` asks a double answering `answers` for, and
     /// what it would print.
     private func infoExchange(
-        _ arguments: [String], answering answers: [[VMCommandResponse]]
+        _ arguments: [String], answering answers: [VMCommandResponse]
     ) async throws -> (sent: [VMCommandRequest.Verb], printed: String) {
         let command = try #require(try KernovaCommand.parseAsRoot(arguments) as? KernovaCommand.Info)
         let listener = try TestCommandSocket()

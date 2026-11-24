@@ -15,13 +15,16 @@ extension CommandError {
             Int(errAENoSuchObject)
         case .invalidArgument:
             Int(errAETypeError)
-        case .timedOut:
+        case .timedOut, .waitEnded(_, _, .timedOut):
             Int(errAETimeout)
+        case .waitEnded(_, _, .removed):
+            Int(errAENoSuchObject)
         case .invalidState, .changeTakesStoppedVM, .stepRequired, .unsupported, .unsupportedByBuild,
             .unsupportedByMacOS, .conflict,
             .confirmationRequired, .guestAccountPasswordRequired, .busy,
             .heldByAnotherCopy,
-            .terminating, .operationFailed, .filesKept, .shutdownNotCarriedOut, .restartCancelledByStop:
+            .terminating, .waitEnded(_, _, .noAddressToWaitFor), .operationFailed, .filesKept,
+            .shutdownNotCarriedOut, .restartCancelledByStop:
             Int(errAEEventFailed)
         }
     }

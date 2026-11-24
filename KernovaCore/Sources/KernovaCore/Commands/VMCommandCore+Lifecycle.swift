@@ -1309,7 +1309,7 @@ extension VMCommandCore {
 
     /// Refuses a deadline no wait can honor, before anything is asked of the
     /// guest.
-    private static func requireUsable(_ timeout: TimeInterval?) throws {
+    static func requireUsable(_ timeout: TimeInterval?) throws {
         guard let timeout, !CommandTimeout.isUsable(timeout) else { return }
         throw CommandError.invalidArgument("A timeout is a number of seconds greater than zero.")
     }
