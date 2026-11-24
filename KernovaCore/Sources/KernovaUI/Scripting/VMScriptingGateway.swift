@@ -82,19 +82,26 @@ final class VMScriptingGateway {
         return commands.list(.all).compactMap { object(for: $0.id) }
     }
 
-    /// The one VM called `name`, resolved by the core — or nothing, with the
-    /// command asking deferred, until the library has landed.
+    /// The one VM called `name`, resolved by the core — among `network`'s
+    /// members when it is given — or nothing, with the command asking
+    /// deferred, until the library has landed.
     ///
     /// Cocoa's own name lookup answers with the first match, which for two VMs
-    /// sharing a display name is whichever the library happens to list first.
-    /// The core refuses that name instead, with the candidates, and a name no
-    /// VM answers to in its own words too — both recorded on the command being
-    /// answered, so the script reads the refusal every other door shows rather
-    /// than a bare "can't get".
-    func virtualMachine(named name: String) -> VMScriptObject? {
+    /// sharing a display name is whichever the container happens to list
+    /// first. The core refuses that name instead, with the candidates, and a
+    /// name no VM answers to in its own words too — both recorded on the
+    /// command being answered, so the script reads the refusal every other door
+    /// shows rather than a bare "can't get".
+    func virtualMachine(named name: String, on network: NetworkSummary? = nil) -> VMScriptObject? {
         guard !deferUntilLanded() else { return nil }
         do {
-            return VMScriptObject(try commands.info(.name(name)), gateway: self)
+            return VMScriptObject(
+                try commands.info(.name(name), among: network.map { Set($0.members.map(\.id)) }), gateway: self)
+        } catch CommandError.notFound where network != nil {
+            answering?.refuse(
+                CommandError.itemNotFoundOnHost(
+                    item: "virtual machine named \u{201C}\(name)\u{201D} on \u{201C}\(network?.name ?? "")\u{201D}"))
+            return nil
         } catch let refusal as CommandError {
             answering?.refuse(refusal)
             return nil

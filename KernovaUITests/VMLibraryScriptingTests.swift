@@ -125,6 +125,69 @@ struct VMLibraryScriptingTests {
         #expect(wired.storage.permanentlyDeleteVMBundleCallCount == (immediately ? deletes.count : 0))
     }
 
+    /// The containers a script names a VM by name under, for a `delete`.
+    enum NameForm: CaseIterable, Sendable {
+        /// `delete virtual machine "Build"`.
+        case application
+        /// `delete virtual machine "Build" of network "Lab"`.
+        case network
+        /// `delete snapshot "Clean" of virtual machine "Build" of network "Lab"`.
+        case snapshotOfNetwork
+        /// `delete virtual machine "Solo" of network "Lab"`, where the one VM
+        /// called Solo is on no network.
+        case notOnTheNetwork
+
+        /// The event's reference.
+        @MainActor
+        func reference() -> NSAppleEventDescriptor {
+            let lab = ScriptEvent.element("KvNw", named: "Lab")
+            return switch self {
+            case .application: VMLibraryScriptingTests.vm(named: "Build")
+            case .network: ScriptEvent.element("KvVM", named: "Build", of: lab)
+            case .snapshotOfNetwork:
+                ScriptEvent.element("KvSn", named: "Clean", of: ScriptEvent.element("KvVM", named: "Build", of: lab))
+            case .notOnTheNetwork: ScriptEvent.element("KvVM", named: "Solo", of: lab)
+            }
+        }
+    }
+
+    @Test(
+        "A delete naming a VM by a name two VMs share, or by one its container doesn't hold, is refused and deletes nothing",
+        arguments: NameForm.allCases)
+    func aNameResolvesOnlyAmongItsContainer(form: NameForm) async throws {
+        let wired = WiredCommandCore()
+        let lab = try wired.core.createNetwork(name: "Lab", kind: .nat)
+        func member(_ configuration: inout VMConfiguration) {
+            configuration.networkEnabled = true
+            configuration.networkMode = .nat
+            configuration.networkMembership = .network(lab.id)
+            configuration.applyNetworkMode(configuration.networkMode)
+        }
+        let clean = VMSnapshot(name: "Clean", kind: .cold, macAddress: nil)
+        let builds = [
+            wired.register(name: "Build", snapshots: [clean], mutate: member),
+            wired.register(name: "build", snapshots: [clean], mutate: member),
+        ]
+        let solo = wired.register(name: "Solo")
+        let host = ScriptHost()
+        let gateway = await makeGateway(wired, host: host)
+
+        // A snapshot's delete refuses immediate deletion whatever it names.
+        let reply = try await host.send(
+            ScriptEvent.delete(
+                form.reference(), confirmation: true, immediateDeletion: form != .snapshotOfNetwork),
+            to: gateway)
+
+        #expect(reply.errorNumber == Int(errAENoSuchObject))
+        let named = form == .notOnTheNetwork ? [solo] : builds
+        for vm in named {
+            #expect(reply.errorString?.contains(form == .notOnTheNetwork ? vm.name : vm.id.uuidString) == true)
+        }
+        #expect(Set(wired.library.instances.map(\.id)) == Set((builds + [solo]).map(\.id)))
+        #expect(wired.storage.deleteVMBundleCallCount + wired.storage.permanentlyDeleteVMBundleCallCount == 0)
+        #expect(wired.machineFiles.discardedIDs.isEmpty)
+    }
+
     // MARK: - Duplicate
 
     @Test(

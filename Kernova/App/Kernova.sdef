@@ -40,6 +40,10 @@
 			<parameter name="waiting" code="KpWt" type="boolean" optional="yes" description="Wait for a virtual machine&#8217;s copy to finish before answering, as by default; without waiting answers the new virtual machine while its copy is still being written.">
 				<cocoa key="Waiting"/>
 			</parameter>
+			<result description="The new virtual machine, or a list of them for a reference to several.">
+				<type type="specifier"/>
+				<type type="specifier" list="yes"/>
+			</result>
 		</command>
 
 		<!-- The Standard Suite's make, with the class that takes a snapshot for one made at a virtual machine. -->
