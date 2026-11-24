@@ -718,7 +718,9 @@ package final class VMIntentGateway {
 
     // MARK: - Dispatch
 
-    /// Runs `verb` once the library read has landed, logging any refusal.
+    /// Runs `verb` once the library read has landed, logging any refusal, and
+    /// any other failure — Shortcuts declining to bring Kernova forward among
+    /// them.
     ///
     /// The log line is the only trace an App Intents failure leaves: the
     /// framework shows it to whoever ran the intent and reports it nowhere
@@ -733,15 +735,21 @@ package final class VMIntentGateway {
         _ verb: VMVerb, on id: UUID?, _ body: () async throws -> T
     ) async throws -> T {
         await ready()
+        let subject = id.map { " for \($0.uuidString)" } ?? ""
         do {
             return try await body()
         } catch let failure as CommandError {
-            let subject = id.map { " for \($0.uuidString)" } ?? ""
             logger.log(
                 .notice,
                 "Intent \(verb.rawValue, privacy: .public) refused\(subject, privacy: .public): \(failure.message(in: .log), privacy: .public)"
             )
             throw failure
+        } catch {
+            logger.log(
+                .notice,
+                "Intent \(verb.rawValue, privacy: .public) failed\(subject, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            throw error
         }
     }
 
