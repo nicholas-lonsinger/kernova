@@ -249,14 +249,20 @@ package final class VMCommandCore {
         case .id(let id):
             return entries.filter { $0.id == id }
         case .name(let name):
-            return entries.filter { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+            return entries.filter { Self.name($0.name, isNamedBy: name) }
         case .idOrName(let text):
             if let id = UUID(uuidString: text) {
                 let byID = entries.filter { $0.id == id }
                 if !byID.isEmpty { return byID }
             }
-            return entries.filter { $0.name.caseInsensitiveCompare(text) == .orderedSame }
+            return entries.filter { Self.name($0.name, isNamedBy: text) }
         }
+    }
+
+    /// Whether a VM displayed as `name` is one `text` names, as a
+    /// ``VMSelector/name(_:)`` matches it: the whole name, ignoring case.
+    nonisolated static func name(_ name: String, isNamedBy text: String) -> Bool {
+        name.caseInsensitiveCompare(text) == .orderedSame
     }
 
     /// The refusal every VM verb addressed to an arrival raises.
