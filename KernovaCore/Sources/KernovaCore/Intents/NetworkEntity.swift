@@ -4,8 +4,7 @@ import KernovaCommandModel
 
 /// One of the library's named networks, as Shortcuts names it.
 ///
-/// Built from a ``NetworkSummary`` and the full read of each VM on it, so what
-/// this surface shows can never drift from what the command core reads.
+/// Built from a ``NetworkSummary`` and the full read of each VM on it.
 struct NetworkEntity: AppEntity {
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Network")
 
@@ -24,11 +23,19 @@ struct NetworkEntity: AppEntity {
     @Property(title: "Virtual Machines")
     var members: [VMEntity]
 
-    init(_ network: NetworkSummary, members: [VMEntity]) {
+    /// The entity `network` describes, accounting for each
+    /// ``NetworkSummary/Field``, with `member` the full read of a VM it
+    /// lists, `nil` for one with none.
+    init(_ network: NetworkSummary, member: (VMSummary) -> VMEntity?) {
         self.id = network.id
-        self.name = network.name
-        self.kind = VMNetworkKind(network.kind)
-        self.members = members
+        for field in NetworkSummary.Field.allCases {
+            switch field {
+            case .id: break  // The entity's identifier, set above.
+            case .name: name = network.name
+            case .kind: kind = VMNetworkKind(network.kind)
+            case .members: members = network.members.compactMap(member)
+            }
+        }
     }
 
     var displayRepresentation: DisplayRepresentation {

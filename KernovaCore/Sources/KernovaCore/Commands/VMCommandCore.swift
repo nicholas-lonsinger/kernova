@@ -697,7 +697,8 @@ package final class VMCommandCore {
     }
 
     /// An arrival described from what its write was asked for: no session, no
-    /// saved state, no snapshots, and the bundle path it publishes at.
+    /// saved state, no snapshots counted while ``VMInfo/hasSnapshots`` reads
+    /// whether its source has any, and the bundle path it publishes at.
     private func info(_ arrival: VMArrival) -> VMInfo {
         let config = arrival.configuration
         let context = library.sidebarContext

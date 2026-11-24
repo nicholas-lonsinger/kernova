@@ -63,28 +63,35 @@ struct KernovaScriptingDefinitionTests {
         }
     }
 
-    @Test(
-        "A virtual machine and a guest agent read each field of their record by the key its accounting names, and no other"
-    )
+    @Test("Each class reads each field of its record by the key its accounting names, and no other key")
     @MainActor
     func everyFieldHasItsTerm() throws {
         let suite = try loadSuite()
-        let vmKeys = try values(
-            "class[@name='virtual machine']/*[self::property or self::element]/cocoa", "key", in: suite)
-        let agentKeys = try values("class[@name='guest agent']/property/cocoa", "key", in: suite)
+        let classes: [(name: String, object: NSObject.Type, keys: [String])] = [
+            (
+                "virtual machine", VMScriptObject.self,
+                VMInfo.Field.allCases.compactMap(VMScriptObject.key(carrying:)) + [VMScriptObject.storageDisksKey]
+            ),
+            (
+                "guest agent", VMGuestAgentScriptObject.self,
+                VMAgentLine.Field.allCases.map(VMGuestAgentScriptObject.key(carrying:))
+            ),
+            (
+                "storage disk", VMStorageDiskScriptObject.self,
+                StorageDiskSummary.Field.allCases.map(VMStorageDiskScriptObject.key(carrying:))
+            ),
+            (
+                "network", VMNetworkScriptObject.self,
+                NetworkSummary.Field.allCases.map(VMNetworkScriptObject.key(carrying:))
+            ),
+        ]
 
-        #expect(
-            Set(vmKeys)
-                == Set(VMInfo.Field.allCases.map(VMScriptObject.key(carrying:)) + [VMScriptObject.storageDisksKey]))
-        #expect(Set(agentKeys) == Set(VMAgentLine.Field.allCases.map(VMGuestAgentScriptObject.key(carrying:))))
-        for key in vmKeys {
-            #expect(
-                VMScriptObject.instancesRespond(to: NSSelectorFromString(key)), "VMScriptObject answers to no \(key)")
-        }
-        for key in agentKeys {
-            #expect(
-                VMGuestAgentScriptObject.instancesRespond(to: NSSelectorFromString(key)),
-                "VMGuestAgentScriptObject answers to no \(key)")
+        for (name, object, accounted) in classes {
+            let keys = try values("class[@name='\(name)']/*[self::property or self::element]/cocoa", "key", in: suite)
+            #expect(Set(keys) == Set(accounted), "\(name)")
+            for key in keys {
+                #expect(object.instancesRespond(to: NSSelectorFromString(key)), "\(object) answers to no \(key)")
+            }
         }
     }
 
@@ -113,19 +120,11 @@ struct KernovaScriptingDefinitionTests {
         #expect(writable.isSubset(of: names))
     }
 
-    @Test("Every property and element of a network reads a key the object answers to")
-    func everyNetworkKeyResolves() throws {
+    @Test("A network's name is writable and its kind and identifier read only")
+    func aNetworkIsRenamedByItsName() throws {
         let classes = try loadSuite().nodes(forXPath: "class[@name='network']")
         let network = try #require(classes.first as? XMLElement)
-        let keyed = try network.nodes(forXPath: "property | element").compactMap { $0 as? XMLElement }
 
-        #expect(keyed.count == 4)
-        for node in keyed {
-            let key = try #require(try values("cocoa", "key", in: node).first)
-            #expect(
-                VMNetworkScriptObject.instancesRespond(to: NSSelectorFromString(key)),
-                "VMNetworkScriptObject answers to no \(key)")
-        }
         // A rename is a `set name`; the kind is fixed when a network is made.
         #expect(try values("property[@name='name']", "access", in: network).isEmpty)
         #expect(try values("property[@name='kind']", "access", in: network) == ["r"])
@@ -133,20 +132,15 @@ struct KernovaScriptingDefinitionTests {
         #expect(VMNetworkScriptObject.instancesRespond(to: NSSelectorFromString("setName:")))
     }
 
-    @Test("Every property of a storage disk reads a key the object answers to, and none is writable")
-    func everyStorageDiskKeyResolves() throws {
+    @Test("A storage disk is named storage disks in the plural, and none of its properties is writable")
+    func storageDisksAreReadOnly() throws {
         let classes = try loadSuite().nodes(forXPath: "class[@name='storage disk']")
         let disk = try #require(classes.first as? XMLElement)
         let properties = try disk.nodes(forXPath: "property").compactMap { $0 as? XMLElement }
 
         #expect(disk.attribute(forName: "plural")?.stringValue == "storage disks")
-        #expect(properties.count == 8, "One property per StorageDiskSummary field")
         for property in properties {
             let name = try #require(property.attribute(forName: "name")?.stringValue)
-            let key = try #require(try values("cocoa", "key", in: property).first)
-            #expect(
-                VMStorageDiskScriptObject.instancesRespond(to: NSSelectorFromString(key)),
-                "VMStorageDiskScriptObject answers to no \(key)")
             #expect(property.attribute(forName: "access")?.stringValue == "r", "\(name) is writable")
         }
         // `id` is what Cocoa resolves `storage disk id "…"` against.
@@ -224,6 +218,28 @@ struct KernovaScriptingDefinitionTests {
             let term = try #require(terms[state], "No term for \(state)")
             #expect(declared[term] == state.code, "No \(term) enumerator")
         }
+    }
+
+    @Test("Every state group has a term a script compares against, VM state's own where it shares the word")
+    func everyStateGroupHasAnEnumerator() throws {
+        let declared = try enumerators("VM state group")
+        let states = try enumerators("VM state")
+
+        let terms: [VMStateBucket: String] = [
+            .running: "running", .suspended: "suspended", .stopped: "stopped",
+            .heldByAnotherCopy: "held by another copy", .preparing: "preparing",
+        ]
+
+        #expect(declared.count == VMStateBucket.allCases.count)
+        for bucket in VMStateBucket.allCases {
+            let term = try #require(terms[bucket], "No term for \(bucket)")
+            #expect(declared[term] == VMScriptStateGroup(bucket).code, "No \(term) enumerator")
+            if let state = states[term] { #expect(declared[term] == state, "\(term) carries two codes") }
+        }
+        let suite = try loadSuite()
+        #expect(
+            try values("class[@name='virtual machine']/property[@name='state group']", "type", in: suite)
+                == ["VM state group"])
     }
 
     @Test("The state a preparing bundle reports is one of them")

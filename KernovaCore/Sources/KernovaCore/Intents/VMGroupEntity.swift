@@ -24,11 +24,19 @@ struct VMGroupEntity: AppEntity {
     @Property(title: "Virtual Machines")
     var members: [VMEntity]
 
-    init(_ group: GroupSummary, members: [VMEntity]) {
+    /// The entity `group` describes, accounting for each
+    /// ``GroupSummary/Field``, with `member` the full read of a VM it lists,
+    /// `nil` for one with none.
+    init(_ group: GroupSummary, member: (VMSummary) -> VMEntity?) {
         self.id = group.id
-        self.name = group.name
-        self.kind = VMGroupKindChoice(group.kind)
-        self.members = members
+        for field in GroupSummary.Field.allCases {
+            switch field {
+            case .id: break  // The entity's identifier, set above.
+            case .name: name = group.name
+            case .kind: kind = VMGroupKindChoice(group.kind)
+            case .members: members = group.members.compactMap(member)
+            }
+        }
     }
 
     /// The group as a command names it.

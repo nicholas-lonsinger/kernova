@@ -54,7 +54,12 @@ package final class VMGuestAgentScriptObject: NSObject {
     // MARK: - Specifier
 
     /// How a script names this agent back — `guest agent <n>` of
-    /// `virtual machine id "…"`: an agent has no identifier of its own.
+    /// `virtual machine id "…"`, which names whichever agent holds that place
+    /// when the script uses it.
+    ///
+    /// No field of a line names one agent: the hub keys a connected session
+    /// agent by its session (`PeerConflict.sameKey`), so one user can run two,
+    /// and a line for an agent that didn't reconnect names no user.
     package nonisolated override var objectSpecifier: NSScriptObjectSpecifier? {
         guard let virtualMachine = NSScriptClassDescription(for: VMScriptObject.self) else {
             Self.logger.log(.fault, "VMScriptObject has no scripting class description")

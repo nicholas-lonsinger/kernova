@@ -4,9 +4,8 @@ import KernovaCommandModel
 
 /// One disk a VM attaches, as a Shortcut reads it.
 ///
-/// Built from a ``StorageDiskSummary`` and nothing else, so what this surface
-/// shows can never drift from what the command core reads. Transient because
-/// no intent takes a disk as a parameter: a disk only ever leaves
+/// Built from a ``StorageDiskSummary`` alone. Transient because no intent
+/// takes a disk as a parameter: a disk only ever leaves
 /// ``FindStorageDisksIntent`` as a value, so there is no identifier to
 /// re-resolve.
 struct StorageDiskEntity: TransientAppEntity {
@@ -40,14 +39,22 @@ struct StorageDiskEntity: TransientAppEntity {
 
     init() {}
 
+    /// The entity `summary` describes, accounting for each
+    /// ``StorageDiskSummary/Field``.
     init(_ summary: StorageDiskSummary) {
-        self.label = summary.label
-        self.kind = summary.kind
-        self.readOnly = summary.readOnly
-        self.path = summary.path
-        self.notes = summary.notes
-        self.capacityBytes = summary.capacityBytes.map { Int(clamping: $0) }
-        self.usedBytes = summary.usedBytes.map { Int(clamping: $0) }
+        for field in StorageDiskSummary.Field.allCases {
+            switch field {
+            // What a storage-disk edit names a disk by, and no action here takes one.
+            case .id: break
+            case .label: label = summary.label
+            case .kind: kind = summary.kind
+            case .readOnly: readOnly = summary.readOnly
+            case .path: path = summary.path
+            case .notes: notes = summary.notes
+            case .capacityBytes: capacityBytes = summary.capacityBytes.map { Int(clamping: $0) }
+            case .usedBytes: usedBytes = summary.usedBytes.map { Int(clamping: $0) }
+            }
+        }
     }
 
     var displayRepresentation: DisplayRepresentation {

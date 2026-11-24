@@ -288,6 +288,14 @@ public struct SnapshotSummary: Codable, Sendable, Hashable {
     /// be deleted while the mode names it.
     public let isEphemeralBaseline: Bool
 
+    /// Every field, by the key the JSON names it with, as ``VMInfo/Field``
+    /// is for a ``VMInfo``.
+    public enum Field: String, CodingKey, CaseIterable, Sendable {
+        case id, name, notes, kind, createdAt, isCurrent, isEphemeralBaseline
+    }
+
+    private typealias CodingKeys = Field
+
     /// Describes one restore point.
     public init(
         id: UUID,
@@ -346,6 +354,14 @@ public struct StorageDiskSummary: Codable, Sendable, Hashable {
     public let capacityBytes: UInt64?
     /// What the image takes on its volume, `nil` when the image can't be read.
     public let usedBytes: UInt64?
+
+    /// Every field, by the key the JSON names it with, as ``VMInfo/Field``
+    /// is for a ``VMInfo``.
+    public enum Field: String, CodingKey, CaseIterable, Sendable {
+        case id, label, kind, readOnly, path, notes, capacityBytes, usedBytes
+    }
+
+    private typealias CodingKeys = Field
 
     /// Describes one disk.
     public init(
@@ -442,6 +458,14 @@ public struct NetworkSummary: Codable, Sendable, Hashable {
     /// The virtual machines that join it, in library order.
     public let members: [VMSummary]
 
+    /// Every field, by the key the JSON names it with, as ``VMInfo/Field``
+    /// is for a ``VMInfo``.
+    public enum Field: String, CodingKey, CaseIterable, Sendable {
+        case id, name, kind, members
+    }
+
+    private typealias CodingKeys = Field
+
     /// Describes one named network.
     public init(id: UUID, name: String, kind: NetworkKind, members: [VMSummary]) {
         self.id = id
@@ -461,6 +485,14 @@ public struct GroupSummary: Codable, Sendable, Hashable {
     public let kind: VMGroupKind
     /// The virtual machines in it, in library order — a folder's in its own.
     public let members: [VMSummary]
+
+    /// Every field, by the key the JSON names it with, as ``VMInfo/Field``
+    /// is for a ``VMInfo``.
+    public enum Field: String, CodingKey, CaseIterable, Sendable {
+        case id, name, kind, members
+    }
+
+    private typealias CodingKeys = Field
 
     /// Describes one group.
     public init(id: UUID, name: String, kind: VMGroupKind, members: [VMSummary]) {

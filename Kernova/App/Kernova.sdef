@@ -24,6 +24,14 @@
 			<enumerator name="preparing" code="KsPr" description="A create, clone or import is still writing the bundle."/>
 		</enumeration>
 
+		<enumeration name="VM state group" code="KvGE" description="A virtual machine&#8217;s coarse state, as the library&#8217;s filter groups it. A group spelled like a VM state is that state&#8217;s constant.">
+			<enumerator name="running" code="KsRn" description="A session is live in this copy of Kernova, paused or mid-operation included."/>
+			<enumerator name="suspended" code="KsSu" description="At rest with a saved session it resumes from."/>
+			<enumerator name="stopped" code="KsSt" description="At rest with no session, never booted and failed included."/>
+			<enumerator name="held by another copy" code="KsHc" description="Another running copy of Kernova holds it, and this copy can&#8217;t see its state."/>
+			<enumerator name="preparing" code="KsPr" description="A create, clone or import is still writing its bundle."/>
+		</enumeration>
+
 		<enumeration name="VM stop method" code="KvSM" description="How a stop, or a restart, takes the guest down: the Virtual Machine menu’s Stop, Stop Anyway and Force Stop.">
 			<enumerator name="normal" code="KmNo" description="Stop, or Restart: ask the guest to power itself off."/>
 			<enumerator name="anyway" code="KmSa" description="Stop Anyway, or Restart Anyway: shut a macOS guest down without waiting for apps, which quit without asking to save. Takes the Kernova agent installed “For everyone”, connected."/>
@@ -71,11 +79,8 @@
 			<property name="state" code="KvSt" type="VM state" access="r" description="What it is doing right now.">
 				<cocoa key="state"/>
 			</property>
-			<property name="state group" code="KvSg" type="text" access="r" description="Its coarse state, as the library&#8217;s filter groups it: running while a session is live, paused or mid-operation included; suspended or stopped at rest; heldByAnotherCopy; or preparing while a create, clone or import writes its bundle.">
+			<property name="state group" code="KvSg" type="VM state group" access="r" description="Its coarse state, as the library&#8217;s filter groups it; held by another copy when Kernova last found another running copy of Kernova holding it.">
 				<cocoa key="stateGroup"/>
-			</property>
-			<property name="held by another copy" code="KvHc" type="boolean" access="r" description="Whether Kernova last found another running copy of Kernova holding it.">
-				<cocoa key="heldByAnotherCopy"/>
 			</property>
 			<property name="guest operating system" code="KvOS" type="text" access="r" description="Which guest it runs.">
 				<cocoa key="guestOperatingSystem"/>

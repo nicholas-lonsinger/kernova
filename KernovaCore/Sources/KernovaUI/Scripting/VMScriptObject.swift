@@ -4,7 +4,7 @@ import KernovaCore
 import KernovaLogging
 
 /// One VM as the scripting dictionary's `virtual machine`, each ``VMInfo``
-/// field read by the key ``key(carrying:)`` names.
+/// field read by the key ``key(carrying:)`` names for it.
 ///
 /// A snapshot, not a handle: the container rebuilds the whole list on every
 /// specifier evaluation, so a script always reads a VM as it stands now and
@@ -99,10 +99,9 @@ package final class VMScriptObject: NSObject {
 
     @objc var hasSnapshots: Bool { info.hasSnapshots }
 
-    /// ``VMInfo/stateBucket`` as its wire name.
-    @objc var stateGroup: String { info.stateBucket.rawValue }
-
-    @objc var heldByAnotherCopy: Bool { info.heldByAnotherCopy }
+    /// The `VM state group` enumerator for ``VMInfo/stateBucket``, as the
+    /// Apple event code the dictionary gives it.
+    @objc var stateGroup: NSNumber { NSNumber(value: VMScriptStateGroup(info.stateBucket).code) }
 
     @objc var tags: [String]? { info.tags }
 
@@ -114,8 +113,9 @@ package final class VMScriptObject: NSObject {
 
     /// The Cocoa key of the property or element the dictionary reads `field`
     /// by — the key `Kernova.sdef` gives that term, which
-    /// `KernovaScriptingDefinitionTests` checks.
-    static func key(carrying field: VMInfo.Field) -> String {
+    /// `KernovaScriptingDefinitionTests` checks — or `nil` for a field no term
+    /// reads.
+    static func key(carrying field: VMInfo.Field) -> String? {
         switch field {
         case .id: #keyPath(VMScriptObject.uniqueID)
         case .name: #keyPath(VMScriptObject.name)
@@ -137,7 +137,8 @@ package final class VMScriptObject: NSObject {
         case .guestAgent: #keyPath(VMScriptObject.agentVersion)
         case .stateBucket: #keyPath(VMScriptObject.stateGroup)
         case .bundlePath: #keyPath(VMScriptObject.bundlePath)
-        case .heldByAnotherCopy: #keyPath(VMScriptObject.heldByAnotherCopy)
+        // `state group` is `held by another copy` exactly when this is true.
+        case .heldByAnotherCopy: nil
         case .agents: Self.guestAgentsKey
         case .tags: #keyPath(VMScriptObject.tags)
         }
@@ -278,6 +279,46 @@ enum VMScriptState: CaseIterable {
         case .initialBoot: FourCharCode(scriptingCode: "KsIb")
         case .failed: FourCharCode(scriptingCode: "KsEr")
         case .preparing: FourCharCode(scriptingCode: "KsPr")
+        }
+    }
+}
+
+// MARK: - VM state group
+
+/// The dictionary's `VM state group` enumeration, in Swift — the other half of
+/// its enumerators in `Kernova.sdef`, which `KernovaScriptingDefinitionTests`
+/// checks.
+///
+/// A group whose word is also a `VM state` term takes that enumerator's code,
+/// so `state group of virtual machine 1 is running` compares the one constant
+/// `running` names.
+enum VMScriptStateGroup {
+    case running
+    case suspended
+    case stopped
+    case heldByAnotherCopy
+    case preparing
+
+    /// The term `bucket` is named by. Exhaustive, so a new group has to be
+    /// given a term before it compiles.
+    init(_ bucket: VMStateBucket) {
+        switch bucket {
+        case .running: self = .running
+        case .suspended: self = .suspended
+        case .stopped: self = .stopped
+        case .heldByAnotherCopy: self = .heldByAnotherCopy
+        case .preparing: self = .preparing
+        }
+    }
+
+    /// The Apple event code the dictionary gives this case's term.
+    var code: FourCharCode {
+        switch self {
+        case .running: VMScriptState.running.code
+        case .suspended: VMScriptState.suspended.code
+        case .stopped: VMScriptState.stopped.code
+        case .heldByAnotherCopy: FourCharCode(scriptingCode: "KsHc")
+        case .preparing: VMScriptState.preparing.code
         }
     }
 }
