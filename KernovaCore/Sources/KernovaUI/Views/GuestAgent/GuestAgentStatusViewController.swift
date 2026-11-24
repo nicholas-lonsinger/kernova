@@ -216,7 +216,7 @@ final class GuestAgentStatusViewController: NSViewController {
     }
 
     private func applyContent() {
-        titleLabel.stringValue = Self.title(for: status)
+        titleLabel.stringValue = status.kind.title
         let explanation = Self.explanation(for: status)
         explanationLabel.stringValue = explanation ?? ""
         explanationLabel.isHidden = explanation == nil
@@ -278,22 +278,6 @@ final class GuestAgentStatusViewController: NSViewController {
     }
 
     // MARK: - Per-status strings
-
-    /// The panel's title for `status`; Settings ▸ Reminders shows the
-    /// `.waiting` one beside the install reminder's switch.
-    static func title(for status: AgentStatus) -> String {
-        switch status {
-        case .waiting: "Set up the Kernova guest agent"
-        case .outdated: "Update available"
-        case .reinstallNeeded: "Guest agent can\u{2019}t update in place"
-        case .updating: "Updating guest agent"
-        case .connecting: "Connecting to guest agent"
-        case .current, .connected: "Guest agent connected"
-        case .unresponsive: "Guest agent unresponsive"
-        case .expectedMissing: "Guest agent didn't reconnect"
-        case .disconnected: "Guest agent disconnected"
-        }
-    }
 
     /// What the user does about `status`, where its title alone doesn't say.
     static func explanation(for status: AgentStatus) -> String? {

@@ -1,6 +1,8 @@
 import Cocoa
 import CoreServices
 import Foundation
+import KernovaAgentCore
+import KernovaAgentHost
 import KernovaKit
 import KernovaTestSupport
 import Testing
@@ -141,20 +143,29 @@ struct VMScriptingGatewayTests {
         alpha.beginSessionContextForTesting().hasAgentTransport = true
         let beta = wired.register(name: "Beta", phase: .suspended)
         try VMInstanceFixture.writeSaveFile(for: beta)
-        wired.register(name: "Gamma") {
+        try SavedStateVersion.record("0.10.0 (412)", at: beta.bundleLayout.saveFileURL)
+        let gamma = wired.register(name: "Gamma") {
             $0.networkEnabled = true
             $0.networkMode = .nat
             $0.networkMembership = .network(lab.id)
             $0.applyNetworkMode($0.networkMode)
+            // An agent on record, and none bundled to judge it against.
+            $0.lastSeenAgentVersion = "1.0"
         }
+        let work = try wired.library.createTag(named: "Work", color: .blue)
+        let ci = try wired.library.createTag(named: "CI", color: .green)
+        try wired.library.setTag(ci.id, assigned: true, on: gamma)
+        try wired.library.setTag(work.id, assigned: true, on: gamma)
+        let delta = wired.register(name: "Delta")
+        wired.storage.files.holdElsewhere(delta.bundleURL)
         wired.arpTable.setTable([
             .scripted("192.168.64.3", mac: "aa:bb:cc:dd:ee:ff", expiry: ARPEntry.freshExpiry)
         ])
         await wired.library.guestAddresses.readForTesting()
 
         let vms = makeGateway(wired).virtualMachines()
-        try #require(vms.count == 3)
-        let (vm, suspended, onLab) = (vms[0], vms[1], vms[2])
+        try #require(vms.count == 4)
+        let (vm, suspended, onLab, held) = (vms[0], vms[1], vms[2], vms[3])
 
         #expect(vm.name == "Alpha")
         #expect(vm.state == NSNumber(value: VMScriptState.running.code))
@@ -178,6 +189,52 @@ struct VMScriptingGatewayTests {
         #expect(!suspended.ephemeral)
         #expect(onLab.networkMembership == lab.id.uuidString)
         #expect(onLab.networkName == "Lab")
+
+        #expect(vm.stateGroup == NSNumber(value: VMScriptState.running.code))
+        #expect(suspended.stateGroup == NSNumber(value: VMScriptState.suspended.code))
+        #expect(onLab.stateGroup == NSNumber(value: VMScriptState.stopped.code))
+        #expect(held.stateGroup == NSNumber(value: VMScriptStateGroup.heldByAnotherCopy.code))
+        #expect(suspended.savedStateVersion == "0.10.0 (412)")
+        #expect(vm.savedStateVersion == nil)
+        #expect(vm.hasSnapshots)
+        #expect(!suspended.hasSnapshots)
+        #expect(vm.agentVersion == "neverConnected")
+        #expect(onLab.agentVersion == nil)
+        // The library's order of its tags, not the order they were put on.
+        #expect(onLab.tags == ["Work", "CI"])
+        #expect(vm.tags == [])
+    }
+
+    @Test("Every guest agent of a VM answers each field of its line through the reference a script is handed")
+    func guestAgentsAnswerThroughTheirReferences() async throws {
+        let wired = WiredCommandCore()
+        let alpha = wired.register(name: "Alpha", phase: .running(sessionID: UUID()))
+        alpha.beginSessionContextForTesting().hasAgentTransport = true
+        let session = PeerSummary(
+            handle: PeerHandle(rawValue: 1), role: .sessionPeer, scope: .user, os: .linux, sessionID: "2",
+            userName: "pbear", console: .on, versionLabel: "1.0", standing: .current, isResponsive: true)
+        let system = PeerSummary(
+            handle: PeerHandle(rawValue: 2), role: .systemPeer, scope: .system, os: .linux, sessionID: "2",
+            userName: "", console: .on, versionLabel: "0.9", standing: .current, isResponsive: false)
+        alpha.publishAgentHubSnapshotForTesting(
+            AgentHubSnapshot(peers: [session, system], features: FeatureStatus.merge([]), away: []))
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+
+        let agents = try await host.send(ScriptEvent.get(ScriptEvent.every("KvGA", of: Self.vm(at: 1))), to: gateway)
+        try #require(agents.errorNumber == 0)
+        var read: [[String?]] = []
+        for agent in agents.items {
+            var fields: [String?] = []
+            for code in ["KvRl", "KvUr", "KvSu", "vers"] {
+                let reply = try await host.send(ScriptEvent.get(ScriptEvent.property(code, of: agent)), to: gateway)
+                #expect(reply.errorNumber == 0, "\(code)")
+                fields.append(reply.descriptor?.descriptorType == typeType ? nil : reply.descriptor?.stringValue)
+            }
+            read.append(fields)
+        }
+
+        #expect(read == [["session", "pbear", "current", "1.0"], ["system", nil, "unresponsive", "0.9"]])
     }
 
     // MARK: - Configuration

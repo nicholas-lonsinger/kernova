@@ -446,7 +446,7 @@ package final class VMIntentGateway {
     }
 
     private func entity(for network: NetworkSummary) -> NetworkEntity {
-        NetworkEntity(network, members: network.members.compactMap { entity(for: $0.id) })
+        NetworkEntity(network) { entity(for: $0.id) }
     }
 
     // MARK: - Groups
@@ -456,7 +456,7 @@ package final class VMIntentGateway {
     func groups() async throws -> [VMGroupEntity] {
         try await perform(.groups, on: nil) {
             try self.commands.groups().map { group in
-                VMGroupEntity(group, members: group.members.compactMap { self.entity(for: $0.id) })
+                VMGroupEntity(group) { self.entity(for: $0.id) }
             }
         }
     }

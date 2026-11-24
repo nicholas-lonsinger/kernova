@@ -558,6 +558,9 @@ final class VMScriptingGateway {
     /// What a script that asks to make a storage disk reads back.
     nonisolated static let cannotMakeStorageDisk = "A script can\u{2019}t make a storage disk."
 
+    /// What a script that asks to make a guest agent reads back.
+    nonisolated static let cannotMakeGuestAgent = "A script can\u{2019}t make a guest agent."
+
     /// Every named network, ordered by name — or nothing, with the command
     /// asking deferred, until the library has landed, and with the command
     /// refused while the library's list of networks cannot be read.

@@ -3,7 +3,8 @@ import KernovaCommandModel
 import KernovaCore
 import KernovaLogging
 
-/// One disk a VM attaches, as the scripting dictionary's `storage disk`.
+/// One disk a VM attaches, as the scripting dictionary's `storage disk`, each
+/// ``StorageDiskSummary`` field read by the key ``key(carrying:)`` names.
 ///
 /// A snapshot of one measured read, like ``VMScriptObject``: the VM rebuilds
 /// its list on every specifier evaluation. Every property is read only.
@@ -60,6 +61,22 @@ package final class VMStorageDiskScriptObject: NSObject {
 
     private static func gigabytes(_ bytes: UInt64?) -> NSNumber? {
         bytes.map { NSNumber(value: Double($0) / 1_000_000_000) }
+    }
+
+    /// The Cocoa key of the property the dictionary reads `field` by — the key
+    /// `Kernova.sdef` gives that term, which `KernovaScriptingDefinitionTests`
+    /// checks.
+    static func key(carrying field: StorageDiskSummary.Field) -> String {
+        switch field {
+        case .id: #keyPath(VMStorageDiskScriptObject.uniqueID)
+        case .label: #keyPath(VMStorageDiskScriptObject.name)
+        case .kind: #keyPath(VMStorageDiskScriptObject.kind)
+        case .readOnly: #keyPath(VMStorageDiskScriptObject.readOnly)
+        case .path: #keyPath(VMStorageDiskScriptObject.path)
+        case .notes: #keyPath(VMStorageDiskScriptObject.notes)
+        case .capacityBytes: #keyPath(VMStorageDiskScriptObject.capacity)
+        case .usedBytes: #keyPath(VMStorageDiskScriptObject.usedSpace)
+        }
     }
 
     // MARK: - Specifier

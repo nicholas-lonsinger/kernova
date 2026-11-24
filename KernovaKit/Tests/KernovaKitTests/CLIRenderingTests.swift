@@ -28,7 +28,8 @@ struct CLIRenderingTests {
             ipAddress: ipAddress, agentStatus: agentStatus,
             hasSavedState: hasSavedState, savedStateKernovaVersion: savedStateKernovaVersion, isEphemeral: true,
             snapshotCount: 2, hasSnapshots: false, guestAgent: nil, stateBucket: .stopped,
-            bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false, agents: agents)
+            bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false, agents: agents,
+            tags: ["Lab", "CI"])
     }
 
     private let mainDisk = StorageDiskSummary(
@@ -69,7 +70,7 @@ struct CLIRenderingTests {
             isEphemeral: base.isEphemeral,
             snapshotCount: base.snapshotCount, hasSnapshots: base.hasSnapshots, guestAgent: base.guestAgent,
             stateBucket: .heldByAnotherCopy,
-            bundlePath: base.bundlePath, heldByAnotherCopy: true)
+            bundlePath: base.bundlePath, heldByAnotherCopy: true, agents: [], tags: [])
         let status = try #require(
             TableRenderer.render(report(heldInfo)).components(separatedBy: "\n")
                 .first { $0.hasPrefix("Status") })

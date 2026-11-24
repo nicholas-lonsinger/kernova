@@ -624,9 +624,7 @@ package final class VMCommandCore {
     /// automation reads them: none without a session that reaches the agents.
     static func agentLines(of instance: VMInstance) -> [VMAgentLine] {
         (instance.agentPresentation?.agents ?? []).map { line in
-            VMAgentLine(
-                role: line.role == .system ? "system" : "session", user: line.user, version: line.version,
-                status: line.status.wireName)
+            VMAgentLine(role: line.role, user: line.user, version: line.version, status: line.status.wireName)
         }
     }
 
@@ -669,7 +667,8 @@ package final class VMCommandCore {
 
     private func info(_ instance: VMInstance) -> VMInfo {
         let config = instance.configuration
-        let subject = library.sidebarContext.subject(of: instance)
+        let context = library.sidebarContext
+        let subject = context.subject(of: instance)
         return VMInfo(
             id: instance.instanceID,
             name: instance.name,
@@ -692,15 +691,18 @@ package final class VMCommandCore {
             stateBucket: subject.state,
             bundlePath: instance.bundleURL.path(percentEncoded: false),
             heldByAnotherCopy: instance.heldByAnotherCopy,
-            agents: Self.agentLines(of: instance)
+            agents: Self.agentLines(of: instance),
+            tags: context.tagNames(of: instance.hostState)
         )
     }
 
     /// An arrival described from what its write was asked for: no session, no
-    /// saved state, no snapshots, and the bundle path it publishes at.
+    /// saved state, no snapshots counted while ``VMInfo/hasSnapshots`` reads
+    /// whether its source has any, and the bundle path it publishes at.
     private func info(_ arrival: VMArrival) -> VMInfo {
         let config = arrival.configuration
-        let subject = library.sidebarContext.subject(of: arrival)
+        let context = library.sidebarContext
+        let subject = context.subject(of: arrival)
         return VMInfo(
             id: arrival.id,
             name: arrival.name,
@@ -722,7 +724,9 @@ package final class VMCommandCore {
             guestAgent: subject.guestAgent,
             stateBucket: subject.state,
             bundlePath: arrival.destinationURL.path(percentEncoded: false),
-            heldByAnotherCopy: false
+            heldByAnotherCopy: false,
+            agents: [],
+            tags: context.tagNames(of: arrival.starting.hostState)
         )
     }
 

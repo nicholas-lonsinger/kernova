@@ -4,7 +4,8 @@ import KernovaCommandModel
 import KernovaCore
 import KernovaLogging
 
-/// One named network as the scripting dictionary's `network`.
+/// One named network as the scripting dictionary's `network`, each
+/// ``NetworkSummary`` field read by the key ``key(carrying:)`` names.
 ///
 /// A snapshot, like ``VMScriptObject``: the container rebuilds the list on
 /// every specifier evaluation. `name` is its one writable property, and setting
@@ -43,6 +44,18 @@ package final class VMNetworkScriptObject: NSObject {
     @objc var kind: NSNumber { NSNumber(value: VMScriptNetworkKind(network.kind).code) }
 
     @objc var virtualMachines: [VMScriptObject] { members }
+
+    /// The Cocoa key of the property or element the dictionary reads `field`
+    /// by — the key `Kernova.sdef` gives that term, which
+    /// `KernovaScriptingDefinitionTests` checks.
+    static func key(carrying field: NetworkSummary.Field) -> String {
+        switch field {
+        case .id: #keyPath(VMNetworkScriptObject.uniqueID)
+        case .name: #keyPath(VMNetworkScriptObject.name)
+        case .kind: #keyPath(VMNetworkScriptObject.kind)
+        case .members: #keyPath(VMNetworkScriptObject.virtualMachines)
+        }
+    }
 
     // MARK: - Elements
 

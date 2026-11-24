@@ -99,6 +99,12 @@ package struct SidebarLayout {
         func subject(of arrival: VMArrival) -> VMLibraryFilter.Subject {
             arrival.filterSubject(bundledPayloadHashes: bundledPayloadHashes, networks: networks, tags: tags ?? [])
         }
+
+        /// The names of the tags `hostState` assigns, in the library's order
+        /// of its tags; `nil` while the file defining them can't be read.
+        func tagNames(of hostState: VMHostState) -> [String]? {
+            tags.map { $0.assigned(hostState.tags).map(\.name) }
+        }
     }
 
     /// What a section's header counts.

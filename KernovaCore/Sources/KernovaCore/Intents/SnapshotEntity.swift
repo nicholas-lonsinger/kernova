@@ -30,8 +30,7 @@ struct SnapshotEntityID: Hashable, Sendable, EntityIdentifierConvertible {
 
 /// One of a VM's named restore points, as Shortcuts names it.
 ///
-/// Built from a ``SnapshotSummary`` and the owning VM's identifier, so what
-/// this surface shows can never drift from what the command core reads.
+/// Built from a ``SnapshotSummary`` and the owning VM's identifier.
 ///
 /// The sizes are deferred, read only when asked for: the read walks the
 /// snapshot's files, and the query builds an entity for every snapshot a
@@ -79,15 +78,22 @@ struct SnapshotEntity: AppEntity {
     /// What the sizes are read through.
     private let sizes: VMIntentGateway
 
+    /// The entity `summary` describes, accounting for each
+    /// ``SnapshotSummary/Field``.
     init(_ summary: SnapshotSummary, vm: UUID, sizes: VMIntentGateway) {
         self.sizes = sizes
         self.id = SnapshotEntityID(vm: vm, snapshot: summary.id)
-        self.name = summary.name
-        self.notes = summary.notes
-        self.kind = summary.kind
-        self.createdAt = summary.createdAt
-        self.isCurrent = summary.isCurrent
-        self.isEphemeralBaseline = summary.isEphemeralBaseline
+        for field in SnapshotSummary.Field.allCases {
+            switch field {
+            case .id: break  // In the entity's identifier, set above.
+            case .name: name = summary.name
+            case .notes: notes = summary.notes
+            case .kind: kind = summary.kind
+            case .createdAt: createdAt = summary.createdAt
+            case .isCurrent: isCurrent = summary.isCurrent
+            case .isEphemeralBaseline: isEphemeralBaseline = summary.isEphemeralBaseline
+            }
+        }
     }
 
     var displayRepresentation: DisplayRepresentation {

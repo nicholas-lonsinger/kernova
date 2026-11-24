@@ -5,10 +5,9 @@ import KernovaCommandModel
 
 /// One virtual machine, as Shortcuts and Spotlight name it.
 ///
-/// Built from a ``VMInfo`` and nothing else, so what this surface shows can
-/// never drift from what the command core reads. Every field but the
-/// identifier is an entity property, which is what lets a Shortcut read a VM's
-/// configuration as variables and filter the library on it.
+/// Built from a ``VMInfo`` alone, each field but the identifier in an entity
+/// property, which is what lets a Shortcut read a VM's configuration as
+/// variables and filter the library on it.
 package struct VMEntity: IndexedEntity {
     package static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Virtual Machine")
 
@@ -77,44 +76,65 @@ package struct VMEntity: IndexedEntity {
     @Property(title: "Has Saved State")
     var hasSavedState: Bool
 
+    /// ``VMInfo/savedStateKernovaVersion``.
+    @Property(title: "Saved by Kernova Version")
+    var savedStateKernovaVersion: String?
+
     @Property(title: "Ephemeral Mode")
     var isEphemeral: Bool
 
     @Property(title: "Snapshot Count")
     var snapshotCount: Int
 
-    /// Whether the VM holds any snapshot, its Ephemeral Mode baseline included.
+    /// ``VMInfo/hasSnapshots``.
     @Property(title: "Has Snapshots")
     var hasSnapshots: Bool
 
     @Property(title: "Bundle Path")
     var bundlePath: String
 
-    /// Whether another running copy of Kernova holds the VM, which is what
-    /// the subtitle reads in place of ``status``.
-    let heldByAnotherCopy: Bool
+    /// ``VMInfo/heldByAnotherCopy``, which the subtitle reads in place of
+    /// ``status``.
+    @Property(title: "In Use by Another Copy of Kernova")
+    var heldByAnotherCopy: Bool
 
+    @Property(title: "Guest Agents")
+    var agents: [GuestAgentEntity]
+
+    /// ``VMInfo/tags``.
+    @Property(title: "Tags")
+    var tags: [String]?
+
+    /// The entity `info` describes, accounting for each ``VMInfo/Field``.
     init(_ info: VMInfo) {
         self.id = info.id
-        self.heldByAnotherCopy = info.heldByAnotherCopy
-        self.name = info.name
-        self.status = info.status
-        self.stateGroup = info.stateBucket.rawValue
-        self.guestOS = info.guestOS
-        self.cpuCount = info.cpuCount
-        self.memoryBytes = Int(clamping: info.memoryBytes)
-        self.networkMode = info.networkMode
-        self.networkMembership = info.networkMembership
-        self.networkName = info.networkName?.title
-        self.macAddress = info.macAddress
-        self.ipAddress = info.ipAddress.address
-        self.agentStatus = info.agentStatus
-        self.guestAgentVersion = info.guestAgent?.rawValue
-        self.hasSavedState = info.hasSavedState
-        self.isEphemeral = info.isEphemeral
-        self.snapshotCount = info.snapshotCount
-        self.hasSnapshots = info.hasSnapshots
-        self.bundlePath = info.bundlePath
+        for field in VMInfo.Field.allCases {
+            switch field {
+            case .id: break  // The entity's identifier, set above.
+            case .name: name = info.name
+            case .status: status = info.status
+            case .stateBucket: stateGroup = info.stateBucket.rawValue
+            case .guestOS: guestOS = info.guestOS
+            case .cpuCount: cpuCount = info.cpuCount
+            case .memoryBytes: memoryBytes = Int(clamping: info.memoryBytes)
+            case .networkMode: networkMode = info.networkMode
+            case .networkMembership: networkMembership = info.networkMembership
+            case .networkName: networkName = info.networkName?.title
+            case .macAddress: macAddress = info.macAddress
+            case .ipAddress: ipAddress = info.ipAddress.address
+            case .agentStatus: agentStatus = info.agentStatus
+            case .guestAgent: guestAgentVersion = info.guestAgent?.rawValue
+            case .hasSavedState: hasSavedState = info.hasSavedState
+            case .savedStateKernovaVersion: savedStateKernovaVersion = info.savedStateKernovaVersion
+            case .isEphemeral: isEphemeral = info.isEphemeral
+            case .snapshotCount: snapshotCount = info.snapshotCount
+            case .hasSnapshots: hasSnapshots = info.hasSnapshots
+            case .bundlePath: bundlePath = info.bundlePath
+            case .heldByAnotherCopy: heldByAnotherCopy = info.heldByAnotherCopy
+            case .agents: agents = info.agents.map(GuestAgentEntity.init)
+            case .tags: tags = info.tags
+            }
+        }
     }
 
     package var displayRepresentation: DisplayRepresentation {
