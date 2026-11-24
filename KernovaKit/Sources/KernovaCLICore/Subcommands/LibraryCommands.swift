@@ -135,6 +135,39 @@ extension KernovaCommand {
         }
     }
 
+    /// `kernova cancel-copy <vm>` — stop a create, clone or import still being
+    /// written.
+    struct CancelCopy: VerbCommand {
+        /// What `kernova cancel-copy --help` says.
+        static let configuration = CommandConfiguration(
+            commandName: "cancel-copy",
+            abstract: "Cancel a virtual machine that is still being created, cloned or imported.",
+            discussion: "The copy is stopped and what it has written is removed, so the virtual "
+                + "machine leaves the library; a `kernova clone` or `kernova import` waiting for "
+                + "it exits 1. Returns once the cancel is requested, without waiting for the "
+                + "removal. Refuses without --yes. A virtual machine whose copy has finished "
+                + "refuses: `kernova delete` is the verb for it.")
+
+        /// Which virtual machine, by name or identifier.
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
+        var vm: String
+
+        /// The options every subcommand carries.
+        @OptionGroup var options: GlobalOptions
+
+        /// The request this command line stands for.
+        func verb() throws -> VMCommandRequest.Verb {
+            .cancelPreparing(
+                try SelectorParsing.selector(from: vm, forcingID: options.id),
+                consent: options.consent)
+        }
+
+        /// Cancels the copy.
+        func run() throws {
+            try perform()
+        }
+    }
+
     /// `kernova rename <vm> <new-name>` — change a virtual machine's label.
     struct Rename: VerbCommand {
         /// What `kernova rename --help` says.

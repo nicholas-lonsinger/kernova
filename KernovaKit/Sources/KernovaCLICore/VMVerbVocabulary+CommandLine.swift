@@ -28,6 +28,7 @@ extension VMVerbVocabulary {
         case .usbPairings: [KernovaCommand.USB.Rules.self]
         case .forgetUSBPairing: [KernovaCommand.USB.Forget.self]
         case .start: [KernovaCommand.Start.self]
+        case .cancelGuestSetup: [KernovaCommand.CancelSetup.self]
         case .stop: [KernovaCommand.Stop.self]
         case .pause: [KernovaCommand.Pause.self]
         case .resume: [KernovaCommand.Resume.self]
@@ -41,10 +42,12 @@ extension VMVerbVocabulary {
         case .revertToSnapshot: [KernovaCommand.Snapshot.Revert.self]
         case .deleteSnapshot: [KernovaCommand.Snapshot.Delete.self]
         case .renameSnapshot: [KernovaCommand.Snapshot.Rename.self]
+        case .setSnapshotNotes: [KernovaCommand.Snapshot.Notes.self]
         case .clone: [KernovaCommand.Clone.self]
         case .rename: [KernovaCommand.Rename.self]
         case .delete: [KernovaCommand.Delete.self]
         case .importVM: [KernovaCommand.Import.self]
+        case .cancelPreparing: [KernovaCommand.CancelCopy.self]
         case .editSharedDirectory: [KernovaCommand.Share.Add.self, KernovaCommand.Share.Remove.self]
         case .editUSBAccessory: [KernovaCommand.USB.Attach.self, KernovaCommand.USB.Detach.self]
         case .configurationKeys, .configuration: [KernovaCommand.Get.self]
@@ -54,8 +57,7 @@ extension VMVerbVocabulary {
         case .renameNetwork: [KernovaCommand.Network.Rename.self]
         case .deleteNetwork: [KernovaCommand.Network.Delete.self]
         case .quit: [KernovaCommand.Quit.self]
-        case .cancelGuestSetup, .setSnapshotNotes, .create, .cancelPreparing,
-            .editStorageDisk, .editRemovableMedia, .guestAgentDisk:
+        case .create, .editStorageDisk, .editRemovableMedia, .guestAgentDisk:
             []
         }
     }

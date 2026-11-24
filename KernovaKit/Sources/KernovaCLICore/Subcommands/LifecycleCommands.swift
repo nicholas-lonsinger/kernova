@@ -347,6 +347,39 @@ extension KernovaCommand {
         }
     }
 
+    /// `kernova cancel-setup <vm>` — interrupt the guest setup a first start
+    /// began.
+    struct CancelSetup: VerbCommand {
+        /// What `kernova cancel-setup --help` says.
+        static let configuration = CommandConfiguration(
+            commandName: "cancel-setup",
+            abstract: "Cancel the guest setup a virtual machine is running.",
+            discussion: "Interrupts the download, verification or install the virtual machine's "
+                + "first start is running. The virtual machine is kept, and its next `kernova "
+                + "start` takes the setup up again. Refuses without --yes, saying what that start does about the "
+                + "step it interrupts. A "
+                + "virtual machine with no guest setup running refuses.")
+
+        /// Which virtual machine, by name or identifier.
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
+        var vm: String
+
+        /// The options every subcommand carries.
+        @OptionGroup var options: GlobalOptions
+
+        /// The request this command line stands for.
+        func verb() throws -> VMCommandRequest.Verb {
+            .cancelGuestSetup(
+                try SelectorParsing.selector(from: vm, forcingID: options.id),
+                consent: options.consent)
+        }
+
+        /// Cancels the setup.
+        func run() throws {
+            try perform()
+        }
+    }
+
     /// `kernova open <vm>` — put the guest's display in front of the user.
     struct Open: VerbCommand {
         /// What `kernova open --help` says.

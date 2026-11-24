@@ -14,7 +14,7 @@ extension KernovaCommand {
             discussion: "Every verb here names its snapshot by name or identifier, matched "
                 + "against the virtual machine's own list — a name several snapshots carry "
                 + "exits 4 listing their identifiers.",
-            subcommands: [List.self, Take.self, Revert.self, Delete.self, Rename.self])
+            subcommands: [List.self, Take.self, Revert.self, Delete.self, Rename.self, Notes.self])
     }
 }
 
@@ -123,15 +123,9 @@ extension KernovaCommand.Snapshot {
 
         /// Reverts the VM.
         func run() throws {
-            let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
-            let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
-            defer { client.close() }
-            let target = try KernovaCommand.Snapshot.resolve(
-                snapshot, of: vm, selector: selector, forcingID: options.id, from: client)
-            _ = try client.send(
-                .revertToSnapshot(
-                    selector, snapshot: target.id, consent: options.consent)
-            ).payload()
+            try KernovaCommand.Snapshot.perform(on: snapshot, of: vm, options: options) {
+                .revertToSnapshot($0, snapshot: $1, consent: options.consent)
+            }
         }
     }
 
@@ -158,14 +152,9 @@ extension KernovaCommand.Snapshot {
 
         /// Deletes the snapshot.
         func run() throws {
-            let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
-            let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
-            defer { client.close() }
-            let target = try KernovaCommand.Snapshot.resolve(
-                snapshot, of: vm, selector: selector, forcingID: options.id, from: client)
-            _ = try client.send(
-                .deleteSnapshot(selector, snapshot: target.id, consent: options.consent)
-            ).payload()
+            try KernovaCommand.Snapshot.perform(on: snapshot, of: vm, options: options) {
+                .deleteSnapshot($0, snapshot: $1, consent: options.consent)
+            }
         }
     }
 
@@ -196,14 +185,41 @@ extension KernovaCommand.Snapshot {
 
         /// Renames the snapshot.
         func run() throws {
-            let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
-            let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
-            defer { client.close() }
-            let target = try KernovaCommand.Snapshot.resolve(
-                snapshot, of: vm, selector: selector, forcingID: options.id, from: client)
-            _ = try client.send(
-                .renameSnapshot(selector, snapshot: target.id, newName: newName)
-            ).payload()
+            try KernovaCommand.Snapshot.perform(on: snapshot, of: vm, options: options) {
+                .renameSnapshot($0, snapshot: $1, newName: newName)
+            }
+        }
+    }
+
+    /// `kernova snapshot notes <vm> <snapshot> <text>` — replace one's note.
+    struct Notes: VMScopedCommandLine {
+        /// What `kernova snapshot notes --help` says.
+        static let configuration = CommandConfiguration(
+            commandName: "notes",
+            abstract: "Replace the note kept with one of a virtual machine's snapshots.",
+            discussion: "Leading and trailing spaces and line breaks are trimmed, and an empty "
+                + "<text> clears the note.")
+
+        /// Which virtual machine, by name or identifier.
+        @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
+        var vm: String
+
+        /// Which snapshot, by name or identifier.
+        @Argument(help: "The snapshot's name or identifier.", completion: CompletionSource.snapshot)
+        var snapshot: String
+
+        /// The note to keep instead.
+        @Argument(help: "The new note; empty to clear it.")
+        var text: String
+
+        /// The options every subcommand carries.
+        @OptionGroup var options: GlobalOptions
+
+        /// Replaces the snapshot's note.
+        func run() throws {
+            try KernovaCommand.Snapshot.perform(on: snapshot, of: vm, options: options) {
+                .setSnapshotNotes($0, snapshot: $1, notes: text)
+            }
         }
     }
 }
@@ -240,17 +256,25 @@ extension KernovaCommand.Snapshot {
         return sizes
     }
 
-    /// The snapshot `text` names, matched against the VM's own listing.
+    /// Sends the request `verb` builds for the snapshot `text` names on the
+    /// virtual machine `vm` names, handing it the VM's selector and the
+    /// snapshot's identifier.
     ///
-    /// The wire addresses a snapshot by identifier alone, so a typed name is
-    /// resolved here — against the listing rather than by asking the app to
-    /// search, which keeps one set of matching rules for both arguments.
-    static func resolve(
-        _ text: String, of vm: String, selector: VMSelector, forcingID: Bool,
-        from client: VMCommandClient
-    ) throws -> SnapshotSummary {
-        try SnapshotResolution.snapshot(
+    /// The wire addresses a snapshot by identifier alone, so `text` is matched
+    /// here against the VM's own listing (``SnapshotResolution``), and the
+    /// identifier `verb` is handed is always one that listing carries. That is
+    /// what refuses a snapshot the VM doesn't list: the app takes a rename or a
+    /// note edit naming one as a no-op.
+    static func perform(
+        on text: String, of vm: String, options: GlobalOptions,
+        _ verb: (VMSelector, UUID) -> VMCommandRequest.Verb
+    ) throws {
+        let selector = try SelectorParsing.selector(from: vm, forcingID: options.id)
+        let client = try CommandConnection.open(launchIfNeeded: !options.noLaunch)
+        defer { client.close() }
+        let target = try SnapshotResolution.snapshot(
             named: text, of: vm, in: try summaries(of: selector, from: client),
-            forcingID: forcingID)
+            forcingID: options.id)
+        _ = try client.send(verb(selector, target.id)).payload()
     }
 }
