@@ -278,46 +278,87 @@ final class VMDeleteScriptCommand: NSDeleteCommand {
     }
 }
 
-/// The Standard Suite's `make`: a snapshot made at a VM is taken by
-/// ``VMScriptObject/makeSnapshot(name:notes:)``, and every other make is
-/// Cocoa's own.
+/// The Standard Suite's `make`: a snapshot is taken by
+/// ``VMScriptObject/makeSnapshot(name:notes:)``, and every other class's make
+/// is Cocoa's own.
 @MainActor
 @objc(VMCreateScriptCommand)
 final class VMCreateScriptCommand: NSCreateCommand {
-    nonisolated private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMCreateScriptCommand")
-
     /// The Cocoa key of `make`'s `at`, as the dictionary declares it.
     nonisolated private static let locationKey = "Location"
 
     /// A selector hop to the main actor, as ``VMScriptCommand/execute()``
-    /// takes, for a snapshot whose location evaluates to a VM's snapshots.
+    /// takes, for a snapshot's make.
     nonisolated override func performDefaultImplementation() -> Any? {
-        guard createClassDescription.implementationClassName == NSStringFromClass(VMSnapshotScriptObject.self),
-            let location = arguments?[Self.locationKey] as? NSPositionalSpecifier
-        else { return super.performDefaultImplementation() }
-        location.setInsertionClassDescription(createClassDescription)
-        location.evaluate()
-        guard location.insertionContainer is VMScriptObject, location.insertionKey == VMScriptObject.snapshotsKey
+        guard createClassDescription.implementationClassName == NSStringFromClass(VMSnapshotScriptObject.self)
         else { return super.performDefaultImplementation() }
         performSelector(onMainThread: #selector(makeSnapshot), with: nil, waitUntilDone: true)
         return nil
     }
 
-    /// Where the hop lands, on the main actor, with the location evaluated.
+    /// Where the hop lands, on the main actor: takes a snapshot of the one VM
+    /// the make names, or records why it names none.
     @objc private func makeSnapshot() {
-        guard
-            let vm = (arguments?[Self.locationKey] as? NSPositionalSpecifier)?.insertionContainer
-                as? VMScriptObject
-        else {
-            Self.logger.log(.fault, "A snapshot's make lost the virtual machine its location evaluated to")
-            assertionFailure("A snapshot's make lost the virtual machine its location evaluated to")
-            refuse(Int(errAEEventFailed), "Kernova could not answer this.")
-            return
-        }
+        guard let vm = virtualMachine() else { return }
         let properties = resolvedKeyDictionary
         vm.makeSnapshot(
             name: Self.text(properties[#keyPath(VMSnapshotScriptObject.name)]),
             notes: Self.text(properties[#keyPath(VMSnapshotScriptObject.notes)]))
+    }
+
+    /// The VM the make names: `at`'s container when it is a VM's snapshots,
+    /// or else, with no `at`, the `tell` block's subject — `tell virtual
+    /// machine … to make new snapshot`, whose target travels only as the
+    /// event's subject attribute, the container Cocoa's own make inserts into.
+    ///
+    /// `nil`, with the refusal recorded, for a reference that names nothing
+    /// and for one that names no single VM.
+    private func virtualMachine() -> VMScriptObject? {
+        guard let location = arguments?[Self.locationKey] as? NSPositionalSpecifier else {
+            guard let subject = Self.subject(of: appleEvent) else { return unplaced() }
+            guard let evaluated = subject.objectsByEvaluatingSpecifier else { return failure(evaluating: subject) }
+            return evaluated as? VMScriptObject ?? unplaced()
+        }
+        // Evaluated before the location is: after the location's evaluation
+        // finds no place for a snapshot in a network, the same reference
+        // evaluates to nothing (observed on macOS 27), and "Can't get" would
+        // name a network that exists.
+        guard location.objectSpecifier.objectsByEvaluatingSpecifier != nil else {
+            return failure(evaluating: location.objectSpecifier)
+        }
+        location.setInsertionClassDescription(createClassDescription)
+        location.evaluate()
+        guard location.insertionKey == VMScriptObject.snapshotsKey,
+            let vm = location.insertionContainer as? VMScriptObject
+        else { return unplaced() }
+        return vm
+    }
+
+    /// The object a `tell` block names, as `event`'s subject attribute
+    /// carries it; `nil` for none, or for the application.
+    private static func subject(of event: NSAppleEventDescriptor?) -> NSScriptObjectSpecifier? {
+        guard let descriptor = event?.attributeDescriptor(forKeyword: FourCharCode(scriptingCode: "subj")),
+            descriptor.descriptorType == typeObjectSpecifier
+        else { return nil }
+        return NSScriptObjectSpecifier(descriptor: descriptor)
+    }
+
+    /// Records `specifier`'s failed evaluation as what the script reads —
+    /// "Can't get …" — unless the evaluation recorded a refusal in words of its
+    /// own, such as a VM name nothing answers to.
+    private func failure(evaluating specifier: NSScriptObjectSpecifier) -> VMScriptObject? {
+        if scriptErrorString == nil {
+            VMScriptEvaluationFailure(specifier).record(on: self, addressing: specifier)
+        }
+        return nil
+    }
+
+    /// Refuses a make that names no single VM for the snapshot to be taken
+    /// of, in place of the bare error Cocoa's search for a place recorded.
+    private func unplaced() -> VMScriptObject? {
+        refuse(Int(errAECantPutThatThere), "Name the virtual machine to take a snapshot of.")
+        scriptErrorOffendingObjectDescriptor = nil
+        return nil
     }
 
     /// `value` as the text the dictionary declares the property as, `nil` for

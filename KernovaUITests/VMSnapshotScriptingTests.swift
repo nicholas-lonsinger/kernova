@@ -41,7 +41,7 @@ struct VMSnapshotScriptingTests {
     // MARK: - Script references
 
     /// `virtual machine "<name>"`.
-    private static func vm(named name: String) -> NSAppleEventDescriptor {
+    fileprivate static func vm(named name: String) -> NSAppleEventDescriptor {
         ScriptEvent.element("KvVM", named: name)
     }
 
@@ -62,8 +62,33 @@ struct VMSnapshotScriptingTests {
 
     // MARK: - Verbs
 
-    @Test("make answers the snapshot it took by a reference revert to lands on, which fails once it is deleted")
-    func aTakenSnapshotIsTheReferenceItsVerbsLandOn() async throws {
+    /// The ways a script names the VM a `make new snapshot` is made at.
+    enum MakeForm: CaseIterable, Sendable {
+        /// `make new snapshot at virtual machine "Alpha" …`
+        case atTheVM
+        /// `make new snapshot at end of snapshots of virtual machine "Alpha" …`
+        case atTheEndOfItsSnapshots
+        /// `tell virtual machine "Alpha" to make new snapshot …`
+        case toldTheVM
+
+        /// The event, as AppleScript sends this form, with `properties`.
+        @MainActor
+        func event(properties: [String: NSAppleEventDescriptor]) -> NSAppleEventDescriptor {
+            let alpha = VMSnapshotScriptingTests.vm(named: "Alpha")
+            return switch self {
+            case .atTheVM: ScriptEvent.make(new: "KvSn", at: alpha, properties: properties)
+            case .atTheEndOfItsSnapshots:
+                ScriptEvent.make(
+                    new: "KvSn", at: ScriptEvent.end(of: ScriptEvent.every("KvSn", of: alpha)), properties: properties)
+            case .toldTheVM: ScriptEvent.told(ScriptEvent.make(new: "KvSn", properties: properties), to: alpha)
+            }
+        }
+    }
+
+    @Test(
+        "make answers the snapshot it took by a reference revert to lands on, which fails once it is deleted",
+        arguments: MakeForm.allCases)
+    func aTakenSnapshotIsTheReferenceItsVerbsLandOn(form: MakeForm) async throws {
         let virtualization = MockVirtualizationService()
         let wired = WiredCommandCore(virtualization: virtualization)
         let earlier = VMSnapshot(name: "Earlier", kind: .cold, macAddress: nil)
@@ -72,14 +97,12 @@ struct VMSnapshotScriptingTests {
         let gateway = await makeGateway(wired, host: host)
 
         let made = try await host.send(
-            ScriptEvent.make(
-                new: "KvSn", at: Self.vm(named: "Alpha"),
-                properties: [
-                    "pnam": NSAppleEventDescriptor(string: "Before the run"),
-                    "KvNo": NSAppleEventDescriptor(string: "a note"),
-                ]),
+            form.event(properties: [
+                "pnam": NSAppleEventDescriptor(string: "Before the run"),
+                "KvNo": NSAppleEventDescriptor(string: "a note"),
+            ]),
             to: gateway)
-        try #require(made.errorNumber == 0)
+        try #require(made.errorNumber == 0, "\(form): \(made.errorString ?? "")")
         let taken = try #require(alpha.snapshotManifest.snapshots.first { $0.id != earlier.id })
         #expect(taken.name == "Before the run")
         #expect(taken.notes == "a note")

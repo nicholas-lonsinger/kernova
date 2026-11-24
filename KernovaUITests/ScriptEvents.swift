@@ -70,6 +70,14 @@ enum ScriptEvent {
         reference("prop", form: "prop", NSAppleEventDescriptor(typeCode: code(property)), of: container)
     }
 
+    /// `end of <reference>`, the insertion location `make … at` takes.
+    static func end(of reference: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
+        let location = record(as: "insl")
+        location.setDescriptor(reference, forKeyword: code("kobj"))
+        location.setDescriptor(NSAppleEventDescriptor(enumCode: code("end ")), forKeyword: code("kpos"))
+        return location
+    }
+
     /// `<lhs> is <rhs>`, as a `whose` test.
     static func equals(_ lhs: NSAppleEventDescriptor, _ rhs: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
         let comparison = record(as: "cmpd")
@@ -123,6 +131,14 @@ enum ScriptEvent {
             make.setParam(record, forKeyword: code("prdt"))
         }
         return make
+    }
+
+    /// `event` as a `tell <subject>` block sends it: the subject travels as an
+    /// attribute, which Cocoa promotes to the receivers of a command naming
+    /// none.
+    static func told(_ event: NSAppleEventDescriptor, to subject: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
+        event.setAttribute(subject, forKeyword: code("subj"))
+        return event
     }
 
     /// `delete <reference> [with confirmation]`.
