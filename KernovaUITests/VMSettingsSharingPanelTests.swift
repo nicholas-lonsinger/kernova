@@ -136,4 +136,61 @@ struct VMSettingsSharingPanelTests {
         #expect(toggle.isEnabled)
         #expect(!visibleLabel(VMSettingsSharingPanelViewController.installPromptDisabledCaption, in: vc.view))
     }
+
+    // MARK: - Remembered USB accessories
+
+    /// The Sharing panel of a VM in a library over `passthrough`, holding
+    /// `pairings` as a bundle written on a Mac that had passthrough would.
+    private func makeUSBController(
+        passthrough: USBAccessoryPassthrough, pairings: [USBAccessoryPairing]
+    ) -> VMSettingsViewController {
+        let viewModel = makeLibraryViewModel(preferences: preferences, usbAccessoryPassthrough: passthrough)
+        let instance = viewModel.library.registerFixture(guestOS: .macOS)
+        instance.seedUSBPairings(USBAccessoryPairingSet(pairings: pairings))
+        let vc = makeSettingsPane(instance: instance, viewModel: viewModel, isReadOnly: false)
+        vc.loadViewIfNeeded()
+        vc.viewDidAppear()
+        vc.showCategory(.sharing)
+        return vc
+    }
+
+    private static let pairing = USBAccessoryPairing(
+        key: "0403:6001:0100:0373", form: .serialNumber, displayName: "Drive", receptacleLabel: nil)
+
+    @Test(
+        "Without passthrough, Remembered USB Accessories shows, names what it needs, and offers no Forget",
+        arguments: [
+            (USBAccessoryPassthrough.Gap.needsMacOS(27), "Kernova needs macOS 27 or later for USB accessory passthrough."),
+            (.needsEntitlement, "This build of Kernova does not support USB accessory passthrough."),
+        ])
+    func rememberedAccessoriesNameWhatPassthroughNeeds(gap: USBAccessoryPassthrough.Gap, reason: String) throws {
+        let empty = makeUSBController(passthrough: .unavailable(gap), pairings: [])
+        #expect(visibleLabel("Remembered USB Accessories", in: empty.view))
+        #expect(visibleLabel(reason, in: empty.view))
+
+        let holding = makeUSBController(passthrough: .unavailable(gap), pairings: [Self.pairing])
+        #expect(visibleLabel(reason, in: holding.view))
+        #expect(visibleLabel("Drive", in: holding.view))
+        let forget = try #require(
+            firstSubview(NSButton.self, in: holding.view) {
+                $0.action.map(NSStringFromSelector) == "forgetPairingTapped:"
+            })
+        #expect(!forget.isEnabled)
+    }
+
+    @Test("With passthrough, Remembered USB Accessories shows only what the VM remembers, with Forget offered")
+    func rememberedAccessoriesWithPassthrough() throws {
+        let empty = makeUSBController(passthrough: .available(MockUSBAccessoryService()), pairings: [])
+        #expect(!visibleLabel("Remembered USB Accessories", in: empty.view))
+
+        let holding = makeUSBController(
+            passthrough: .available(MockUSBAccessoryService()), pairings: [Self.pairing])
+        #expect(visibleLabel("Remembered USB Accessories", in: holding.view))
+        #expect(visibleLabel("Drive", in: holding.view))
+        let forget = try #require(
+            firstSubview(NSButton.self, in: holding.view) {
+                $0.action.map(NSStringFromSelector) == "forgetPairingTapped:"
+            })
+        #expect(forget.isEnabled)
+    }
 }
