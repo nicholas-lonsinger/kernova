@@ -52,6 +52,48 @@ extension VMCommandCore {
         return held + (try availableUSBAccessories())
     }
 
+    /// The accessory no guest holds that the durable `key` names now, `nil`
+    /// when none carries it; refused as ``unit(withKey:among:accessory:)``
+    /// refuses.
+    func availableUSBAccessory(withKey key: String) throws -> USBAccessorySummary? {
+        let service = try requireUSBAccessoryService()
+        let held = library.accessoryHolders.heldRegistryIDs
+        let free = service.accessories.filter { !held.contains($0.registryID) }
+        return try unit(withKey: key, among: free) { $0 }.map { USBAccessorySummary($0, named: listingNames()) }
+    }
+
+    /// The accessory the VM's guest holds that the durable `key` names now,
+    /// `nil` when none carries it; refused as
+    /// ``unit(withKey:among:accessory:)`` refuses.
+    func usbAccessory(withKey key: String, heldBy selector: VMSelector) throws -> USBAccessorySummary? {
+        try requireUSBAccessoryService()
+        let attached = try resolve(selector).liveUSBAccessories
+        return try unit(withKey: key, among: attached, accessory: \.accessory).map {
+            USBAccessorySummary($0.accessory, named: listingNames(), deviceID: $0.deviceID)
+        }
+    }
+
+    /// The one of `candidates` whose accessory the durable `key` names now,
+    /// `nil` when none carries it.
+    ///
+    /// Refuses a key that may name another unit
+    /// (``USBAccessoryInfo/keyNamesItAlone(among:)``) — the rule an automatic
+    /// attach keeps to — rather than act on whichever unit is in its port.
+    private func unit<Candidate>(
+        withKey key: String, among candidates: [Candidate],
+        accessory: (Candidate) -> USBAccessoryInfo
+    ) throws -> Candidate? {
+        guard let match = candidates.first(where: { accessory($0).identity?.key == key }) else { return nil }
+        let unit = accessory(match)
+        guard unit.keyNamesItAlone(among: attachedAccessories + assignedAccessories) else {
+            let name = listingNames()[unit.registryID] ?? unit.displayName
+            throw CommandError.invalidArgument(
+                "Kernova knows \u{201C}\(name)\u{201D} only by the port it\u{2019}s plugged into, and another accessory of the same model is connected, so it can\u{2019}t tell which one is meant."
+            )
+        }
+        return match
+    }
+
     /// The accessories one VM takes back automatically, or every VM's when
     /// `selector` is `nil`.
     ///
@@ -251,9 +293,17 @@ extension VMCommandCore {
     /// What to call each accessory Kernova knows about
     /// (``USBAccessoryInfo/listingNames(attached:assigned:)``).
     private func listingNames() -> [UInt64: String] {
-        USBAccessoryInfo.listingNames(
-            attached: library.accessoryHolders.attachedEntries.map(\.attached.accessory),
-            assigned: lifecycle.usbAccessoryService?.accessories ?? [])
+        USBAccessoryInfo.listingNames(attached: attachedAccessories, assigned: assignedAccessories)
+    }
+
+    /// The accessories the guests hold.
+    private var attachedAccessories: [USBAccessoryInfo] {
+        library.accessoryHolders.attachedEntries.map(\.attached.accessory)
+    }
+
+    /// The accessories macOS has assigned to Kernova.
+    private var assignedAccessories: [USBAccessoryInfo] {
+        lifecycle.usbAccessoryService?.accessories ?? []
     }
 
     /// The command refusal an attach or detach failure stands for.

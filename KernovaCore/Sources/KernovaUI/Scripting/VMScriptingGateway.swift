@@ -533,7 +533,7 @@ final class VMScriptingGateway {
 
     func reveal(_ selectors: [VMSelector]) async throws {
         try await perform(.reveal, on: selectors) {
-            try await self.commands.reveal($0)
+            try self.commands.reveal($0)
         }
     }
 

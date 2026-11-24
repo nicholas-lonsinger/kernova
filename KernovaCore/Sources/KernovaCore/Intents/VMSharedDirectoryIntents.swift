@@ -1,5 +1,6 @@
 import AppIntents
 import Foundation
+import KernovaCommandModel
 
 struct FindSharedDirectoriesIntent: AppIntent {
     static let title: LocalizedStringResource = "Find Shared Directories"
@@ -37,11 +38,6 @@ struct AddSharedDirectoryIntent: AppIntent {
     @Parameter(title: "Virtual Machine")
     var vm: VMEntity
 
-    // Apple documents a file an action receives as readable for the span of
-    // the action (`IntentFile.fileURL`), and nothing about a bookmark made from
-    // it outliving the action; a share is reopened at every boot, through the
-    // bookmark an open panel's pick yields (Accessing files from the macOS App
-    // Sandbox).
     @Parameter(title: "Path")
     var path: String
 
@@ -58,13 +54,28 @@ struct AddSharedDirectoryIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ReturnsValue<SharedDirectoryEntity> {
-        let folder = URL(fileURLWithPath: path).lastPathComponent
-        return .result(
+        .result(
             value: try await gateway.addSharedDirectory(vm.id, path: path, readOnly: readOnly) {
-                guard systemContext.currentMode != .foreground else { return }
-                try await continueInForeground(
-                    "Kernova needs your permission to read \u{201C}\(folder)\u{201D}.", alwaysConfirm: false)
+                try await comeForward()
             })
+    }
+
+    /// Brings Kernova to the front for the open panel, refusing — in Kernova's
+    /// words rather than the framework's — where the system can't.
+    @MainActor
+    private func comeForward() async throws {
+        let mode = systemContext.currentMode
+        guard mode != .foreground else { return }
+        let folder = "\u{201C}\(URL(fileURLWithPath: path).standardizedFileURL.lastPathComponent)\u{201D}"
+        guard mode.canContinueInForeground else {
+            throw CommandError.operationFailed(
+                verb: .editSharedDirectory,
+                message:
+                    "Kernova needs your permission to read \(folder), which it asks for in an open panel, and it can\u{2019}t come to the front from here to show one. Add the folder from the virtual machine\u{2019}s Sharing settings instead."
+            )
+        }
+        try await continueInForeground(
+            "Kernova needs your permission to read \(folder).", alwaysConfirm: false)
     }
 }
 

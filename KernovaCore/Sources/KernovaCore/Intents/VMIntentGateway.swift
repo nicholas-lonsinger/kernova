@@ -268,7 +268,7 @@ package final class VMIntentGateway {
     /// Brings the VM in front of the user whatever state it is in — its display
     /// where there is one, else its row in the library.
     func reveal(_ id: UUID) async throws {
-        try await perform(.reveal, on: id) { try await self.commands.reveal(.id(id)) }
+        try await perform(.reveal, on: id) { try self.commands.reveal(.id(id)) }
     }
 
     /// Shows the library searched for `term`, once the library has landed.
@@ -386,10 +386,10 @@ package final class VMIntentGateway {
     ) async throws -> SharedDirectoryEntity {
         try await perform(.editSharedDirectory, on: id) {
             let folder = try Self.requireFullPath(path)
-            let requester = ActivationRequester { [prepareToSurface] in
+            let requester = ActivationRequester(awaiting: { [prepareToSurface] in
                 try await bringForward()
                 prepareToSurface()
-            }
+            })
             let shared = try await ActivationRequester.$current.withValue(requester) {
                 try await self.commands.addSharedDirectory(.id(id), path: folder, readOnly: readOnly)
             }
@@ -441,9 +441,9 @@ package final class VMIntentGateway {
     ) async throws {
         try await perform(.editUSBAccessory, on: id) {
             guard
-                let listed = try self.commands.availableUSBAccessories().first(where: {
-                    USBAccessoryEntityID($0) == picked
-                })
+                let listed = try self.accessory(
+                    picked, keyed: { try self.commands.availableUSBAccessory(withKey: $0) },
+                    listed: { try self.commands.availableUSBAccessories() })
             else {
                 throw CommandError.itemNotFoundOnHost(
                     item: "USB accessory \u{201C}\(name)\u{201D} available to attach")
@@ -459,15 +459,28 @@ package final class VMIntentGateway {
     ) async throws {
         try await perform(.editUSBAccessory, on: id) {
             guard
-                let held = try self.commands.usbAccessories(of: .id(id)).first(where: {
-                    USBAccessoryEntityID($0) == picked
-                }),
+                let held = try self.accessory(
+                    picked, keyed: { try self.commands.usbAccessory(withKey: $0, heldBy: .id(id)) },
+                    listed: { try self.commands.usbAccessories(of: .id(id)) }),
                 let device = held.deviceID
             else {
                 throw CommandError.itemNotFound(
                     vm: try self.summary(of: id), item: "USB accessory \u{201C}\(name)\u{201D} attached")
             }
             try await self.commands.detachUSBAccessory(.id(id), device: device)
+        }
+    }
+
+    /// The accessory `picked` names: by its durable key through `keyed`, which
+    /// refuses a key that may name another unit, or — for one with none — by
+    /// this run's registry ID among `listed`.
+    private func accessory(
+        _ picked: USBAccessoryEntityID, keyed: (String) throws -> USBAccessorySummary?,
+        listed: () throws -> [USBAccessorySummary]
+    ) throws -> USBAccessorySummary? {
+        switch picked {
+        case .key(let key): try keyed(key)
+        case .registryID: try listed().first { USBAccessoryEntityID($0) == picked }
         }
     }
 

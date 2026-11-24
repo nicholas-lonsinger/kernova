@@ -175,10 +175,10 @@ package struct VMCommandEnvelopeRouter {
         case .groupAction(let action, let group):
             return .groupAction(try await commands.groupAction(action, on: group))
         case .open(let selector):
-            try await commands.open(selector)
+            try commands.open(selector)
             return .ok
         case .reveal(let selector):
-            try await commands.reveal(selector)
+            try commands.reveal(selector)
             return .ok
         case .showInFinder(let selector):
             try commands.showInFinder(selector)

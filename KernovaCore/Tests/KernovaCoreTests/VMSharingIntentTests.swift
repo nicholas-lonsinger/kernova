@@ -103,6 +103,36 @@ struct VMSharingIntentTests {
         #expect(service.attachedRegistryIDs == [8, 9])
     }
 
+    @Test("A pick known only by its port is refused while another unit of its model is connected")
+    func portKeyedPickIsRefusedBesideAnotherUnitOfItsModel() async throws {
+        let harness = makeHarness()
+        let service = try #require(harness.usbAccessories)
+        let vm = makeRunningInstance(in: harness)
+        let inPortA = MockUSBAccessoryService.accessory(registryID: 7, receptacle: "hub/Port-A@1")
+        let inPortB = MockUSBAccessoryService.accessory(registryID: 8, receptacle: "hub/Port-B@1")
+        let portA = try #require(inPortA.identity?.key)
+        service.accessories = [inPortA, inPortB]
+        let gateway = makeGateway(harness)
+
+        await #expect(throws: CommandError.self) {
+            try await gateway.attachUSBAccessory(vm.id, accessory: .key(portA), named: "Drive")
+        }
+        #expect(service.attachedRegistryIDs.isEmpty)
+
+        // Alone of its model, the unit in the port is the one the key names.
+        service.accessories = [inPortA]
+        try await gateway.attachUSBAccessory(vm.id, accessory: .key(portA), named: "Drive")
+        #expect(service.attachedRegistryIDs == [7])
+
+        // A second unit of the model, held by the same guest.
+        service.accessories = [inPortA, inPortB]
+        try await harness.core.attachUSBAccessory(.id(vm.id), accessory: inPortB.registryID)
+        await #expect(throws: CommandError.self) {
+            try await gateway.detachUSBAccessory(vm.id, accessory: .key(portA), named: "Drive")
+        }
+        #expect(service.detachedDeviceIDs.isEmpty)
+    }
+
     @Test("Detach takes back the accessory the pick names, of two the guest holds")
     func detachTakesBackThePickedAccessory() async throws {
         let harness = makeHarness()

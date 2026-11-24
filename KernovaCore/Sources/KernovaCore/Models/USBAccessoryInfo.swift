@@ -72,6 +72,25 @@ package struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
             })
     }
 
+    /// Whether the durable key this accessory carries names it and no other
+    /// unit among `known`, every accessory Kernova knows about — what decides
+    /// whether a key may stand for this unit, for an automatic attach and for
+    /// an accessory a shortcut picked alike.
+    ///
+    /// A key built on the serial number follows the unit. One built on a
+    /// receptacle names whatever is in that port, so while another unit of the
+    /// same model is connected, the one in the port may be either of them. An
+    /// accessory with no key is named by nothing durable. An accessory `known`
+    /// lists twice — captured by a guest, and not yet withdrawn by macOS — is
+    /// one unit.
+    func keyNamesItAlone(among known: [USBAccessoryInfo]) -> Bool {
+        guard let identity else { return false }
+        return identity.form == .serialNumber
+            || !known.contains {
+                $0.registryID != registryID && $0.descriptor.modelKey == descriptor.modelKey
+            }
+    }
+
     /// What to call this accessory.
     ///
     /// The device's own vendor and product strings first — "Samsung Type-C" is

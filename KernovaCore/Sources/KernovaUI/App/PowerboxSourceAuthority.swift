@@ -40,7 +40,7 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
         // A request arriving from a terminal or a shortcut has no window of its
         // own, and a panel ordered in behind the app that asked has asked
         // nobody anything.
-        try await ActivationRequester.requestActivation()
+        try await ActivationRequester.awaitActivation()
 
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false

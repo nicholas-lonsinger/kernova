@@ -1,10 +1,6 @@
 import AppIntents
 import Foundation
 
-// Each description names the macOS version passthrough needs, which a Mac
-// without it is refused for (`VMCommandCore.usbPassthroughRefusal`), so an
-// action shows what enables it before it is run.
-
 struct FindAttachedUSBAccessoriesIntent: AppIntent {
     static let title: LocalizedStringResource = "Find Attached USB Accessories"
     static let description: IntentDescription? = IntentDescription(

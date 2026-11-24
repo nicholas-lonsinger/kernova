@@ -152,10 +152,7 @@ final class USBAccessoryCoordinator {
             )
             return
         }
-        // A key built on a receptacle names whatever is in that port. With a
-        // second unit of the same model around, the one in the port may be
-        // either of them.
-        if identity.form == .receptacle, sharesItsModel(info) {
+        guard info.keyNamesItAlone(among: knownAccessories()) else {
             Self.logger.log(
                 .notice,
                 "Holding USB accessory \(info.displayName, privacy: .public): it is identified by its port, and more than one accessory of that model is connected"
@@ -204,13 +201,14 @@ final class USBAccessoryCoordinator {
     func sessionBecameAttachable(_ instance: VMInstance) -> [VMFollowUp] {
         guard let sessionID = instance.attachableSessionID else { return [] }
         let held = library.accessoryHolders.heldRegistryIDs
+        let known = knownAccessories()
         let owed = service.accessories.filter { accessory in
             guard !held.contains(accessory.registryID), let identity = accessory.identity else {
                 return false
             }
             guard instance.usbPairings.pairing(matching: identity) != nil else { return false }
             guard claimantCount(of: identity) == 1 else { return false }
-            return !(identity.form == .receptacle && sharesItsModel(accessory))
+            return accessory.keyNamesItAlone(among: known)
         }
         return owed.map { autoAttach($0, to: instance, for: sessionID, as: .paired) }
     }
@@ -411,10 +409,9 @@ final class USBAccessoryCoordinator {
         library.instances.filter { $0.usbPairings.pairing(matching: identity) != nil }.count
     }
 
-    /// Whether another accessory Kernova knows about is of the same model as
-    /// `info` — the ambiguity a port-keyed pairing cannot resolve.
-    private func sharesItsModel(_ info: USBAccessoryInfo) -> Bool {
-        let known = service.accessories + accessoriesHeldByGuests()
-        return known.filter { $0.descriptor.modelKey == info.descriptor.modelKey }.count > 1
+    /// Every accessory Kernova knows about, for
+    /// ``USBAccessoryInfo/keyNamesItAlone(among:)``.
+    private func knownAccessories() -> [USBAccessoryInfo] {
+        accessoriesHeldByGuests() + service.accessories
     }
 }

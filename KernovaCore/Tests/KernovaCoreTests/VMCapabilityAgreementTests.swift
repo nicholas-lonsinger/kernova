@@ -83,8 +83,8 @@ struct VMCapabilityAgreementTests {
         case .pause: try await core.pause(vm)
         case .resume: try await core.resume(vm, consent: .none)
         case .suspend: try await core.suspend(vm)
-        case .open: try await core.open(vm)
-        case .reveal: try await core.reveal(vm)
+        case .open: try core.open(vm)
+        case .reveal: try core.reveal(vm)
         case .takeSnapshot:
             _ = try await core.takeSnapshot(vm, name: "Agreement", notes: "", asEphemeralBaseline: false)
         case .revertToSnapshot:

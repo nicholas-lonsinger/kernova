@@ -419,6 +419,10 @@ extension VMCommandCore {
     /// answers with — a share is reopened at every boot. That URL is the folder
     /// shared and answered, whichever folder the user picked.
     ///
+    /// `path` is taken in ``comparablePath(_:)``'s spelling, so a `.` or `..`
+    /// hop never reaches the stored path or the name a macOS guest mounts the
+    /// folder by, whichever door named it.
+    ///
     /// The gate is asked again once the panel answers: it stands for as long as
     /// the user leaves it up, and the VM the caller named can have started in
     /// the meantime.
@@ -428,10 +432,11 @@ extension VMCommandCore {
     ) async throws -> SharedDirectorySummary {
         let instance = try resolve(selector)
         _ = try requireSharedDirectories(.add, on: instance)
-        if let shared = sharedDirectory(at: path, on: instance) { return SharedDirectorySummary(shared) }
+        let named = Self.comparablePath(path)
+        if let shared = sharedDirectory(at: named, on: instance) { return SharedDirectorySummary(shared) }
 
         let folder = try await requireSourceAuthority(.editSharedDirectory)
-            .readableURL(for: URL(fileURLWithPath: path), as: .sharedDirectory)
+            .readableURL(for: URL(fileURLWithPath: named), as: .sharedDirectory)
         try Self.requireDirectory(folder)
         let picked = PickedFile(picking: folder)
         try addSharedDirectories([picked], readOnly: readOnly, to: instance)
