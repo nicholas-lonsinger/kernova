@@ -81,7 +81,7 @@ enum TableRenderer {
         case .heldByAnotherCopy: nil
         // Status names the state the group coarsens.
         case .stateBucket: nil
-        case .guestOS: (.guest, [info.guestOS])
+        case .guestOS: (.guest, [info.guestOS.rawValue])
         case .cpuCount: (.cpus, [String(info.cpuCount)])
         case .memoryBytes: (.memory, [memory(info.memoryBytes)])
         case .networkMode:
@@ -89,7 +89,7 @@ enum TableRenderer {
                 .network,
                 [
                     info.networkMode.map { mode in
-                        [mode, info.networkName?.title ?? info.networkMembership].compactMap(\.self)
+                        [mode.rawValue, info.networkName?.title ?? info.networkMembership].compactMap(\.self)
                             .joined(separator: ", ")
                     } ?? "Off"
                 ]

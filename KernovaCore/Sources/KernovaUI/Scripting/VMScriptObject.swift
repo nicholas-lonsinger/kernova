@@ -52,7 +52,7 @@ package final class VMScriptObject: NSObject {
         return NSNumber(value: state.code)
     }
 
-    @objc var guestOperatingSystem: String { info.guestOS }
+    @objc var guestOperatingSystem: String { info.guestOS.rawValue }
 
     @objc var processorCount: Int { info.cpuCount }
 
@@ -62,7 +62,7 @@ package final class VMScriptObject: NSObject {
 
     /// `missing value` written is networking turned off, as a read answers it.
     @objc var networkMode: String? {
-        get { info.networkMode }
+        get { info.networkMode?.rawValue }
         set {
             write(
                 VMConfigurationKeyRegistry.networkMode,

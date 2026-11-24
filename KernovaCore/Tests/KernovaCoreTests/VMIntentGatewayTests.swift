@@ -87,68 +87,61 @@ struct VMIntentGatewayTests {
 
     // MARK: - Find
 
-    /// What a Find's next action acts on: a shortcut that deletes each VM it
-    /// finds, with Delete Immediately on and Confirm Before off, loses every
-    /// VM a wrong answer names.
-    @Test("Find's Network and Tags conditions answer what kernova list --network and --tag list, under All or Any")
-    func findMatchesNetworksAndTagsAsTheListingDoes() async throws {
+    /// A shortcut acts on every VM its Find answers, so a condition answering
+    /// another set hands its next action VMs nobody asked for.
+    @Test("Find's negated conditions answer every VM kernova list does not list, and a name it doesn't list is refused")
+    func findNegatesAndRefusesAsTheListingDoes() async throws {
         let harness = WiredCommandCore()
         let lab = try harness.core.createNetwork(name: "Lab", kind: .hostOnly)
+        let gone = try harness.core.createNetwork(name: "Gone", kind: .nat)
+        try harness.core.deleteNetwork(gone.id.uuidString)
         let prod = try harness.library.createTag(named: "Prod", color: .blue)
         harness.register(name: "On Lab") {
             $0.applyNetworkMode(.hostOnly)
             $0.networkMembership = .network(lab.id)
         }
         harness.register(name: "Common", hostState: VMHostState(tags: [prod.id])) { $0.applyNetworkMode(.nat) }
-        harness.register(name: "Off")
+        harness.register(name: "Off", guestOS: .macOS)
         let gateway = makeGateway(over: harness)
 
-        func found(
-            _ conditions: [VMEntityQuery.Condition], mode: EntityQueryComparatorMode = .and
-        ) async throws -> [String] {
-            try await gateway.vms(meeting: conditions, mode: mode).map(\.name)
+        func found(_ condition: VMEntityQuery.Condition) async throws -> [String] {
+            try await gateway.vms(meeting: [condition], mode: .and).map(\.name)
         }
 
-        #expect(try await found([.onNetwork("lab")]) == ["On Lab"])
-        #expect(try await found([.onNetwork(lab.id.uuidString)]) == ["On Lab"])
-        #expect(try await found([.onNetwork("nat")]) == ["Common"])
-        #expect(try await found([.onNetwork("Lab").negated]) == ["Common", "Off"])
-        #expect(try await found([.carrying(tag: "prod")]) == ["Common"])
-        #expect(try await found([.carrying(tag: "Prod").negated]) == ["On Lab", "Off"])
-        #expect(try await found([.onNetwork("Lab"), .carrying(tag: "Prod")]).isEmpty)
-        #expect(try await found([.onNetwork("Lab"), .carrying(tag: "Prod")], mode: .or) == ["On Lab", "Common"])
-        // Refused as `kernova list --tag Staging` is, rather than finding none.
-        await #expect(throws: CommandError.self) { try await found([.carrying(tag: "Staging")]) }
+        #expect(try await found(.onNetwork("lab").negated) == ["Common", "Off"])
+        #expect(try await found(.inMembership("Lab").negated) == ["Common", "Off"])
+        #expect(try await found(.carrying(tag: "prod").negated) == ["On Lab", "Off"])
+        #expect(try await found(.admitted(by: VMLibraryFilter(guestOSes: [.linux]), holding: false)) == ["Off"])
+        // Refused rather than answering every VM: a network since deleted, a
+        // mode's word, which names no network, a membership nothing spells,
+        // and a tag the library doesn't define.
+        let refused: [VMEntityQuery.Condition] = [
+            .onNetwork("Gone"), .onNetwork("nat"), .inMembership("comon"), .carrying(tag: "Staging"),
+        ]
+        for condition in refused {
+            await #expect(throws: CommandError.self) { try await found(condition.negated) }
+        }
     }
 
-    /// A shortcut that deletes the one VM a Find sorted by Last Run, oldest
-    /// first, answers loses whichever VM a wrong order puts first.
-    @Test("Find with no sort answers library order; Date Created and Last Run sort as kernova list --sort, or reversed")
-    func findSortsAsTheListingDoes() async throws {
-        let harness = WiredCommandCore()
-        func register(_ name: String, created: TimeInterval, lastRun: TimeInterval?, running: Bool = false) {
-            harness.register(
-                name: name, phase: running ? .running(sessionID: UUID()) : .stopped,
-                hostState: VMHostState(lastRunAt: lastRun.map(Date.init(timeIntervalSince1970:)))
-            ) { $0.createdAt = Date(timeIntervalSince1970: created) }
+    /// A Find whose picker value stands for another library value answers
+    /// that value's VMs, which the shortcut's next action takes as the ones
+    /// it asked for.
+    @Test("Each Shortcuts picker value stands for the library value of its own name, both ways")
+    func pickerValuesStandForTheirLibraryValues() {
+        for bucket in VMStateBucket.allCases {
+            #expect(VMStateGroup(bucket).rawValue == bucket.rawValue)
+            #expect(VMStateGroup(bucket).bucket == bucket)
         }
-        register("Beta", created: 100, lastRun: nil)
-        register("Older", created: 400, lastRun: 300)
-        register("Alpha", created: 100, lastRun: nil)
-        // Running now since before every other VM last ran.
-        register("Running", created: 200, lastRun: 50, running: true)
-        register("Recent", created: 300, lastRun: 500)
-        let library = try await makeGateway(over: harness).vms(meeting: [], mode: .and)
-
-        func sorted(by key: PartialKeyPath<VMEntity>, ascending: Bool) -> [String] {
-            VMEntityQuery.sorted(library, by: key, ascending: ascending).map(\.name)
+        for os in VMGuestOS.allCases {
+            #expect(VMGuestOperatingSystem(os).rawValue == os.rawValue)
+            #expect(VMGuestOperatingSystem(os).os == os)
         }
-
-        #expect(VMEntityQuery.ordered(library, by: [], limit: 2).map(\.name) == ["Beta", "Older"])
-        #expect(sorted(by: \VMEntity.$lastRunAt, ascending: false) == ["Running", "Recent", "Older", "Alpha", "Beta"])
-        #expect(sorted(by: \VMEntity.$lastRunAt, ascending: true) == ["Beta", "Alpha", "Older", "Recent", "Running"])
-        // Beta and Alpha were created together, so they keep library order.
-        #expect(sorted(by: \VMEntity.$createdAt, ascending: false) == ["Older", "Recent", "Running", "Beta", "Alpha"])
-        #expect(sorted(by: \VMEntity.$createdAt, ascending: true) == ["Alpha", "Beta", "Running", "Recent", "Older"])
+        for mode in VMNetworkMode.allCases {
+            #expect(VMNetworkModeOption(mode).rawValue == mode.rawValue)
+        }
+        for bucket in VMGuestAgentBucket.allCases {
+            #expect(VMGuestAgentVersion(bucket).rawValue == bucket.rawValue)
+            #expect(VMGuestAgentVersion(bucket).bucket == bucket)
+        }
     }
 }

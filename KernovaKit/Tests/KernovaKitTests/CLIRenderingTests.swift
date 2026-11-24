@@ -22,8 +22,8 @@ struct CLIRenderingTests {
         hasSavedState: Bool = false, savedStateKernovaVersion: String? = nil
     ) -> VMInfo {
         VMInfo(
-            id: alpha.id, name: "Alpha", status: "running", guestOS: "macOS", cpuCount: 4,
-            memoryBytes: memoryBytes, networkMode: "nat", networkMembership: networkMembership,
+            id: alpha.id, name: "Alpha", status: "running", guestOS: .macOS, cpuCount: 4,
+            memoryBytes: memoryBytes, networkMode: .nat, networkMembership: networkMembership,
             networkName: networkName, macAddress: "aa:bb:cc:dd:ee:ff",
             ipAddress: ipAddress, agentStatus: agentStatus,
             hasSavedState: hasSavedState, savedStateKernovaVersion: savedStateKernovaVersion, isEphemeral: true,

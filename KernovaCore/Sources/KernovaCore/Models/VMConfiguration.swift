@@ -2,21 +2,7 @@ import Foundation
 import KernovaCommandModel
 import KernovaKit
 
-/// How an enabled network device attaches to the world.
-package enum VMNetworkMode: String, Codable, Sendable, Equatable, CaseIterable {
-    case nat
-    case bridged
-    case hostOnly
-
-    /// How every surface the user reads names this mode.
-    package var title: String {
-        switch self {
-        case .nat: "NAT"
-        case .bridged: "Bridged"
-        case .hostOnly: "Host Only"
-        }
-    }
-
+extension VMNetworkMode {
     /// Whether a saved state taken on one network of this mode restores on
     /// another network of the same mode — what lets a VM holding one move
     /// between its mode's common network and a network of its own.

@@ -116,6 +116,8 @@ package final class VMIntentGateway {
         case .listed(let query, let negated):
             let listed = Set(commands.list(try commands.selection(for: query, verb: .list)).map(\.id))
             return { listed.contains($0.id) != negated }
+        case .naming(let network, let holds):
+            return try predicate(for: holds(try commands.namedNetwork(network, verb: .list).id))
         }
     }
 

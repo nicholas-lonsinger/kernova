@@ -27,13 +27,12 @@ package struct VMEntity: IndexedEntity {
     @Property(title: "State")
     var status: String
 
-    /// The VM's coarse state — a ``VMStateBucket`` wire name, the buckets the
-    /// sidebar filters and groups by.
+    /// The VM's coarse state, the buckets the sidebar filters and groups by.
     @Property(title: "State Group")
-    var stateGroup: String
+    var stateGroup: VMStateGroup
 
     @Property(title: "Guest Operating System")
-    var guestOS: String
+    var guestOS: VMGuestOperatingSystem
 
     @Property(title: "CPU Count")
     var cpuCount: Int
@@ -45,7 +44,7 @@ package struct VMEntity: IndexedEntity {
     var memoryBytes: Int
 
     @Property(title: "Network Mode")
-    var networkMode: String?
+    var networkMode: VMNetworkModeOption?
 
     @Property(title: "Network Membership")
     var networkMembership: String?
@@ -67,11 +66,10 @@ package struct VMEntity: IndexedEntity {
     @Property(title: "Guest Agent Status")
     var agentStatus: String?
 
-    /// How the guest agents stand against the bundled ones — a
-    /// ``VMGuestAgentBucket`` wire name — `nil` when an agent has connected
-    /// and this build bundles none for the guest's OS.
+    /// How the guest agents stand against the bundled ones, `nil` when an
+    /// agent has connected and this build bundles none for the guest's OS.
     @Property(title: "Guest Agent Version")
-    var guestAgentVersion: String?
+    var guestAgentVersion: VMGuestAgentVersion?
 
     @Property(title: "Has Saved State")
     var hasSavedState: Bool
@@ -125,17 +123,17 @@ package struct VMEntity: IndexedEntity {
             case .id: break  // The entity's identifier, set above.
             case .name: name = info.name
             case .status: status = info.status
-            case .stateBucket: stateGroup = info.stateBucket.rawValue
-            case .guestOS: guestOS = info.guestOS
+            case .stateBucket: stateGroup = VMStateGroup(info.stateBucket)
+            case .guestOS: guestOS = VMGuestOperatingSystem(info.guestOS)
             case .cpuCount: cpuCount = info.cpuCount
             case .memoryBytes: memoryBytes = Int(clamping: info.memoryBytes)
-            case .networkMode: networkMode = info.networkMode
+            case .networkMode: networkMode = info.networkMode.map(VMNetworkModeOption.init)
             case .networkMembership: networkMembership = info.networkMembership
             case .networkName: networkName = info.networkName?.title
             case .macAddress: macAddress = info.macAddress
             case .ipAddress: ipAddress = info.ipAddress.address
             case .agentStatus: agentStatus = info.agentStatus
-            case .guestAgent: guestAgentVersion = info.guestAgent?.rawValue
+            case .guestAgent: guestAgentVersion = info.guestAgent.map(VMGuestAgentVersion.init)
             case .hasSavedState: hasSavedState = info.hasSavedState
             case .savedStateKernovaVersion: savedStateKernovaVersion = info.savedStateKernovaVersion
             case .isEphemeral: isEphemeral = info.isEphemeral
@@ -170,13 +168,8 @@ package struct VMEntity: IndexedEntity {
     package var attributeSet: CSSearchableItemAttributeSet {
         let attributes = defaultAttributeSet
         attributes.displayName = name
-        attributes.contentDescription = "\(Self.guestOSDisplayName(guestOS)) virtual machine"
+        attributes.contentDescription = "\(guestOS.os.displayName) virtual machine"
         return attributes
-    }
-
-    /// A wire guest OS in the words a person reads.
-    static func guestOSDisplayName(_ guestOS: String) -> String {
-        VMGuestOS(rawValue: guestOS)?.displayName ?? guestOS
     }
 }
 
@@ -199,15 +192,46 @@ package struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQu
         /// Holds for each VM `kernova list` lists for the query, refusing
         /// what it refuses — or, `negated`, for every other VM.
         case listed(VMListQuery, negated: Bool)
+        /// Holds where `holds` does of the named network `text` names, by
+        /// name, ignoring case, or by identifier — which the gateway resolves,
+        /// refusing one the library does not list.
+        case naming(network: String, holds: @Sendable (UUID) -> Condition)
 
-        /// Holds for each VM listed on the network `text` names
-        /// (``VMListQuery/networks``); a `nil` text names none, and holds for
-        /// each VM whose ``VMEntity/networkName`` reads `nil`.
+        /// Holds for each VM `kernova list` lists under `filter`, or with
+        /// `holding` false, for every other VM.
+        static func admitted(by filter: VMLibraryFilter, holding: Bool = true) -> Self {
+            .listed(
+                VMListQuery(filter: filter, networks: [], tags: [], groups: [], sort: .manual), negated: !holding)
+        }
+
+        /// Holds for each VM listed on the named network `text` names; a `nil`
+        /// text names none, and holds for each VM whose
+        /// ``VMEntity/networkName`` reads `nil`.
         static func onNetwork(_ text: String?) -> Self {
             guard let text else { return .admits { $0.networkName == nil } }
-            return .listed(
-                VMListQuery(filter: VMLibraryFilter(), networks: [text], tags: [], groups: [], sort: .manual),
-                negated: false)
+            return .naming(network: text) { id in
+                .listed(
+                    VMListQuery(
+                        filter: VMLibraryFilter(), networks: [id.uuidString], tags: [], groups: [], sort: .manual),
+                    negated: false)
+            }
+        }
+
+        /// Holds for each VM whose ``VMEntity/networkMembership`` is the one
+        /// `text` names: `common` or `isolated`, ignoring case, or a named
+        /// network; a `nil` text names none, and holds for each VM whose
+        /// membership reads `nil`.
+        static func inMembership(_ text: String?) -> Self {
+            guard let text else { return .admits { $0.networkMembership == nil } }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let membership = [VMNetworkMembership.common, .isolated].first(where: {
+                $0.rawValue.caseInsensitiveCompare(trimmed) == .orderedSame
+            }) {
+                return .admits { $0.networkMembership == membership.rawValue }
+            }
+            return .naming(network: text) { id in
+                .admits { $0.networkMembership == VMNetworkMembership.network(id).rawValue }
+            }
         }
 
         /// Holds for each VM listed as carrying the tag `text` names
@@ -218,11 +242,20 @@ package struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQu
                 negated: false)
         }
 
+        /// Holds for each VM listed with its guest agents standing as
+        /// `version` names; a `nil` version holds for each VM whose
+        /// ``VMEntity/guestAgentVersion`` reads `nil`.
+        static func agents(_ version: VMGuestAgentVersion?) -> Self {
+            guard let version else { return .admits { $0.guestAgentVersion == nil } }
+            return admitted(by: VMLibraryFilter(guestAgents: [version.bucket]))
+        }
+
         /// Holds for each VM this does not.
         var negated: Self {
             switch self {
             case .admits(let admits): .admits { !admits($0) }
             case .listed(let query, let negated): .listed(query, negated: !negated)
+            case .naming(let network, let holds): .naming(network: network) { holds($0).negated }
             }
         }
     }
@@ -287,20 +320,20 @@ package struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQu
             NotEqualToComparator { value in .admits { $0.status != value } }
         }
         Property(\VMEntity.$stateGroup) {
-            EqualToComparator { value in .admits { $0.stateGroup == value } }
-            NotEqualToComparator { value in .admits { $0.stateGroup != value } }
+            EqualToComparator { value in .admitted(by: VMLibraryFilter(states: [value.bucket])) }
+            NotEqualToComparator { value in .admitted(by: VMLibraryFilter(states: [value.bucket]), holding: false) }
         }
         Property(\VMEntity.$guestOS) {
-            EqualToComparator { value in .admits { $0.guestOS == value } }
-            NotEqualToComparator { value in .admits { $0.guestOS != value } }
+            EqualToComparator { value in .admitted(by: VMLibraryFilter(guestOSes: [value.os])) }
+            NotEqualToComparator { value in .admitted(by: VMLibraryFilter(guestOSes: [value.os]), holding: false) }
         }
         Property(\VMEntity.$networkMode) {
             EqualToComparator { value in .admits { $0.networkMode == value } }
             NotEqualToComparator { value in .admits { $0.networkMode != value } }
         }
         Property(\VMEntity.$networkMembership) {
-            EqualToComparator { value in .admits { $0.networkMembership == value } }
-            NotEqualToComparator { value in .admits { $0.networkMembership != value } }
+            EqualToComparator { value in .inMembership(value) }
+            NotEqualToComparator { value in .inMembership(value).negated }
         }
         Property(\VMEntity.$networkName) {
             EqualToComparator { value in .onNetwork(value) }
@@ -314,11 +347,11 @@ package struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQu
             NotEqualToComparator { value in .admits { $0.agentStatus != value } }
         }
         Property(\VMEntity.$guestAgentVersion) {
-            EqualToComparator { value in .admits { $0.guestAgentVersion == value } }
-            NotEqualToComparator { value in .admits { $0.guestAgentVersion != value } }
+            EqualToComparator { value in .agents(value) }
+            NotEqualToComparator { value in .agents(value).negated }
         }
         Property(\VMEntity.$hasSnapshots) {
-            EqualToComparator { value in .admits { $0.hasSnapshots == value } }
+            EqualToComparator { value in .admitted(by: VMLibraryFilter(withSnapshotsOnly: true), holding: value) }
         }
         Property(\VMEntity.$snapshotCount) {
             EqualToComparator { value in .admits { $0.snapshotCount == value } }
@@ -329,7 +362,7 @@ package struct VMEntityQuery: EntityQuery, EntityStringQuery, EnumerableEntityQu
             EqualToComparator { value in .admits { $0.hasSavedState == value } }
         }
         Property(\VMEntity.$isEphemeral) {
-            EqualToComparator { value in .admits { $0.isEphemeral == value } }
+            EqualToComparator { value in .admitted(by: VMLibraryFilter(ephemeralOnly: true), holding: value) }
         }
     }
 

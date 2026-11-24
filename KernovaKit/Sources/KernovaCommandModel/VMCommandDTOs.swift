@@ -99,14 +99,14 @@ public struct VMInfo: Codable, Sendable, Hashable {
     /// still being written by a create, clone or import reports `preparing`,
     /// which is not a ``VMStatus`` value.
     public let status: String
-    /// Which guest the VM runs, as its stable wire name.
-    public let guestOS: String
+    /// Which guest the VM runs.
+    public let guestOS: VMGuestOS
     /// Virtual CPUs the guest is configured with.
     public let cpuCount: Int
     /// Guest memory in bytes.
     public let memoryBytes: UInt64
-    /// The network the VM joins, `nil` when networking is off.
-    public let networkMode: String?
+    /// The mode of the network the VM joins, `nil` when networking is off.
+    public let networkMode: VMNetworkMode?
     /// Which network of its mode the VM joins — `common`, `isolated`, or a
     /// named network's identifier, as `network.membership` reads it — `nil`
     /// where it joins no app-managed network (networking off, or bridged).
@@ -179,10 +179,10 @@ public struct VMInfo: Codable, Sendable, Hashable {
         id: UUID,
         name: String,
         status: String,
-        guestOS: String,
+        guestOS: VMGuestOS,
         cpuCount: Int,
         memoryBytes: UInt64,
-        networkMode: String?,
+        networkMode: VMNetworkMode?,
         networkMembership: String?,
         networkName: VMNetworkName?,
         macAddress: String?,

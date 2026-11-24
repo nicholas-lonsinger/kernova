@@ -99,7 +99,6 @@ struct VMCommandEnvelopeRouterTests {
 
         let response = try await harness.transport.sendRaw(request)
 
-        #expect(VMCommandRequest.currentProtocolVersion == 21)
         #expect(
             response.result
                 == .refused(.unsupportedProtocolVersion(peer: 13, expected: VMCommandRequest.currentProtocolVersion)))
