@@ -101,8 +101,7 @@ package final class VMLibrary: VMAdmissionPeers {
     @ObservationIgnored var onUnsettledSession: ((VMInstance) -> [VMFollowUp])?
 
     /// Fires when an arrival settles as no VM, in the same main-actor step as
-    /// — and just before — its row leaves the library, so anything the hook
-    /// emits precedes every observer of the removal.
+    /// — and just before — its row leaves the library.
     @ObservationIgnored var onArrivalFailed: ((VMArrival, any Error) -> Void)?
 
     /// Fires when a VM reaches a state a device can be attached to, answering

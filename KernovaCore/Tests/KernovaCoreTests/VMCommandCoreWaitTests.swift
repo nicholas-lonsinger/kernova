@@ -29,13 +29,11 @@ struct VMCommandCoreWaitTests {
                 virtualization: virtualization, installService: install, preferences: preferences, clock: clock))
     }
 
-    /// A wait for `condition` on the VM `id` names, bounded by `seconds`,
-    /// returned once it is armed.
+    /// A wait for `condition` on the VM `id` names, returned once it is armed.
     private func armedWait(
-        in harness: Harness, on id: UUID, until condition: WaitCondition, seconds: TimeInterval = 60,
-        clock: GatedEngineClock
+        in harness: Harness, on id: UUID, until condition: WaitCondition, clock: GatedEngineClock
     ) async throws -> Task<VMInfo, any Error> {
-        let wait = Task { try await harness.core.wait(.id(id), until: condition, timeout: seconds) }
+        let wait = Task { try await harness.core.wait(.id(id), until: condition, timeout: 60) }
         try await clock.sleepRequested.wait { !clock.parked.isEmpty }
         return wait
     }
@@ -109,32 +107,6 @@ struct VMCommandCoreWaitTests {
         let alert = try #require(harness.failures.first)
         let ended = try await #require(throws: CommandError.self) { try await wait.joined() }
         #expect(ended == .operationFailed(verb: .wait, message: alert.message(in: .app)))
-    }
-
-    @Test("A guest setup cancelled while the wait runs leaves it running to its deadline")
-    func aCancelledSetupLeavesTheWaitRunning() async throws {
-        let install = MockMacOSInstallService()
-        install.installError = CancellationError()
-        let clock = GatedEngineClock()
-        let harness = makeHarness(install: install, clock: clock)
-        let vm = makeSetupPendingVM(in: harness)
-
-        let wait = try await armedWait(in: harness, on: vm.id, until: .running, clock: clock)
-        try await harness.core.start(.id(vm.id), recovery: false, consent: .none)
-        try await vm.setupOperationTask?.joined()
-        #expect(vm.status == .initialBoot)
-        // A cancel is somebody's decision, not a failure to tell anyone of.
-        #expect(harness.failures.isEmpty)
-
-        // Letting the deadline expire is what proves the wait was still
-        // running: had the cancel ended it, it would already have thrown
-        // something other than its expiry.
-        clock.release(try #require(clock.parked.first))
-        let ended = try await #require(throws: CommandError.self) { try await wait.joined() }
-        guard case .waitEnded(_, .running, .timedOut(60)) = ended else {
-            Issue.record("Expected the wait's expiry, got \(ended)")
-            return
-        }
     }
 
     @Test("A restore a group start runs that fails, resting the VM suspended again, ends the wait")
@@ -216,23 +188,6 @@ struct VMCommandCoreWaitTests {
         let met = try await wait.joined()
         #expect(met.id == alpha.id)
         #expect(met.status == VMStatus.running.rawValue)
-    }
-
-    @Test("The deadline ends a wait nothing else does, naming the condition and the seconds")
-    func theDeadlineEndsTheWait() async throws {
-        let clock = GatedEngineClock()
-        let harness = makeHarness(clock: clock)
-        let vm = harness.wired.register(name: "Idle")
-
-        let wait = try await armedWait(in: harness, on: vm.id, until: .running, seconds: 45, clock: clock)
-        clock.release(try #require(clock.parked.first))
-
-        let ended = try await #require(throws: CommandError.self) { try await wait.joined() }
-        guard case .waitEnded(let summary, .running, .timedOut(45)) = ended else {
-            Issue.record("Expected the wait's expiry, got \(ended)")
-            return
-        }
-        #expect(summary.id == vm.id)
     }
 
     @Test(

@@ -183,14 +183,8 @@ extension KernovaCommand {
         /// it, not seen yet — so each refuses rather than printing prose a
         /// script would parse as an address.
         static func line(for address: GuestIPAddress, vm: String) throws -> String {
-            let absence: GuestAddressAbsence
-            switch address {
-            case .observed(let value): return value
-            case .notObserved: absence = .notObserved
-            case .externallyAssigned: absence = .externallyAssigned
-            case .unavailable: absence = .unavailable
-            }
-            throw CLIFailure(.refusedByState, absence.sentence(vm: vm))
+            if let absence = address.absence { throw CLIFailure(.refusedByState, absence.sentence(vm: vm)) }
+            return address.address ?? ""
         }
     }
 
