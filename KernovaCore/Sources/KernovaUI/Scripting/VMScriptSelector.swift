@@ -17,11 +17,10 @@ enum VMScriptSelector {
     ///
     /// - Throws: ``VMScriptEvaluationFailure`` as one specifier's read does, and
     ///   ``CommandError/invalidArgument(_:)`` for a list item that is not a
-    ///   specifier.
+    ///   reference to a VM.
     static func selectors(addressing parameter: Any) throws -> [VMSelector] {
-        try specifiers(in: parameter, naming: "virtual machine").flatMap { specifier in
-            try selectors(addressing: specifier)
-        }
+        let listed = try specifiers(in: parameter, naming: "virtual machine", key: VMScriptingRoot.virtualMachinesKey)
+        return try listed.flatMap { specifier in try selectors(addressing: specifier) }
     }
 
     /// The snapshots `parameter` addresses — one specifier, or a list of them
@@ -33,9 +32,8 @@ enum VMScriptSelector {
     ///
     /// - Throws: As ``selectors(addressing:)-swift.type.method`` does.
     static func snapshots(addressing parameter: Any) throws -> [VMSnapshotAddress] {
-        try specifiers(in: parameter, naming: "snapshot").flatMap { specifier in
-            try snapshots(addressing: specifier, in: nil)
-        }
+        let listed = try specifiers(in: parameter, naming: "snapshot", key: VMScriptObject.snapshotsKey)
+        return try listed.flatMap { specifier in try snapshots(addressing: specifier, in: nil) }
     }
 
     /// The snapshots `specifier` addresses, evaluated as
@@ -49,17 +47,23 @@ enum VMScriptSelector {
         try objects(evaluating: specifier, in: containers, as: VMSnapshotScriptObject.self).map { $0.address }
     }
 
-    /// `parameter` as the specifiers it holds: one, or a list of them.
+    /// `parameter` as the specifiers it holds: one, or a list of references to
+    /// the element a `noun` is under `key`.
+    ///
+    /// A list is refused whole for one item that is something else, so a verb
+    /// runs on all of it or none.
     ///
     /// - Throws: ``CommandError/invalidArgument(_:)`` for anything else, or a
-    ///   list item that is not a specifier.
-    private static func specifiers(in parameter: Any, naming noun: String) throws -> [NSScriptObjectSpecifier] {
+    ///   list item that is not such a reference.
+    private static func specifiers(
+        in parameter: Any, naming noun: String, key: String
+    ) throws -> [NSScriptObjectSpecifier] {
         if let specifier = parameter as? NSScriptObjectSpecifier { return [specifier] }
         guard let list = parameter as? [Any] else {
             throw CommandError.invalidArgument("Name a \(noun), or a list of them.")
         }
         return try list.enumerated().map { index, item in
-            guard let specifier = item as? NSScriptObjectSpecifier else {
+            guard let specifier = item as? NSScriptObjectSpecifier, specifier.key == key else {
                 throw CommandError.invalidArgument("A list here names \(noun)s only; item \(index + 1) is not one.")
             }
             return specifier

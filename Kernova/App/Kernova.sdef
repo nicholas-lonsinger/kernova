@@ -5,16 +5,38 @@
 
 	<suite name="Standard Suite" code="????" description="Common classes and commands for all applications.">
 
-		<xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef" xpointer="xpointer(/dictionary/suite/node()[not(self::command and @name = 'delete')])"/>
+		<xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef" xpointer="xpointer(/dictionary/suite/node()[not(self::command and (@name = 'delete' or @name = 'make'))])"/>
 
-		<!-- The Standard Suite's delete, with the consent a snapshot's delete refuses without, and the class that deletes a snapshot by what its reference evaluates to. -->
+		<!-- The Standard Suite's delete, taking a list of references too and the consent a snapshot's delete refuses without, with the class that deletes a snapshot by what its reference evaluates to. -->
 		<command name="delete" code="coredelo" description="Delete an object.">
 			<cocoa class="VMDeleteScriptCommand"/>
 			<access-group identifier="*"/>
-			<direct-parameter type="specifier" description="The object(s) to delete."/>
+			<direct-parameter description="The object(s) to delete.">
+				<type type="specifier"/>
+				<type type="specifier" list="yes"/>
+			</direct-parameter>
 			<parameter name="confirmation" code="Kpcf" type="boolean" optional="yes" description="Supply the consent deleting a snapshot refuses without.">
 				<cocoa key="Confirmation"/>
 			</parameter>
+		</command>
+
+		<!-- The Standard Suite's make, with the class that takes a snapshot for one made at a virtual machine. -->
+		<command name="make" code="corecrel" description="Create a new object.">
+			<cocoa class="VMCreateScriptCommand"/>
+			<access-group identifier="*"/>
+			<parameter name="new" code="kocl" type="type" description="The class of the new object.">
+				<cocoa key="ObjectClass"/>
+			</parameter>
+			<parameter name="at" code="insh" type="location specifier" optional="yes" description="The location at which to insert the object.">
+				<cocoa key="Location"/>
+			</parameter>
+			<parameter name="with data" code="data" type="any" optional="yes" description="The initial contents of the object.">
+				<cocoa key="ObjectData"/>
+			</parameter>
+			<parameter name="with properties" code="prdt" type="record" optional="yes" description="The initial values for properties of the object.">
+				<cocoa key="KeyDictionary"/>
+			</parameter>
+			<result type="specifier" description="The new object."/>
 		</command>
 
 	</suite>

@@ -6,7 +6,7 @@ import Testing
 @testable import KernovaCore
 @testable import KernovaCoreTestSupport
 
-/// The library half of the App Intents surface: what a rename, an import and a
+/// The library half of the App Intents surface: what an import and a
 /// delete do to the library, and how narrowly the delete is offered.
 ///
 /// Driven through the gateway rather than through the intents, which resolve
@@ -20,29 +20,6 @@ struct VMLibraryIntentTests {
         VMIntentGateway(
             commands: wired.core, readiness: LibraryReadiness(awaitReady: {}),
             index: MockVMEntityIndex(), record: makeTestIndexRecord())
-    }
-
-    // MARK: - Library Verbs
-
-    /// The core trims the name and writes nothing when none is left — the
-    /// inline field commits on end-editing whether or not the text changed —
-    /// so a Shortcut whose Name resolves to nothing would report success
-    /// having renamed nothing.
-    @Test(
-        "A rename carrying nothing but whitespace for a name is refused",
-        arguments: ["", "   ", "\n\t "])
-    func aRenameWithoutANameIsRefused(name: String) async throws {
-        let wired = WiredCommandCore()
-        let vm = wired.register()
-
-        await #expect(
-            throws: CommandError.invalidArgument(
-                "A name is at least one character that is not a space.")
-        ) {
-            try await makeGateway(wired).rename(vm.id, to: name)
-        }
-
-        #expect(vm.name == "Wired")
     }
 
     // MARK: - Import

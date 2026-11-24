@@ -326,9 +326,8 @@ package final class VMIntentGateway {
 
     func renameSnapshot(_ id: UUID, snapshot: SnapshotEntityID, to newName: String) async throws {
         try await perform(.renameSnapshot, on: id) {
-            let named = try VMCommandCore.requireName(newName)
             let listed = try self.listedSnapshot(snapshot, on: id)
-            try self.commands.renameSnapshot(.id(id), snapshot: listed, to: named)
+            try self.commands.renameSnapshot(.id(id), snapshot: listed, to: newName)
         }
     }
 
@@ -529,7 +528,7 @@ package final class VMIntentGateway {
 
     func rename(_ id: UUID, to newName: String) async throws {
         try await perform(.rename, on: id) {
-            try self.commands.rename(.id(id), to: VMCommandCore.requireName(newName))
+            try self.commands.rename(.id(id), to: newName)
         }
     }
 

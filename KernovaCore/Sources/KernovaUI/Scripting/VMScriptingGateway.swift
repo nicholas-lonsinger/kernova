@@ -711,9 +711,10 @@ final class VMScriptingGateway {
     }
 
     /// Takes a snapshot of the VM `vm` identifies, called `name` and noted
-    /// `notes` — a script's `make new snapshot at` it — once the dispatch
-    /// returns (``afterDispatch(_:on:_:)``), answering the `make` with the
-    /// snapshot taken.
+    /// `notes` — a script's `make new snapshot at` it
+    /// (``VMCreateScriptCommand``) — once the dispatch returns
+    /// (``afterDispatch(_:on:_:)``), answering the `make` with the snapshot
+    /// taken.
     ///
     /// No name is the name the app's own sheet proposes.
     func makeSnapshot(of vm: UUID, name: String?, notes: String?) {
@@ -724,22 +725,24 @@ final class VMScriptingGateway {
         }
     }
 
-    /// Deletes each snapshot `specifier` evaluates to in `containers` — a
-    /// script's `delete snapshot`, whose VMs Cocoa evaluated apart from it —
-    /// once the dispatch returns (``afterDispatch(_:on:_:)``), with
-    /// `delete`'s `with confirmation` as the consent it refuses without; or
-    /// records on `delete` why `specifier` names none.
+    /// Deletes each snapshot `read` finds in `addressed` — a script's `delete`
+    /// of one snapshot reference, or of a list of them — once the dispatch
+    /// returns (``afterDispatch(_:on:_:)``), with `delete`'s
+    /// `with confirmation` as the consent it refuses without; or records on
+    /// `delete` why `addressed` names none.
     ///
-    /// Evaluated as every other snapshot verb's reference is
-    /// (``VMScriptSelector/snapshots(addressing:in:)``), never by the index
+    /// `read` evaluates as every other snapshot verb's reference is
+    /// (``VMScriptSelector/snapshots(addressing:)``), never by the index
     /// Cocoa's own delete computes: that one names the first snapshot whose
     /// name matches, of however many do (observed on macOS 27).
-    func deleteSnapshots(_ specifier: NSScriptObjectSpecifier, in containers: Any?, for delete: NSScriptCommand) {
+    func deleteSnapshots(
+        _ addressed: Any, for delete: NSScriptCommand, reading read: () throws -> [VMSnapshotAddress]
+    ) {
         let snapshots: [VMSnapshotAddress]
         do {
-            snapshots = try VMScriptSelector.snapshots(addressing: specifier, in: containers)
+            snapshots = try read()
         } catch let failure as VMScriptEvaluationFailure {
-            failure.record(on: delete, addressing: specifier)
+            failure.record(on: delete, addressing: addressed)
             return
         } catch let refusal as CommandError {
             delete.refuse(refusal)
@@ -758,9 +761,9 @@ final class VMScriptingGateway {
         }
     }
 
-    /// Refuses Cocoa's removal of a snapshot by index, which a `move` asks
-    /// for: the snapshots are ordered newest first, so there is no move to
-    /// make, and a delete reaches ``deleteSnapshots(_:in:for:)`` instead.
+    /// Refuses Cocoa's removal of a snapshot by index, which only a `move`
+    /// asks for: the snapshots are ordered newest first, so there is no move
+    /// to make.
     func refuseToMoveSnapshot() {
         answering?.refuse(
             Int(errAEEventNotHandled), "Kernova lists snapshots newest first, so a script can\u{2019}t move one.")
@@ -776,12 +779,10 @@ final class VMScriptingGateway {
     }
 
     /// Renames the snapshot `address` names — a script's `set name of
-    /// snapshot` — refusing a name that is nothing but spaces, which the core
-    /// takes as no change.
+    /// snapshot`.
     func renameSnapshot(_ address: VMSnapshotAddress, to newName: String) {
         run(.renameSnapshot, on: address.vm) {
-            try commands.renameSnapshot(
-                .id(address.vm), snapshot: address.snapshot, to: VMCommandCore.requireName(newName))
+            try commands.renameSnapshot(.id(address.vm), snapshot: address.snapshot, to: newName)
         }
     }
 

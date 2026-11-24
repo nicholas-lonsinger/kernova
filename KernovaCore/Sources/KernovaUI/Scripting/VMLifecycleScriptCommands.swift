@@ -214,34 +214,6 @@ final class VMRevealScriptCommand: VMScriptCommand {
     }
 }
 
-/// The Standard Suite's `delete … [with confirmation]`: a snapshot's delete
-/// goes to ``VMScriptingGateway/deleteSnapshots(_:in:for:)``, and everything
-/// else's is Cocoa's own.
-///
-/// Cocoa splits a delete's reference into the container it evaluates and the
-/// element it names (``keySpecifier``), and runs this once that container is
-/// in hand.
-@MainActor
-@objc(VMDeleteScriptCommand)
-final class VMDeleteScriptCommand: NSDeleteCommand {
-    /// A selector hop to the main actor, as ``VMScriptCommand/execute()``
-    /// takes, for a snapshot's delete.
-    nonisolated override func performDefaultImplementation() -> Any? {
-        guard keySpecifier.key == VMScriptObject.snapshotsKey else { return super.performDefaultImplementation() }
-        performSelector(onMainThread: #selector(deleteSnapshots), with: nil, waitUntilDone: true)
-        return nil
-    }
-
-    /// Where the hop lands, on the main actor.
-    @objc private func deleteSnapshots() {
-        guard let gateway = (NSApp.delegate as? VMScriptingRoot)?.scriptingGateway else {
-            refuse(Int(errAEEventFailed), VMScriptCommand.notReady)
-            return
-        }
-        gateway.deleteSnapshots(keySpecifier, in: evaluatedReceivers, for: self)
-    }
-}
-
 /// `revert to snapshot … [with confirmation]`
 ///
 /// It addresses snapshots, each of which names its VM, so it reverts a VM to
@@ -256,5 +228,102 @@ final class VMRevertScriptCommand: VMScriptCommand {
             try await gateway.revert(to: snapshots, confirmation: confirmation)
             return nil
         }
+    }
+}
+
+// MARK: - Standard Suite
+
+/// The Standard Suite's `delete … [with confirmation]`: a snapshot's delete,
+/// or a list of references, goes to
+/// ``VMScriptingGateway/deleteSnapshots(_:for:reading:)``, and every other
+/// delete is Cocoa's own.
+///
+/// Cocoa splits a delete's one reference into the container it evaluates and
+/// the element it names (``deletedElement``), and runs this once that
+/// container is in hand; a list it leaves whole, as the direct parameter.
+@MainActor
+@objc(VMDeleteScriptCommand)
+final class VMDeleteScriptCommand: NSDeleteCommand {
+    /// A selector hop to the main actor, as ``VMScriptCommand/execute()``
+    /// takes, for a snapshot's delete or a list's.
+    nonisolated override func performDefaultImplementation() -> Any? {
+        guard directParameter is [Any] || deletedElement?.key == VMScriptObject.snapshotsKey else {
+            return super.performDefaultImplementation()
+        }
+        performSelector(onMainThread: #selector(deleteSnapshots), with: nil, waitUntilDone: true)
+        return nil
+    }
+
+    /// The element one reference names, `nil` for a list: the header declares
+    /// ``keySpecifier`` non-null, and Cocoa sets it only when the direct
+    /// parameter is one reference.
+    nonisolated private var deletedElement: NSScriptObjectSpecifier? {
+        value(forKey: #keyPath(NSDeleteCommand.keySpecifier)) as? NSScriptObjectSpecifier
+    }
+
+    /// Where the hop lands, on the main actor.
+    @objc private func deleteSnapshots() {
+        guard let gateway = (NSApp.delegate as? VMScriptingRoot)?.scriptingGateway else {
+            refuse(Int(errAEEventFailed), VMScriptCommand.notReady)
+            return
+        }
+        if let list = directParameter as? [Any] {
+            gateway.deleteSnapshots(list, for: self) { try VMScriptSelector.snapshots(addressing: list) }
+        } else if let deleted = deletedElement {
+            let containers = evaluatedReceivers
+            gateway.deleteSnapshots(deleted, for: self) {
+                try VMScriptSelector.snapshots(addressing: deleted, in: containers)
+            }
+        }
+    }
+}
+
+/// The Standard Suite's `make`: a snapshot made at a VM is taken by
+/// ``VMScriptObject/makeSnapshot(name:notes:)``, and every other make is
+/// Cocoa's own.
+@MainActor
+@objc(VMCreateScriptCommand)
+final class VMCreateScriptCommand: NSCreateCommand {
+    nonisolated private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMCreateScriptCommand")
+
+    /// The Cocoa key of `make`'s `at`, as the dictionary declares it.
+    nonisolated private static let locationKey = "Location"
+
+    /// A selector hop to the main actor, as ``VMScriptCommand/execute()``
+    /// takes, for a snapshot whose location evaluates to a VM's snapshots.
+    nonisolated override func performDefaultImplementation() -> Any? {
+        guard createClassDescription.implementationClassName == NSStringFromClass(VMSnapshotScriptObject.self),
+            let location = arguments?[Self.locationKey] as? NSPositionalSpecifier
+        else { return super.performDefaultImplementation() }
+        location.setInsertionClassDescription(createClassDescription)
+        location.evaluate()
+        guard location.insertionContainer is VMScriptObject, location.insertionKey == VMScriptObject.snapshotsKey
+        else { return super.performDefaultImplementation() }
+        performSelector(onMainThread: #selector(makeSnapshot), with: nil, waitUntilDone: true)
+        return nil
+    }
+
+    /// Where the hop lands, on the main actor, with the location evaluated.
+    @objc private func makeSnapshot() {
+        guard
+            let vm = (arguments?[Self.locationKey] as? NSPositionalSpecifier)?.insertionContainer
+                as? VMScriptObject
+        else {
+            Self.logger.log(.fault, "A snapshot's make lost the virtual machine its location evaluated to")
+            assertionFailure("A snapshot's make lost the virtual machine its location evaluated to")
+            refuse(Int(errAEEventFailed), "Kernova could not answer this.")
+            return
+        }
+        let properties = resolvedKeyDictionary
+        vm.makeSnapshot(
+            name: Self.text(properties[#keyPath(VMSnapshotScriptObject.name)]),
+            notes: Self.text(properties[#keyPath(VMSnapshotScriptObject.notes)]))
+    }
+
+    /// `value` as the text the dictionary declares the property as, `nil` for
+    /// none: `with properties` arrives uncoerced.
+    private static func text(_ value: Any?) -> String? {
+        guard let value else { return nil }
+        return NSScriptCoercionHandler.shared().coerceValue(value, to: NSString.self) as? String
     }
 }

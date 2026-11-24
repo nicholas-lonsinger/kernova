@@ -186,6 +186,31 @@ struct VMSnapshotScriptingTests {
         #expect(alpha.snapshotManifest.snapshots.map(\.id) == [first.id, second.id])
     }
 
+    @Test("A delete of a list of snapshot references takes its consent, then deletes each one it names")
+    func aListOfSnapshotsIsDeleted() async throws {
+        let wired = WiredCommandCore()
+        let keep = VMSnapshot(name: "Keep", kind: .cold, macAddress: nil)
+        let older = VMSnapshot(name: "Older", kind: .cold, macAddress: nil)
+        let oldest = VMSnapshot(name: "Oldest", kind: .cold, macAddress: nil)
+        let alpha = register(in: wired, name: "Alpha", snapshots: [keep, older, oldest])
+        let host = ScriptHost()
+        let gateway = await makeGateway(wired, host: host)
+        // `set old to …` holds a list of references, which `delete old` sends.
+        let old = NSAppleEventDescriptor.list()
+        old.insert(Self.snapshot(older, of: "Alpha"), at: 1)
+        old.insert(Self.snapshot(oldest, of: "Alpha"), at: 2)
+
+        let unconsented = try await host.send(ScriptEvent.delete(old, confirmation: false), to: gateway)
+        #expect(unconsented.errorNumber == Int(errAEEventFailed))
+        #expect(unconsented.errorString?.contains("with confirmation") == true)
+        #expect(wired.machineFiles.discardedIDs.isEmpty)
+        let deleted = try await host.send(ScriptEvent.delete(old, confirmation: true), to: gateway)
+
+        #expect(deleted.errorNumber == 0)
+        #expect(wired.machineFiles.discardedIDs == [older.id, oldest.id])
+        #expect(alpha.snapshotManifest.snapshots.map(\.id) == [keep.id])
+    }
+
     // MARK: - Reads
 
     /// One `snapshot` as `get properties` answers it.
