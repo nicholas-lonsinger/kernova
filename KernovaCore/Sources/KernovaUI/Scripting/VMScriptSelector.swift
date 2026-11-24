@@ -11,16 +11,48 @@ import KernovaCore
 /// one the container handed back first. Everything else a specifier can say —
 /// an index, a range, `every`, a `whose` test — only Cocoa can read, so those
 /// are evaluated and each VM addressed by identifier.
+///
+/// What an event addresses is its direct parameter: one specifier, or a list
+/// of them. A Standard Suite `delete` or `duplicate` evaluates its one
+/// specifier's container apart from it (`NSDeleteCommand.keySpecifier`) and
+/// passes it as `containers`, which that specifier is evaluated against.
 enum VMScriptSelector {
-    /// The VMs `parameter` addresses: one specifier, or a list of them, each
-    /// read as ``selectors(addressing:)-swift.type.method`` reads one.
+    /// The VMs `parameter` addresses, in the order it named them.
     ///
-    /// - Throws: ``VMScriptEvaluationFailure`` as one specifier's read does, and
+    /// - Throws: ``VMScriptEvaluationFailure`` when Cocoa could not evaluate a
+    ///   specifier, or evaluated it to something that is not a VM, and
     ///   ``CommandError/invalidArgument(_:)`` for a list item that is not a
     ///   reference to a VM.
-    static func selectors(addressing parameter: Any) throws -> [VMSelector] {
-        let listed = try specifiers(in: parameter, naming: "virtual machine", key: VMScriptingRoot.virtualMachinesKey)
-        return try listed.flatMap { specifier in try selectors(addressing: specifier) }
+    static func selectors(addressing parameter: Any, in containers: Any? = nil) throws -> [VMSelector] {
+        try virtualMachines(addressing: parameter, in: containers).selectors
+    }
+
+    /// The VMs `parameter` addresses, as ``selectors(addressing:in:)`` reads
+    /// them, and whether it addresses them as a list — a list of references,
+    /// or one reference Cocoa evaluated to a list, such as `every virtual
+    /// machine whose …` — which is what a verb answering one result for each
+    /// answers as a list.
+    ///
+    /// Empty when a specifier evaluated to nothing — `every virtual machine`
+    /// of an empty library, a `whose` test nothing satisfies — which is a verb
+    /// with nothing to do rather than a refusal. Called only once the library
+    /// has landed: an evaluation before that reads an empty library as if it
+    /// were the whole one.
+    ///
+    /// - Throws: As ``selectors(addressing:in:)`` does.
+    static func virtualMachines(
+        addressing parameter: Any, in containers: Any? = nil
+    ) throws -> (selectors: [VMSelector], isList: Bool) {
+        guard let specifier = parameter as? NSScriptObjectSpecifier else {
+            let listed = try specifiers(
+                in: parameter, naming: "virtual machine", key: VMScriptingRoot.virtualMachinesKey)
+            return (try listed.flatMap { try virtualMachines(addressing: $0, in: nil).selectors }, true)
+        }
+        if containers == nil, let named = selector(naming: specifier) {
+            return ([named], false)
+        }
+        let evaluated = try objects(evaluating: specifier, in: containers, as: VMScriptObject.self)
+        return (evaluated.elements.map(\.selector), evaluated.isList)
     }
 
     /// The snapshots `parameter` addresses — one specifier, or a list of them
@@ -30,21 +62,22 @@ enum VMScriptSelector {
     /// resolves through the core as a VM a verb names does
     /// (`valueInVirtualMachinesWithName:`).
     ///
-    /// - Throws: As ``selectors(addressing:)-swift.type.method`` does.
-    static func snapshots(addressing parameter: Any) throws -> [VMSnapshotAddress] {
-        let listed = try specifiers(in: parameter, naming: "snapshot", key: VMScriptObject.snapshotsKey)
-        return try listed.flatMap { specifier in try snapshots(addressing: specifier, in: nil) }
+    /// - Throws: As ``selectors(addressing:in:)`` does.
+    static func snapshots(addressing parameter: Any, in containers: Any? = nil) throws -> [VMSnapshotAddress] {
+        guard let specifier = parameter as? NSScriptObjectSpecifier else {
+            let listed = try specifiers(in: parameter, naming: "snapshot", key: VMScriptObject.snapshotsKey)
+            return try listed.flatMap { try snapshots(addressing: $0, in: nil) }
+        }
+        return try objects(evaluating: specifier, in: containers, as: VMSnapshotScriptObject.self).elements
+            .map(\.address)
     }
 
-    /// The snapshots `specifier` addresses, evaluated as
-    /// ``snapshots(addressing:)`` evaluates one — against `containers` where
-    /// Cocoa evaluated them apart from it, as it does a `delete`'s.
-    ///
-    /// - Throws: As ``snapshots(addressing:)`` does.
-    static func snapshots(
-        addressing specifier: NSScriptObjectSpecifier, in containers: Any?
-    ) throws -> [VMSnapshotAddress] {
-        try objects(evaluating: specifier, in: containers, as: VMSnapshotScriptObject.self).map { $0.address }
+    /// The element key `parameter` addresses: its specifier's, or for a list,
+    /// its first item's — `nil` for a parameter that holds no specifier
+    /// first.
+    static func key(addressedBy parameter: Any) -> String? {
+        let first = parameter as? NSScriptObjectSpecifier ?? (parameter as? [Any])?.first as? NSScriptObjectSpecifier
+        return first?.key
     }
 
     /// `parameter` as the specifiers it holds: one, or a list of references to
@@ -68,23 +101,6 @@ enum VMScriptSelector {
             }
             return specifier
         }
-    }
-
-    /// The VMs `specifier` addresses, in the order it named them.
-    ///
-    /// Empty when the specifier evaluated to nothing — `every virtual machine`
-    /// of an empty library, a `whose` test nothing satisfies — which is a verb
-    /// with nothing to do rather than a refusal. Called only once the library
-    /// has landed: an evaluation before that reads an empty library as if it
-    /// were the whole one.
-    ///
-    /// - Throws: ``VMScriptEvaluationFailure`` when Cocoa could not evaluate
-    ///   the specifier, or evaluated it to something that is not a VM.
-    static func selectors(addressing specifier: NSScriptObjectSpecifier) throws -> [VMSelector] {
-        if let named = selector(naming: specifier) {
-            return [named]
-        }
-        return try objects(evaluating: specifier, as: VMScriptObject.self).map(\.selector)
     }
 
     /// The VM `specifier` names by itself, `nil` when reading it takes an
@@ -111,7 +127,8 @@ enum VMScriptSelector {
     }
 
     /// What `specifier` evaluates to — against `containers`, or else its own
-    /// container chain — each of it an `Element`, in order.
+    /// container chain — each of it an `Element`, in order, and whether Cocoa
+    /// answered a list.
     ///
     /// A list Cocoa answers for each of several containers — `every snapshot
     /// of every virtual machine` — is read through.
@@ -119,14 +136,14 @@ enum VMScriptSelector {
     /// - Throws: ``VMScriptEvaluationFailure`` when Cocoa could not evaluate
     ///   the specifier, or evaluated it to something that is not an `Element`.
     private static func objects<Element>(
-        evaluating specifier: NSScriptObjectSpecifier, in containers: Any? = nil, as _: Element.Type
-    ) throws -> [Element] {
+        evaluating specifier: NSScriptObjectSpecifier, in containers: Any?, as _: Element.Type
+    ) throws -> (elements: [Element], isList: Bool) {
         let evaluated = containers.map { specifier.objectsByEvaluating(withContainers: $0) }
         guard let evaluated = evaluated ?? specifier.objectsByEvaluatingSpecifier else {
             throw VMScriptEvaluationFailure(specifier)
         }
         func items(_ value: Any) -> [Any] { (value as? [Any])?.flatMap(items) ?? [value] }
-        return try items(evaluated).map { object in
+        let elements = try items(evaluated).map { object in
             guard let element = object as? Element else {
                 // The event named something else the dictionary has, which
                 // Cocoa's own dispatch answers as an object with no handler
@@ -135,6 +152,7 @@ enum VMScriptSelector {
             }
             return element
         }
+        return (elements, evaluated is [Any])
     }
 
     /// The specifier at fault in what an event addressed — one specifier, or a

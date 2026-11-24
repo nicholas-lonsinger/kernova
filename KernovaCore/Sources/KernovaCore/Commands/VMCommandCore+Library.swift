@@ -40,7 +40,7 @@ extension VMCommandCore {
     ///
     /// What the rename takes is wider than what the sidebar and the settings
     /// pane offer — ``VMCapabilityCatalog/accepts(_:on:)`` states the split.
-    func rename(_ selector: VMSelector, to newName: String) throws {
+    package func rename(_ selector: VMSelector, to newName: String) throws {
         let instance = try resolve(selector)
         let trimmed = try Self.trimmedName(newName)
         guard trimmed != instance.name else { return }
@@ -190,7 +190,7 @@ extension VMCommandCore {
     /// once, and a failure reaches ``onFailure``. Either way the arrival is
     /// registered before this call first suspends.
     @discardableResult
-    func clone(
+    package func clone(
         _ selector: VMSelector, outcome: CloneOutcome?, waitForOutcome: Bool
     ) async throws -> VMSummary {
         guard waitForOutcome else { return try beginClone(selector, outcome: outcome) }
@@ -527,7 +527,7 @@ extension VMCommandCore {
     /// with no suspension point inside it, so overlapping imports cannot claim
     /// the same destination.
     @discardableResult
-    func importVM(atPath path: String, waitForOutcome: Bool) async throws -> VMSummary {
+    package func importVM(atPath path: String, waitForOutcome: Bool) async throws -> VMSummary {
         let source = try await requireSourceAuthority(.importVM)
             .readableURL(for: URL(fileURLWithPath: path), as: .vmBundle)
         return try await importVM(from: source, waitForOutcome: waitForOutcome)
@@ -736,7 +736,7 @@ extension VMCommandCore {
     /// nothing following its outcome — a waiter, a create's auto-start — ever
     /// receives the VM. A VM is not something being prepared, so a cancel
     /// naming one is refused.
-    func cancelPreparing(_ selector: VMSelector, consent: Consent) throws {
+    package func cancelPreparing(_ selector: VMSelector, consent: Consent) throws {
         let arrival: VMArrival
         switch try resolveEntry(selector) {
         case .vm(let instance): throw invalidState(instance)
@@ -782,7 +782,7 @@ extension VMCommandCore {
     /// `permanently` bypasses the Trash. Files shared with another VM are never
     /// deleted even when their id is passed. Once the VM is gone, any named file
     /// that stayed throws ``CommandError/filesKept(_:)``.
-    func delete(
+    package func delete(
         _ selector: VMSelector, permanently: Bool, alsoRemoving: Set<UUID>, consent: Consent
     ) async throws {
         // Resolution is the membership re-check: a delete sheet is window-modal

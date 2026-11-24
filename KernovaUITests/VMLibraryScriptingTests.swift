@@ -1,0 +1,163 @@
+import Cocoa
+import CoreServices
+import Foundation
+import KernovaCommandModel
+import KernovaTestSupport
+import Testing
+
+@testable import KernovaCore
+@testable import KernovaCoreTestSupport
+@testable import KernovaUI
+
+/// The library's verbs through the Standard Suite: which virtual machines a
+/// script's `delete` lands on, past the Trash or not and with what consent,
+/// and which one the reference a `duplicate` answers names.
+///
+/// A script's own events are dispatched to the test host (``ScriptHost``) and
+/// answered by the gateway under test.
+@Suite("VM library scripting", .caseScoped)
+@MainActor
+struct VMLibraryScriptingTests {
+    /// A gateway whose library read has landed.
+    private func makeGateway(_ wired: WiredCommandCore, host: ScriptHost) async -> VMScriptingGateway {
+        let readiness = LibraryReadiness(awaitReady: {})
+        await readiness.ready()
+        return VMScriptingGateway(
+            commands: wired.core, readiness: readiness, prepareToSurface: {}, runtime: host.runtime)
+    }
+
+    /// `virtual machine "<name>"`.
+    fileprivate static func vm(named name: String) -> NSAppleEventDescriptor {
+        ScriptEvent.element("KvVM", named: name)
+    }
+
+    // MARK: - Delete
+
+    /// A library of three VMs, the last two on the network "Lab": the first
+    /// is `virtual machine 1` of the application, the second `virtual machine
+    /// 1` of the network.
+    @MainActor
+    fileprivate struct Library {
+        let wired = WiredCommandCore()
+        let alpha: VMInstance
+        let beta: VMInstance
+        let gamma: VMInstance
+
+        init() throws {
+            let lab = try wired.core.createNetwork(name: "Lab", kind: .nat)
+            func member(_ configuration: inout VMConfiguration) {
+                configuration.networkEnabled = true
+                configuration.networkMode = .nat
+                configuration.networkMembership = .network(lab.id)
+                configuration.applyNetworkMode(configuration.networkMode)
+            }
+            alpha = wired.register(name: "Alpha")
+            beta = wired.register(name: "Beta", mutate: member)
+            gamma = wired.register(name: "Gamma", mutate: member)
+        }
+    }
+
+    /// The ways a script names the VMs a `delete` lands on.
+    enum DeleteForm: CaseIterable, Sendable {
+        /// `delete virtual machine "Beta"`, which a `tell virtual machine
+        /// "Beta" to delete` sends too.
+        case named
+        /// `delete {virtual machine "Alpha", virtual machine id "<Gamma's>"}`,
+        /// as a variable holding a list of references sends it.
+        case list
+        /// `delete virtual machine 1 of network "Lab"`, which is not the
+        /// application's `virtual machine 1`.
+        case indexOfNetwork
+        /// `delete every virtual machine whose name is "Gamma"`.
+        case whose
+
+        /// The event, and the names of the VMs it deletes, in order.
+        @MainActor
+        fileprivate func event(in library: Library) -> (reference: NSAppleEventDescriptor, deletes: [String]) {
+            let lab = ScriptEvent.element("KvNw", named: "Lab")
+            switch self {
+            case .named:
+                return (VMLibraryScriptingTests.vm(named: "Beta"), ["Beta"])
+            case .list:
+                let list = NSAppleEventDescriptor.list()
+                list.insert(VMLibraryScriptingTests.vm(named: "Alpha"), at: 1)
+                list.insert(ScriptEvent.element("KvVM", id: library.gamma.id.uuidString), at: 2)
+                return (list, ["Alpha", "Gamma"])
+            case .indexOfNetwork:
+                return (ScriptEvent.element("KvVM", at: 1, of: lab), ["Beta"])
+            case .whose:
+                let name = ScriptEvent.property("pnam", of: ScriptEvent.examined)
+                return (
+                    ScriptEvent.every("KvVM", whose: ScriptEvent.equals(name, NSAppleEventDescriptor(string: "Gamma"))),
+                    ["Gamma"]
+                )
+            }
+        }
+    }
+
+    @Test(
+        "delete refuses without with confirmation, naming it, then deletes exactly the VMs named, past the Trash only with immediate deletion",
+        arguments: DeleteForm.allCases, [false, true])
+    func aDeleteLandsOnWhatItNames(form: DeleteForm, immediately: Bool) async throws {
+        let library = try Library()
+        let wired = library.wired
+        let host = ScriptHost()
+        let gateway = await makeGateway(wired, host: host)
+        let (reference, deletes) = form.event(in: library)
+        let first = try #require([library.alpha, library.beta, library.gamma].first { $0.name == deletes[0] })
+        let prompt = VMCommandCore.deletePrompt(first, permanently: immediately, externals: [])
+
+        let unconsented = try await host.send(
+            ScriptEvent.delete(reference, confirmation: false, immediateDeletion: immediately), to: gateway)
+
+        #expect(unconsented.errorNumber == Int(errAEEventFailed))
+        #expect(unconsented.errorString == CommandError.confirmationRequired(prompt).appleEventErrorString)
+        #expect(unconsented.errorString?.contains("with confirmation") == true)
+        #expect(wired.library.instances.map(\.name) == ["Alpha", "Beta", "Gamma"])
+        #expect(wired.storage.deleteVMBundleCallCount + wired.storage.permanentlyDeleteVMBundleCallCount == 0)
+
+        let deleted = try await host.send(
+            ScriptEvent.delete(reference, confirmation: true, immediateDeletion: immediately), to: gateway)
+
+        #expect(deleted.errorNumber == 0, "\(deleted.errorString ?? "")")
+        #expect(wired.library.instances.map(\.name) == ["Alpha", "Beta", "Gamma"].filter { !deletes.contains($0) })
+        #expect(wired.storage.deleteVMBundleCallCount == (immediately ? 0 : deletes.count))
+        #expect(wired.storage.permanentlyDeleteVMBundleCallCount == (immediately ? deletes.count : 0))
+    }
+
+    // MARK: - Duplicate
+
+    @Test(
+        "duplicate answers the clone it made, as the outcome as names or else the Clone as setting, and a delete of that answer lands on the clone",
+        arguments: [nil, CloneOutcome.newMachine, .exactCopy])
+    func aDuplicateAnswersItsClone(outcome: CloneOutcome?) async throws {
+        let preferences = makeTestPreferences()
+        preferences.cloneOutcome = .exactCopy
+        let wired = WiredCommandCore(preferences: preferences)
+        let source = wired.register(name: "Alpha") { $0.mintMACAddressIfNeeded() }
+        let sourceMAC = try #require(source.configuration.macAddress)
+        let host = ScriptHost()
+        let gateway = await makeGateway(wired, host: host)
+        let code: String? =
+            switch outcome {
+            case nil: nil
+            case .newMachine: "KcNm"
+            case .exactCopy: "KcEx"
+            }
+
+        let duplicated = try await host.send(ScriptEvent.duplicate(Self.vm(named: "Alpha"), as: code), to: gateway)
+
+        #expect(duplicated.errorNumber == 0, "\(duplicated.errorString ?? "")")
+        let answer = try #require(duplicated.descriptor)
+        #expect(answer.forKeyword(ScriptEvent.code("want"))?.typeCodeValue == ScriptEvent.code("KvVM"))
+        let id = try #require(answer.forKeyword(ScriptEvent.code("seld"))?.stringValue.flatMap(UUID.init(uuidString:)))
+        let clone = try #require(wired.library.instances.first { $0.id == id })
+        #expect(clone.id != source.id)
+        #expect((clone.configuration.macAddress == sourceMAC) == (outcome ?? .exactCopy == .exactCopy))
+
+        let deleted = try await host.send(ScriptEvent.delete(answer, confirmation: true), to: gateway)
+
+        #expect(deleted.errorNumber == 0, "\(deleted.errorString ?? "")")
+        #expect(wired.library.instances.map(\.id) == [source.id])
+    }
+}
