@@ -1457,8 +1457,11 @@ package final class VMLibraryViewModel {
         }
     }
 
-    /// Renames a snapshot; an empty or unchanged name is a no-op.
+    /// Renames a snapshot; an empty or unchanged name is a no-op, since the
+    /// inline field commits on end-editing whether or not the text changed.
     package func renameSnapshot(_ snapshot: VMSnapshot, newName: String, on instance: VMInstance) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != snapshot.name else { return }
         runSync(on: instance) {
             try self.verbs().renameSnapshot(
                 .id(instance.id), snapshot: snapshot.id, to: newName)
@@ -1676,7 +1679,9 @@ package final class VMLibraryViewModel {
         activeRename = .detail(instance.id)
     }
 
-    /// Commits the rename text from one of the two rename surfaces.
+    /// Commits the rename text from one of the two rename surfaces; an empty or
+    /// unchanged name renames nothing, since a field commits on end-editing
+    /// whether or not the text changed.
     ///
     /// The marker is only cleared while it still belongs to `surface`'s rename of
     /// `instance`: a commit can fire from a field editor resigning *because* a rename
@@ -1684,8 +1689,11 @@ package final class VMLibraryViewModel {
     /// the pending session), and clearing unconditionally would wipe the newer
     /// rename's marker before its UI ever opened.
     package func commitRename(for instance: VMInstance, newName: String, from surface: RenameSurface) {
+        defer { clearRename(ifOwnedBy: surface.target(for: instance)) }
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != instance.name else { return }
         do {
-            try verbs().rename(.id(instance.id), to: newName)
+            try verbs().rename(.id(instance.id), to: trimmed)
         } catch let error as CommandError where error.isOperationFailure {
             // The configuration funnel already told the user the write failed;
             // the verb throws so a wire client hears about it, and a second
@@ -1697,7 +1705,6 @@ package final class VMLibraryViewModel {
         } catch {
             present(error, about: .vm(instance))
         }
-        clearRename(ifOwnedBy: surface.target(for: instance))
     }
 
     /// Cancels the rename that `surface` has open on `instance`, leaving a rename

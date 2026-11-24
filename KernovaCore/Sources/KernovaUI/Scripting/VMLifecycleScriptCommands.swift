@@ -51,10 +51,10 @@ enum VMScriptStopMethod: CaseIterable {
     }
 }
 
-// MARK: - The shape every VM verb takes
+// MARK: - The shape every Kernova verb takes
 
 /// What every Kernova verb an Apple event can ask for is built out of: take
-/// the event over, read who it addressed once the library has landed, run the
+/// the event over, read what it addressed once the library has landed, run the
 /// verb, and answer once it settles.
 ///
 /// Main-actor isolated because everything it touches is: Cocoa creates and
@@ -66,6 +66,9 @@ class VMScriptCommand: NSScriptCommand {
 
     /// What a script reads back before the app has a gateway to answer it.
     nonisolated static let notReady = "Kernova is not ready to answer scripts."
+
+    /// The Cocoa key of `with confirmation`, on every command that takes it.
+    nonisolated static let confirmationKey = "Confirmation"
 
     /// Takes the event over from Cocoa's own dispatch, for the gateway to
     /// answer (``VMScriptingGateway/execute(_:)``).
@@ -94,23 +97,24 @@ class VMScriptCommand: NSScriptCommand {
         gateway.execute(self)
     }
 
-    /// Runs the verb on `selectors`, recording whatever refused it.
+    /// Reads what the event addresses — inside a dispatch of the gateway's
+    /// own — and answers the verb to run on it once that dispatch returns, or
+    /// `nil` with the refusal recorded.
     ///
-    /// The gateway resumes the event once this returns, which is what hands
-    /// it back, so a refusal not recorded by then is not reported at all.
-    func perform(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async {
-        do {
-            try await run(gateway, on: selectors)
-        } catch let refusal as CommandError {
-            refuse(refusal)
-        } catch {
-            refuse(Int(errAEEventFailed), error.localizedDescription)
+    /// A command addressing VMs runs ``run(_:on:)`` on the ones its direct
+    /// parameter names; one addressing anything else overrides this.
+    func work(on gateway: VMScriptingGateway) -> VMScriptingGateway.Work? {
+        guard let selectors = gateway.virtualMachines(addressedBy: self) else { return nil }
+        return {
+            try await self.run(gateway, on: selectors)
+            return nil
         }
     }
 
     /// The verb, run on the VMs the event addressed.
     ///
-    /// Every command overrides this; reaching the base is a programming error.
+    /// Every command addressing VMs overrides this; reaching the base is a
+    /// programming error.
     func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         Self.logger.log(
             .fault,
@@ -139,7 +143,7 @@ class VMScriptCommand: NSScriptCommand {
 final class VMStartScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         try await gateway.start(
-            selectors, recoveryMode: flag("RecoveryMode"), confirmation: flag("Confirmation"))
+            selectors, recoveryMode: flag("RecoveryMode"), confirmation: flag(Self.confirmationKey))
     }
 }
 
@@ -148,7 +152,7 @@ final class VMStartScriptCommand: VMScriptCommand {
 final class VMStopScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         try await gateway.stop(
-            selectors, method: try stopMethod(), confirmation: flag("Confirmation"),
+            selectors, method: try stopMethod(), confirmation: flag(Self.confirmationKey),
             givingUpAfter: seconds("GivingUpAfter"))
     }
 }
@@ -158,7 +162,7 @@ final class VMStopScriptCommand: VMScriptCommand {
 final class VMRestartScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         try await gateway.restart(
-            selectors, method: try stopMethod(), confirmation: flag("Confirmation"),
+            selectors, method: try stopMethod(), confirmation: flag(Self.confirmationKey),
             givingUpAfter: seconds("GivingUpAfter"))
     }
 }
@@ -190,7 +194,7 @@ final class VMPauseScriptCommand: VMScriptCommand {
 @objc(VMResumeScriptCommand)
 final class VMResumeScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
-        try await gateway.resume(selectors, confirmation: flag("Confirmation"))
+        try await gateway.resume(selectors, confirmation: flag(Self.confirmationKey))
     }
 }
 
@@ -207,5 +211,160 @@ final class VMSuspendScriptCommand: VMScriptCommand {
 final class VMRevealScriptCommand: VMScriptCommand {
     override func run(_ gateway: VMScriptingGateway, on selectors: [VMSelector]) async throws {
         try await gateway.reveal(selectors)
+    }
+}
+
+/// `revert to snapshot … [with confirmation]`
+///
+/// It addresses snapshots, each of which names its VM, so it reverts a VM to
+/// a snapshot of its own by construction.
+@objc(VMRevertScriptCommand)
+final class VMRevertScriptCommand: VMScriptCommand {
+    override func work(on gateway: VMScriptingGateway) -> VMScriptingGateway.Work? {
+        guard let snapshots = gateway.snapshots(addressedBy: self, unnamed: "Name the snapshot to revert to.")
+        else { return nil }
+        let confirmation = flag(Self.confirmationKey)
+        return {
+            try await gateway.revert(to: snapshots, confirmation: confirmation)
+            return nil
+        }
+    }
+}
+
+// MARK: - Standard Suite
+
+/// The Standard Suite's `delete … [with confirmation]`: a snapshot's delete,
+/// or a list of references, goes to
+/// ``VMScriptingGateway/deleteSnapshots(_:for:reading:)``, and every other
+/// delete is Cocoa's own.
+///
+/// Cocoa splits a delete's one reference into the container it evaluates and
+/// the element it names (``deletedElement``), and runs this once that
+/// container is in hand; a list it leaves whole, as the direct parameter.
+@MainActor
+@objc(VMDeleteScriptCommand)
+final class VMDeleteScriptCommand: NSDeleteCommand {
+    /// A selector hop to the main actor, as ``VMScriptCommand/execute()``
+    /// takes, for a snapshot's delete or a list's.
+    nonisolated override func performDefaultImplementation() -> Any? {
+        guard directParameter is [Any] || deletedElement?.key == VMScriptObject.snapshotsKey else {
+            return super.performDefaultImplementation()
+        }
+        performSelector(onMainThread: #selector(deleteSnapshots), with: nil, waitUntilDone: true)
+        return nil
+    }
+
+    /// The element one reference names, `nil` for a list: the header declares
+    /// ``keySpecifier`` non-null, and Cocoa sets it only when the direct
+    /// parameter is one reference.
+    nonisolated private var deletedElement: NSScriptObjectSpecifier? {
+        value(forKey: #keyPath(NSDeleteCommand.keySpecifier)) as? NSScriptObjectSpecifier
+    }
+
+    /// Where the hop lands, on the main actor.
+    @objc private func deleteSnapshots() {
+        guard let gateway = (NSApp.delegate as? VMScriptingRoot)?.scriptingGateway else {
+            refuse(Int(errAEEventFailed), VMScriptCommand.notReady)
+            return
+        }
+        if let list = directParameter as? [Any] {
+            gateway.deleteSnapshots(list, for: self) { try VMScriptSelector.snapshots(addressing: list) }
+        } else if let deleted = deletedElement {
+            let containers = evaluatedReceivers
+            gateway.deleteSnapshots(deleted, for: self) {
+                try VMScriptSelector.snapshots(addressing: deleted, in: containers)
+            }
+        }
+    }
+}
+
+/// The Standard Suite's `make`: a snapshot is taken by
+/// ``VMScriptObject/makeSnapshot(name:notes:)``, and every other class's make
+/// is Cocoa's own.
+@MainActor
+@objc(VMCreateScriptCommand)
+final class VMCreateScriptCommand: NSCreateCommand {
+    /// The Cocoa key of `make`'s `at`, as the dictionary declares it.
+    nonisolated private static let locationKey = "Location"
+
+    /// A selector hop to the main actor, as ``VMScriptCommand/execute()``
+    /// takes, for a snapshot's make.
+    nonisolated override func performDefaultImplementation() -> Any? {
+        guard createClassDescription.implementationClassName == NSStringFromClass(VMSnapshotScriptObject.self)
+        else { return super.performDefaultImplementation() }
+        performSelector(onMainThread: #selector(makeSnapshot), with: nil, waitUntilDone: true)
+        return nil
+    }
+
+    /// Where the hop lands, on the main actor: takes a snapshot of the one VM
+    /// the make names, or records why it names none.
+    @objc private func makeSnapshot() {
+        guard let vm = virtualMachine() else { return }
+        let properties = resolvedKeyDictionary
+        vm.makeSnapshot(
+            name: Self.text(properties[#keyPath(VMSnapshotScriptObject.name)]),
+            notes: Self.text(properties[#keyPath(VMSnapshotScriptObject.notes)]))
+    }
+
+    /// The VM the make names: `at`'s container when it is a VM's snapshots,
+    /// or else, with no `at`, the `tell` block's subject — `tell virtual
+    /// machine … to make new snapshot`, whose target travels only as the
+    /// event's subject attribute, the container Cocoa's own make inserts into.
+    ///
+    /// `nil`, with the refusal recorded, for a reference that names nothing
+    /// and for one that names no single VM.
+    private func virtualMachine() -> VMScriptObject? {
+        guard let location = arguments?[Self.locationKey] as? NSPositionalSpecifier else {
+            guard let subject = Self.subject(of: appleEvent) else { return unplaced() }
+            guard let evaluated = subject.objectsByEvaluatingSpecifier else { return failure(evaluating: subject) }
+            return evaluated as? VMScriptObject ?? unplaced()
+        }
+        // Evaluated before the location is: after the location's evaluation
+        // finds no place for a snapshot in a network, the same reference
+        // evaluates to nothing (observed on macOS 27), and "Can't get" would
+        // name a network that exists.
+        guard location.objectSpecifier.objectsByEvaluatingSpecifier != nil else {
+            return failure(evaluating: location.objectSpecifier)
+        }
+        location.setInsertionClassDescription(createClassDescription)
+        location.evaluate()
+        guard location.insertionKey == VMScriptObject.snapshotsKey,
+            let vm = location.insertionContainer as? VMScriptObject
+        else { return unplaced() }
+        return vm
+    }
+
+    /// The object a `tell` block names, as `event`'s subject attribute
+    /// carries it; `nil` for none, or for the application.
+    private static func subject(of event: NSAppleEventDescriptor?) -> NSScriptObjectSpecifier? {
+        guard let descriptor = event?.attributeDescriptor(forKeyword: FourCharCode(scriptingCode: "subj")),
+            descriptor.descriptorType == typeObjectSpecifier
+        else { return nil }
+        return NSScriptObjectSpecifier(descriptor: descriptor)
+    }
+
+    /// Records `specifier`'s failed evaluation as what the script reads —
+    /// "Can't get …" — unless the evaluation recorded a refusal in words of its
+    /// own, such as a VM name nothing answers to.
+    private func failure(evaluating specifier: NSScriptObjectSpecifier) -> VMScriptObject? {
+        if scriptErrorString == nil {
+            VMScriptEvaluationFailure(specifier).record(on: self, addressing: specifier)
+        }
+        return nil
+    }
+
+    /// Refuses a make that names no single VM for the snapshot to be taken
+    /// of, in place of the bare error Cocoa's search for a place recorded.
+    private func unplaced() -> VMScriptObject? {
+        refuse(Int(errAECantPutThatThere), "Name the virtual machine to take a snapshot of.")
+        scriptErrorOffendingObjectDescriptor = nil
+        return nil
+    }
+
+    /// `value` as the text the dictionary declares the property as, `nil` for
+    /// none: `with properties` arrives uncoerced.
+    private static func text(_ value: Any?) -> String? {
+        guard let value else { return nil }
+        return NSScriptCoercionHandler.shared().coerceValue(value, to: NSString.self) as? String
     }
 }

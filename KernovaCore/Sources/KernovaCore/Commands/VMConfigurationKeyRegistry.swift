@@ -700,10 +700,7 @@ package enum VMConfigurationKeyRegistry {
                     "This virtual machine has no snapshot \u{201C}\(trimmed)\u{201D}.")
             case .ambiguous(let candidates):
                 throw CommandError.invalidArgument(
-                    "\u{201C}\(trimmed)\u{201D} names \(candidates.count) snapshots. "
-                        + "Use one of their identifiers instead: "
-                        + candidates.map { "\($0.name) (\($0.id.uuidString))" }
-                        .joined(separator: ", ") + ".")
+                    SnapshotSelection.ambiguity(trimmed, among: candidates, id: \.id, name: \.name))
             }
         })
 

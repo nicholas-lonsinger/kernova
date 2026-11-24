@@ -13,11 +13,12 @@ import KernovaLogging
 /// **Passes:** a specifier is evaluated only inside Cocoa's own dispatch of
 /// the script's event. A command whose dispatch reads what is not in hand yet
 /// — the library before the app's first read of it lands, a VM's storage
-/// disks, which are measured from their image files off the main thread — is
-/// suspended, and answered from a later dispatch of the same event to this
-/// process, once what it read is in hand (``answer(_:)``). A verb's own
-/// dispatch only suspends it: what it addresses is read in such a dispatch,
-/// and the verb runs once that read is answered.
+/// disks or a snapshot's size, which are measured from their files off the
+/// main thread — is suspended, and answered from a later dispatch of the same
+/// event to this process, once what it read is in hand (``answer(_:)``). A
+/// verb whose core call awaits — a Kernova command, and a `make` or `delete`
+/// of a snapshot — runs on what such a dispatch addressed, once it returns;
+/// its own dispatch only suspends it.
 /// **Addressing:** a script names a VM the way a person does, so this addresses
 /// VMs by ``VMSelector/name(_:)`` as readily as by identifier and the ambiguity
 /// refusal can fire here — on a verb and on a read alike.
@@ -42,7 +43,7 @@ final class VMScriptingGateway {
     private(set) var suspended: [CommandEvaluation] = []
 
     /// The evaluation whose event this gateway is dispatching again, which
-    /// every disk-list read the dispatch reaches answers from.
+    /// every measured read the dispatch reaches answers from.
     private var evaluating: CommandEvaluation?
 
     /// The command Cocoa suspended during the dispatch it is still
@@ -141,42 +142,59 @@ final class VMScriptingGateway {
     }
 
     /// The storage disks of the VM `vm` identifies, in attachment order, from
-    /// the measurement the evaluation being answered holds.
+    /// the measurement the evaluation being answered holds
+    /// (``measured(_:read:)``).
+    func storageDisks(of vm: UUID) -> [VMStorageDiskScriptObject] {
+        let disks = measured(.storageDisks(of: vm)) { $0.storageDisks[vm] }
+        return (disks ?? []).map { VMStorageDiskScriptObject($0, of: vm) }
+    }
+
+    /// The size of the snapshot `address` names, from the measurement the
+    /// evaluation being answered holds (``measured(_:read:)``), `nil` when
+    /// its files can't be read.
+    func snapshotSize(of address: VMSnapshotAddress) -> SnapshotSize? {
+        measured(.snapshotSize(address)) { $0.snapshotSizes[address] } ?? nil
+    }
+
+    /// What `measurement` measured for the evaluation being answered, as
+    /// `read` finds it there.
     ///
     /// A dispatch of a script's own event holds no measurement, so its command
-    /// is suspended, once, and answered by dispatches that do. A list not
-    /// measured yet answers nothing for now, and the evaluation measures it
+    /// is suspended, once, and answered by dispatches that do. What is not
+    /// measured yet answers `nil` for now, and the evaluation measures it
     /// before its next dispatch.
     ///
     /// Cocoa evaluates the rest of a dispatch after its command is suspended,
-    /// and a `whose` test can match the empty list answered for now — so the
-    /// dispatch is refused, which holds back every write left in it
-    /// (``run(_:on:_:)``). Only a dispatch that reads every list measured
+    /// and a `whose` test can match the empty or missing answer given for now —
+    /// so the dispatch is refused, which holds back every write left in it
+    /// (``run(_:on:_:)``). Only a dispatch that reads everything measured
     /// answers the script, and its outcome replaces the refusal.
-    func storageDisks(of vm: UUID) -> [VMStorageDiskScriptObject] {
+    private func measured<Value>(
+        _ measurement: Measurement, read: (CommandEvaluation) -> Value?
+    ) -> Value? {
         let evaluation: CommandEvaluation
         if let evaluating {
             evaluation = evaluating
         } else if let command = answering {
-            evaluation = suspend(command, because: "reached a storage disk list")
+            evaluation = suspend(command, because: "reached \(measurement)")
         } else {
             Self.logger.log(
                 .fault,
-                "Storage disks of \(vm.uuidString, privacy: .public) read outside any script command's evaluation")
-            assertionFailure("Storage disks of \(vm.uuidString) read outside any script command's evaluation")
-            return []
+                "\(String(describing: measurement), privacy: .public) read outside any script command's evaluation")
+            assertionFailure("\(measurement) read outside any script command's evaluation")
+            return nil
         }
-        guard let disks = evaluation.measured[vm] else {
-            if !evaluation.unmeasured.contains(vm) { evaluation.unmeasured.append(vm) }
-            answering?.refuse(Int(errAEEventFailed), Self.measuringStorageDisks)
-            return []
+        guard let value = read(evaluation) else {
+            if !evaluation.unmeasured.contains(measurement) { evaluation.unmeasured.append(measurement) }
+            answering?.refuse(Int(errAEEventFailed), Self.measuring)
+            return nil
         }
-        return disks.map { VMStorageDiskScriptObject($0, of: vm) }
+        return value
     }
 
-    /// The refusal a dispatch that read a disk list unmeasured carries, which
+    /// The refusal a dispatch that read something unmeasured carries, which
     /// the dispatch that answers the script replaces.
-    nonisolated static let measuringStorageDisks = "Kernova is measuring the storage disks this reads."
+    nonisolated static let measuring = "Kernova is measuring what this reads."
 
     /// The refusal a suspended command's own dispatch carries, which the
     /// dispatch that answers the script replaces.
@@ -184,10 +202,28 @@ final class VMScriptingGateway {
 
     // MARK: - Evaluations
 
+    /// A read a dispatch can reach that is measured off the main thread
+    /// first.
+    enum Measurement: Hashable, CustomStringConvertible {
+        case storageDisks(of: UUID)
+        case snapshotSize(VMSnapshotAddress)
+
+        var description: String {
+            switch self {
+            case .storageDisks(let vm): "the storage disks of \(vm.uuidString)"
+            case .snapshotSize(let address):
+                "the size of snapshot \(address.snapshot.uuidString) of \(address.vm.uuidString)"
+            }
+        }
+    }
+
+    /// A verb a dispatch reached whose core call awaits, run once the
+    /// dispatch returns; it answers what the command resumes with.
+    typealias Work = @MainActor () async throws -> NSScriptObjectSpecifier?
+
     /// One suspended command's evaluation: the event every dispatch of it
-    /// sends again, the storage disks measured for it, the lists a dispatch
-    /// reached unmeasured, and — for a verb — what the last dispatch
-    /// addressed.
+    /// sends again, what was measured for it, what a dispatch reached
+    /// unmeasured, and the verbs the last dispatch reached.
     ///
     /// The measurements live only as long as the evaluation, so no command
     /// answers from another's.
@@ -198,12 +234,15 @@ final class VMScriptingGateway {
         /// The event `command` came from, as the script sent it.
         let event: NSAppleEventDescriptor?
         /// Each reached VM's storage disks, as measured for this command.
-        fileprivate(set) var measured: [UUID: [StorageDiskSummary]] = [:]
-        /// The VMs whose disk lists a dispatch reached unmeasured, in the order
-        /// it reached them.
-        fileprivate(set) var unmeasured: [UUID] = []
-        /// The VMs a verb's last dispatch addressed, `nil` when it refused.
-        fileprivate(set) var addressed: [VMSelector]?
+        fileprivate(set) var storageDisks: [UUID: [StorageDiskSummary]] = [:]
+        /// Each reached snapshot's size, as measured for this command: `nil`
+        /// when its files can't be read.
+        fileprivate(set) var snapshotSizes: [VMSnapshotAddress: SnapshotSize?] = [:]
+        /// What a dispatch reached unmeasured, in the order it reached it.
+        fileprivate(set) var unmeasured: [Measurement] = []
+        /// The verbs the last dispatch reached, in the order it reached them;
+        /// none when it reached nothing it recorded or refused first.
+        fileprivate(set) var work: [Work] = []
 
         init(_ command: NSScriptCommand) {
             self.command = command
@@ -275,20 +314,26 @@ final class VMScriptingGateway {
         }
     }
 
-    /// Dispatches `evaluation`'s event until a dispatch reaches no disk list
+    /// Dispatches `evaluation`'s event until a dispatch reaches nothing
     /// unmeasured, measuring what each one reached before the next, and returns
     /// the last one's reply.
     ///
-    /// Cocoa stops a failed evaluation early, so a dispatch can reach a list
-    /// the one before never got to. Each dispatch but the last measures a VM
-    /// no earlier one did, so the dispatches end.
+    /// Cocoa stops a failed evaluation early, so a dispatch can reach a read
+    /// the one before never got to. Each dispatch but the last measures
+    /// something no earlier one did, so the dispatches end.
     private func evaluate(_ evaluation: CommandEvaluation) async -> Reply {
         while true {
             let reached = evaluation.unmeasured
             evaluation.unmeasured = []
-            for vm in reached {
-                evaluation.measured[vm] = await measureStorageDisks(of: vm)
+            for measurement in reached {
+                switch measurement {
+                case .storageDisks(let vm):
+                    evaluation.storageDisks[vm] = await measureStorageDisks(of: vm)
+                case .snapshotSize(let address):
+                    evaluation.snapshotSizes.updateValue(await measureSnapshotSize(address), forKey: address)
+                }
             }
+            evaluation.work = []
             evaluating = evaluation
             let reply = dispatch(evaluation)
             evaluating = nil
@@ -372,6 +417,21 @@ final class VMScriptingGateway {
         }
     }
 
+    /// The size of the snapshot `address` names, measured off the main thread
+    /// — `nil` for one its VM no longer lists, which the next dispatch reaches
+    /// again only if it is listed again.
+    private func measureSnapshotSize(_ address: VMSnapshotAddress) async -> SnapshotSize? {
+        do {
+            return try await commands.snapshotSize(of: .id(address.vm), snapshot: address.snapshot)
+        } catch {
+            Self.logger.log(
+                .notice,
+                "No size read for snapshot \(address.snapshot.uuidString, privacy: .public) of \(address.vm.uuidString, privacy: .public): \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
+    }
+
     // MARK: - Suspended commands
 
     /// Suspends the command Cocoa is evaluating a specifier for, when the
@@ -413,8 +473,13 @@ final class VMScriptingGateway {
 
     /// Answers a suspended command, once its own dispatch has returned and the
     /// library has landed: with the reply of the first dispatch of its event
-    /// that reaches every disk list measured — or, for a verb, by running it
-    /// on what that dispatch addressed.
+    /// that reaches everything measured — or, where that dispatch reached a
+    /// verb and refused nothing, with what the verb answers once run.
+    ///
+    /// The verbs run in the order the dispatch reached them, and the first
+    /// refusal stops them: an event addressing several snapshots or VMs
+    /// carries back one error, and finishing the rest would leave a script
+    /// unable to tell how far it got.
     private func answer(_ evaluation: CommandEvaluation) async {
         if openFirstPass === evaluation { openFirstPass = nil }
         await readiness.ready()
@@ -426,44 +491,92 @@ final class VMScriptingGateway {
             .notice,
             "Answering the suspended \(command.commandDescription.commandName, privacy: .public)"
         )
-        guard let verb = command as? VMScriptCommand else {
-            runtime.resume(command, reply.resumption(for: command))
+        var result = reply.resumption(for: command)
+        if command.scriptErrorNumber == 0 {
+            do {
+                for work in evaluation.work { result = try await work() }
+            } catch let refusal as CommandError {
+                command.refuse(refusal)
+                result = nil
+            } catch {
+                command.refuse(Int(errAEEventFailed), error.localizedDescription)
+                result = nil
+            }
+        }
+        runtime.resume(command, result)
+    }
+
+    /// Runs `body` once the dispatch reaching it returns — a verb Cocoa's own
+    /// command reached inside its specifier evaluation, where nothing can
+    /// await — logging a refusal of it with `verb` and `vm`.
+    ///
+    /// Outside a dispatch of this gateway's own, suspends the command being
+    /// answered instead, which such a dispatch then reaches it in. Records
+    /// nothing once that command already carries a refusal, as
+    /// ``run(_:on:_:)`` runs nothing.
+    private func afterDispatch(_ verb: VMVerb, on vm: UUID, _ body: @escaping Work) {
+        guard let evaluating else {
+            if let command = answering { suspend(command, because: "reached \(verb.rawValue)") }
             return
         }
-        if verb.scriptErrorNumber == 0, let selectors = evaluation.addressed {
-            await verb.perform(self, on: selectors)
+        if let answering, answering.scriptErrorNumber != 0 { return }
+        evaluating.work.append {
+            do {
+                return try await body()
+            } catch let refusal as CommandError {
+                Self.logger.log(
+                    .notice,
+                    "Script \(verb.rawValue, privacy: .public) refused for \(vm.uuidString, privacy: .public): \(refusal.message(in: .log), privacy: .public)"
+                )
+                throw refusal
+            }
         }
-        runtime.resume(verb, nil)
     }
 
     // MARK: - Verbs
 
     /// Takes `verb`'s event over: a dispatch of this gateway's own reads what
-    /// it addresses, and any other is suspended, to run the verb once that
-    /// read is answered.
+    /// it addresses (``VMScriptCommand/work(on:)``), and any other is
+    /// suspended, to run the verb once that read is answered.
     ///
     /// Cocoa evaluates no receivers for a Kernova verb (``VMScriptCommand``),
-    /// so nothing is read before this, and a name reaches the core as a name.
+    /// so nothing is read before this, and a VM's name reaches the core as a
+    /// name.
     func execute(_ verb: VMScriptCommand) {
         guard let evaluating else {
             suspend(verb, because: "arrived")
             return
         }
-        evaluating.addressed = address(verb)
+        if let work = verb.work(on: self) { evaluating.work.append(work) }
     }
 
     /// The VMs `verb` addresses — its direct parameter, one specifier or a
     /// list of them, or the `tell` block's subject, which Cocoa promotes into
     /// the same slot — or `nil` with the refusal recorded on it.
-    private func address(_ verb: VMScriptCommand) -> [VMSelector]? {
+    func virtualMachines(addressedBy verb: VMScriptCommand) -> [VMSelector]? {
+        addressed(
+            by: verb, unnamed: "Name the virtual machine to \(verb.commandDescription.commandName).",
+            VMScriptSelector.selectors(addressing:))
+    }
+
+    /// The snapshots `verb` addresses, as ``virtualMachines(addressedBy:)``
+    /// reads VMs — each evaluated, so a reference names the snapshot its VM
+    /// lists under it as the dispatch reads it.
+    func snapshots(addressedBy verb: VMScriptCommand, unnamed: String) -> [VMSnapshotAddress]? {
+        addressed(by: verb, unnamed: unnamed, VMScriptSelector.snapshots(addressing:))
+    }
+
+    /// What `read` makes of what `verb` addresses, or `nil` with the refusal
+    /// recorded on it — `unnamed` for one that addresses nothing.
+    private func addressed<Addressed>(
+        by verb: VMScriptCommand, unnamed: String, _ read: (Any) throws -> [Addressed]
+    ) -> [Addressed]? {
         guard let addressed = verb.directParameter ?? verb.receiversSpecifier else {
-            verb.refuse(
-                Int(errAEWrongNumberArgs),
-                "Name the virtual machine to \(verb.commandDescription.commandName).")
+            verb.refuse(Int(errAEWrongNumberArgs), unnamed)
             return nil
         }
         do {
-            return try VMScriptSelector.selectors(addressing: addressed)
+            return try read(addressed)
         } catch let failure as VMScriptEvaluationFailure {
             failure.record(on: verb, addressing: addressed)
         } catch let refusal as CommandError {
@@ -547,6 +660,137 @@ final class VMScriptingGateway {
     func setConfiguration(_ id: UUID, key: VMConfigurationKey, value: String) {
         run(.setConfiguration, on: id) {
             try commands.setConfiguration(.id(id), assignments: [key.assigning(value)], consent: .none)
+        }
+    }
+
+    // MARK: - Snapshots
+
+    /// The snapshots of the VM `vm` identifies, newest first — none, with the
+    /// refusal recorded on the command being answered, when the VM can't be
+    /// read.
+    ///
+    /// Every snapshot a script reaches is one of these, so a verb on it names
+    /// a snapshot the VM listed as the dispatch read it.
+    func snapshots(of vm: UUID) -> [VMSnapshotScriptObject] {
+        listedSnapshots(of: vm)?.map { VMSnapshotScriptObject($0, of: vm, gateway: self) } ?? []
+    }
+
+    /// The snapshot `text` names among the VM's (``SnapshotSelection``) —
+    /// or `nil`, with the refusal recorded on the command being answered, for
+    /// text that names none of them, or several.
+    func snapshot(named text: String, of vm: UUID) -> VMSnapshotScriptObject? {
+        guard let listed = listedSnapshots(of: vm) else { return nil }
+        switch SnapshotSelection(text, in: listed, id: \.id, name: \.name) {
+        case .found(let snapshot):
+            return VMSnapshotScriptObject(snapshot, of: vm, gateway: self)
+        case .notFound:
+            if let summary = commands.list(.all).first(where: { $0.id == vm }) {
+                answering?.refuse(
+                    CommandError.itemNotFound(vm: summary, item: "snapshot named \u{201C}\(text)\u{201D}"))
+            }
+            return nil
+        case .ambiguous(let candidates):
+            answering?.refuse(
+                Int(errAENoSuchObject),
+                SnapshotSelection.ambiguity(text, among: candidates, id: \.id, name: \.name))
+            return nil
+        }
+    }
+
+    /// The core's listing of the VM `vm` identifies, or `nil` with the refusal
+    /// recorded on the command being answered.
+    private func listedSnapshots(of vm: UUID) -> [SnapshotSummary]? {
+        do {
+            return try commands.snapshots(of: .id(vm))
+        } catch let refusal as CommandError {
+            answering?.refuse(refusal)
+        } catch {
+            answering?.refuse(Int(errAEEventFailed), error.localizedDescription)
+        }
+        return nil
+    }
+
+    /// Takes a snapshot of the VM `vm` identifies, called `name` and noted
+    /// `notes` — a script's `make new snapshot at` it
+    /// (``VMCreateScriptCommand``) — once the dispatch returns
+    /// (``afterDispatch(_:on:_:)``), answering the `make` with the snapshot
+    /// taken.
+    ///
+    /// No name is the name the app's own sheet proposes.
+    func makeSnapshot(of vm: UUID, name: String?, notes: String?) {
+        afterDispatch(.takeSnapshot, on: vm) {
+            let taken = try await self.commands.takeSnapshot(
+                .id(vm), name: name ?? "", notes: notes ?? "", asEphemeralBaseline: false)
+            return VMSnapshotScriptObject.specifier(for: VMSnapshotAddress(vm: vm, snapshot: taken.id))
+        }
+    }
+
+    /// Deletes each snapshot `read` finds in `addressed` — a script's `delete`
+    /// of one snapshot reference, or of a list of them — once the dispatch
+    /// returns (``afterDispatch(_:on:_:)``), with `delete`'s
+    /// `with confirmation` as the consent it refuses without; or records on
+    /// `delete` why `addressed` names none.
+    ///
+    /// `read` evaluates as every other snapshot verb's reference is
+    /// (``VMScriptSelector/snapshots(addressing:)``), never by the index
+    /// Cocoa's own delete computes: that one names the first snapshot whose
+    /// name matches, of however many do (observed on macOS 27).
+    func deleteSnapshots(
+        _ addressed: Any, for delete: NSScriptCommand, reading read: () throws -> [VMSnapshotAddress]
+    ) {
+        let snapshots: [VMSnapshotAddress]
+        do {
+            snapshots = try read()
+        } catch let failure as VMScriptEvaluationFailure {
+            failure.record(on: delete, addressing: addressed)
+            return
+        } catch let refusal as CommandError {
+            delete.refuse(refusal)
+            return
+        } catch {
+            delete.refuse(Int(errAEEventFailed), error.localizedDescription)
+            return
+        }
+        let consent = Self.consent(delete.arguments?[VMScriptCommand.confirmationKey] as? Bool ?? false)
+        for snapshot in snapshots {
+            afterDispatch(.deleteSnapshot, on: snapshot.vm) {
+                try await self.commands.deleteSnapshot(
+                    .id(snapshot.vm), snapshot: snapshot.snapshot, consent: consent)
+                return nil
+            }
+        }
+    }
+
+    /// Refuses Cocoa's removal of a snapshot by index, which only a `move`
+    /// asks for: the snapshots are ordered newest first, so there is no move
+    /// to make.
+    func refuseToMoveSnapshot() {
+        answering?.refuse(
+            Int(errAEEventNotHandled), "Kernova lists snapshots newest first, so a script can\u{2019}t move one.")
+    }
+
+    /// Returns each snapshot's VM to it, with `confirmation` as the consent a
+    /// revert refuses without.
+    func revert(to snapshots: [VMSnapshotAddress], confirmation: Bool) async throws {
+        try await perform(.revertToSnapshot, on: snapshots, naming: \.snapshot.uuidString) { snapshot in
+            try await self.commands.revertToSnapshot(
+                .id(snapshot.vm), snapshot: snapshot.snapshot, consent: Self.consent(confirmation))
+        }
+    }
+
+    /// Renames the snapshot `address` names — a script's `set name of
+    /// snapshot`.
+    func renameSnapshot(_ address: VMSnapshotAddress, to newName: String) {
+        run(.renameSnapshot, on: address.vm) {
+            try commands.renameSnapshot(.id(address.vm), snapshot: address.snapshot, to: newName)
+        }
+    }
+
+    /// Replaces the note of the snapshot `address` names — a script's
+    /// `set notes of snapshot`.
+    func setSnapshotNotes(_ address: VMSnapshotAddress, to notes: String) {
+        run(.setSnapshotNotes, on: address.vm) {
+            try commands.setSnapshotNotes(.id(address.vm), snapshot: address.snapshot, notes: notes)
         }
     }
 
@@ -674,8 +918,17 @@ final class VMScriptingGateway {
 
     // MARK: - Dispatch
 
-    /// Runs `verb` on each VM once the library read has landed, logging and
-    /// rethrowing the first refusal.
+    /// Runs `verb` on each VM, as ``perform(_:on:naming:_:)`` runs it on each
+    /// subject.
+    private func perform(
+        _ verb: VMVerb, on selectors: [VMSelector],
+        _ body: (VMSelector) async throws -> Void
+    ) async throws {
+        try await perform(verb, on: selectors, naming: \.displayText, body)
+    }
+
+    /// Runs `verb` on each subject once the library read has landed, logging
+    /// the first refusal under the subject's `name` and rethrowing it.
     ///
     /// The verbs run under an ``ActivationRequester`` that only readies the
     /// app, so a verb that surfaces readies it at that moment — a window put up
@@ -683,19 +936,19 @@ final class VMScriptingGateway {
     /// as it was. A refusal stops the run where it happened: an event
     /// addressing several VMs carries back one error, and finishing the rest
     /// would leave a script unable to tell how far the verb got.
-    private func perform(
-        _ verb: VMVerb, on selectors: [VMSelector],
-        _ body: (VMSelector) async throws -> Void
+    private func perform<Subject: Sendable>(
+        _ verb: VMVerb, on subjects: [Subject], naming name: (Subject) -> String,
+        _ body: (Subject) async throws -> Void
     ) async throws {
         await readiness.ready()
         try await ActivationRequester.$current.withValue(ActivationRequester(prepareToSurface)) {
-            for selector in selectors {
+            for subject in subjects {
                 do {
-                    try await body(selector)
+                    try await body(subject)
                 } catch let failure as CommandError {
                     Self.logger.log(
                         .notice,
-                        "Script \(verb.rawValue, privacy: .public) refused for '\(selector.displayText, privacy: .private)': \(failure.message(in: .log), privacy: .public)"
+                        "Script \(verb.rawValue, privacy: .public) refused for '\(name(subject), privacy: .private)': \(failure.message(in: .log), privacy: .public)"
                     )
                     throw failure
                 }

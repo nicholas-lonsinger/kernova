@@ -33,6 +33,13 @@ enum ScriptEvent {
         reference(elementClass, form: "name", NSAppleEventDescriptor(string: name), of: container)
     }
 
+    /// `<class> id "<id>" of <container>`.
+    static func element(
+        _ elementClass: String, id: String, of container: NSAppleEventDescriptor = application
+    ) -> NSAppleEventDescriptor {
+        reference(elementClass, form: "ID  ", NSAppleEventDescriptor(string: id), of: container)
+    }
+
     /// `<class> <index> of <container>`, counting from 1.
     static func element(
         _ elementClass: String, at index: Int32, of container: NSAppleEventDescriptor = application
@@ -61,6 +68,14 @@ enum ScriptEvent {
     /// `<property> of <container>`.
     static func property(_ property: String, of container: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
         reference("prop", form: "prop", NSAppleEventDescriptor(typeCode: code(property)), of: container)
+    }
+
+    /// `end of <reference>`, the insertion location `make … at` takes.
+    static func end(of reference: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
+        let location = record(as: "insl")
+        location.setDescriptor(reference, forKeyword: code("kobj"))
+        location.setDescriptor(NSAppleEventDescriptor(enumCode: code("end ")), forKeyword: code("kpos"))
+        return location
     }
 
     /// `<lhs> is <rhs>`, as a `whose` test.
@@ -118,9 +133,30 @@ enum ScriptEvent {
         return make
     }
 
-    /// One of Kernova's own verbs, `<verb> <reference>`.
-    static func verb(_ verb: String, _ reference: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
-        event("Krnv", verb, reference)
+    /// `event` as a `tell <subject>` block sends it: the subject travels as an
+    /// attribute, which Cocoa promotes to the receivers of a command naming
+    /// none.
+    static func told(_ event: NSAppleEventDescriptor, to subject: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
+        event.setAttribute(subject, forKeyword: code("subj"))
+        return event
+    }
+
+    /// `delete <reference> [with confirmation]`.
+    static func delete(_ reference: NSAppleEventDescriptor, confirmation: Bool = false) -> NSAppleEventDescriptor {
+        confirming(event("core", "delo", reference), confirmation)
+    }
+
+    /// One of Kernova's own verbs, `<verb> <reference> [with confirmation]`.
+    static func verb(
+        _ verb: String, _ reference: NSAppleEventDescriptor, confirmation: Bool = false
+    ) -> NSAppleEventDescriptor {
+        confirming(event("Krnv", verb, reference), confirmation)
+    }
+
+    /// `event`, carrying `with confirmation` when `confirmation` says so.
+    private static func confirming(_ event: NSAppleEventDescriptor, _ confirmation: Bool) -> NSAppleEventDescriptor {
+        if confirmation { event.setParam(NSAppleEventDescriptor(boolean: true), forKeyword: code("Kpcf")) }
+        return event
     }
 
     private static func event(

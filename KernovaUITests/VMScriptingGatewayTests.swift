@@ -280,11 +280,8 @@ struct VMScriptingGatewayTests {
     private static func stopEvent(
         _ verb: String, _ name: String, method: VMScriptStopMethod, confirmation: Bool
     ) -> NSAppleEventDescriptor {
-        let event = ScriptEvent.verb(verb, vm(named: name))
+        let event = ScriptEvent.verb(verb, vm(named: name), confirmation: confirmation)
         event.setParam(NSAppleEventDescriptor(enumCode: method.code), forKeyword: ScriptEvent.code("KpSm"))
-        if confirmation {
-            event.setParam(NSAppleEventDescriptor(boolean: true), forKeyword: ScriptEvent.code("Kpcf"))
-        }
         return event
     }
 

@@ -16,7 +16,7 @@ extension VMCommandCore {
     /// The size of the snapshot `id` names, read as ``snapshotSizes(of:)``
     /// reads each, refusing one the VM does not list; `nil` when it can't be
     /// read.
-    func snapshotSize(of selector: VMSelector, snapshot id: UUID) async throws -> SnapshotSize? {
+    package func snapshotSize(of selector: VMSelector, snapshot id: UUID) async throws -> SnapshotSize? {
         let instance = try resolve(selector)
         let snapshot = try requireSnapshot(id, on: instance)
         return await instance.bundle.snapshotSizes(of: [snapshot.id])[snapshot.id]
@@ -27,7 +27,7 @@ extension VMCommandCore {
     /// Captures a snapshot; `asEphemeralBaseline` also turns Ephemeral Mode on
     /// with it as the baseline, written inside the capture.
     @discardableResult
-    func takeSnapshot(
+    package func takeSnapshot(
         _ selector: VMSelector, name: String, notes: String, asEphemeralBaseline: Bool
     ) async throws -> SnapshotSummary {
         try await takeSnapshot(
@@ -160,7 +160,7 @@ extension VMCommandCore {
     /// the snapshot's network with ``CommandError/stepRequired(_:)`` and no
     /// route: the revert installs the snapshot's network, overwriting a change
     /// made before it.
-    func revertToSnapshot(_ selector: VMSelector, snapshot id: UUID, consent: Consent) async throws {
+    package func revertToSnapshot(_ selector: VMSelector, snapshot id: UUID, consent: Consent) async throws {
         let instance = try resolve(selector)
         let snapshot = try requireSnapshot(id, on: instance)
         try require(.revertToSnapshot, on: instance)
@@ -336,7 +336,7 @@ extension VMCommandCore {
 
     // MARK: - Delete
 
-    func deleteSnapshot(_ selector: VMSelector, snapshot id: UUID, consent: Consent) async throws {
+    package func deleteSnapshot(_ selector: VMSelector, snapshot id: UUID, consent: Consent) async throws {
         let instance = try resolve(selector)
         let snapshot = try requireSnapshot(id, on: instance)
         try requireNotEphemeralBaseline(snapshot, on: instance)
@@ -429,20 +429,18 @@ extension VMCommandCore {
 
     // MARK: - Metadata
 
-    /// Renames a snapshot; an empty name, an unchanged one, and one naming a
-    /// snapshot the manifest no longer lists are all no-ops, and a rename that
-    /// would change the name is refused while the VM's state holds its
-    /// snapshot metadata.
+    /// Renames a snapshot to `newName` trimmed (``trimmedName(_:)``); an
+    /// unchanged name, and one naming a snapshot the manifest no longer lists,
+    /// are no-ops, and a rename that would change the name is refused while
+    /// the VM's state holds its snapshot metadata.
     ///
     /// What decides is whether the write would change anything, rather than
-    /// whether the snapshot is still there: the inline field commits on
-    /// end-editing whether or not the text changed, so a row deleted while its
+    /// whether the snapshot is still there: a row deleted while its inline
     /// editor was open must not raise an alert about a rename nobody made.
-    func renameSnapshot(_ selector: VMSelector, snapshot id: UUID, to newName: String) throws {
+    package func renameSnapshot(_ selector: VMSelector, snapshot id: UUID, to newName: String) throws {
         let instance = try resolve(selector)
-        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let snapshot = instance.snapshotManifest.snapshot(id: id),
-            snapshot.name != trimmed
+        let trimmed = try Self.trimmedName(newName)
+        guard let snapshot = instance.snapshotManifest.snapshot(id: id), snapshot.name != trimmed
         else { return }
         try require(.renameSnapshot, on: instance)
         try edit(.renameSnapshot, on: instance, verb: .renameSnapshot) { permit in
@@ -455,7 +453,7 @@ extension VMCommandCore {
     ///
     /// Unlike a name, an empty note is a legitimate value — it clears the note.
     /// Leading and trailing whitespace is trimmed; interior newlines are kept.
-    func setSnapshotNotes(_ selector: VMSelector, snapshot id: UUID, notes: String) throws {
+    package func setSnapshotNotes(_ selector: VMSelector, snapshot id: UUID, notes: String) throws {
         let instance = try resolve(selector)
         let trimmed = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let snapshot = instance.snapshotManifest.snapshot(id: id), snapshot.notes != trimmed
@@ -500,5 +498,18 @@ extension VMCommandCore {
             )
             throw CommandError.failed(verb: verb, error: error)
         }
+    }
+}
+
+extension SnapshotSelection {
+    /// What an in-app surface refuses `text` with when it names every snapshot
+    /// in `candidates`: each one's name with the identifier that names it
+    /// alone.
+    package static func ambiguity(
+        _ text: String, among candidates: [Candidate], id: (Candidate) -> UUID,
+        name: (Candidate) -> String
+    ) -> String {
+        "\u{201C}\(text)\u{201D} names \(candidates.count) snapshots. Use one of their identifiers instead: "
+            + candidates.map { "\(name($0)) (\(id($0).uuidString))" }.joined(separator: ", ") + "."
     }
 }

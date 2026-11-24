@@ -35,14 +35,15 @@ extension VMCommandCore {
 
     // MARK: - Rename
 
-    /// Renames a VM; an empty or unchanged name is a no-op.
+    /// Renames a VM to `newName` trimmed (``trimmedName(_:)``); an unchanged
+    /// name is a no-op.
     ///
     /// What the rename takes is wider than what the sidebar and the settings
     /// pane offer — ``VMCapabilityCatalog/accepts(_:on:)`` states the split.
     func rename(_ selector: VMSelector, to newName: String) throws {
         let instance = try resolve(selector)
-        let trimmed = newName.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, trimmed != instance.name else { return }
+        let trimmed = try Self.trimmedName(newName)
+        guard trimmed != instance.name else { return }
         try require(.rename, on: instance)
         logger.log(
             .debug,
@@ -62,6 +63,17 @@ extension VMCommandCore {
                     "\u{201C}\(instance.name)\u{201D} could not be renamed — the change was not saved."
             )
         }
+    }
+
+    /// `name` with its surrounding whitespace and line breaks gone, the name a
+    /// rename writes — refusing one that carries nothing else, which a script
+    /// or a Shortcut can supply from a variable that resolves to nothing.
+    nonisolated static func trimmedName(_ name: String) throws -> String {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw CommandError.invalidArgument("A name is at least one character that is not a space.")
+        }
+        return trimmed
     }
 
     // MARK: - Arrival Outcomes

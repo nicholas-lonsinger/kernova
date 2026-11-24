@@ -131,6 +131,25 @@ struct VMCommandEnvelopeRouterTests {
         #expect(harness.library.instances.isEmpty)
     }
 
+    @Test(
+        "A rename of a VM or a snapshot to nothing but whitespace is refused and renames nothing",
+        arguments: ["", "   ", "\n\t "])
+    func aRenameWithoutANameIsRefused(name: String) async throws {
+        let harness = makeHarness()
+        let snapshot = VMSnapshot(name: "Baseline", kind: .cold, macAddress: nil)
+        let instance = harness.wired.register(name: "Wired", snapshots: [snapshot])
+        let refusal = CommandErrorDTO.invalidArgument(message: "A name is at least one character that is not a space.")
+
+        let vm = try await harness.transport.send(.rename(.id(instance.id), newName: name))
+        let renamedSnapshot = try await harness.transport.send(
+            .renameSnapshot(.id(instance.id), snapshot: snapshot.id, newName: name))
+
+        #expect(vm.failure == refusal)
+        #expect(renamedSnapshot.failure == refusal)
+        #expect(instance.name == "Wired")
+        #expect(instance.snapshotManifest.snapshots.map(\.name) == ["Baseline"])
+    }
+
     // MARK: - Attachments
 
     @Test("Each storage-disk edit crosses the wire onto its own verb")
