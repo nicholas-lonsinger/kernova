@@ -302,15 +302,13 @@ package final class VMIntentGateway {
 
     // MARK: - Library
 
-    /// Copies the VM's bundle, answering the arrival the copy fills.
-    ///
-    /// Unwaited, so the clone answers without suspending once its arrival is
-    /// registered, and the `info` read is the same main-actor turn — the row is
-    /// always there to describe.
-    func clone(_ id: UUID, outcome: CloneOutcome?) async throws -> VMEntity {
+    /// Copies the VM's bundle. `waitForOutcome` answers the VM the copy became,
+    /// throwing the copy's failure; without it the answer is the arrival the
+    /// copy fills, read in the main-actor turn that registered it.
+    func clone(_ id: UUID, outcome: CloneOutcome?, waitForOutcome: Bool) async throws -> VMEntity {
         try await perform(.clone, on: id) {
             let copy = try await self.commands.clone(
-                .id(id), outcome: outcome, waitForOutcome: false)
+                .id(id), outcome: outcome, waitForOutcome: waitForOutcome)
             return VMEntity(try self.commands.info(.id(copy.id)))
         }
     }
@@ -318,11 +316,9 @@ package final class VMIntentGateway {
     /// Copies a bundle outside the library into it, answering the VM the copy
     /// became once it has settled.
     ///
-    /// The one library verb here that waits, and the security-scoped bracket is
-    /// why: the authority to read `url` is the caller's, held only for the span
-    /// of this call, and the copy reads the source for as long as it runs.
-    /// Answering the arrival the way ``clone(_:outcome:)`` does would
-    /// drop that authority out from under a copy still reading through it.
+    /// Always waited, unlike ``clone(_:outcome:waitForOutcome:)``: the
+    /// authority to read `url` is the caller's, held only for the span of this
+    /// call, and the copy reads the source for as long as it runs.
     func importVM(from url: URL) async throws -> VMEntity {
         try await perform(.importVM, on: nil) {
             let grant = SandboxFileGrants.shared.startAccessing(url)
