@@ -3,7 +3,7 @@ import Testing
 
 @testable import KernovaCore
 
-/// The query Find Virtual Machines runs: that it is Kernova's to run, and
+/// The query Find Virtual Machine runs: that it is Kernova's to run, and
 /// what it refuses.
 @Suite("VM Entity Query Tests")
 struct VMEntityQueryTests {
@@ -12,7 +12,7 @@ struct VMEntityQueryTests {
     /// finding VMs by State Group got none on a library of stopped VMs, and
     /// one naming a network or tag Kernova doesn't have gets none instead of
     /// failing — and its next action acts on that set.
-    @Test("Find Virtual Machines is no query Shortcuts filters itself")
+    @Test("Find Virtual Machine is no query Shortcuts filters itself")
     func findIsNotFilteredByShortcuts() {
         #expect(Self.isEnumerable(VMEntityQuery.self) == false)
     }

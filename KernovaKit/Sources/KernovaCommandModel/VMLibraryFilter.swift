@@ -224,7 +224,9 @@ public struct VMLibraryFilter: Codable, Hashable, Sendable {
         public var state: VMStateBucket
         /// The network the VM is set to.
         public var network: Network
-        /// `nil` for a guest no Kernova agent runs in (Linux).
+        /// How the guest's agents stand against the ones this build bundles,
+        /// `nil` when an agent has connected and nothing is bundled for its
+        /// guest OS to judge it against.
         public var guestAgent: VMGuestAgentBucket?
         /// Whether Ephemeral Mode is on.
         public var isEphemeral: Bool

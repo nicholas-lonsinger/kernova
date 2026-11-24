@@ -180,7 +180,7 @@ package struct VMEntity: IndexedEntity {
 /// for a picker, and a typed name matches as the sidebar's search does
 /// (``SidebarNameSearch``).
 ///
-/// Find Virtual Machines runs as this property query, which filters and sorts
+/// Find Virtual Machine runs as this property query, which filters and sorts
 /// the library in memory, in library order until a sort is chosen; a
 /// condition `kernova list` also takes is its listing
 /// (``Condition/listed(_:negated:)``). It is no `EnumerableEntityQuery`, whose
