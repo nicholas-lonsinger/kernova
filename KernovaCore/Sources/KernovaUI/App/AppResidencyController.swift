@@ -469,8 +469,9 @@ final class AppResidencyController: WindowResidencyHosting {
     /// the app: the `kernova` tool by pid, a link's opener through its Launch
     /// Services request, a script that says `activate`, Shortcuts for an
     /// action that asked to continue in the foreground. Reached through
-    /// ``ActivationRequester/requestActivation()``, once the verb has passed
-    /// its checks and is about to surface.
+    /// ``ActivationRequester/requestActivation()`` for a surface shown in the
+    /// verb's own job and ``ActivationRequester/awaitActivation()`` for an open
+    /// panel, once the verb has passed its checks and is about to surface.
     private func prepareForExternalSurface() {
         setActivationPolicy(.regular)
         leaveHiddenState()
