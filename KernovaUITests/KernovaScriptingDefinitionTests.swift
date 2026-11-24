@@ -71,6 +71,7 @@ struct KernovaScriptingDefinitionTests {
             #expect(try values("direct-parameter/type", "type", in: command) == [type, type] + groups)
             #expect(try values("direct-parameter/type", "list", in: command) == ["yes"])
             if type == "virtual machine" {
+                #expect(command.elements(forName: "result").count == (actsOnGroups ? 1 : 0), "\(name)")
                 let answers = try values("result/type", "type", in: command)
                 #expect(answers == (actsOnGroups ? ["specifier", "specifier"] : []), "\(name)")
                 #expect(try values("result/type", "list", in: command) == (actsOnGroups ? ["yes"] : []), "\(name)")
