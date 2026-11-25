@@ -291,9 +291,12 @@ package final class VMLibraryViewModel {
     /// Every per-VM capability predicate the AppKit surfaces read.
     package var capabilities: VMCapabilityCatalog { library.capabilities }
 
-    /// Whether this process, on this Mac, can pass a host USB accessory through
-    /// to a guest — what decides whether the USB Device menu exists at all.
-    package var supportsUSBAccessories: Bool { library.usbPassthroughGap == nil }
+    /// What keeps this process, on this Mac, from passing a host USB accessory
+    /// through to a guest, or `nil` when nothing does. Under a gap, a control
+    /// that offers passthrough still shows, dimmed, saying the gap's
+    /// ``USBAccessoryPassthrough/Gap/reason`` — the sentence every USB verb
+    /// refuses with.
+    package var usbPassthroughGap: USBAccessoryPassthrough.Gap? { library.usbPassthroughGap }
 
     package func snapshotSizes(for instance: VMInstance) async -> [UUID: SnapshotSize] {
         do {

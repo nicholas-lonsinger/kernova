@@ -184,7 +184,7 @@ struct VMSharingScriptingTests {
             let reply = try await host.send(event, to: gateway)
             #expect(reply.errorNumber == Int(errAEEventFailed), "\(event)")
             #expect(
-                reply.errorString == VMCommandCore.usbPassthroughRefusal(gap).message(in: .appleScript), "\(event)")
+                reply.errorString == gap.refusal.message(in: .appleScript), "\(event)")
         }
     }
 
