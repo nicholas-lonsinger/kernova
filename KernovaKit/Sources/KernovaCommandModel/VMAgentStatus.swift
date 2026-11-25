@@ -59,7 +59,7 @@ public enum VMAgentLineStatus: String, Codable, CaseIterable, Sendable {
         switch self {
         case .current: "Guest agent up to date"
         case .connected: "Guest agent connected"
-        case .outdated: "Guest agent out of date"
+        case .outdated: "Guest agent update available"
         case .reinstallNeeded: "Guest agent can\u{2019}t update in place"
         case .updating: "Guest agent updating"
         case .unresponsive: "Guest agent not responding"

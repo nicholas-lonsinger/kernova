@@ -110,7 +110,7 @@ enum VMGuestAgentStatus: String, AppEnum {
         .waiting: "No guest agent connected",
         .current: "Guest agent up to date",
         .connected: "Guest agent connected",
-        .outdated: "Guest agent out of date",
+        .outdated: "Guest agent update available",
         .reinstallNeeded: "Guest agent can’t update in place",
         .updating: "Guest agent updating",
         .unresponsive: "Guest agent not responding",
@@ -155,7 +155,7 @@ enum VMGuestAgentLineStatus: String, AppEnum {
     static let caseDisplayRepresentations: [VMGuestAgentLineStatus: DisplayRepresentation] = [
         .current: "Guest agent up to date",
         .connected: "Guest agent connected",
-        .outdated: "Guest agent out of date",
+        .outdated: "Guest agent update available",
         .reinstallNeeded: "Guest agent can’t update in place",
         .updating: "Guest agent updating",
         .unresponsive: "Guest agent not responding",
