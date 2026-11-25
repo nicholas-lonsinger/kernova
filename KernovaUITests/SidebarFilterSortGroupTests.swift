@@ -50,7 +50,7 @@ struct SidebarFilterSortGroupTests {
 
         let info = try viewModel.commandsLeavingEditsOpen.info(.id(capturing.id))
 
-        #expect(info.status == VMStatus.snapshotting.rawValue)
+        #expect(info.status == .runtime(.snapshotting))
         #expect(info.stateBucket == .stopped)
         #expect(VMEntity(info).stateGroup == .stopped)
     }

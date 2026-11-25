@@ -850,7 +850,7 @@ package final class VMInstance {
     /// one way whichever of them is naming the VM.
     func summary(ipAddress: GuestIPAddress) -> VMSummary {
         VMSummary(
-            id: instanceID, name: name, status: status.rawValue, ipAddress: ipAddress,
+            id: instanceID, name: name, status: .runtime(status), ipAddress: ipAddress,
             heldByAnotherCopy: heldByAnotherCopy)
     }
 

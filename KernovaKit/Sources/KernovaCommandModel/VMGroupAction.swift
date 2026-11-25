@@ -119,7 +119,7 @@ public struct VMGroupActionResult: Codable, Sendable, Hashable {
         case .done:
             return "Started \(name)"
         case .passedOver(.state):
-            let state = VMStatus.phrase(forWireName: vm.status, heldByAnotherCopy: vm.heldByAnotherCopy)
+            let state = vm.status.phrase(heldByAnotherCopy: vm.heldByAnotherCopy)
             return "Skipped \(name): it is \(state)."
         case .passedOver(.refused(let error)):
             return "Skipped \(name): \(error.message(in: vocabulary))"

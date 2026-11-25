@@ -10,7 +10,7 @@ import Testing
 @Suite("Command error as an Apple event error", .caseScoped)
 struct CommandErrorAppleEventsTests {
     private func makeSummary(name: String = "Alpha") -> VMSummary {
-        VMSummary(id: UUID(), name: name, status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
+        VMSummary(id: UUID(), name: name, status: .runtime(.stopped), ipAddress: .unavailable, heldByAnotherCopy: false)
     }
 
     private func makePrompt(kind: ConfirmationKind = .forceStop) -> ConfirmationPrompt {

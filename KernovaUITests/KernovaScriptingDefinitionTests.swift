@@ -275,8 +275,8 @@ struct KernovaScriptingDefinitionTests {
             .initialBoot: "initial boot", .failed: "failed", .preparing: "preparing",
         ]
 
-        // `VMScriptState` covers every `VMStatus` by an exhaustive switch, so a
-        // new status cannot compile without landing here.
+        // `VMScriptState` covers every `VMReportedStatus` by an exhaustive
+        // switch, so a new status cannot compile without landing here.
         #expect(declared.count == VMScriptState.allCases.count)
         for state in VMScriptState.allCases {
             let term = try #require(terms[state], "No term for \(state)")
@@ -304,12 +304,6 @@ struct KernovaScriptingDefinitionTests {
         #expect(
             try values("class[@name='virtual machine']/property[@name='state group']", "type", in: suite)
                 == ["VM state group"])
-    }
-
-    @Test("The state a preparing bundle reports is one of them")
-    func preparingIsAState() throws {
-        #expect(VMScriptState(wireName: VMStatus.preparingWireName) == .preparing)
-        #expect(try enumerators("VM state")["preparing"] == VMScriptState.preparing.code)
     }
 
     @Test("Every way the core can stop a guest has a term a script can name")
