@@ -10,7 +10,7 @@ enum SnapshotResolution {
     /// The snapshot `text` names among `snapshots`, where `vm` is what the user
     /// called the virtual machine.
     ///
-    /// Matched by ``SnapshotSelection``. `forcingID` stops at the identifier
+    /// Matched by ``NamedSelection``. `forcingID` stops at the identifier
     /// reading, and refuses text that is not one rather than silently
     /// searching by name.
     ///
@@ -22,7 +22,7 @@ enum SnapshotResolution {
         named text: String, of vm: String, in snapshots: [SnapshotSummary], forcingID: Bool
     ) throws -> SnapshotSummary {
         guard forcingID else {
-            switch SnapshotSelection(text, in: snapshots, id: \.id, name: \.name) {
+            switch NamedSelection(text, in: snapshots, id: \.id, name: \.name) {
             case .found(let match): return match
             case .notFound: throw notFound(text, of: vm)
             case .ambiguous(let candidates): throw ambiguous(text, of: vm, candidates: candidates)

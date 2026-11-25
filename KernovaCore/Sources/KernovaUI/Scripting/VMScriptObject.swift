@@ -157,6 +157,18 @@ package final class VMScriptObject: NSObject {
     /// with.
     nonisolated static let settingsKey = "settings"
 
+    /// The literal KVC key the dictionary's `shared directory` element is
+    /// declared with.
+    nonisolated static let sharedDirectoriesKey = "sharedDirectories"
+
+    /// The literal KVC key the dictionary's `USB accessory` element is
+    /// declared with, here and on the application.
+    nonisolated static let usbAccessoriesKey = "usbAccessories"
+
+    /// The literal KVC key the dictionary's `remembered USB accessory` element
+    /// is declared with.
+    nonisolated static let rememberedUSBAccessoriesKey = "rememberedUSBAccessories"
+
     /// Every disk the VM attaches, in attachment order, measured
     /// for the command being answered — see
     /// ``VMScriptingGateway/storageDisks(of:)``.
@@ -199,15 +211,66 @@ package final class VMScriptObject: NSObject {
         gateway?.setting(named: name, of: info.id)
     }
 
+    /// The folders the VM shares with its guest, in the order it shares them
+    /// — see ``VMScriptingGateway/sharedDirectories(of:)``.
+    @objc var sharedDirectories: [VMSharedDirectoryScriptObject] {
+        gateway?.sharedDirectories(of: info.id) ?? []
+    }
+
+    /// The named-element accessor Cocoa resolves `shared directory "…"`
+    /// through, by a path or a folder's name — see
+    /// ``VMScriptingGateway/sharedDirectory(named:of:)``.
+    @objc(valueInSharedDirectoriesWithName:)
+    func valueInSharedDirectories(withName name: String) -> VMSharedDirectoryScriptObject? {
+        gateway?.sharedDirectory(named: name, of: info.id)
+    }
+
+    /// The USB accessories the VM's guest holds — see
+    /// ``VMScriptingGateway/usbAccessories(of:)``.
+    @objc var usbAccessories: [VMUSBAccessoryScriptObject] {
+        gateway?.usbAccessories(of: info.id) ?? []
+    }
+
+    /// The named-element accessor Cocoa resolves `USB accessory "…"` of a VM
+    /// through — see ``VMScriptingGateway/usbAccessory(named:attachedTo:)``.
+    ///
+    /// KVC capitalizes only the key's first letter.
+    @objc(valueInUsbAccessoriesWithName:)
+    func valueInUSBAccessories(withName name: String) -> VMUSBAccessoryScriptObject? {
+        gateway?.usbAccessory(named: name, attachedTo: info.id)
+    }
+
+    /// The USB accessories the VM takes back automatically — see
+    /// ``VMScriptingGateway/rememberedUSBAccessories(of:)``.
+    @objc var rememberedUSBAccessories: [VMRememberedUSBAccessoryScriptObject] {
+        gateway?.rememberedUSBAccessories(of: info.id) ?? []
+    }
+
+    /// The named-element accessor Cocoa resolves `remembered USB accessory
+    /// "…"` through, by a key or a name — see
+    /// ``VMScriptingGateway/rememberedUSBAccessory(named:of:)``.
+    @objc(valueInRememberedUSBAccessoriesWithName:)
+    func valueInRememberedUSBAccessories(withName name: String) -> VMRememberedUSBAccessoryScriptObject? {
+        gateway?.rememberedUSBAccessory(named: name, of: info.id)
+    }
+
     /// Takes a snapshot of the VM for `make new snapshot at` it — see
     /// ``VMScriptingGateway/makeSnapshot(of:name:notes:)``.
     func makeSnapshot(name: String?, notes: String?) {
         gateway?.makeSnapshot(of: info.id, name: name, notes: notes)
     }
 
-    /// Refuses `make new storage disk at`, `make new guest agent at` or
-    /// `make new setting at` a VM: a script adds none of them. A snapshot's
-    /// make never reaches this (``VMCreateScriptCommand``).
+    /// Shares the folder at the full path `path` with the VM's guest for
+    /// `make new shared directory at` it — see
+    /// ``VMScriptingGateway/makeSharedDirectory(of:path:readOnly:)``.
+    func makeSharedDirectory(path: String, readOnly: Bool) {
+        gateway?.makeSharedDirectory(of: info.id, path: path, readOnly: readOnly)
+    }
+
+    /// Refuses `make new` at a VM of every element a script adds none of: a
+    /// storage disk, a guest agent, a setting, a USB accessory, a remembered
+    /// USB accessory. A snapshot's and a shared directory's make never reach
+    /// this (``VMCreateScriptCommand``).
     ///
     /// Cocoa's own answer allocates the element's class with `init()`, which
     /// none of their classes has — so it would trap.
@@ -219,6 +282,8 @@ package final class VMScriptObject: NSObject {
             switch key {
             case Self.guestAgentsKey: VMScriptingGateway.cannotMakeGuestAgent
             case Self.settingsKey: VMScriptingGateway.cannotMakeSetting
+            case Self.usbAccessoriesKey: VMScriptingGateway.cannotMakeUSBAccessory
+            case Self.rememberedUSBAccessoriesKey: VMScriptingGateway.cannotMakeRememberedUSBAccessory
             default: VMScriptingGateway.cannotMakeStorageDisk
             }
         MainActor.assumeIsolated { gateway?.refuseToMake(refusal) }

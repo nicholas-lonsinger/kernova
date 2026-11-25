@@ -402,7 +402,7 @@ extension VMCommandCore {
     /// Each entry is the stored path and its access, without the bookmark
     /// behind it. Nothing on disk is opened, so a folder that has moved is
     /// answered the way the VM carries it rather than left out.
-    func sharedDirectories(of selector: VMSelector) throws -> [SharedDirectorySummary] {
+    package func sharedDirectories(of selector: VMSelector) throws -> [SharedDirectorySummary] {
         try (resolve(selector).configuration.sharedDirectories ?? []).map(SharedDirectorySummary.init)
     }
 
@@ -427,7 +427,7 @@ extension VMCommandCore {
     /// the user leaves it up, and the VM the caller named can have started in
     /// the meantime.
     @discardableResult
-    func addSharedDirectory(
+    package func addSharedDirectory(
         _ selector: VMSelector, path: String, readOnly: Bool
     ) async throws -> SharedDirectorySummary {
         let instance = try resolve(selector)
@@ -472,7 +472,7 @@ extension VMCommandCore {
     }
 
     /// Drops the share the folder at `path` fills, leaving the folder alone.
-    func removeSharedDirectory(_ selector: VMSelector, path: String) throws {
+    package func removeSharedDirectory(_ selector: VMSelector, path: String) throws {
         let instance = try resolve(selector)
         _ = try requireSharedDirectories(.remove, on: instance)
         guard let directory = sharedDirectory(at: path, on: instance) else {
@@ -487,7 +487,7 @@ extension VMCommandCore {
     ///
     /// Every "does this VM already share it" question in the core is asked in
     /// this spelling, whichever verb asks.
-    static func comparablePath(_ path: String) -> String {
+    package static func comparablePath(_ path: String) -> String {
         let standardized = URL(fileURLWithPath: path).standardizedFileURL
             .path(percentEncoded: false)
         guard standardized.count > 1, standardized.hasSuffix("/") else { return standardized }

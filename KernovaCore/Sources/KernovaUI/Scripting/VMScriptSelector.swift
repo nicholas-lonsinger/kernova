@@ -2,8 +2,29 @@ import Cocoa
 import KernovaCommandModel
 import KernovaCore
 
+/// One of the dictionary's elements, as a verb's refusal names it: the key a
+/// reference to one is under, and its class's name and plural.
+struct VMScriptElement {
+    let key: String
+    let singular: String
+    let plural: String
+
+    static let virtualMachine = Self(
+        key: VMScriptingRoot.virtualMachinesKey, singular: "virtual machine", plural: "virtual machines")
+    static let snapshot = Self(key: VMScriptObject.snapshotsKey, singular: "snapshot", plural: "snapshots")
+    static let setting = Self(key: VMScriptObject.settingsKey, singular: "setting", plural: "settings")
+    static let sharedDirectory = Self(
+        key: VMScriptObject.sharedDirectoriesKey, singular: "shared directory", plural: "shared directories")
+    static let usbAccessory = Self(
+        key: VMScriptObject.usbAccessoriesKey, singular: "USB accessory", plural: "USB accessories")
+    static let rememberedUSBAccessory = Self(
+        key: VMScriptObject.rememberedUSBAccessoriesKey, singular: "remembered USB accessory",
+        plural: "remembered USB accessories")
+}
+
 /// How one Apple event addresses the VMs, the smart group or folder, the
-/// snapshots or the settings its verb runs on.
+/// snapshots, the settings, the shared directories or the USB accessories its
+/// verb runs on.
 ///
 /// A specifier that names a VM on its own — by name or by identifier, as an
 /// element of the application — is read *unevaluated*: the name reaches the
@@ -45,8 +66,7 @@ enum VMScriptSelector {
         addressing parameter: Any, in containers: Any? = nil
     ) throws -> (selectors: [VMSelector], isList: Bool) {
         guard let specifier = parameter as? NSScriptObjectSpecifier else {
-            let listed = try specifiers(
-                in: parameter, naming: "virtual machine", key: VMScriptingRoot.virtualMachinesKey)
+            let listed = try specifiers(in: parameter, naming: .virtualMachine)
             return (try listed.flatMap { try virtualMachines(addressing: $0, in: nil).selectors }, true)
         }
         if containers == nil, let named = selector(naming: specifier) {
@@ -103,11 +123,7 @@ enum VMScriptSelector {
     ///
     /// - Throws: As ``selectors(addressing:in:)`` does.
     static func snapshots(addressing parameter: Any, in containers: Any? = nil) throws -> [VMSnapshotAddress] {
-        guard let specifier = parameter as? NSScriptObjectSpecifier else {
-            let listed = try specifiers(in: parameter, naming: "snapshot", key: VMScriptObject.snapshotsKey)
-            return try listed.flatMap { try snapshots(addressing: $0, in: nil) }
-        }
-        return try objects(evaluating: specifier, in: containers, as: VMSnapshotScriptObject.self).elements
+        try objects(addressing: parameter, in: containers, .snapshot, as: VMSnapshotScriptObject.self).elements
             .map(\.address)
     }
 
@@ -119,12 +135,55 @@ enum VMScriptSelector {
     ///
     /// - Throws: As ``selectors(addressing:in:)`` does.
     static func settings(addressing parameter: Any) throws -> (settings: [VMSettingAddress], isList: Bool) {
-        guard let specifier = parameter as? NSScriptObjectSpecifier else {
-            let listed = try specifiers(in: parameter, naming: "setting", key: VMScriptObject.settingsKey)
-            return (try listed.flatMap { try settings(addressing: $0).settings }, true)
-        }
-        let evaluated = try objects(evaluating: specifier, in: nil, as: VMSettingScriptObject.self)
+        let evaluated = try objects(addressing: parameter, in: nil, .setting, as: VMSettingScriptObject.self)
         return (evaluated.elements.map(\.address), evaluated.isList)
+    }
+
+    /// The shared directories `parameter` addresses, evaluated as
+    /// ``snapshots(addressing:in:)`` reads a snapshot.
+    ///
+    /// - Throws: As ``selectors(addressing:in:)`` does.
+    static func sharedDirectories(
+        addressing parameter: Any, in containers: Any? = nil
+    ) throws -> [VMSharedDirectoryAddress] {
+        try objects(addressing: parameter, in: containers, .sharedDirectory, as: VMSharedDirectoryScriptObject.self)
+            .elements.map(\.address)
+    }
+
+    /// The USB accessories `parameter` addresses, each where it is — the
+    /// application's, available to attach, or a VM's, attached to it —
+    /// evaluated as ``snapshots(addressing:in:)`` reads a snapshot.
+    ///
+    /// - Throws: As ``selectors(addressing:in:)`` does.
+    static func usbAccessories(addressing parameter: Any) throws -> [VMUSBAccessoryScriptObject] {
+        try objects(addressing: parameter, in: nil, .usbAccessory, as: VMUSBAccessoryScriptObject.self).elements
+    }
+
+    /// The remembered USB accessories `parameter` addresses, evaluated as
+    /// ``snapshots(addressing:in:)`` reads a snapshot.
+    ///
+    /// - Throws: As ``selectors(addressing:in:)`` does.
+    static func rememberedUSBAccessories(
+        addressing parameter: Any, in containers: Any? = nil
+    ) throws -> [VMRememberedUSBAccessoryAddress] {
+        try objects(
+            addressing: parameter, in: containers, .rememberedUSBAccessory,
+            as: VMRememberedUSBAccessoryScriptObject.self
+        ).elements.map(\.address)
+    }
+
+    /// The `Element`s `parameter` addresses — one specifier, or a list of
+    /// references to `element` — each evaluated, in the order it named them,
+    /// and whether it addresses them as a list, as
+    /// ``virtualMachines(addressing:in:)`` answers it.
+    private static func objects<Element>(
+        addressing parameter: Any, in containers: Any?, _ element: VMScriptElement, as type: Element.Type
+    ) throws -> (elements: [Element], isList: Bool) {
+        guard let specifier = parameter as? NSScriptObjectSpecifier else {
+            let listed = try specifiers(in: parameter, naming: element)
+            return (try listed.flatMap { try objects(evaluating: $0, in: nil, as: type).elements }, true)
+        }
+        return try objects(evaluating: specifier, in: containers, as: type)
     }
 
     /// The element key `parameter` addresses: its specifier's, or for a list,
@@ -136,7 +195,7 @@ enum VMScriptSelector {
     }
 
     /// `parameter` as the specifiers it holds: one, or a list of references to
-    /// the element a `noun` is under `key`.
+    /// `element`.
     ///
     /// A list is refused whole for one item that is something else, so a verb
     /// runs on all of it or none.
@@ -144,15 +203,16 @@ enum VMScriptSelector {
     /// - Throws: ``CommandError/invalidArgument(_:)`` for anything else, or a
     ///   list item that is not such a reference.
     private static func specifiers(
-        in parameter: Any, naming noun: String, key: String
+        in parameter: Any, naming element: VMScriptElement
     ) throws -> [NSScriptObjectSpecifier] {
         if let specifier = parameter as? NSScriptObjectSpecifier { return [specifier] }
         guard let list = parameter as? [Any] else {
-            throw CommandError.invalidArgument("Name a \(noun), or a list of them.")
+            throw CommandError.invalidArgument("Name a \(element.singular), or a list of them.")
         }
         return try list.enumerated().map { index, item in
-            guard let specifier = item as? NSScriptObjectSpecifier, specifier.key == key else {
-                throw CommandError.invalidArgument("A list here names \(noun)s only; item \(index + 1) is not one.")
+            guard let specifier = item as? NSScriptObjectSpecifier, specifier.key == element.key else {
+                throw CommandError.invalidArgument(
+                    "A list here names \(element.plural) only; item \(index + 1) is not one.")
             }
             return specifier
         }
