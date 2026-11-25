@@ -184,7 +184,7 @@ package struct VMEntity: IndexedEntity {
 package struct VMEntityQuery: EntityStringQuery, FindQuery {
     /// One condition a Find puts on the VMs it answers, as the comparator a
     /// Shortcut chose makes it.
-    package enum Condition: Sendable {
+    package enum Condition: FindComparison {
         /// Holds for each VM the predicate admits.
         case admits(@Sendable (VMEntity) -> Bool)
         /// Holds for each VM `kernova list` lists for the query, refusing

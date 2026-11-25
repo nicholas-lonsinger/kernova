@@ -112,13 +112,13 @@ package final class VMIntentGateway {
     /// An `or` over no predicates keeps every entity: a Shortcut that names
     /// no filter is asking for all of them, not for nothing.
     private func found<Entity>(
-        _ entities: [Entity], meeting predicates: [(Entity) -> Bool], mode: EntityQueryComparatorMode,
+        _ entities: [Entity], meeting predicates: [FindPredicate<Entity>], mode: EntityQueryComparatorMode,
         noun: String
     ) -> [Entity] {
         let found = entities.filter { entity in
             switch mode {
-            case .and: predicates.allSatisfy { $0(entity) }
-            case .or: predicates.isEmpty || predicates.contains { $0(entity) }
+            case .and: predicates.allSatisfy { $0.admits(entity) }
+            case .or: predicates.isEmpty || predicates.contains { $0.admits(entity) }
             }
         }
         logger.log(
@@ -129,13 +129,13 @@ package final class VMIntentGateway {
     }
 
     /// What `condition` admits.
-    private func predicate(for condition: VMEntityQuery.Condition) throws -> (VMEntity) -> Bool {
+    private func predicate(for condition: VMEntityQuery.Condition) throws -> FindPredicate<VMEntity> {
         switch condition {
         case .admits(let admits):
-            return admits
+            return FindPredicate(admits)
         case .listed(let query, let negated):
             let listed = Set(commands.list(try commands.selection(for: query, verb: .list)).map(\.id))
-            return { listed.contains($0.id) != negated }
+            return FindPredicate { listed.contains($0.id) != negated }
         case .naming(let network, let holds):
             return try predicate(for: holds(try commands.namedNetwork(network, verb: .list).id))
         case .spelling(let membership, let holds):

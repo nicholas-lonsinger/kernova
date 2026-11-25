@@ -85,13 +85,13 @@ struct NetworkEntityQuery: EntityStringQuery, FindQuery {
 
     nonisolated(unsafe) static let properties = QueryProperties {
         Property(\NetworkEntity.$name) {
-            EqualToComparator { value in { @Sendable in VMCommandCore.name($0.name, isNamedBy: value) } }
-            NotEqualToComparator { value in { @Sendable in !VMCommandCore.name($0.name, isNamedBy: value) } }
-            ContainsComparator { value in { @Sendable in SidebarNameSearch(text: value).admits($0.name) } }
+            EqualToComparator { value in FindPredicate { VMCommandCore.name($0.name, isNamedBy: value) } }
+            NotEqualToComparator { value in FindPredicate { !VMCommandCore.name($0.name, isNamedBy: value) } }
+            ContainsComparator { value in FindPredicate { SidebarNameSearch(text: value).admits($0.name) } }
         }
         Property(\NetworkEntity.$kind) {
-            EqualToComparator { value in { @Sendable in $0.kind == value } }
-            NotEqualToComparator { value in { @Sendable in $0.kind != value } }
+            EqualToComparator { value in FindPredicate { $0.kind == value } }
+            NotEqualToComparator { value in FindPredicate { $0.kind != value } }
         }
     }
 
