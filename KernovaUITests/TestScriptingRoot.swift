@@ -30,6 +30,10 @@ final class TestScriptingRoot: VMScriptingRoot {
     fileprivate static func install() {
         // KernovaTestHost starts a plain NSApplication, before this bundle,
         // which holds every Kernova class, is loaded.
+        let host: AnyClass = object_getClass(NSApplication.shared) ?? NSApplication.self
+        precondition(
+            class_getInstanceSize(VMScriptingApplication.self) == class_getInstanceSize(host),
+            "VMScriptingApplication added a stored property, so the test host's application can't become one")
         object_setClass(NSApplication.shared, VMScriptingApplication.self)
         NSApplication.shared.delegate = shared
     }

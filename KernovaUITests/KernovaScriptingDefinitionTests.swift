@@ -248,16 +248,19 @@ struct KernovaScriptingDefinitionTests {
         }
     }
 
-    @Test("Every class that holds elements resolves the names a script gives them, the application by its delegate")
-    func everyContainerResolvesItsElementsNames() throws {
-        let containers = try values("class[element]/cocoa", "class", in: loadSuite())
+    @Test("Every class given elements evaluates a named range of them, the application's by its delegate")
+    func everyContainerEvaluatesItsNamedRanges() throws {
+        // The compiler holds the types: each of these is a container, and the
+        // app's application one that hands its elements to its delegate,
+        // which `VMScriptingApplication` reaches as a container.
+        let containers: [VMScriptContainer.Type] = [
+            VMScriptObject.self, VMNetworkScriptObject.self, VMSmartGroupScriptObject.self, VMFolderScriptObject.self,
+        ]
+        let _: VMScriptingApplication.Type = KernovaApplication.self
 
-        #expect(!containers.isEmpty)
-        for name in containers {
-            let container: AnyClass = try #require(NSClassFromString(name), "\(name)")
-            #expect(container is VMScriptContainer.Type, "\(name) is not a VMScriptContainer")
-        }
-        #expect(KernovaApplication.isSubclass(of: VMScriptingApplication.self))
+        let declared = try values("class[element]/cocoa", "class", in: loadSuite())
+
+        #expect(Set(declared) == Set(containers.map { NSStringFromClass($0) }))
     }
 
     // MARK: - Enumerations
