@@ -12,8 +12,9 @@ struct VMEntityQueryTests {
     /// shortcut finding VMs by State Group got none on a library of stopped
     /// VMs, one naming a network or tag Kernova doesn't have gets none
     /// instead of failing, and a name matches under Shortcuts' rule rather
-    /// than Kernova's — and its next action acts on that set.
-    @Test("No Find is a query Shortcuts filters itself")
+    /// than Kernova's — and its next action acts on that set. The setting-key
+    /// query is outside it: its entity has no properties to filter by.
+    @Test("No Find with properties to filter by is a query Shortcuts filters itself")
     func findIsNotFilteredByShortcuts() {
         #expect(Self.isEnumerable(VMEntityQuery.self) == false)
         #expect(Self.isEnumerable(NetworkEntityQuery.self) == false)

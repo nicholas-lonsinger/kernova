@@ -580,9 +580,12 @@ package final class VMIntentGateway {
         return await configurationKeys().filter { wanted.contains($0.id) }
     }
 
-    /// Every key whose name contains `text`, ignoring case.
+    /// Every key whose name the library's search for `text` admits
+    /// (``SidebarNameSearch/admits(_:)``) — matched as ``vms(matching:)``
+    /// matches a VM.
     func configurationKeys(matching text: String) async -> [VMSettingKeyEntity] {
-        await configurationKeys().filter { $0.id.localizedCaseInsensitiveContains(text) }
+        let search = SidebarNameSearch(text: text)
+        return await configurationKeys().filter { search.admits($0.id) }
     }
 
     /// ``VMCommandCore/configuration(_:key:)``, answering the value alone.

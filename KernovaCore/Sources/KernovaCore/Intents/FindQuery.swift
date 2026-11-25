@@ -5,18 +5,10 @@ import KernovaCommandModel
 /// A property query whose Find action Kernova runs: Kernova filters, sorts
 /// and truncates what the action answers.
 ///
-/// None is an `EnumerableEntityQuery`, whose entities Shortcuts filters
-/// itself, as that protocol's documentation says. On macOS 27.2, Shortcuts
-/// filtered a query adopting both protocols itself too, and never called
-/// `entities(matching:mode:sortedBy:limit:)`.
-///
-/// Each conformer spells `properties` and `sortingOptions` as stored
-/// properties with an inline builder, the only shape the App Intents metadata
-/// processor parses: a computed property returning the same value exports no
-/// metadata, which leaves the filters and sorts silently absent from
-/// Shortcuts. They are `nonisolated(unsafe)` because AppIntents' builder
-/// results are not marked `Sendable`; each is built once from constant
-/// closures and never mutated.
+/// A conformer adopts no `EnumerableEntityQuery`, whose entities Shortcuts
+/// filters itself, as that protocol's documentation says. On macOS 27.2,
+/// Shortcuts filtered a query adopting both protocols itself too, and never
+/// called `entities(matching:mode:sortedBy:limit:)`.
 protocol FindQuery: EntityPropertyQuery {
     /// `entities`, in the order the query reads them, ordered by the property
     /// `key` names; one naming a property this query does not offer to sort

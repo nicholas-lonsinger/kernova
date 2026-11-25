@@ -292,6 +292,12 @@ package struct VMEntityQuery: EntityStringQuery, FindQuery {
         try Self.ordered(try await gateway.vms(meeting: comparators, mode: mode), by: sortedBy, limit: limit)
     }
 
+    // Both tables are spelled as stored properties with an inline builder,
+    // which is the only shape the App Intents metadata processor parses — a
+    // computed property returning the same value exports no metadata at all,
+    // and that leaves the filters and sorts silently absent from Shortcuts.
+    // `nonisolated(unsafe)` because AppIntents' builder results are not marked
+    // `Sendable`: each is built once from constant closures and never mutated.
     package nonisolated(unsafe) static let properties = QueryProperties {
         Property(\VMEntity.$name) {
             EqualToComparator { value in .admits { VMCommandCore.name($0.name, isNamedBy: value) } }
@@ -359,10 +365,6 @@ package struct VMEntityQuery: EntityStringQuery, FindQuery {
 
     // MARK: - Sorting
 
-    /// `entities`, given in library order, ordered by the property `key`
-    /// names; one naming a property this query does not offer to sort on
-    /// leaves them as given.
-    ///
     /// Name, Date Created and Last Run take ``VMLibrarySort``'s order — its
     /// one direction ascending by name and descending by either date — and
     /// that order reversed the other way.
