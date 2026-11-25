@@ -47,6 +47,12 @@ enum ScriptEvent {
         reference(elementClass, form: "indx", NSAppleEventDescriptor(int32: index), of: container)
     }
 
+    /// `<class> after <base>`, where `base` is a reference to one of its
+    /// container's elements.
+    static func element(_ elementClass: String, after base: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
+        reference(elementClass, form: "rele", NSAppleEventDescriptor(enumCode: code("next")), of: base)
+    }
+
     /// `<class>s <start> thru <end> of <container>`, each end a reference to
     /// one of the range's own elements, as AppleScript sends `"Build"` there.
     static func range(

@@ -203,21 +203,13 @@ struct VMLibraryScriptingTests {
         #expect(wired.machineFiles.discardedIDs.isEmpty)
     }
 
-    /// The containers a script names a range of VMs under.
-    enum RangeContainer: CaseIterable, Sendable {
+    /// The containers a script names VMs under.
+    enum NameContainer: CaseIterable, Sendable {
         case application
         /// The network "Lab".
         case network
         /// The folder "Lab".
         case folder
-
-        /// `virtual machines "<start>" thru "<end>"` of the container.
-        @MainActor
-        func range(from start: String, thru end: String) -> NSAppleEventDescriptor {
-            ScriptEvent.range(
-                "KvVM", from: ScriptEvent.rangeEnd("KvVM", named: start),
-                thru: ScriptEvent.rangeEnd("KvVM", named: end), of: container)
-        }
 
         /// `virtual machine "<name>"` of the container.
         @MainActor
@@ -226,7 +218,7 @@ struct VMLibraryScriptingTests {
         }
 
         @MainActor
-        private var container: NSAppleEventDescriptor {
+        fileprivate var container: NSAppleEventDescriptor {
             switch self {
             case .application: ScriptEvent.application
             case .network: ScriptEvent.element("KvNw", named: "Lab")
@@ -235,10 +227,40 @@ struct VMLibraryScriptingTests {
         }
     }
 
+    /// The references a name bounds without naming the VM itself.
+    enum BoundedForm: CaseIterable, Sendable {
+        /// `virtual machines "<name>" thru "Solo"`.
+        case range
+        /// `virtual machine after virtual machine "<name>"`.
+        case relative
+
+        /// The reference `name` bounds, under `container`.
+        @MainActor
+        func reference(bounding name: String, in container: NameContainer) -> NSAppleEventDescriptor {
+            switch self {
+            case .range:
+                ScriptEvent.range(
+                    "KvVM", from: ScriptEvent.rangeEnd("KvVM", named: name),
+                    thru: ScriptEvent.rangeEnd("KvVM", named: "Solo"), of: container.container)
+            case .relative:
+                ScriptEvent.element("KvVM", after: container.vm(named: name))
+            }
+        }
+
+        /// The names of the VMs a delete of the reference "Alpha" bounds
+        /// leaves, of Alpha, Build, build, Solo and Zed.
+        var leavesAfterAlpha: [String] {
+            switch self {
+            case .range: ["Zed"]
+            case .relative: ["Alpha", "build", "Solo", "Zed"]
+            }
+        }
+    }
+
     @Test(
-        "A delete of a range of VMs whose end is a name two VMs share is refused as that name alone is, and deletes nothing; ends one VM each carries delete exactly that range",
-        arguments: RangeContainer.allCases)
-    func aRangeEndResolvesByTheNameRule(container: RangeContainer) async throws {
+        "A delete of VMs a name two VMs share bounds is refused as that name alone is, and deletes nothing; one VM's name bounds exactly what it says",
+        arguments: NameContainer.allCases, BoundedForm.allCases)
+    func aBoundingNameResolvesByTheNameRule(container: NameContainer, form: BoundedForm) async throws {
         let wired = WiredCommandCore()
         let lab = try wired.core.createNetwork(name: "Lab", kind: .nat)
         func member(_ configuration: inout VMConfiguration) {
@@ -257,7 +279,7 @@ struct VMLibraryScriptingTests {
 
         let ambiguous = try await host.send(
             ScriptEvent.delete(
-                container.range(from: "Build", thru: "Solo"), confirmation: true, immediateDeletion: true),
+                form.reference(bounding: "Build", in: container), confirmation: true, immediateDeletion: true),
             to: gateway)
 
         #expect(alone.errorNumber == Int(errAENoSuchObject))
@@ -271,11 +293,11 @@ struct VMLibraryScriptingTests {
 
         let named = try await host.send(
             ScriptEvent.delete(
-                container.range(from: "Alpha", thru: "Solo"), confirmation: true, immediateDeletion: true),
+                form.reference(bounding: "Alpha", in: container), confirmation: true, immediateDeletion: true),
             to: gateway)
 
         #expect(named.errorNumber == 0, "\(named.errorString ?? "")")
-        #expect(wired.library.instances.map(\.name) == ["Zed"])
+        #expect(wired.library.instances.map(\.name) == form.leavesAfterAlpha)
     }
 
     // MARK: - Duplicate
