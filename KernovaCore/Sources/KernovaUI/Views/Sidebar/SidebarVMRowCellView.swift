@@ -523,9 +523,9 @@ final class SidebarVMRowCellView: NSTableCellView {
         guard instance.setupState == nil else { return nil }
         guard let presentation = instance.agentPresentation else { return nil }
         switch presentation.status {
-        case .current, .connected: return nil
-        case .waiting, .outdated, .reinstallNeeded, .updating, .unresponsive, .expectedMissing, .connecting,
-            .disconnected:
+        case .agent(.current), .agent(.connected): return nil
+        case .waiting, .agent(.outdated), .agent(.reinstallNeeded), .agent(.updating), .agent(.unresponsive),
+            .agent(.expectedMissing), .agent(.connecting), .agent(.disconnected):
             break
         }
         if case .waiting = presentation.status,

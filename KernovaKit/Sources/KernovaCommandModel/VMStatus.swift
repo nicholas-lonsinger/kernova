@@ -7,7 +7,7 @@ import Foundation
 /// ``displayName`` is what a person reads. Nothing is *decided* here: a
 /// predicate belongs to the phase, which distinguishes the cases a status
 /// conflates.
-public enum VMStatus: String, Sendable {
+public enum VMStatus: String, Codable, CaseIterable, Sendable {
     case stopped
     case starting
     case running
@@ -32,38 +32,18 @@ public enum VMStatus: String, Sendable {
     case initialBoot
     case error
 
-    /// The wire name a VM whose bundle is still being written by a create,
-    /// clone or import reports.
-    ///
-    /// Not a case: it is not a runtime state a session can be in, and
-    /// nothing but a listing ever sees it.
-    public static let preparingWireName = "preparing"
-
     /// What a person reads for this status.
     public var displayName: String { words.name }
+
+    /// This status as it reads after "is" in a sentence ("Tahoe is
+    /// suspended.").
+    public var phrase: String { words.phrase }
 
     /// What a person reads for a VM in this status: ``heldByAnotherCopyDisplayName``
     /// when another copy of Kernova holds it, since the status this copy sees
     /// then says nothing about what the VM is doing.
     public func displayName(heldByAnotherCopy: Bool) -> String {
-        Self.words(for: self, wireName: rawValue, heldByAnotherCopy: heldByAnotherCopy).name
-    }
-
-    /// A status read off the wire, in the words a person reads, by the same
-    /// rule as ``displayName(heldByAnotherCopy:)``.
-    ///
-    /// Answers for ``preparingWireName``, which is no case of this type, and
-    /// falls back to the raw name for anything else — which only a peer from
-    /// another vocabulary could send.
-    public static func displayName(forWireName wireName: String, heldByAnotherCopy: Bool) -> String {
-        words(for: VMStatus(rawValue: wireName), wireName: wireName, heldByAnotherCopy: heldByAnotherCopy).name
-    }
-
-    /// A status read off the wire as it reads after "is" in a sentence
-    /// ("Tahoe is suspended."), by the same rule as
-    /// ``displayName(forWireName:heldByAnotherCopy:)``.
-    public static func phrase(forWireName wireName: String, heldByAnotherCopy: Bool) -> String {
-        words(for: VMStatus(rawValue: wireName), wireName: wireName, heldByAnotherCopy: heldByAnotherCopy).phrase
+        heldByAnotherCopy ? Self.heldByAnotherCopyDisplayName : displayName
     }
 
     /// What a person reads in place of the status of a VM another running
@@ -76,24 +56,15 @@ public enum VMStatus: String, Sendable {
     /// One status in both of the forms a person reads it in: a label, and
     /// the phrase a sentence carries — each spelled out, since a label's case
     /// is not a sentence's ("Kernova" stays capitalized mid-sentence).
-    private struct Words {
+    struct Words {
         let name: String
         let phrase: String
     }
 
-    private static let heldByAnotherCopyWords = Words(
+    static let heldByAnotherCopyWords = Words(
         name: "In use by another copy of Kernova", phrase: "in use by another copy of Kernova")
 
-    /// The words for a VM reporting `wireName` (`status` when it names a
-    /// case): the held words whenever another copy holds it.
-    private static func words(for status: VMStatus?, wireName: String, heldByAnotherCopy: Bool) -> Words {
-        if heldByAnotherCopy { return heldByAnotherCopyWords }
-        if let status { return status.words }
-        if wireName == preparingWireName { return Words(name: "Preparing", phrase: "preparing") }
-        return Words(name: wireName, phrase: wireName)
-    }
-
-    private var words: Words {
+    var words: Words {
         switch self {
         case .stopped: Words(name: "Stopped", phrase: "stopped")
         case .starting: Words(name: "Starting", phrase: "starting")
@@ -108,6 +79,60 @@ public enum VMStatus: String, Sendable {
         case .forceStopping: Words(name: "Force Stopping", phrase: "force stopping")
         case .initialBoot: Words(name: "Initial Boot", phrase: "not yet booted")
         case .error: Words(name: "Error", phrase: "in an error state")
+        }
+    }
+}
+
+/// The status a listing or a read reports for a VM: a VM in the library's
+/// runtime ``VMStatus``, or ``preparing`` while a create, clone or import is
+/// still writing its bundle — which is no runtime state a session can be in.
+///
+/// Coded as one string, its ``rawValue``: the status's own, or `preparing`.
+public enum VMReportedStatus: RawRepresentable, Codable, CaseIterable, Hashable, Sendable {
+    /// A VM in the library, in this runtime state.
+    case runtime(VMStatus)
+    /// A VM whose bundle a create, clone or import is still writing.
+    case preparing
+
+    public static let allCases: [VMReportedStatus] = VMStatus.allCases.map(Self.runtime) + [.preparing]
+
+    private static let preparingRawValue = "preparing"
+
+    /// The name every automation surface reads this status by.
+    public var rawValue: String {
+        switch self {
+        case .runtime(let status): status.rawValue
+        case .preparing: Self.preparingRawValue
+        }
+    }
+
+    /// The status `rawValue` names, `nil` for a name no case has.
+    public init?(rawValue: String) {
+        if rawValue == Self.preparingRawValue {
+            self = .preparing
+        } else if let status = VMStatus(rawValue: rawValue) {
+            self = .runtime(status)
+        } else {
+            return nil
+        }
+    }
+
+    /// What a person reads for a VM reporting this status, by the rule
+    /// ``VMStatus/displayName(heldByAnotherCopy:)`` states.
+    public func displayName(heldByAnotherCopy: Bool) -> String {
+        words(heldByAnotherCopy: heldByAnotherCopy).name
+    }
+
+    /// This status as it reads after "is" in a sentence, by the same rule.
+    public func phrase(heldByAnotherCopy: Bool) -> String {
+        words(heldByAnotherCopy: heldByAnotherCopy).phrase
+    }
+
+    private func words(heldByAnotherCopy: Bool) -> VMStatus.Words {
+        if heldByAnotherCopy { return VMStatus.heldByAnotherCopyWords }
+        return switch self {
+        case .runtime(let status): status.words
+        case .preparing: VMStatus.Words(name: "Preparing", phrase: "preparing")
         }
     }
 }

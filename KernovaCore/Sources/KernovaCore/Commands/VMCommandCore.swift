@@ -275,11 +275,11 @@ package final class VMCommandCore {
             ipAddress: library.guestAddresses.address(for: instance))
     }
 
-    /// An arrival as a listing names it: ``VMStatus/preparingWireName``, and
+    /// An arrival as a listing names it: ``VMReportedStatus/preparing``, and
     /// the address its configuration answers with nothing live.
     func summary(_ arrival: VMArrival) -> VMSummary {
         VMSummary(
-            id: arrival.id, name: arrival.name, status: VMStatus.preparingWireName,
+            id: arrival.id, name: arrival.name, status: .preparing,
             ipAddress: GuestAddressObserver.address(withNoLiveGuest: arrival.configuration),
             heldByAnotherCopy: false)
     }
@@ -632,7 +632,7 @@ package final class VMCommandCore {
     /// automation reads them: none without a session that reaches the agents.
     static func agentLines(of instance: VMInstance) -> [VMAgentLine] {
         (instance.agentPresentation?.agents ?? []).map { line in
-            VMAgentLine(role: line.role, user: line.user, version: line.version, status: line.status.wireName)
+            VMAgentLine(role: line.role, user: line.user, version: line.version, status: line.status.kind)
         }
     }
 
@@ -682,7 +682,7 @@ package final class VMCommandCore {
         return VMInfo(
             id: instance.instanceID,
             name: instance.name,
-            status: instance.status.rawValue,
+            status: .runtime(instance.status),
             guestOS: config.guestOS,
             cpuCount: config.cpuCount,
             memoryBytes: config.memorySizeInBytes,
@@ -691,7 +691,7 @@ package final class VMCommandCore {
             networkName: library.networks.networkName(of: config),
             macAddress: config.macAddress,
             ipAddress: library.guestAddresses.address(for: instance),
-            agentStatus: instance.agentPresentation?.status.wireName,
+            agentStatus: instance.agentPresentation?.status.kind,
             hasSavedState: instance.hasSaveFile,
             savedStateKernovaVersion: instance.savedStateVersion,
             isEphemeral: subject.isEphemeral,
@@ -719,7 +719,7 @@ package final class VMCommandCore {
         return VMInfo(
             id: arrival.id,
             name: arrival.name,
-            status: VMStatus.preparingWireName,
+            status: .preparing,
             guestOS: config.guestOS,
             cpuCount: config.cpuCount,
             memoryBytes: config.memorySizeInBytes,

@@ -12,7 +12,7 @@ import Testing
 @Suite("CLI exit codes", .caseScoped)
 struct CLIExitCodeTests {
     private let vm = VMSummary(
-        id: UUID(), name: "Alpha", status: "running", ipAddress: .unavailable, heldByAnotherCopy: false)
+        id: UUID(), name: "Alpha", status: .runtime(.running), ipAddress: .unavailable, heldByAnotherCopy: false)
 
     @Test("Every verb refusal takes its own code")
     func everyCommandErrorMaps() throws {
@@ -24,10 +24,10 @@ struct CLIExitCodeTests {
             // And one the host answered for, naming nothing on a VM at all.
             (.itemNotFoundOnHost(item: "USB accessory with the identifier 7"), .notFound),
             (.ambiguous(selector: .idOrName("Alpha"), candidates: [vm]), .ambiguous),
-            (.invalidState(vm: vm, current: "running", allowed: [.stop]), .refusedByState),
+            (.invalidState(vm: vm, current: .running, allowed: [.stop]), .refusedByState),
             (
                 .changeTakesStoppedVM(
-                    vm: vm, current: "running", change: .firstOrLastSharedDirectory),
+                    vm: vm, current: .running, change: .firstOrLastSharedDirectory),
                 .refusedByState
             ),
             (.unsupported(capability: "snapshots"), .refusedByState),

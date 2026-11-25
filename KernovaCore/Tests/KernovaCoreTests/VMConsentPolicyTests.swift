@@ -59,7 +59,7 @@ struct VMConsentPolicyTests {
     // MARK: - Step routes
 
     private let vm = VMSummary(
-        id: UUID(), name: "Clone", status: "stopped", ipAddress: .unavailable,
+        id: UUID(), name: "Clone", status: .runtime(.stopped), ipAddress: .unavailable,
         heldByAnotherCopy: false)
 
     private func requirement(routes: Int = 2) -> StepRequirement {

@@ -40,11 +40,16 @@ extension VMVerbVocabulary {
         case .cancelPreparing: "cancel copy"
         case .cancelGuestSetup: "cancel guest setup"
         case .groups: "get smart groups, get folders"
+        case .sharedDirectories: "get shared directories"
+        case .editSharedDirectory: "make new shared directory, delete shared directory"
+        case .usbAccessories: "get USB accessories of virtual machine"
+        case .availableUSBAccessories: "get USB accessories"
+        case .editUSBAccessory: "attach, detach"
+        case .usbPairings: "get remembered USB accessories"
+        case .forgetUSBPairing: "delete remembered USB accessory"
         // The standard suite's `quit` is a quit Apple event, which the app
         // classifies by its sender rather than running this verb.
-        case .quit, .ipAddress, .sharedDirectories, .usbAccessories,
-            .availableUSBAccessories, .usbPairings, .forgetUSBPairing, .wait, .open, .showInFinder,
-            .create, .editStorageDisk, .editRemovableMedia, .editSharedDirectory, .editUSBAccessory,
+        case .quit, .ipAddress, .wait, .open, .showInFinder, .create, .editStorageDisk, .editRemovableMedia,
             .guestAgentDisk:
             nil
         }

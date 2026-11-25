@@ -35,7 +35,8 @@ package final class VMGuestAgentScriptObject: NSObject {
 
     @objc var user: String? { agent.user }
 
-    @objc var status: String { agent.status }
+    /// ``VMAgentLine/status`` as its wire name.
+    @objc var status: String { agent.status.rawValue }
 
     @objc var version: String { agent.version }
 

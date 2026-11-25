@@ -8,7 +8,7 @@
 		<xi:include href="file:///System/Library/ScriptingDefinitions/CocoaStandard.sdef" xpointer="xpointer(/dictionary/suite/node()[not(self::command and (@name = 'delete' or @name = 'duplicate' or @name = 'make'))])"/>
 
 		<!-- The Standard Suite's delete, taking a list of references too, the consent deleting a virtual machine or a snapshot refuses without, and a virtual machine's delete past the Trash, with the class that deletes both by what their references evaluate to. -->
-		<command name="delete" code="coredelo" description="Delete an object. A virtual machine&#8217;s bundle moves to the Trash, and files it uses outside its bundle stay where they are. A delete naming several stops at the first one refused, leaving those before it deleted.">
+		<command name="delete" code="coredelo" description="Delete an object. A virtual machine&#8217;s bundle moves to the Trash, and files it uses outside its bundle stay where they are. Deleting a shared directory stops sharing its folder, and deleting a remembered USB accessory forgets it; neither deletes a file. A delete naming several stops at the first one refused, leaving those before it deleted.">
 			<cocoa class="VMDeleteScriptCommand"/>
 			<access-group identifier="*"/>
 			<direct-parameter description="The object(s) to delete.">
@@ -160,6 +160,14 @@
 				<accessor style="range"/>
 				<accessor style="test"/>
 			</element>
+			<element type="USB accessory" access="r" description="The USB accessories you&#8217;ve assigned to Kernova in macOS&#8217;s Virtual Machine Accessories menu extra that no virtual machine holds: the ones attach takes. USB accessory &#8220;&#8230;&#8221; names one by its id or its name, and refuses a name several of them carry, listing their ids.">
+				<cocoa key="usbAccessories"/>
+				<accessor style="index"/>
+				<accessor style="name"/>
+				<accessor style="id"/>
+				<accessor style="range"/>
+				<accessor style="test"/>
+			</element>
 		</class-extension>
 
 		<class name="virtual machine" code="KvVM" plural="virtual machines" description="One virtual machine in the library.">
@@ -263,6 +271,28 @@
 				<accessor style="range"/>
 				<accessor style="test"/>
 			</element>
+			<element type="shared directory" description="The folders it shares with its guest, in the order it shares them. Shared directory &#8220;&#8230;&#8221; names one by its folder&#8217;s full path, starting with / or ~/, or by its folder&#8217;s name, and refuses a name several of them carry, listing their paths.">
+				<cocoa key="sharedDirectories"/>
+				<accessor style="index"/>
+				<accessor style="name"/>
+				<accessor style="range"/>
+				<accessor style="test"/>
+			</element>
+			<element type="USB accessory" access="r" description="The USB accessories its guest holds: the ones detach takes back. USB accessory &#8220;&#8230;&#8221; names one by its id or its name, and refuses a name several of them carry, listing their ids.">
+				<cocoa key="usbAccessories"/>
+				<accessor style="index"/>
+				<accessor style="name"/>
+				<accessor style="id"/>
+				<accessor style="range"/>
+				<accessor style="test"/>
+			</element>
+			<element type="remembered USB accessory" description="The USB accessories it takes back automatically, plugged in or not. Remembered USB accessory &#8220;&#8230;&#8221; names one by its key or its name, and refuses a name several of them carry, listing their keys.">
+				<cocoa key="rememberedUSBAccessories"/>
+				<accessor style="index"/>
+				<accessor style="name"/>
+				<accessor style="range"/>
+				<accessor style="test"/>
+			</element>
 		</class>
 
 		<class name="setting" code="KvCf" plural="settings" description="One of a virtual machine&#8217;s settings, such as setting &quot;cpus&quot; or setting &quot;display.width&quot;. On a virtual machine in Ephemeral Mode, a change to most of them goes back to its baseline snapshot at the next shutdown.">
@@ -317,7 +347,7 @@
 			<property name="user" code="KvUr" type="text" access="r" description="The user a session agent runs for, or missing value for the system service or a session agent that names none.">
 				<cocoa key="user"/>
 			</property>
-			<property name="status" code="KvSu" type="text" access="r" description="How it stands, in the terms agent status uses: current, connected, outdated, updating or unresponsive while connected; updating while it relaunches into an update and connecting while it is otherwise away; expectedMissing when it didn&#8217;t reconnect, and disconnected when it left and its wait passed.">
+			<property name="status" code="KvSu" type="text" access="r" description="How it stands, in the terms agent status uses: current, connected, outdated, reinstallNeeded, updating or unresponsive while connected; updating while it relaunches into an update and connecting while it is otherwise away; expectedMissing when it didn&#8217;t reconnect, and disconnected when it left and its wait passed.">
 				<cocoa key="status"/>
 			</property>
 			<property name="version" code="vers" type="text" access="r" description="The version it reports, or last reported while away, empty when it reports none.">
@@ -393,6 +423,51 @@
 			<element type="virtual machine" access="r" description="The virtual machines in it, in its own order. Several can share a name: virtual machine &#8220;&#8230;&#8221; of a folder refuses one more than one of them carries, listing their ids.">
 				<cocoa key="virtualMachines"/>
 			</element>
+		</class>
+
+		<class name="shared directory" code="KvSh" plural="shared directories" description="A folder on this Mac that a virtual machine shares with its guest. Share one with make new shared directory at a virtual machine with properties {path:&#8230;}, its full path, starting with / or ~/, and read only:true to keep the guest from writing to it; a folder the virtual machine already shares is left as it is. Kernova asks for a folder it can&#8217;t already read in an open panel, which comes in front once the script has told Kernova to activate, and shares the folder chosen there; AppleScript stops waiting for an answer after two minutes unless a with timeout block gives it longer, and the panel stays up in Kernova. Deleting one stops sharing its folder, which stays where it is.">
+			<cocoa class="VMSharedDirectoryScriptObject"/>
+			<property name="name" code="pnam" type="text" access="r" description="The folder&#8217;s own name, as the Sharing settings list it.">
+				<cocoa key="name"/>
+			</property>
+			<property name="path" code="KvPa" type="text" access="r" description="The folder, as this Mac names it.">
+				<cocoa key="path"/>
+			</property>
+			<property name="read only" code="KvRo" type="boolean" access="r" description="Whether the guest may read the folder but not write to it.">
+				<cocoa key="readOnly"/>
+			</property>
+		</class>
+
+		<class name="USB accessory" code="KvUA" plural="USB accessories" description="A USB accessory you&#8217;ve assigned to Kernova in macOS&#8217;s Virtual Machine Accessories menu extra: one of the application&#8217;s while no virtual machine holds it, and one of a virtual machine&#8217;s while its guest does. Attach one of the application&#8217;s to a running virtual machine, and detach one of a virtual machine&#8217;s. USB accessory passthrough needs macOS 27 or later.">
+			<cocoa class="VMUSBAccessoryScriptObject"/>
+			<property name="id" code="ID  " type="text" access="r" description="Its identifier, which lasts until it is unplugged or detached.">
+				<cocoa key="uniqueID"/>
+			</property>
+			<property name="name" code="pnam" type="text" access="r" description="What the accessory calls itself, qualified by its port where two accessories would read alike.">
+				<cocoa key="name"/>
+			</property>
+			<property name="vendor ID" code="KvVd" type="integer" access="r" description="The vendor identifier its device descriptor reports.">
+				<cocoa key="vendorID"/>
+			</property>
+			<property name="product ID" code="KvPd" type="integer" access="r" description="The product identifier its device descriptor reports.">
+				<cocoa key="productID"/>
+			</property>
+			<property name="key" code="KvKy" type="text" access="r" description="What Kernova recognizes it by across a replug and a restart, the key a remembered USB accessory carries; missing value when it reports nothing Kernova can recognize it by.">
+				<cocoa key="key"/>
+			</property>
+		</class>
+
+		<class name="remembered USB accessory" code="KvRA" plural="remembered USB accessories" description="A USB accessory a virtual machine takes back automatically whenever both are available, plugged in or not. Attaching an accessory remembers it, and detaching it or deleting this forgets it. USB accessory passthrough needs macOS 27 or later.">
+			<cocoa class="VMRememberedUSBAccessoryScriptObject"/>
+			<property name="name" code="pnam" type="text" access="r" description="What the accessory is called, qualified by its port when Kernova recognizes it by the port it&#8217;s plugged into.">
+				<cocoa key="name"/>
+			</property>
+			<property name="key" code="KvKy" type="text" access="r" description="What Kernova recognizes it by, the key a USB accessory carries while it is plugged in.">
+				<cocoa key="key"/>
+			</property>
+			<property name="date remembered" code="KvRd" type="date" access="r" description="When an attach someone asked for last remembered it; Kernova passing it through again on its own leaves this as it is.">
+				<cocoa key="dateRemembered"/>
+			</property>
 		</class>
 
 		<command name="start" code="KrnvStrt" description="Start a virtual machine, running whatever guest setup it still owes first. Wrap a long wait in a with timeout block: AppleScript gives up on a reply after two minutes by default, and the command goes on in Kernova. Given several virtual machines, it takes them in turn and ends at the first one refused, leaving those before it started. Given a smart group or folder, it starts, restores or resumes each virtual machine in it whose state takes it, one after another, as Start All does, asking nothing, passing over one whose start would set up its guest, and taking no recovery mode or confirmation. One whose own start would ask something first, or fails, is left undone while the start goes on to the next; once each has had its turn, it errors with a line for each one left undone, and what it did to the others stands.">
@@ -549,6 +624,25 @@
 				<cocoa key="Waiting"/>
 			</parameter>
 			<result type="specifier" description="The imported virtual machine."/>
+		</command>
+
+		<command name="attach" code="KrnvAtch" description="Pass a USB accessory through to a running virtual machine&#8217;s guest, and remember it there: the virtual machine takes it back automatically whenever both are available, unless the accessory reports nothing Kernova can recognize it by. It takes the application&#8217;s USB accessories, the ones no virtual machine holds. Given several, it attaches them in turn and ends at the first one refused, leaving those before it attached. USB accessory passthrough needs macOS 27 or later.">
+			<cocoa class="VMAttachScriptCommand"/>
+			<direct-parameter description="The USB accessory to attach, or a list of them.">
+				<type type="USB accessory"/>
+				<type type="USB accessory" list="yes"/>
+			</direct-parameter>
+			<parameter name="to" code="KpTo" type="virtual machine" description="The running virtual machine to attach it to.">
+				<cocoa key="Target"/>
+			</parameter>
+		</command>
+
+		<command name="detach" code="KrnvDtch" description="Take a USB accessory back off a running virtual machine&#8217;s guest, and forget it there: the virtual machine no longer takes it back automatically. It takes a virtual machine&#8217;s USB accessories, which return to the application&#8217;s, under a new id. Given several, it detaches them in turn and ends at the first one refused, leaving those before it detached. USB accessory passthrough needs macOS 27 or later.">
+			<cocoa class="VMDetachScriptCommand"/>
+			<direct-parameter description="The USB accessory to detach, or a list of them.">
+				<type type="USB accessory"/>
+				<type type="USB accessory" list="yes"/>
+			</direct-parameter>
 		</command>
 
 		<command name="cancel copy" code="KrnvCnCp" description="Stop a new virtual machine that a duplicate, import or create is still writing, one whose state is preparing, and remove what it has written. A virtual machine whose copy has finished refuses, as does the one a clone is copied from.">

@@ -11,15 +11,15 @@ import Testing
 struct CLIVerbWireTests {
     private let alpha = VMSummary(
         id: UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID(),
-        name: "Alpha", status: "running", ipAddress: .observed("192.168.64.4"), heldByAnotherCopy: false)
+        name: "Alpha", status: .runtime(.running), ipAddress: .observed("192.168.64.4"), heldByAnotherCopy: false)
 
     private var info: VMInfo {
         VMInfo(
-            id: alpha.id, name: "Alpha", status: "running", guestOS: .macOS, cpuCount: 4,
+            id: alpha.id, name: "Alpha", status: .runtime(.running), guestOS: .macOS, cpuCount: 4,
             memoryBytes: 8 << 30, networkMode: .nat, networkMembership: "common",
             networkName: nil, macAddress: "aa:bb:cc:dd:ee:ff",
             ipAddress: .observed("192.168.64.4"),
-            agentStatus: "current", hasSavedState: false, savedStateKernovaVersion: nil, isEphemeral: true,
+            agentStatus: .agent(.current), hasSavedState: false, savedStateKernovaVersion: nil, isEphemeral: true,
             snapshotCount: 2, hasSnapshots: false,
             guestAgent: nil, stateBucket: .stopped,
             bundlePath: "/Users/somebody/VMs/Alpha.kernova", heldByAnotherCopy: false, agents: [], tags: [],

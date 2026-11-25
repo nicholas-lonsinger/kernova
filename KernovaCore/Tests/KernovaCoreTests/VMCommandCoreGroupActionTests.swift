@@ -128,7 +128,8 @@ struct VMCommandCoreGroupActionTests {
 
     @Test("A question is a VM to answer for; the quit and another copy's hold are nobody's failure; the rest fail")
     func refusalsMapToOutcomes() {
-        let vm = VMSummary(id: UUID(), name: "VM", status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false)
+        let vm = VMSummary(
+            id: UUID(), name: "VM", status: .runtime(.stopped), ipAddress: .unavailable, heldByAnotherCopy: false)
         let confirmation = CommandError.confirmationRequired(
             ConfirmationPrompt(
                 kind: .startBesideSharedMachineIdentity, title: "T", message: "M", confirmTitle: "C",
