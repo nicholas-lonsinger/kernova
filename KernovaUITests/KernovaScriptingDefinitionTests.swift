@@ -51,7 +51,8 @@ struct KernovaScriptingDefinitionTests {
             "start": "virtual machine", "stop": "virtual machine", "restart": "virtual machine",
             "pause": "virtual machine", "resume": "virtual machine", "suspend": "virtual machine",
             "reveal": "virtual machine", "revert to": "snapshot", "cancel guest setup": "virtual machine",
-            "cancel copy": "virtual machine", "change": "setting",
+            "cancel copy": "virtual machine", "change": "setting", "attach": "USB accessory",
+            "detach": "USB accessory",
         ]
         #expect(Set(try values("command", "name", in: suite)) == Set(addressed.keys).union(["import"]))
 
@@ -87,7 +88,25 @@ struct KernovaScriptingDefinitionTests {
             (
                 "virtual machine", VMScriptObject.self,
                 VMInfo.Field.allCases.compactMap(VMScriptObject.key(carrying:))
-                    + [VMScriptObject.storageDisksKey, VMScriptObject.snapshotsKey, VMScriptObject.settingsKey]
+                    + [
+                        VMScriptObject.storageDisksKey, VMScriptObject.snapshotsKey, VMScriptObject.settingsKey,
+                        VMScriptObject.sharedDirectoriesKey, VMScriptObject.usbAccessoriesKey,
+                        VMScriptObject.rememberedUSBAccessoriesKey,
+                    ]
+            ),
+            (
+                "shared directory", VMSharedDirectoryScriptObject.self,
+                SharedDirectorySummary.Field.allCases.map(VMSharedDirectoryScriptObject.key(carrying:))
+                    // The folder's own name, which the path ends in.
+                    + [#keyPath(VMSharedDirectoryScriptObject.name)]
+            ),
+            (
+                "USB accessory", VMUSBAccessoryScriptObject.self,
+                USBAccessorySummary.Field.allCases.compactMap(VMUSBAccessoryScriptObject.key(carrying:))
+            ),
+            (
+                "remembered USB accessory", VMRememberedUSBAccessoryScriptObject.self,
+                USBPairingSummary.Field.allCases.compactMap(VMRememberedUSBAccessoryScriptObject.key(carrying:))
             ),
             (
                 // The keyspace's entry and its key's descriptor, but for
@@ -256,8 +275,8 @@ struct KernovaScriptingDefinitionTests {
             .initialBoot: "initial boot", .failed: "failed", .preparing: "preparing",
         ]
 
-        // `VMScriptState` covers every `VMStatus` by an exhaustive switch, so a
-        // new status cannot compile without landing here.
+        // `VMScriptState` covers every `VMReportedStatus` by an exhaustive
+        // switch, so a new status cannot compile without landing here.
         #expect(declared.count == VMScriptState.allCases.count)
         for state in VMScriptState.allCases {
             let term = try #require(terms[state], "No term for \(state)")
@@ -285,12 +304,6 @@ struct KernovaScriptingDefinitionTests {
         #expect(
             try values("class[@name='virtual machine']/property[@name='state group']", "type", in: suite)
                 == ["VM state group"])
-    }
-
-    @Test("The state a preparing bundle reports is one of them")
-    func preparingIsAState() throws {
-        #expect(VMScriptState(wireName: VMStatus.preparingWireName) == .preparing)
-        #expect(try enumerators("VM state")["preparing"] == VMScriptState.preparing.code)
     }
 
     @Test("Every way the core can stop a guest has a term a script can name")

@@ -22,10 +22,8 @@ package struct VMEntity: IndexedEntity {
     @Property(title: "Name", indexingKey: \.displayName)
     var name: String
 
-    /// The VM's runtime status, as its stable wire name — the same string every
-    /// other front door reports.
     @Property(title: "State")
-    var status: String
+    var status: VMState
 
     /// The VM's coarse state, the buckets the sidebar filters and groups by.
     @Property(title: "State Group")
@@ -61,10 +59,9 @@ package struct VMEntity: IndexedEntity {
     @Property(title: "IP Address")
     var ipAddress: String?
 
-    /// The guest-agent status as its wire name, `nil` when the VM has no agent
-    /// channel.
+    /// The guest-agent status, `nil` when the VM has no agent channel.
     @Property(title: "Guest Agent Status")
-    var agentStatus: String?
+    var agentStatus: VMGuestAgentStatus?
 
     /// How the guest agents stand against the bundled ones, `nil` when an
     /// agent has connected and this build bundles none for the guest's OS.
@@ -122,7 +119,7 @@ package struct VMEntity: IndexedEntity {
             switch field {
             case .id: break  // The entity's identifier, set above.
             case .name: name = info.name
-            case .status: status = info.status
+            case .status: status = VMState(info.status)
             case .stateBucket: stateGroup = VMStateGroup(info.stateBucket)
             case .guestOS: guestOS = VMGuestOperatingSystem(info.guestOS)
             case .cpuCount: cpuCount = info.cpuCount
@@ -132,7 +129,7 @@ package struct VMEntity: IndexedEntity {
             case .networkName: networkName = info.networkName?.title
             case .macAddress: macAddress = info.macAddress
             case .ipAddress: ipAddress = info.ipAddress.address
-            case .agentStatus: agentStatus = info.agentStatus
+            case .agentStatus: agentStatus = info.agentStatus.map(VMGuestAgentStatus.init)
             case .guestAgent: guestAgentVersion = info.guestAgent.map(VMGuestAgentVersion.init)
             case .hasSavedState: hasSavedState = info.hasSavedState
             case .savedStateKernovaVersion: savedStateKernovaVersion = info.savedStateKernovaVersion
@@ -157,7 +154,7 @@ package struct VMEntity: IndexedEntity {
     package var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(
             title: "\(name)",
-            subtitle: "\(VMStatus.displayName(forWireName: status, heldByAnotherCopy: heldByAnotherCopy))")
+            subtitle: "\(status.reportedStatus.displayName(heldByAnotherCopy: heldByAnotherCopy))")
     }
 
     /// What Spotlight holds for this VM: the name it is found by, and the
@@ -367,7 +364,8 @@ package struct VMEntityQuery: EntityStringQuery, FindQuery {
 
     /// Name, Date Created and Last Run take ``VMLibrarySort``'s order — its
     /// one direction ascending by name and descending by either date — and
-    /// that order reversed the other way.
+    /// that order reversed the other way. State ascends as its titles read,
+    /// A→Z.
     static func sorted(
         _ entities: [VMEntity], by key: PartialKeyPath<VMEntity>, ascending: Bool
     ) -> [VMEntity] {
@@ -376,12 +374,14 @@ package struct VMEntityQuery: EntityStringQuery, FindQuery {
         let lastRunAt: PartialKeyPath<VMEntity> = \VMEntity.$lastRunAt
         let status: PartialKeyPath<VMEntity> = \VMEntity.$status
         let snapshotCount: PartialKeyPath<VMEntity> = \VMEntity.$snapshotCount
+        let stateTitle = { (entity: VMEntity) in entity.status.reportedStatus.displayName(heldByAnotherCopy: false) }
         let (ordered, isAscending): ([VMEntity], Bool) =
             switch key {
             case name: (VMLibrarySort.name.ordered(entities, by: \.sortKeys), true)
             case createdAt: (VMLibrarySort.dateCreated.ordered(entities, by: \.sortKeys), false)
             case lastRunAt: (VMLibrarySort.lastRun.ordered(entities, by: \.sortKeys), false)
-            case status: (entities.sorted { $0.status < $1.status }, true)
+            case status:
+                (entities.sorted { stateTitle($0).localizedStandardCompare(stateTitle($1)) == .orderedAscending }, true)
             case snapshotCount: (entities.sorted { $0.snapshotCount < $1.snapshotCount }, true)
             default: (entities, ascending)
             }

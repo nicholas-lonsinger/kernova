@@ -191,7 +191,7 @@ struct VMCommandCoreArrivalTests {
         let source = makeSource(in: harness)
         let clone = try await harness.core.clone(
             .id(source.id), outcome: .newMachine, waitForOutcome: true)
-        #expect(clone.status == VMStatus.stopped.rawValue)
+        #expect(clone.status == .runtime(.stopped))
 
         let refusal = try #require(throws: CommandError.self) {
             try harness.core.cancelPreparing(.id(clone.id), consent: .all)

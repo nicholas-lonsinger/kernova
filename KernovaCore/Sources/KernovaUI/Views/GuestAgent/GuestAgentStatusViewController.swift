@@ -1,5 +1,6 @@
 import AppKit
 import KernovaAgentHost
+import KernovaCommandModel
 import KernovaCore
 import KernovaKit
 
@@ -282,17 +283,21 @@ final class GuestAgentStatusViewController: NSViewController {
     /// What the user does about `status`, where its title alone doesn't say.
     static func explanation(for status: AgentStatus) -> String? {
         switch status {
-        case .reinstallNeeded(_, _, .launchRefused):
+        case .waiting:
+            "Set up the Kernova guest agent in this guest. An agent that\u{2019}s already set up connects once "
+                + "it starts."
+        case .agent(.reinstallNeeded(_, _, .launchRefused)):
             "This agent has a different signature from the one Kernova bundles, so it can\u{2019}t update in "
                 + "place. Reinstall it from the installer disk."
-        case .reinstallNeeded(_, _, .notTeamSigned):
+        case .agent(.reinstallNeeded(_, _, .notTeamSigned)):
             "This build of Kernova bundles a guest agent signed without a team, so agents can\u{2019}t update "
                 + "in place. Reinstall it from the installer disk. A build signed with a development team "
                 + "updates agents in place."
-        case .disconnected:
+        case .agent(.disconnected):
             "The session agent disconnected and hasn\u{2019}t come back. An installed session agent connects "
                 + "again when its user logs in to the guest."
-        case .waiting, .current, .connected, .outdated, .updating, .unresponsive, .expectedMissing, .connecting:
+        case .agent(.current), .agent(.connected), .agent(.outdated), .agent(.updating), .agent(.unresponsive),
+            .agent(.expectedMissing), .agent(.connecting):
             nil
         }
     }

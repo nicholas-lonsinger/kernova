@@ -167,6 +167,13 @@ enum ScriptEvent {
         return change
     }
 
+    /// `attach <reference> to <virtual machine>`.
+    static func attach(_ reference: NSAppleEventDescriptor, to vm: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
+        let attach = verb("Atch", reference)
+        attach.setParam(vm, forKeyword: code("KpTo"))
+        return attach
+    }
+
     /// One of Kernova's own verbs, `<verb> <reference> [with confirmation]`.
     static func verb(
         _ verb: String, _ reference: NSAppleEventDescriptor, confirmation: Bool = false
