@@ -375,7 +375,9 @@ final class RemindersSettingsViewController: NSViewController, SettingsPaneScrol
     }
 
     private static var agentInstallReminderInfo: [InfoPopoverParagraph] {
-        InfoPopoverParagraph.message(title: VMAgentStatus.waiting.title, text: nil) + [
+        let prompt = InfoPopoverParagraph.message(
+            title: VMAgentStatus.waiting.title, text: GuestAgentStatusViewController.explanation(for: .waiting))
+        return prompt + [
             .body(
                 "The sidebar prompt to install the Kernova guest agent on a running macOS "
                     + "virtual machine. Turn a virtual machine off below to stop only its "

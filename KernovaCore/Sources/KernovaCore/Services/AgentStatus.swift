@@ -8,6 +8,60 @@ package enum AgentStatus: Equatable, Sendable {
     /// may still be booting.
     case waiting
 
+    /// An agent has been seen on this VM, and the agent this status names
+    /// stands as the ``AgentLineStatus`` says.
+    case agent(AgentLineStatus)
+
+    package var isConnecting: Bool {
+        if case .agent(.connecting) = self { return true }
+        return false
+    }
+
+    /// Resolves an upstream `AgentStatus` plus persisted host-side context into
+    /// the final status the UI should render.
+    ///
+    /// Called only inside a session. Precedence: `.expectedMissing` (the
+    /// watchdog warned) beats `upstream` unless it is `.waiting`, which
+    /// becomes `.disconnected` when `departedVersion` names a scope that left
+    /// with nothing awaited, else `.connecting` (agent seen before, none
+    /// connected). Each synthesized case requires a non-empty version, which
+    /// the UI renders beside it; with an empty one the next rule wins.
+    static func synthesize(
+        upstream: AgentStatus,
+        lastSeenAgentVersion: String?,
+        agentExpectedButMissing: Bool,
+        departedVersion: String?
+    ) -> AgentStatus {
+        if agentExpectedButMissing,
+            let expected = lastSeenAgentVersion,
+            !expected.isEmpty
+        {
+            return .agent(.expectedMissing(expected: expected))
+        }
+        guard case .waiting = upstream else { return upstream }
+        if let departed = departedVersion, !departed.isEmpty {
+            return .agent(.disconnected(last: departed))
+        }
+        if let lastSeen = lastSeenAgentVersion, !lastSeen.isEmpty {
+            return .agent(.connecting(expected: lastSeen))
+        }
+        return upstream
+    }
+
+    /// This status without the versions it carries, as every automation
+    /// surface names it.
+    package var kind: VMAgentStatus {
+        switch self {
+        case .waiting: .waiting
+        case .agent(let status): .agent(status.kind)
+        }
+    }
+}
+
+/// How one guest agent that has been seen stands, with the versions the UI
+/// renders beside it — or, as ``AgentStatus/agent(_:)``, the agent a VM's
+/// status names.
+package enum AgentLineStatus: Equatable, Sendable {
     /// The guest agent is connected and runs the payload the host bundles.
     case current(version: String)
 
@@ -36,8 +90,8 @@ package enum AgentStatus: Equatable, Sendable {
     /// elapsed with none connected — after the VM started or resumed, or after
     /// the agent went away mid-session (``MissingAgentRule``).
     ///
-    /// Synthesized only by
-    /// ``synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:departedVersion:)``.
+    /// For a VM, synthesized only by
+    /// ``AgentStatus/synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:departedVersion:)``.
     case expectedMissing(expected: String)
 
     /// A VM that has had an agent connect before
@@ -47,8 +101,9 @@ package enum AgentStatus: Equatable, Sendable {
     ///
     /// Resolves once an agent connects; to `.expectedMissing` when the agent
     /// absence watchdog warns; or to `.disconnected` once nothing is awaited
-    /// and only a scope that left this session remains. Synthesized only by
-    /// ``synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:departedVersion:)``.
+    /// and only a scope that left this session remains. For a VM, synthesized
+    /// only by
+    /// ``AgentStatus/synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:departedVersion:)``.
     case connecting(expected: String)
 
     /// A VM whose session agent connected during this session and left, its
@@ -57,8 +112,8 @@ package enum AgentStatus: Equatable, Sendable {
     /// the same to the host as an uninstall. `last` is the version it last
     /// reported.
     ///
-    /// Resolves once an agent connects. Synthesized only by
-    /// ``synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:departedVersion:)``.
+    /// Resolves once an agent connects. For a VM, synthesized only by
+    /// ``AgentStatus/synthesize(upstream:lastSeenAgentVersion:agentExpectedButMissing:departedVersion:)``.
     case disconnected(last: String)
 
     /// Why an agent can't take the bundled payload in place.
@@ -71,47 +126,10 @@ package enum AgentStatus: Equatable, Sendable {
         case notTeamSigned
     }
 
-    package var isConnecting: Bool {
-        if case .connecting = self { return true }
-        return false
-    }
-
-    /// Resolves an upstream `AgentStatus` plus persisted host-side context into
-    /// the final status the UI should render.
-    ///
-    /// Called only inside a session. Precedence: `.expectedMissing` (the
-    /// watchdog warned) beats `upstream` unless it is `.waiting`, which
-    /// becomes `.disconnected` when `departedVersion` names a scope that left
-    /// with nothing awaited, else `.connecting` (agent seen before, none
-    /// connected). Each synthesized case requires a non-empty version, which
-    /// the UI renders beside it; with an empty one the next rule wins.
-    static func synthesize(
-        upstream: AgentStatus,
-        lastSeenAgentVersion: String?,
-        agentExpectedButMissing: Bool,
-        departedVersion: String?
-    ) -> AgentStatus {
-        if agentExpectedButMissing,
-            let expected = lastSeenAgentVersion,
-            !expected.isEmpty
-        {
-            return .expectedMissing(expected: expected)
-        }
-        guard case .waiting = upstream else { return upstream }
-        if let departed = departedVersion, !departed.isEmpty {
-            return .disconnected(last: departed)
-        }
-        if let lastSeen = lastSeenAgentVersion, !lastSeen.isEmpty {
-            return .connecting(expected: lastSeen)
-        }
-        return upstream
-    }
-
     /// This status without the versions it carries, as every automation
     /// surface names it.
-    package var kind: VMAgentStatus {
+    package var kind: VMAgentLineStatus {
         switch self {
-        case .waiting: .waiting
         case .current: .current
         case .connected: .connected
         case .outdated: .outdated

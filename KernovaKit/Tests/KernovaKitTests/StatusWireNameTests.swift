@@ -19,9 +19,11 @@ struct StatusWireNameTests {
             (.runtime(.error), "error"), (.preparing, "preparing"),
         ]
         let agents: [(VMAgentStatus, String)] = [
-            (.waiting, "waiting"), (.current, "current"), (.connected, "connected"), (.outdated, "outdated"),
-            (.reinstallNeeded, "reinstallNeeded"), (.updating, "updating"), (.unresponsive, "unresponsive"),
-            (.expectedMissing, "expectedMissing"), (.connecting, "connecting"), (.disconnected, "disconnected"),
+            (.waiting, "waiting"), (.agent(.current), "current"), (.agent(.connected), "connected"),
+            (.agent(.outdated), "outdated"), (.agent(.reinstallNeeded), "reinstallNeeded"),
+            (.agent(.updating), "updating"), (.agent(.unresponsive), "unresponsive"),
+            (.agent(.expectedMissing), "expectedMissing"), (.agent(.connecting), "connecting"),
+            (.agent(.disconnected), "disconnected"),
         ]
 
         for (status, name) in statuses {

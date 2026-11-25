@@ -111,15 +111,10 @@ package struct VMEntity: IndexedEntity {
     /// When the VM last ran, as ``VMLibrarySort/lastRun`` orders it.
     let lastRun: VMLibrarySort.LastRun
 
-    /// The status ``status`` names, which the subtitle and the State sort
-    /// read in its words.
-    let reportedStatus: VMReportedStatus
-
     /// The entity `info` describes, accounting for each ``VMInfo/Field``.
     init(_ info: VMInfo) {
         self.id = info.id
         self.lastRun = VMLibrarySort.LastRun(state: info.stateBucket, lastRunAt: info.lastRunAt)
-        self.reportedStatus = info.status
         for field in VMInfo.Field.allCases {
             switch field {
             case .id: break  // The entity's identifier, set above.
@@ -159,7 +154,7 @@ package struct VMEntity: IndexedEntity {
     package var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(
             title: "\(name)",
-            subtitle: "\(reportedStatus.displayName(heldByAnotherCopy: heldByAnotherCopy))")
+            subtitle: "\(status.reportedStatus.displayName(heldByAnotherCopy: heldByAnotherCopy))")
     }
 
     /// What Spotlight holds for this VM: the name it is found by, and the
@@ -402,7 +397,7 @@ package struct VMEntityQuery: EntityStringQuery, EntityPropertyQuery {
         let lastRunAt: PartialKeyPath<VMEntity> = \VMEntity.$lastRunAt
         let status: PartialKeyPath<VMEntity> = \VMEntity.$status
         let snapshotCount: PartialKeyPath<VMEntity> = \VMEntity.$snapshotCount
-        let stateTitle = { (entity: VMEntity) in entity.reportedStatus.displayName(heldByAnotherCopy: false) }
+        let stateTitle = { (entity: VMEntity) in entity.status.reportedStatus.displayName(heldByAnotherCopy: false) }
         let (ordered, isAscending): ([VMEntity], Bool) =
             switch key {
             case name: (VMLibrarySort.name.ordered(entities, by: \.sortKeys), true)

@@ -137,9 +137,18 @@ struct VMIntentGatewayTests {
     func pickerValuesStandForTheirLibraryValues() {
         for status in VMReportedStatus.allCases {
             #expect(VMState(status).rawValue == status.rawValue)
+            #expect(VMState(status).reportedStatus == status)
         }
         for status in VMAgentStatus.allCases {
             #expect(VMGuestAgentStatus(status).rawValue == status.rawValue)
+        }
+        for status in VMAgentLineStatus.allCases {
+            #expect(VMGuestAgentLineStatus(status).rawValue == status.rawValue)
+            #expect(VMGuestAgentLineStatus(status).lineStatus == status)
+        }
+        for role in VMAgentRole.allCases {
+            #expect(VMGuestAgentRole(role).rawValue == role.rawValue)
+            #expect(VMGuestAgentRole(role).agentRole == role)
         }
         for bucket in VMStateBucket.allCases {
             #expect(VMStateGroup(bucket).rawValue == bucket.rawValue)

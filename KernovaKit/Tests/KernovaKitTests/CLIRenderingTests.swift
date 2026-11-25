@@ -18,7 +18,7 @@ struct CLIRenderingTests {
     private func info(
         ipAddress: GuestIPAddress = .observed("192.168.64.4"), memoryBytes: UInt64 = 8 << 30,
         networkMembership: String = "common", networkName: VMNetworkName? = nil,
-        agentStatus: VMAgentStatus? = .current, agents: [VMAgentLine] = [],
+        agentStatus: VMAgentStatus? = .agent(.current), agents: [VMAgentLine] = [],
         hasSavedState: Bool = false, savedStateKernovaVersion: String? = nil
     ) -> VMInfo {
         VMInfo(

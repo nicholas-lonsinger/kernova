@@ -237,7 +237,7 @@ public struct VMAgentLine: Codable, Sendable, Hashable {
     /// `connecting` for any other away agent; `expectedMissing` for one the session warns didn't
     /// reconnect, and `disconnected` for one that left this session and whose grace passed, each at the
     /// version it last reported.
-    public let status: VMAgentStatus
+    public let status: VMAgentLineStatus
     /// The version the agent reports, empty when it reports none.
     public let version: String
 
@@ -250,7 +250,7 @@ public struct VMAgentLine: Codable, Sendable, Hashable {
     private typealias CodingKeys = Field
 
     /// Describes one agent.
-    public init(role: VMAgentRole, user: String?, version: String, status: VMAgentStatus) {
+    public init(role: VMAgentRole, user: String?, version: String, status: VMAgentLineStatus) {
         self.role = role
         self.user = user
         self.version = version
@@ -259,7 +259,7 @@ public struct VMAgentLine: Codable, Sendable, Hashable {
 }
 
 /// Which of a guest's Kernova agents one is.
-public enum VMAgentRole: String, Codable, Sendable {
+public enum VMAgentRole: String, Codable, CaseIterable, Sendable {
     /// One GUI session's.
     case session
     /// The guest's as a whole.

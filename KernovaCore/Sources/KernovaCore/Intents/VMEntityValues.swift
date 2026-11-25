@@ -49,6 +49,26 @@ enum VMState: String, AppEnum {
         .preparing: "Preparing",
     ]
 
+    /// The status this case names.
+    var reportedStatus: VMReportedStatus {
+        switch self {
+        case .stopped: .runtime(.stopped)
+        case .starting: .runtime(.starting)
+        case .running: .runtime(.running)
+        case .paused: .runtime(.paused)
+        case .suspended: .runtime(.suspended)
+        case .saving: .runtime(.saving)
+        case .snapshotting: .runtime(.snapshotting)
+        case .cloning: .runtime(.cloning)
+        case .restoring: .runtime(.restoring)
+        case .installing: .runtime(.installing)
+        case .forceStopping: .runtime(.forceStopping)
+        case .initialBoot: .runtime(.initialBoot)
+        case .error: .runtime(.error)
+        case .preparing: .preparing
+        }
+    }
+
     /// The case naming `status`.
     init(_ status: VMReportedStatus) {
         self =
@@ -71,8 +91,7 @@ enum VMState: String, AppEnum {
     }
 }
 
-/// A guest agent's ``VMAgentStatus``, titled as ``VMAgentStatus/title`` reads
-/// it.
+/// A VM's ``VMAgentStatus``, titled as ``VMAgentStatus/title`` reads it.
 enum VMGuestAgentStatus: String, AppEnum {
     case waiting
     case current
@@ -88,22 +107,66 @@ enum VMGuestAgentStatus: String, AppEnum {
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Guest Agent Status")
 
     static let caseDisplayRepresentations: [VMGuestAgentStatus: DisplayRepresentation] = [
-        .waiting: "Set up the Kernova guest agent",
+        .waiting: "No guest agent connected",
         .current: "Guest agent up to date",
         .connected: "Guest agent connected",
-        .outdated: "Update available",
+        .outdated: "Guest agent out of date",
         .reinstallNeeded: "Guest agent can’t update in place",
-        .updating: "Updating guest agent",
-        .unresponsive: "Guest agent unresponsive",
+        .updating: "Guest agent updating",
+        .unresponsive: "Guest agent not responding",
+        .expectedMissing: "Guest agent didn’t reconnect",
+        .connecting: "Connecting to guest agent",
+        .disconnected: "Guest agent disconnected",
+    ]
+
+    /// The case naming `status`.
+    init(_ status: VMAgentStatus) {
+        self =
+            switch status {
+            case .waiting: .waiting
+            case .agent(.current): .current
+            case .agent(.connected): .connected
+            case .agent(.outdated): .outdated
+            case .agent(.reinstallNeeded): .reinstallNeeded
+            case .agent(.updating): .updating
+            case .agent(.unresponsive): .unresponsive
+            case .agent(.expectedMissing): .expectedMissing
+            case .agent(.connecting): .connecting
+            case .agent(.disconnected): .disconnected
+            }
+    }
+}
+
+/// One guest agent's ``VMAgentLineStatus``, titled as
+/// ``VMAgentLineStatus/title`` reads it.
+enum VMGuestAgentLineStatus: String, AppEnum {
+    case current
+    case connected
+    case outdated
+    case reinstallNeeded
+    case updating
+    case unresponsive
+    case expectedMissing
+    case connecting
+    case disconnected
+
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Agent Status")
+
+    static let caseDisplayRepresentations: [VMGuestAgentLineStatus: DisplayRepresentation] = [
+        .current: "Guest agent up to date",
+        .connected: "Guest agent connected",
+        .outdated: "Guest agent out of date",
+        .reinstallNeeded: "Guest agent can’t update in place",
+        .updating: "Guest agent updating",
+        .unresponsive: "Guest agent not responding",
         .expectedMissing: "Guest agent didn’t reconnect",
         .connecting: "Connecting to guest agent",
         .disconnected: "Guest agent disconnected",
     ]
 
     /// The status this case names.
-    var agentStatus: VMAgentStatus {
+    var lineStatus: VMAgentLineStatus {
         switch self {
-        case .waiting: .waiting
         case .current: .current
         case .connected: .connected
         case .outdated: .outdated
@@ -117,10 +180,9 @@ enum VMGuestAgentStatus: String, AppEnum {
     }
 
     /// The case naming `status`.
-    init(_ status: VMAgentStatus) {
+    init(_ status: VMAgentLineStatus) {
         self =
             switch status {
-            case .waiting: .waiting
             case .current: .current
             case .connected: .connected
             case .outdated: .outdated
@@ -130,6 +192,37 @@ enum VMGuestAgentStatus: String, AppEnum {
             case .expectedMissing: .expectedMissing
             case .connecting: .connecting
             case .disconnected: .disconnected
+            }
+    }
+}
+
+/// Which of a guest's agents one is, its ``VMAgentRole``, titled as
+/// ``VMAgentRole/title(user:)`` reads it for an agent that names no user.
+enum VMGuestAgentRole: String, AppEnum {
+    case session
+    case system
+
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Guest Agent Role")
+
+    static let caseDisplayRepresentations: [VMGuestAgentRole: DisplayRepresentation] = [
+        .session: "Session agent",
+        .system: "System service",
+    ]
+
+    /// The role this case names.
+    var agentRole: VMAgentRole {
+        switch self {
+        case .session: .session
+        case .system: .system
+        }
+    }
+
+    /// The case naming `role`.
+    init(_ role: VMAgentRole) {
+        self =
+            switch role {
+            case .session: .session
+            case .system: .system
             }
     }
 }
