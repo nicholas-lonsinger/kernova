@@ -155,7 +155,8 @@ A verb launches Kernova hidden when it isn't running; `--no-launch` refuses inst
 
 ```applescript
 tell application "Kernova"
-    -- A name matches without regard to case; a `whose` test filters the library.
+    -- A name matches without regard to case, a setting's key only as
+    -- `kernova get` lists it; a `whose` test filters the library.
     get name of every virtual machine whose state is running
 
     -- `IP address` is `missing value` until Kernova sees the guest use one —
