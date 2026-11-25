@@ -203,6 +203,81 @@ struct VMLibraryScriptingTests {
         #expect(wired.machineFiles.discardedIDs.isEmpty)
     }
 
+    /// The containers a script names a range of VMs under.
+    enum RangeContainer: CaseIterable, Sendable {
+        case application
+        /// The network "Lab".
+        case network
+        /// The folder "Lab".
+        case folder
+
+        /// `virtual machines "<start>" thru "<end>"` of the container.
+        @MainActor
+        func range(from start: String, thru end: String) -> NSAppleEventDescriptor {
+            ScriptEvent.range(
+                "KvVM", from: ScriptEvent.rangeEnd("KvVM", named: start),
+                thru: ScriptEvent.rangeEnd("KvVM", named: end), of: container)
+        }
+
+        /// `virtual machine "<name>"` of the container.
+        @MainActor
+        func vm(named name: String) -> NSAppleEventDescriptor {
+            ScriptEvent.element("KvVM", named: name, of: container)
+        }
+
+        @MainActor
+        private var container: NSAppleEventDescriptor {
+            switch self {
+            case .application: ScriptEvent.application
+            case .network: ScriptEvent.element("KvNw", named: "Lab")
+            case .folder: ScriptEvent.element("KvGF", named: "Lab")
+            }
+        }
+    }
+
+    @Test(
+        "A delete of a range of VMs whose end is a name two VMs share is refused as that name alone is, and deletes nothing; ends one VM each carries delete exactly that range",
+        arguments: RangeContainer.allCases)
+    func aRangeEndResolvesByTheNameRule(container: RangeContainer) async throws {
+        let wired = WiredCommandCore()
+        let lab = try wired.core.createNetwork(name: "Lab", kind: .nat)
+        func member(_ configuration: inout VMConfiguration) {
+            configuration.networkEnabled = true
+            configuration.networkMode = .nat
+            configuration.networkMembership = .network(lab.id)
+            configuration.applyNetworkMode(configuration.networkMode)
+        }
+        let vms = ["Alpha", "Build", "build", "Solo", "Zed"].map { wired.register(name: $0, mutate: member) }
+        let builds = vms.filter { $0.name.lowercased() == "build" }
+        try wired.library.organization.createFolder(named: "Lab", members: vms.map(\.id))
+        let host = ScriptHost()
+        let gateway = await makeGateway(wired, host: host)
+        let alone = try await host.send(
+            ScriptEvent.delete(container.vm(named: "Build"), confirmation: true, immediateDeletion: true), to: gateway)
+
+        let ambiguous = try await host.send(
+            ScriptEvent.delete(
+                container.range(from: "Build", thru: "Solo"), confirmation: true, immediateDeletion: true),
+            to: gateway)
+
+        #expect(alone.errorNumber == Int(errAENoSuchObject))
+        #expect(ambiguous.errorNumber == alone.errorNumber)
+        #expect(ambiguous.errorString == alone.errorString)
+        for build in builds {
+            #expect(ambiguous.errorString?.contains(build.id.uuidString) == true)
+        }
+        #expect(wired.library.instances.map(\.id) == vms.map(\.id))
+        #expect(wired.storage.deleteVMBundleCallCount + wired.storage.permanentlyDeleteVMBundleCallCount == 0)
+
+        let named = try await host.send(
+            ScriptEvent.delete(
+                container.range(from: "Alpha", thru: "Solo"), confirmation: true, immediateDeletion: true),
+            to: gateway)
+
+        #expect(named.errorNumber == 0, "\(named.errorString ?? "")")
+        #expect(wired.library.instances.map(\.name) == ["Zed"])
+    }
+
     // MARK: - Duplicate
 
     @Test(

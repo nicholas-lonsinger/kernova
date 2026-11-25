@@ -47,6 +47,23 @@ enum ScriptEvent {
         reference(elementClass, form: "indx", NSAppleEventDescriptor(int32: index), of: container)
     }
 
+    /// `<class>s <start> thru <end> of <container>`, each end a reference to
+    /// one of the range's own elements, as AppleScript sends `"Build"` there.
+    static func range(
+        _ elementClass: String, from start: NSAppleEventDescriptor, thru end: NSAppleEventDescriptor,
+        of container: NSAppleEventDescriptor = application
+    ) -> NSAppleEventDescriptor {
+        let range = record(as: "rang")
+        range.setDescriptor(start, forKeyword: code("star"))
+        range.setDescriptor(end, forKeyword: code("stop"))
+        return reference(elementClass, form: "rang", range, of: container)
+    }
+
+    /// `<class> "<name>"` as either end of a range of `<class>`.
+    static func rangeEnd(_ elementClass: String, named name: String) -> NSAppleEventDescriptor {
+        element(elementClass, named: name, of: NSAppleEventDescriptor(descriptorType: code("ccnt"), data: nil)!)
+    }
+
     /// `every <class> of <container>`.
     static func every(
         _ elementClass: String, of container: NSAppleEventDescriptor = application

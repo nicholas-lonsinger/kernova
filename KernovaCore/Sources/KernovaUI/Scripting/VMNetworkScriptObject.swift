@@ -13,7 +13,7 @@ import KernovaLogging
 /// refusal on the command being answered.
 @MainActor
 @objc(VMNetworkScriptObject)
-package final class VMNetworkScriptObject: NSObject {
+package final class VMNetworkScriptObject: VMScriptContainer {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMNetworkScriptObject")
 

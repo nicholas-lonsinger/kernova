@@ -6,7 +6,7 @@ import AppKit
 /// The composition root makes it the shared application by calling
 /// `KernovaApplication.shared` before anything else touches `NSApp`.
 @objc(KernovaApplication)
-public final class KernovaApplication: NSApplication {
+public final class KernovaApplication: VMScriptingApplication {
     private let reservedShortcuts = ReservedShortcutCatcher()
 
     override public func sendEvent(_ event: NSEvent) {

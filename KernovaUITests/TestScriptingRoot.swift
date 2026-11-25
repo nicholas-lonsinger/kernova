@@ -3,8 +3,9 @@ import AppKit
 @testable import KernovaUI
 
 /// The bundle's `NSPrincipalClass`, which XCTest instantiates once when it
-/// loads the bundle, before any test runs: it makes ``TestScriptingRoot`` the
-/// application's delegate for the whole process.
+/// loads the bundle, before any test runs: it makes the application a
+/// ``VMScriptingApplication``, as the app's own is, and ``TestScriptingRoot``
+/// its delegate for the whole process.
 final class TestBundlePrincipal: NSObject {
     override init() {
         super.init()
@@ -27,6 +28,9 @@ final class TestScriptingRoot: VMScriptingRoot {
     private static let shared = TestScriptingRoot()
 
     fileprivate static func install() {
+        // KernovaTestHost starts a plain NSApplication, before this bundle,
+        // which holds every Kernova class, is loaded.
+        object_setClass(NSApplication.shared, VMScriptingApplication.self)
         NSApplication.shared.delegate = shared
     }
 

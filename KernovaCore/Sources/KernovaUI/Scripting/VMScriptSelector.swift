@@ -28,11 +28,10 @@ struct VMScriptElement {
 ///
 /// A specifier that names a VM on its own — by name or by identifier, as an
 /// element of the application — is read *unevaluated*: the name reaches the
-/// core as ``VMSelector/name(_:)``, so a name several VMs answer to is refused
-/// by the core with the candidates listed, rather than resolving to whichever
-/// one the container handed back first. Everything else a specifier can say —
-/// an index, a range, `every`, a `whose` test — only Cocoa can read, so those
-/// are evaluated and each VM addressed by identifier.
+/// core as ``VMSelector/name(_:)``. Everything else a specifier can say — an
+/// index, a range, `every`, a `whose` test — only Cocoa can read, so those are
+/// evaluated, a name in them resolving as that name alone does
+/// (``VMScriptContainer``), and each VM addressed by identifier.
 ///
 /// What an event addresses is its direct parameter: one specifier, or a list
 /// of them. A Standard Suite `delete` or `duplicate` evaluates its one

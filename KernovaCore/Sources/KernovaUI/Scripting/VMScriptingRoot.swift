@@ -10,7 +10,7 @@ import KernovaCore
 /// Every command Cocoa builds from a script's event reaches the gateway
 /// through here: Cocoa hands a command nothing else to work with.
 @MainActor
-package class VMScriptingRoot: NSObject, NSApplicationDelegate {
+package class VMScriptingRoot: VMScriptContainer, NSApplicationDelegate {
     /// The Apple event front door, `nil` until the app has one — which
     /// answers every element empty and every verb as not ready.
     var scriptingGateway: VMScriptingGateway? { nil }

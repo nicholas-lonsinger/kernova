@@ -248,6 +248,18 @@ struct KernovaScriptingDefinitionTests {
         }
     }
 
+    @Test("Every class that holds elements resolves the names a script gives them, the application by its delegate")
+    func everyContainerResolvesItsElementsNames() throws {
+        let containers = try values("class[element]/cocoa", "class", in: loadSuite())
+
+        #expect(!containers.isEmpty)
+        for name in containers {
+            let container: AnyClass = try #require(NSClassFromString(name), "\(name)")
+            #expect(container is VMScriptContainer.Type, "\(name) is not a VMScriptContainer")
+        }
+        #expect(KernovaApplication.isSubclass(of: VMScriptingApplication.self))
+    }
+
     // MARK: - Enumerations
 
     /// The `name`/`code` pairs of one enumeration's enumerators.

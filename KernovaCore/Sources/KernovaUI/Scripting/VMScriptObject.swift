@@ -13,7 +13,7 @@ import KernovaLogging
 /// its settings are written through its `setting` elements.
 @MainActor
 @objc(VMScriptObject)
-package final class VMScriptObject: NSObject {
+package final class VMScriptObject: VMScriptContainer {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMScriptObject")
 

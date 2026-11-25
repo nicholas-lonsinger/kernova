@@ -13,7 +13,7 @@ import KernovaLogging
 /// ``VMFolderScriptObject`` — since Cocoa answers an object's class from its
 /// own implementation class.
 @MainActor
-package class VMGroupScriptObject: NSObject {
+package class VMGroupScriptObject: VMScriptContainer {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "VMGroupScriptObject")
 
