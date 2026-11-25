@@ -62,8 +62,9 @@ package protocol USBAccessoryProviding: AnyObject {
 /// Whether this process can pass a host USB accessory through to a guest, and
 /// when it cannot, what stands in the way.
 ///
-/// Decided once, at the composition root: the GUI reads presence, and a
-/// refusal reads the gap so it names the cause the user can act on.
+/// Decided once, at the composition root. Where it is unavailable, the app's
+/// surfaces and every verb's refusal read the gap, so each names the cause in
+/// the same words.
 package enum USBAccessoryPassthrough {
     case available(any USBAccessoryProviding)
     case unavailable(Gap)
