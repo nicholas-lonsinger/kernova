@@ -104,6 +104,6 @@ struct NetworkEntityQuery: EntityStringQuery, FindQuery {
         _ entities: [NetworkEntity], by key: PartialKeyPath<NetworkEntity>, ascending: Bool
     ) -> [NetworkEntity] {
         let name: PartialKeyPath<NetworkEntity> = \NetworkEntity.$name
-        return key == name ? sorted(byName: entities, \.name, ascending: ascending) : entities
+        return key == name ? sorted(entities, byTitle: \.name, ascending: ascending) : entities
     }
 }

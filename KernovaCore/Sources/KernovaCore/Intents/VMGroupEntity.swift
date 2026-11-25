@@ -112,7 +112,7 @@ struct VMGroupEntityQuery: EntityStringQuery, FindQuery {
         _ entities: [VMGroupEntity], by key: PartialKeyPath<VMGroupEntity>, ascending: Bool
     ) -> [VMGroupEntity] {
         let name: PartialKeyPath<VMGroupEntity> = \VMGroupEntity.$name
-        return key == name ? sorted(byName: entities, \.name, ascending: ascending) : entities
+        return key == name ? sorted(entities, byTitle: \.name, ascending: ascending) : entities
     }
 }
 

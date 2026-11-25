@@ -380,8 +380,7 @@ package struct VMEntityQuery: EntityStringQuery, FindQuery {
             case name: (VMLibrarySort.name.ordered(entities, by: \.sortKeys), true)
             case createdAt: (VMLibrarySort.dateCreated.ordered(entities, by: \.sortKeys), false)
             case lastRunAt: (VMLibrarySort.lastRun.ordered(entities, by: \.sortKeys), false)
-            case status:
-                (entities.sorted { stateTitle($0).localizedStandardCompare(stateTitle($1)) == .orderedAscending }, true)
+            case status: (sorted(entities, byTitle: stateTitle, ascending: true), true)
             case snapshotCount: (entities.sorted { $0.snapshotCount < $1.snapshotCount }, true)
             default: (entities, ascending)
             }

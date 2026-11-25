@@ -37,11 +37,11 @@ extension FindQuery {
         return Array(ordered.prefix(limit))
     }
 
-    /// `entities` in ``VMLibrarySort/name``'s order of the names `name`
+    /// `entities` in ``VMLibrarySort/name``'s order of the text `title`
     /// reads, or, not `ascending`, that order reversed.
-    static func sorted(byName entities: [Entity], _ name: (Entity) -> String, ascending: Bool) -> [Entity] {
+    static func sorted(_ entities: [Entity], byTitle title: (Entity) -> String, ascending: Bool) -> [Entity] {
         let ordered = VMLibrarySort.name.ordered(entities) {
-            VMLibrarySort.Keys(name: name($0), createdAt: nil, lastRun: .unrecorded)
+            VMLibrarySort.Keys(name: title($0), createdAt: nil, lastRun: .unrecorded)
         }
         return ascending ? ordered : ordered.reversed()
     }
