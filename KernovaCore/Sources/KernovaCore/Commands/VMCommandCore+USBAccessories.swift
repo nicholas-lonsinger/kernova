@@ -100,7 +100,7 @@ extension VMCommandCore {
     /// Unlike the two listings above, these rows describe hardware that is
     /// usually not plugged in — which is the whole reason they can be listed
     /// and removed at all.
-    func usbPairings(of selector: VMSelector?) throws -> [USBPairingSummary] {
+    package func usbPairings(of selector: VMSelector?) throws -> [USBPairingSummary] {
         try requireUSBAccessoryService()
         let instances = try selector.map { [try resolve($0)] } ?? library.instances
         return instances.flatMap { instance in
@@ -122,7 +122,7 @@ extension VMCommandCore {
     // MARK: - Edits
 
     /// Stops the VM taking the accessory `key` names back.
-    func forgetUSBPairing(_ selector: VMSelector, key: String) throws {
+    package func forgetUSBPairing(_ selector: VMSelector, key: String) throws {
         try requireUSBAccessoryService()
         let instance = try resolve(selector)
         try require(.forgetUSBPairing, on: instance)
@@ -153,7 +153,7 @@ extension VMCommandCore {
 
     /// Passes the accessory `registryID` names through to the VM's running
     /// guest.
-    func attachUSBAccessory(_ selector: VMSelector, accessory registryID: UInt64) async throws {
+    package func attachUSBAccessory(_ selector: VMSelector, accessory registryID: UInt64) async throws {
         let (instance, sessionID, service) = try admitUSBAccessoryEdit(selector)
         // An accessory macOS has not assigned to Kernova is a miss, not a
         // failed attach: the caller named something that is not there, and the
@@ -190,7 +190,7 @@ extension VMCommandCore {
     }
 
     /// Takes the passthrough device `deviceID` names back off the guest.
-    func detachUSBAccessory(_ selector: VMSelector, device deviceID: UUID) async throws {
+    package func detachUSBAccessory(_ selector: VMSelector, device deviceID: UUID) async throws {
         let (instance, sessionID, _) = try admitUSBAccessoryEdit(selector)
         // An identifier no attachment answers to is a refusal, not a quiet
         // success: the lifecycle treats a device VZ has already let go as done,

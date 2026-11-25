@@ -4,8 +4,8 @@ import KernovaCore
 
 /// The application's delegate as the scripting root: `NSApplication` is the
 /// root of the dictionary, which gives it `virtual machines`, `networks`,
-/// `smart groups` and `folders` elements — keys it forwards here, and every
-/// one of which reaches ``scriptingGateway``.
+/// `smart groups`, `folders` and `USB accessories` elements — keys it forwards
+/// here, and every one of which reaches ``scriptingGateway``.
 ///
 /// Every command Cocoa builds from a script's event reaches the gateway
 /// through here: Cocoa hands a command nothing else to work with.
@@ -43,7 +43,8 @@ package class VMScriptingRoot: NSObject, NSApplicationDelegate {
 
     /// Every element key the application's dictionary entry declares.
     package nonisolated static let scriptingKeys = Set(
-        [virtualMachinesKey, networksKey] + VMGroupKind.allCases.map(groupsKey(of:)))
+        [virtualMachinesKey, networksKey, VMScriptObject.usbAccessoriesKey]
+            + VMGroupKind.allCases.map(groupsKey(of:)))
 
     /// Every VM in the library, as the dictionary's `virtual machine` elements.
     ///
@@ -98,6 +99,23 @@ package class VMScriptingRoot: NSObject, NSApplicationDelegate {
     @objc(valueInFoldersWithName:)
     func valueInFolders(withName name: String) -> VMGroupScriptObject? {
         scriptingGateway?.group(.folder, named: name)
+    }
+
+    /// The USB accessories no guest holds, as the dictionary's `USB accessory`
+    /// elements of the application, read as ``virtualMachines`` is — see
+    /// ``VMScriptingGateway/availableUSBAccessories()``.
+    @objc var usbAccessories: [VMUSBAccessoryScriptObject] {
+        scriptingGateway?.availableUSBAccessories() ?? []
+    }
+
+    /// The named-element accessor Cocoa resolves `USB accessory "…"` of the
+    /// application through — see
+    /// ``VMScriptingGateway/usbAccessory(named:attachedTo:)``.
+    ///
+    /// KVC capitalizes only the key's first letter.
+    @objc(valueInUsbAccessoriesWithName:)
+    func valueInUSBAccessories(withName name: String) -> VMUSBAccessoryScriptObject? {
+        scriptingGateway?.usbAccessory(named: name, attachedTo: nil)
     }
 
     /// Where Cocoa removes a smart group for a `delete` or a `move` — see

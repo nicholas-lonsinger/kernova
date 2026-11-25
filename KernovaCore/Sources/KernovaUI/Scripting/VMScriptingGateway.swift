@@ -16,10 +16,9 @@ import KernovaLogging
 /// disks or a snapshot's size, which are measured from their files off the
 /// main thread — is suspended, and answered from a later dispatch of the same
 /// event to this process, once what it read is in hand (``answer(_:)``). A
-/// verb whose core call awaits — a Kernova command, a `make` of a snapshot, a
-/// `delete` of a virtual machine or a snapshot, and a `duplicate` of a virtual
-/// machine — runs on what such a dispatch addressed, once it returns; its own
-/// dispatch only suspends it.
+/// Kernova command, and a Standard Suite `make`, `delete` or `duplicate` the
+/// gateway answers itself, runs its verb on what such a dispatch addressed,
+/// once it returns; its own dispatch only suspends it.
 /// **Addressing:** a script names a VM the way a person does, so this addresses
 /// VMs by ``VMSelector/name(_:)`` as readily as by identifier and the ambiguity
 /// refusal can fire here — on a verb and on a read alike.
@@ -738,53 +737,85 @@ final class VMScriptingGateway {
     /// `delete` why `addressed` names nothing it deletes.
     ///
     /// What the reference names, or the list's first item, decides whether it
-    /// deletes virtual machines or snapshots, and a list naming anything else
-    /// is refused whole (``VMScriptSelector``). Each is evaluated as every
-    /// other verb on it is, never by the index Cocoa's own delete computes,
-    /// which named the first of two snapshots sharing a name (observed on
-    /// macOS 27).
+    /// deletes virtual machines, snapshots, shared directories or remembered
+    /// USB accessories, and a list naming anything else is refused whole
+    /// (``VMScriptSelector``). Each is evaluated as every other verb on it is,
+    /// never by the index Cocoa's own delete computes, which named the first
+    /// of two snapshots sharing a name (observed on macOS 27).
     func delete(_ addressed: Any, in containers: Any?, for delete: NSScriptCommand) {
-        let confirmation = delete.arguments?[VMScriptCommand.confirmationKey] as? Bool ?? false
-        let immediately = delete.arguments?[VMDeleteScriptCommand.immediateDeletionKey] as? Bool ?? false
         guard (addressed as? [Any])?.isEmpty != true else { return }
         switch VMScriptSelector.key(addressedBy: addressed) {
         case VMScriptingRoot.virtualMachinesKey:
-            guard
-                let vms = reading(
-                    addressed, for: delete, { try VMScriptSelector.selectors(addressing: addressed, in: containers) })
-            else { return }
-            afterDispatch(.delete) {
-                // The files a VM uses outside its bundle are the app's own
-                // sheet's to offer: it is the one surface that shows the user
-                // which they are.
-                try await self.perform(.delete, on: vms) { selector in
-                    try await self.commands.delete(
-                        selector, permanently: immediately, alsoRemoving: [], consent: Self.consent(confirmation))
-                }
-                return nil
+            // The files a VM uses outside its bundle are the app's own sheet's
+            // to offer: it is the one surface that shows the user which they
+            // are.
+            deleteEach(
+                addressed, in: containers, for: delete, verb: .delete,
+                evaluate: VMScriptSelector.selectors(addressing:in:), naming: \.displayText,
+                insteadOfImmediateDeletion: nil
+            ) { vm, permanently, consent in
+                try await self.commands.delete(vm, permanently: permanently, alsoRemoving: [], consent: consent)
             }
         case VMScriptObject.snapshotsKey:
-            guard
-                let snapshots = reading(
-                    addressed, for: delete, { try VMScriptSelector.snapshots(addressing: addressed, in: containers) })
-            else { return }
-            guard !immediately else {
-                delete.refuse(
-                    CommandError.invalidArgument(
-                        "A snapshot\u{2019}s files move to the Trash; immediate deletion deletes a virtual machine."))
-                return
+            deleteEach(
+                addressed, in: containers, for: delete, verb: .deleteSnapshot,
+                evaluate: VMScriptSelector.snapshots(addressing:in:), naming: \.snapshot.uuidString,
+                insteadOfImmediateDeletion: "A snapshot\u{2019}s files move to the Trash"
+            ) { snapshot, _, consent in
+                try await self.commands.deleteSnapshot(.id(snapshot.vm), snapshot: snapshot.snapshot, consent: consent)
             }
-            afterDispatch(.deleteSnapshot) {
-                try await self.perform(.deleteSnapshot, on: snapshots, naming: \.snapshot.uuidString) { snapshot in
-                    try await self.commands.deleteSnapshot(
-                        .id(snapshot.vm), snapshot: snapshot.snapshot, consent: Self.consent(confirmation))
-                }
-                return nil
+        case VMScriptObject.sharedDirectoriesKey:
+            deleteEach(
+                addressed, in: containers, for: delete, verb: .editSharedDirectory,
+                evaluate: VMScriptSelector.sharedDirectories(addressing:in:), naming: \.path,
+                insteadOfImmediateDeletion: "Deleting a shared directory stops sharing its folder and deletes nothing"
+            ) { share, _, _ in
+                try self.commands.removeSharedDirectory(.id(share.vm), path: share.path)
             }
+        case VMScriptObject.rememberedUSBAccessoriesKey:
+            deleteEach(
+                addressed, in: containers, for: delete, verb: .forgetUSBPairing,
+                evaluate: VMScriptSelector.rememberedUSBAccessories(addressing:in:), naming: \.key,
+                insteadOfImmediateDeletion: "Deleting a remembered USB accessory forgets it and deletes nothing"
+            ) { accessory, _, _ in
+                try self.commands.forgetUSBPairing(.id(accessory.vm), key: accessory.key)
+            }
+        case VMScriptObject.usbAccessoriesKey:
+            delete.refuse(
+                Int(errAENotModifiable),
+                "A script can\u{2019}t delete a USB accessory; detach takes one back off its guest.")
         default:
             delete.refuse(
                 CommandError.invalidArgument(
-                    "A list here names virtual machines, or snapshots; item 1 is neither."))
+                    "A list here names virtual machines, snapshots, shared directories or remembered USB accessories; item 1 is none of them."
+                ))
+        }
+    }
+
+    /// Runs `remove` on each `Item` that `evaluate` reads `addressed` as,
+    /// against `containers` — a script's `delete` of one kind of element —
+    /// once the dispatch returns, as `verb`, logging each under `name`; or
+    /// records on `delete` why it removes nothing.
+    ///
+    /// `remove` takes whether the delete was `with immediate deletion` and
+    /// the consent its `with confirmation` gives. Every kind but a VM refuses
+    /// an immediate deletion, saying what its delete does instead.
+    private func deleteEach<Item: Sendable>(
+        _ addressed: Any, in containers: Any?, for delete: NSScriptCommand, verb: VMVerb,
+        evaluate: (Any, Any?) throws -> [Item], naming name: @escaping (Item) -> String,
+        insteadOfImmediateDeletion: String?,
+        remove: @escaping (Item, _ permanently: Bool, Consent) async throws -> Void
+    ) {
+        let consent = Self.consent(delete.arguments?[VMScriptCommand.confirmationKey] as? Bool ?? false)
+        let immediately = delete.arguments?[VMDeleteScriptCommand.immediateDeletionKey] as? Bool ?? false
+        guard let items = reading(addressed, for: delete, { try evaluate(addressed, containers) }) else { return }
+        if immediately, let instead = insteadOfImmediateDeletion {
+            delete.refuse(CommandError.invalidArgument("\(instead); immediate deletion deletes a virtual machine."))
+            return
+        }
+        afterDispatch(verb) {
+            try await self.perform(verb, on: items, naming: name) { try await remove($0, immediately, consent) }
+            return nil
         }
     }
 
@@ -914,26 +945,41 @@ final class VMScriptingGateway {
         listedSnapshots(of: vm)?.map { VMSnapshotScriptObject($0, of: vm, gateway: self) } ?? []
     }
 
-    /// The snapshot `text` names among the VM's (``SnapshotSelection``) —
-    /// or `nil`, with the refusal recorded on the command being answered, for
+    /// The snapshot `text` names among the VM's (``NamedSelection``) — or
+    /// `nil`, with the refusal recorded on the command being answered, for
     /// text that names none of them, or several.
     func snapshot(named text: String, of vm: UUID) -> VMSnapshotScriptObject? {
         guard let listed = listedSnapshots(of: vm) else { return nil }
-        switch SnapshotSelection(text, in: listed, id: \.id, name: \.name) {
-        case .found(let snapshot):
-            return VMSnapshotScriptObject(snapshot, of: vm, gateway: self)
+        return selected(
+            NamedSelection(text, in: listed, id: \.id, name: \.name),
+            missing: { self.itemNotFound("snapshot named \u{201C}\(text)\u{201D}", on: vm) },
+            ambiguity: { NamedSelection.ambiguity(text, among: $0, id: \.id, name: \.name) }
+        ).map { VMSnapshotScriptObject($0, of: vm, gateway: self) }
+    }
+
+    /// The item `selection` found — or `nil`, with the refusal recorded on the
+    /// command being answered: `missing`'s for text that names none of them,
+    /// and `ambiguity`'s words for text that names several.
+    private func selected<Item>(
+        _ selection: NamedSelection<Item>, missing: () -> CommandError?, ambiguity: ([Item]) -> String
+    ) -> Item? {
+        switch selection {
+        case .found(let item):
+            return item
         case .notFound:
-            if let summary = commands.list(.all).first(where: { $0.id == vm }) {
-                answering?.refuse(
-                    CommandError.itemNotFound(vm: summary, item: "snapshot named \u{201C}\(text)\u{201D}"))
-            }
+            if let refusal = missing() { answering?.refuse(refusal) }
             return nil
         case .ambiguous(let candidates):
-            answering?.refuse(
-                Int(errAENoSuchObject),
-                SnapshotSelection.ambiguity(text, among: candidates, id: \.id, name: \.name))
+            answering?.refuse(Int(errAENoSuchObject), ambiguity(candidates))
             return nil
         }
+    }
+
+    /// The refusal of `item`, something the VM `vm` identifies lists none of;
+    /// `nil` once that VM has left the library, whose own evaluation then
+    /// fails.
+    private func itemNotFound(_ item: String, on vm: UUID) -> CommandError? {
+        commands.list(.all).first { $0.id == vm }.map { CommandError.itemNotFound(vm: $0, item: item) }
     }
 
     /// The core's listing of the VM `vm` identifies, or `nil` with the refusal
@@ -992,6 +1038,183 @@ final class VMScriptingGateway {
         }
     }
 
+    // MARK: - Shared directories
+
+    /// The folders the VM `vm` identifies shares with its guest, in the order
+    /// it shares them — none, with the refusal recorded on the command being
+    /// answered, when the VM can't be read.
+    func sharedDirectories(of vm: UUID) -> [VMSharedDirectoryScriptObject] {
+        listedSharedDirectories(of: vm)?.map { VMSharedDirectoryScriptObject($0, of: vm) } ?? []
+    }
+
+    /// The share `text` names among the VM's (``NamedSelection``): a full path,
+    /// starting with `/` or `~/`, names the share of that folder, as the core
+    /// compares two paths; any other text the share whose folder's own name it
+    /// is. `nil`, with the refusal recorded on the command being answered, for
+    /// text that names none of them, or several.
+    func sharedDirectory(named text: String, of vm: UUID) -> VMSharedDirectoryScriptObject? {
+        guard let listed = listedSharedDirectories(of: vm) else { return nil }
+        let folder = (try? UserHome.fullPath(text, of: "A folder")).map(VMCommandCore.comparablePath)
+        return selected(
+            NamedSelection(
+                text, in: listed, identifiedBy: { VMCommandCore.comparablePath($0.path) == folder },
+                name: VMSharedDirectoryScriptObject.folderName(of:)),
+            missing: { self.itemNotFound("shared directory named \u{201C}\(text)\u{201D}", on: vm) },
+            ambiguity: {
+                NamedSelection.ambiguity(
+                    text, among: $0, plural: "shared directories", namedAloneBy: "paths", label: \.path)
+            }
+        ).map { VMSharedDirectoryScriptObject($0, of: vm) }
+    }
+
+    /// The core's listing of the VM `vm` identifies, or `nil` with the refusal
+    /// recorded on the command being answered.
+    private func listedSharedDirectories(of vm: UUID) -> [SharedDirectorySummary]? {
+        answeringRefusal { try commands.sharedDirectories(of: .id(vm)) }
+    }
+
+    /// Shares the folder at the full path `path` with the guest of the VM `vm`
+    /// identifies — a script's `make new shared directory at` it
+    /// (``VMCreateScriptCommand``) — once the dispatch returns, answering the
+    /// `make` with the share the folder fills.
+    ///
+    /// The core asks for a folder Kernova can't already read in an open
+    /// panel, which ``perform(_:on:naming:_:)`` readies the app to put up.
+    func makeSharedDirectory(of vm: UUID, path: String, readOnly: Bool) {
+        afterDispatch(.editSharedDirectory) {
+            try await self.perform(.editSharedDirectory, on: [vm], naming: \.uuidString) { vm in
+                let shared = try await self.commands.addSharedDirectory(.id(vm), path: path, readOnly: readOnly)
+                return VMSharedDirectoryScriptObject.specifier(for: VMSharedDirectoryAddress(vm: vm, path: shared.path))
+            }.first ?? nil
+        }
+    }
+
+    // MARK: - USB accessories
+
+    /// The USB accessories macOS has assigned to Kernova that no guest holds —
+    /// or nothing, with the command asking deferred, until the library has
+    /// landed, and with the core's refusal recorded where this Mac or build
+    /// can't pass accessories through.
+    func availableUSBAccessories() -> [VMUSBAccessoryScriptObject] {
+        listedUSBAccessories(attachedTo: nil) ?? []
+    }
+
+    /// The USB accessories the guest of the VM `vm` identifies holds — none,
+    /// with the core's refusal recorded on the command being answered, when
+    /// the VM can't be read or this Mac or build can't pass accessories
+    /// through.
+    func usbAccessories(of vm: UUID) -> [VMUSBAccessoryScriptObject] {
+        listedUSBAccessories(attachedTo: vm) ?? []
+    }
+
+    /// The accessory `text` names (``NamedSelection``) among the guest's of
+    /// the VM `vm` identifies, or among the ones no guest holds for `nil`: the
+    /// text of its `id`, or else its name. `nil`, with the refusal recorded on
+    /// the command being answered, for text that names none of them, or
+    /// several.
+    func usbAccessory(named text: String, attachedTo vm: UUID?) -> VMUSBAccessoryScriptObject? {
+        guard let listed = listedUSBAccessories(attachedTo: vm) else { return nil }
+        return selected(
+            NamedSelection(
+                text, in: listed, identifiedBy: { $0.uniqueID == text }, name: \.name),
+            missing: {
+                let item = "USB accessory named \u{201C}\(text)\u{201D}"
+                guard let vm else { return CommandError.itemNotFoundOnHost(item: "\(item) available to attach") }
+                return self.itemNotFound(item, on: vm)
+            },
+            ambiguity: {
+                NamedSelection.ambiguity(
+                    text, among: $0, plural: "USB accessories", namedAloneBy: "identifiers",
+                    label: { "\($0.name) (\($0.uniqueID))" })
+            })
+    }
+
+    /// The core's listing of the accessories the guest of the VM `vm`
+    /// identifies holds, or of the ones no guest holds for `nil` — or `nil`,
+    /// deferred until the library has landed, or with the refusal recorded on
+    /// the command being answered.
+    private func listedUSBAccessories(attachedTo vm: UUID?) -> [VMUSBAccessoryScriptObject]? {
+        guard let vm else {
+            guard !deferUntilLanded() else { return nil }
+            return answeringRefusal { try commands.availableUSBAccessories() }?
+                .map(VMUSBAccessoryScriptObject.init(available:))
+        }
+        return answeringRefusal { try commands.usbAccessories(of: .id(vm)) }?
+            .compactMap { VMUSBAccessoryScriptObject($0, attachedTo: vm) }
+    }
+
+    /// The accessories `verb` addresses, each where it is, as
+    /// ``subject(addressedBy:)`` reads VMs — or `nil` with the refusal
+    /// recorded on it, `unnamed` for one that addresses nothing.
+    func usbAccessories(addressedBy verb: VMScriptCommand, unnamed: String) -> [VMUSBAccessoryScriptObject]? {
+        addressed(by: verb, unnamed: unnamed, { try VMScriptSelector.usbAccessories(addressing: $0) })
+    }
+
+    /// The one VM `verb`'s argument under `key` names, as a verb's direct
+    /// parameter names VMs (``VMScriptSelector/selectors(addressing:in:)``) —
+    /// or `nil` with the refusal recorded on it. `purpose` completes "Name one
+    /// virtual machine …": "to attach to".
+    func virtualMachine(namedBy verb: VMScriptCommand, argument key: String, purpose: String) -> VMSelector? {
+        // The dictionary requires the argument, and Cocoa refuses an event
+        // that lacks it or gives it as no reference before any command runs
+        // (−1701, −1700; observed on macOS 27).
+        let named = verb.arguments?[key] as Any
+        guard let vms = reading(named, for: verb, { try VMScriptSelector.selectors(addressing: named) }) else {
+            return nil
+        }
+        guard vms.count == 1, let vm = vms.first else {
+            verb.refuse(CommandError.invalidArgument("Name one virtual machine \(purpose); this names \(vms.count)."))
+            return nil
+        }
+        return vm
+    }
+
+    /// Passes each accessory `registryIDs` names through to the guest of the
+    /// VM `vm` names, in order.
+    func attach(_ registryIDs: [UInt64], to vm: VMSelector) async throws {
+        try await perform(.editUSBAccessory, on: registryIDs, naming: { String($0) }) { registryID in
+            try await self.commands.attachUSBAccessory(vm, accessory: registryID)
+        }
+    }
+
+    /// Takes each attachment back off its VM's guest, in order.
+    func detach(_ attachments: [VMUSBAttachment]) async throws {
+        try await perform(.editUSBAccessory, on: attachments, naming: \.device.uuidString) { attachment in
+            try await self.commands.detachUSBAccessory(.id(attachment.vm), device: attachment.device)
+        }
+    }
+
+    /// The USB accessories the VM `vm` identifies takes back automatically —
+    /// none, with the core's refusal recorded on the command being answered,
+    /// when the VM can't be read or this Mac or build can't pass accessories
+    /// through.
+    func rememberedUSBAccessories(of vm: UUID) -> [VMRememberedUSBAccessoryScriptObject] {
+        listedRememberedUSBAccessories(of: vm)?.map { VMRememberedUSBAccessoryScriptObject($0, of: vm) } ?? []
+    }
+
+    /// The remembered accessory `text` names among the VM's
+    /// (``NamedSelection``): its key, or else its name. `nil`, with the
+    /// refusal recorded on the command being answered, for text that names
+    /// none of them, or several.
+    func rememberedUSBAccessory(named text: String, of vm: UUID) -> VMRememberedUSBAccessoryScriptObject? {
+        guard let listed = listedRememberedUSBAccessories(of: vm) else { return nil }
+        return selected(
+            NamedSelection(text, in: listed, identifiedBy: { $0.key == text }, name: \.name),
+            missing: { self.itemNotFound("remembered USB accessory named \u{201C}\(text)\u{201D}", on: vm) },
+            ambiguity: {
+                NamedSelection.ambiguity(
+                    text, among: $0, plural: "remembered USB accessories", namedAloneBy: "keys",
+                    label: { "\($0.name) (\($0.key))" })
+            }
+        ).map { VMRememberedUSBAccessoryScriptObject($0, of: vm) }
+    }
+
+    /// The core's listing of the VM `vm` identifies, or `nil` with the refusal
+    /// recorded on the command being answered.
+    private func listedRememberedUSBAccessories(of vm: UUID) -> [USBPairingSummary]? {
+        answeringRefusal { try commands.usbPairings(of: .id(vm)) }
+    }
+
     // MARK: - Networks
 
     /// What a script that asks to make a virtual machine reads back.
@@ -1006,6 +1229,14 @@ final class VMScriptingGateway {
 
     /// What a script that asks to make a setting reads back.
     nonisolated static let cannotMakeSetting = "A script can\u{2019}t make a setting."
+
+    /// What a script that asks to make a USB accessory reads back.
+    nonisolated static let cannotMakeUSBAccessory =
+        "A script can\u{2019}t make a USB accessory; attach passes one through to a guest."
+
+    /// What a script that asks to make a remembered USB accessory reads back.
+    nonisolated static let cannotMakeRememberedUSBAccessory =
+        "A script can\u{2019}t make a remembered USB accessory; attaching a USB accessory remembers it."
 
     /// Every named network, ordered by name — or nothing, with the command
     /// asking deferred, until the library has landed, and with the command
@@ -1038,8 +1269,10 @@ final class VMScriptingGateway {
     func makeElement(forKey key: String, name: String?, kind: NSNumber?) -> VMNetworkScriptObject? {
         guard key == VMScriptingRoot.networksKey else {
             refuseToMake(
-                VMScriptingRoot.groupKind(forKey: key).map { "A script can\u{2019}t make a \($0.noun)." }
-                    ?? Self.cannotMakeVirtualMachine)
+                key == VMScriptObject.usbAccessoriesKey
+                    ? Self.cannotMakeUSBAccessory
+                    : VMScriptingRoot.groupKind(forKey: key).map { "A script can\u{2019}t make a \($0.noun)." }
+                        ?? Self.cannotMakeVirtualMachine)
             return nil
         }
         return run(.createNetwork, on: nil) {
