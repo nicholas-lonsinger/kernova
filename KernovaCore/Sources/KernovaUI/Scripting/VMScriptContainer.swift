@@ -64,6 +64,8 @@ package class VMScriptContainer: NSObject {
         }
         var count = 0
         guard let indices = resolved.indicesOfObjectsByEvaluating(withContainer: container, count: &count) else {
+            // No indices and a count of -1 are every element.
+            guard count != -1 else { return [-1] }
             Self.refuse(VMScriptEvaluationFailure(resolved).number)
             return []
         }
