@@ -743,80 +743,47 @@ final class VMScriptingGateway {
     /// never by the index Cocoa's own delete computes, which named the first
     /// of two snapshots sharing a name (observed on macOS 27).
     func delete(_ addressed: Any, in containers: Any?, for delete: NSScriptCommand) {
-        let confirmation = delete.arguments?[VMScriptCommand.confirmationKey] as? Bool ?? false
-        let immediately = delete.arguments?[VMDeleteScriptCommand.immediateDeletionKey] as? Bool ?? false
         guard (addressed as? [Any])?.isEmpty != true else { return }
         switch VMScriptSelector.key(addressedBy: addressed) {
-        case VMScriptObject.sharedDirectoriesKey:
-            guard
-                let shares = reading(
-                    addressed, for: delete,
-                    { try VMScriptSelector.sharedDirectories(addressing: addressed, in: containers) })
-            else { return }
-            guard !immediately else {
-                delete.refuse(
-                    Self.takesNoImmediateDeletion(
-                        "Deleting a shared directory stops sharing its folder and deletes nothing"))
-                return
+        case VMScriptingRoot.virtualMachinesKey:
+            // The files a VM uses outside its bundle are the app's own sheet's
+            // to offer: it is the one surface that shows the user which they
+            // are.
+            deleteEach(
+                addressed, in: containers, for: delete, verb: .delete,
+                evaluate: VMScriptSelector.selectors(addressing:in:), naming: \.displayText,
+                insteadOfImmediateDeletion: nil
+            ) { vm, permanently, consent in
+                try await self.commands.delete(vm, permanently: permanently, alsoRemoving: [], consent: consent)
             }
-            afterDispatch(.editSharedDirectory) {
-                try await self.perform(.editSharedDirectory, on: shares, naming: \.path) { share in
-                    try self.commands.removeSharedDirectory(.id(share.vm), path: share.path)
-                }
-                return nil
+        case VMScriptObject.snapshotsKey:
+            deleteEach(
+                addressed, in: containers, for: delete, verb: .deleteSnapshot,
+                evaluate: VMScriptSelector.snapshots(addressing:in:), naming: \.snapshot.uuidString,
+                insteadOfImmediateDeletion: "A snapshot\u{2019}s files move to the Trash"
+            ) { snapshot, _, consent in
+                try await self.commands.deleteSnapshot(.id(snapshot.vm), snapshot: snapshot.snapshot, consent: consent)
+            }
+        case VMScriptObject.sharedDirectoriesKey:
+            deleteEach(
+                addressed, in: containers, for: delete, verb: .editSharedDirectory,
+                evaluate: VMScriptSelector.sharedDirectories(addressing:in:), naming: \.path,
+                insteadOfImmediateDeletion: "Deleting a shared directory stops sharing its folder and deletes nothing"
+            ) { share, _, _ in
+                try self.commands.removeSharedDirectory(.id(share.vm), path: share.path)
             }
         case VMScriptObject.rememberedUSBAccessoriesKey:
-            guard
-                let remembered = reading(
-                    addressed, for: delete,
-                    { try VMScriptSelector.rememberedUSBAccessories(addressing: addressed, in: containers) })
-            else { return }
-            guard !immediately else {
-                delete.refuse(
-                    Self.takesNoImmediateDeletion("Deleting a remembered USB accessory forgets it and deletes nothing"))
-                return
-            }
-            afterDispatch(.forgetUSBPairing) {
-                try await self.perform(.forgetUSBPairing, on: remembered, naming: \.key) { accessory in
-                    try self.commands.forgetUSBPairing(.id(accessory.vm), key: accessory.key)
-                }
-                return nil
+            deleteEach(
+                addressed, in: containers, for: delete, verb: .forgetUSBPairing,
+                evaluate: VMScriptSelector.rememberedUSBAccessories(addressing:in:), naming: \.key,
+                insteadOfImmediateDeletion: "Deleting a remembered USB accessory forgets it and deletes nothing"
+            ) { accessory, _, _ in
+                try self.commands.forgetUSBPairing(.id(accessory.vm), key: accessory.key)
             }
         case VMScriptObject.usbAccessoriesKey:
             delete.refuse(
                 Int(errAENotModifiable),
                 "A script can\u{2019}t delete a USB accessory; detach takes one back off its guest.")
-        case VMScriptingRoot.virtualMachinesKey:
-            guard
-                let vms = reading(
-                    addressed, for: delete, { try VMScriptSelector.selectors(addressing: addressed, in: containers) })
-            else { return }
-            afterDispatch(.delete) {
-                // The files a VM uses outside its bundle are the app's own
-                // sheet's to offer: it is the one surface that shows the user
-                // which they are.
-                try await self.perform(.delete, on: vms) { selector in
-                    try await self.commands.delete(
-                        selector, permanently: immediately, alsoRemoving: [], consent: Self.consent(confirmation))
-                }
-                return nil
-            }
-        case VMScriptObject.snapshotsKey:
-            guard
-                let snapshots = reading(
-                    addressed, for: delete, { try VMScriptSelector.snapshots(addressing: addressed, in: containers) })
-            else { return }
-            guard !immediately else {
-                delete.refuse(Self.takesNoImmediateDeletion("A snapshot\u{2019}s files move to the Trash"))
-                return
-            }
-            afterDispatch(.deleteSnapshot) {
-                try await self.perform(.deleteSnapshot, on: snapshots, naming: \.snapshot.uuidString) { snapshot in
-                    try await self.commands.deleteSnapshot(
-                        .id(snapshot.vm), snapshot: snapshot.snapshot, consent: Self.consent(confirmation))
-                }
-                return nil
-            }
         default:
             delete.refuse(
                 CommandError.invalidArgument(
@@ -825,10 +792,31 @@ final class VMScriptingGateway {
         }
     }
 
-    /// What a delete of anything but a VM refuses `with immediate deletion`
-    /// with, `fact` saying what that delete does instead.
-    private static func takesNoImmediateDeletion(_ fact: String) -> CommandError {
-        .invalidArgument("\(fact); immediate deletion deletes a virtual machine.")
+    /// Runs `remove` on each `Item` that `evaluate` reads `addressed` as,
+    /// against `containers` — a script's `delete` of one kind of element —
+    /// once the dispatch returns, as `verb`, logging each under `name`; or
+    /// records on `delete` why it removes nothing.
+    ///
+    /// `remove` takes whether the delete was `with immediate deletion` and
+    /// the consent its `with confirmation` gives. Every kind but a VM refuses
+    /// an immediate deletion, saying what its delete does instead.
+    private func deleteEach<Item: Sendable>(
+        _ addressed: Any, in containers: Any?, for delete: NSScriptCommand, verb: VMVerb,
+        evaluate: (Any, Any?) throws -> [Item], naming name: @escaping (Item) -> String,
+        insteadOfImmediateDeletion: String?,
+        remove: @escaping (Item, _ permanently: Bool, Consent) async throws -> Void
+    ) {
+        let consent = Self.consent(delete.arguments?[VMScriptCommand.confirmationKey] as? Bool ?? false)
+        let immediately = delete.arguments?[VMDeleteScriptCommand.immediateDeletionKey] as? Bool ?? false
+        guard let items = reading(addressed, for: delete, { try evaluate(addressed, containers) }) else { return }
+        if immediately, let instead = insteadOfImmediateDeletion {
+            delete.refuse(CommandError.invalidArgument("\(instead); immediate deletion deletes a virtual machine."))
+            return
+        }
+        afterDispatch(verb) {
+            try await self.perform(verb, on: items, naming: name) { try await remove($0, immediately, consent) }
+            return nil
+        }
     }
 
     // MARK: - Settings
@@ -1164,13 +1152,13 @@ final class VMScriptingGateway {
 
     /// The one VM `verb`'s argument under `key` names, as a verb's direct
     /// parameter names VMs (``VMScriptSelector/selectors(addressing:in:)``) —
-    /// or `nil` with the refusal recorded on it. `purpose` completes "Name the
+    /// or `nil` with the refusal recorded on it. `purpose` completes "Name one
     /// virtual machine …": "to attach to".
     func virtualMachine(namedBy verb: VMScriptCommand, argument key: String, purpose: String) -> VMSelector? {
-        guard let named = verb.arguments?[key] else {
-            verb.refuse(Int(errAEParamMissed), "Name the virtual machine \(purpose).")
-            return nil
-        }
+        // The dictionary requires the argument, and Cocoa refuses an event
+        // that lacks it or gives it as no reference before any command runs
+        // (−1701, −1700; observed on macOS 27).
+        let named = verb.arguments?[key] as Any
         guard let vms = reading(named, for: verb, { try VMScriptSelector.selectors(addressing: named) }) else {
             return nil
         }

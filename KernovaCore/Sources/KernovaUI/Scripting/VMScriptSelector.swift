@@ -90,7 +90,7 @@ enum VMScriptSelector {
     /// anything else is the VMs ``virtualMachines(addressing:in:)`` reads.
     ///
     /// A group is never one of several: a list of references holds VMs only,
-    /// as ``specifiers(in:naming:key:)`` refuses anything else.
+    /// as ``specifiers(in:naming:)`` refuses anything else.
     ///
     /// - Throws: As ``selectors(addressing:in:)`` does, and
     ///   ``CommandError/invalidArgument(_:)`` for a reference evaluating to

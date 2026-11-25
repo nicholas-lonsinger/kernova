@@ -9,11 +9,11 @@ public enum NamedSelection<Candidate> {
     /// More than one item carries the name; the candidates say which.
     case ambiguous([Candidate])
 
-    /// Text that is an item's identifier — the one `identifies` answers true
-    /// for — names that item; any other text names the one item whose name it
-    /// is, ignoring case. So an item literally named after another's
-    /// identifier is still reachable by name, and the identifier always
-    /// reaches its own.
+    /// Text that is an item's identifier — the first `identifies` answers true
+    /// for — names that item, whatever any item is called; any other text
+    /// names the one item whose name it is, ignoring case. An identifier always
+    /// reaches its own item, so an item whose name is another's identifier is
+    /// reached only by its own identifier.
     public init(
         _ text: String, in candidates: [Candidate], identifiedBy identifies: (Candidate) -> Bool,
         name: (Candidate) -> String
