@@ -160,7 +160,7 @@ struct AppAlertPresenterTests {
     // MARK: - A step refusal's routes
 
     private static let clone = VMSummary(
-        id: UUID(), name: "Clone", status: "suspended", ipAddress: .unavailable,
+        id: UUID(), name: "Clone", status: .runtime(.suspended), ipAddress: .unavailable,
         heldByAnotherCopy: false)
 
     private static let ownNetwork = ConfigurationEntry(key: "network.membership", value: "isolated")
@@ -245,7 +245,8 @@ struct AppAlertPresenterTests {
         GuestAccountPasswordRequest(
             prompt: GuestAccountPrompt(
                 vm: VMSummary(
-                    id: vmID, name: vmName, status: "stopped", ipAddress: .unavailable, heldByAnotherCopy: false),
+                    id: vmID, name: vmName, status: .runtime(.stopped), ipAddress: .unavailable,
+                    heldByAnotherCopy: false),
                 username: "ada", fullName: "Ada Lovelace",
                 message: "\u{201C}\(vmName)\u{201D} creates the macOS account."),
             answer: { answers.answered.append($0) })

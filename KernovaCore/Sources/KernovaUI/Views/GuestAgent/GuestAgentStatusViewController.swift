@@ -1,5 +1,6 @@
 import AppKit
 import KernovaAgentHost
+import KernovaCommandModel
 import KernovaCore
 import KernovaKit
 

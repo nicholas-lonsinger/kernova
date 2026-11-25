@@ -185,11 +185,9 @@ extension CommandError {
         case .ambiguous(let selector, let candidates):
             .ambiguous(selector: selector, candidates: candidates)
         case .invalidState(let vm, let current, let allowed, let settings, let processEnd):
-            .invalidState(
-                vm: vm, current: current.rawValue, allowed: allowed, settings: settings,
-                processEnd: processEnd)
+            .invalidState(vm: vm, current: current, allowed: allowed, settings: settings, processEnd: processEnd)
         case .changeTakesStoppedVM(let vm, let current, let change):
-            .changeTakesStoppedVM(vm: vm, current: current.rawValue, change: change)
+            .changeTakesStoppedVM(vm: vm, current: current, change: change)
         case .busy(let vm, let operation, let processEnd):
             .busy(vm: vm, operation: operation, processEnd: processEnd)
         case .heldByAnotherCopy(let vm):

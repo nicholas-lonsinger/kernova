@@ -41,19 +41,7 @@ package final class VMScriptObject: NSObject {
 
     /// The `VM state` enumerator for the VM's status, as the Apple event code
     /// the dictionary gives it.
-    ///
-    /// `missing value` for a status from no vocabulary this app writes, which
-    /// is a programming error rather than a state a script can provoke.
-    @objc var state: NSNumber? {
-        guard let state = VMScriptState(wireName: info.status) else {
-            Self.logger.log(
-                .fault,
-                "VM status '\(self.info.status, privacy: .public)' has no scripting term")
-            assertionFailure("VM status '\(info.status)' has no scripting term")
-            return nil
-        }
-        return NSNumber(value: state.code)
-    }
+    @objc var state: NSNumber { NSNumber(value: VMScriptState(info.status).code) }
 
     @objc var guestOperatingSystem: String { info.guestOS.rawValue }
 
@@ -77,7 +65,8 @@ package final class VMScriptObject: NSObject {
 
     @objc var ipAddress: String? { info.ipAddress.address }
 
-    @objc var agentStatus: String? { info.agentStatus }
+    /// ``VMInfo/agentStatus`` as its wire name.
+    @objc var agentStatus: String? { info.agentStatus?.rawValue }
 
     /// ``VMInfo/guestAgent`` as its wire name.
     @objc var agentVersion: String? { info.guestAgent?.rawValue }
@@ -292,34 +281,24 @@ enum VMScriptState: CaseIterable {
     case failed
     case preparing
 
-    /// The state a VM reporting `wireName` is in, `nil` for a name from no
-    /// vocabulary this app writes.
-    init?(wireName: String) {
-        if wireName == VMStatus.preparingWireName {
-            self = .preparing
-            return
-        }
-        guard let status = VMStatus(rawValue: wireName) else { return nil }
-        self.init(status)
-    }
-
     /// The state `status` names. Exhaustive, so a new status has to be given a
     /// term before it compiles.
-    init(_ status: VMStatus) {
+    init(_ status: VMReportedStatus) {
         switch status {
-        case .stopped: self = .stopped
-        case .starting: self = .starting
-        case .running: self = .running
-        case .paused: self = .paused
-        case .suspended: self = .suspended
-        case .saving: self = .saving
-        case .snapshotting: self = .snapshotting
-        case .cloning: self = .cloning
-        case .restoring: self = .restoring
-        case .installing: self = .installing
-        case .forceStopping: self = .forceStopping
-        case .initialBoot: self = .initialBoot
-        case .error: self = .failed
+        case .runtime(.stopped): self = .stopped
+        case .runtime(.starting): self = .starting
+        case .runtime(.running): self = .running
+        case .runtime(.paused): self = .paused
+        case .runtime(.suspended): self = .suspended
+        case .runtime(.saving): self = .saving
+        case .runtime(.snapshotting): self = .snapshotting
+        case .runtime(.cloning): self = .cloning
+        case .runtime(.restoring): self = .restoring
+        case .runtime(.installing): self = .installing
+        case .runtime(.forceStopping): self = .forceStopping
+        case .runtime(.initialBoot): self = .initialBoot
+        case .runtime(.error): self = .failed
+        case .preparing: self = .preparing
         }
     }
 

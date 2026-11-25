@@ -123,7 +123,7 @@ enum CompletionSource {
         return rows.map {
             byIdentifier
                 ? candidate($0.id.uuidString, describedBy: $0.name, for: context.shell)
-                : candidate($0.name, describedBy: $0.status, for: context.shell)
+                : candidate($0.name, describedBy: $0.status.rawValue, for: context.shell)
         }
     }
 

@@ -187,7 +187,7 @@ struct VMCommandCoreWaitTests {
 
         let met = try await wait.joined()
         #expect(met.id == alpha.id)
-        #expect(met.status == VMStatus.running.rawValue)
+        #expect(met.status == .runtime(.running))
     }
 
     @Test(

@@ -1,6 +1,7 @@
 import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
+import KernovaCommandModel
 import KernovaTestSupport
 import KernovaWire
 import Testing
@@ -44,7 +45,7 @@ struct GuestAgentPresentationTests {
                     standing: .outdated(offeredVersionLabel: "1.0", update: update)),
             ]))
         #expect(presentation.status == .reinstallNeeded(installed: "0.8", bundled: "1.0", reason: reason))
-        #expect(presentation.status.wireName == "reinstallNeeded")
+        #expect(presentation.status.kind == .reinstallNeeded)
         #expect(
             presentation.windowLines == [
                 .init(title: "Session agent — pbear", state: "Out of date; this agent can\u{2019}t update itself"),

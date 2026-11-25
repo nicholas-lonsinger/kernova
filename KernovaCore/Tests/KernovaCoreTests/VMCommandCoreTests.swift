@@ -181,7 +181,7 @@ struct VMCommandCoreTests {
         switch (expected, error) {
         case (.busy(let status, let operation), .busy(let vm, let actualOperation, _)):
             #expect(vm.id == instance.id)
-            #expect(vm.status == status.rawValue)
+            #expect(vm.status == .runtime(status))
             #expect(actualOperation == operation)
         case (.invalidState(let current), .invalidState(let vm, let actualCurrent, _, _, _)):
             #expect(vm.id == instance.id)

@@ -135,6 +135,12 @@ struct VMIntentGatewayTests {
     /// it asked for.
     @Test("Each Shortcuts picker value stands for the library value of its own name, both ways")
     func pickerValuesStandForTheirLibraryValues() {
+        for status in VMReportedStatus.allCases {
+            #expect(VMState(status).rawValue == status.rawValue)
+        }
+        for status in VMAgentStatus.allCases {
+            #expect(VMGuestAgentStatus(status).rawValue == status.rawValue)
+        }
         for bucket in VMStateBucket.allCases {
             #expect(VMStateGroup(bucket).rawValue == bucket.rawValue)
             #expect(VMStateGroup(bucket).bucket == bucket)

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 
 /// Whether the guest agent is installed and current relative to what the host
 /// bundles, and whether it's actively responding.
@@ -106,12 +107,9 @@ package enum AgentStatus: Equatable, Sendable {
         return upstream
     }
 
-    /// The name automation surfaces read this status by, without the versions
-    /// the UI renders alongside it.
-    var wireName: String { kind.rawValue }
-
-    /// This status without the versions it carries.
-    package var kind: Kind {
+    /// This status without the versions it carries, as every automation
+    /// surface names it.
+    package var kind: VMAgentStatus {
         switch self {
         case .waiting: .waiting
         case .current: .current
@@ -123,27 +121,6 @@ package enum AgentStatus: Equatable, Sendable {
         case .expectedMissing: .expectedMissing
         case .connecting: .connecting
         case .disconnected: .disconnected
-        }
-    }
-
-    /// One case of ``AgentStatus`` without its versions, by its wire name.
-    package enum Kind: String, Sendable {
-        case waiting, current, connected, outdated, reinstallNeeded, updating, unresponsive, expectedMissing
-        case connecting, disconnected
-
-        /// What a person reads for it: the Guest Agent Status window's title.
-        package var title: String {
-            switch self {
-            case .waiting: "Set up the Kernova guest agent"
-            case .outdated: "Update available"
-            case .reinstallNeeded: "Guest agent can\u{2019}t update in place"
-            case .updating: "Updating guest agent"
-            case .connecting: "Connecting to guest agent"
-            case .current, .connected: "Guest agent connected"
-            case .unresponsive: "Guest agent unresponsive"
-            case .expectedMissing: "Guest agent didn't reconnect"
-            case .disconnected: "Guest agent disconnected"
-            }
         }
     }
 }

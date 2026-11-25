@@ -19,7 +19,7 @@ struct GuestAgentEntity: TransientAppEntity {
 
     /// ``VMAgentLine/status``.
     @Property(title: "Status")
-    var status: String
+    var status: VMGuestAgentStatus
 
     @Property(title: "Version")
     var version: String
@@ -32,7 +32,7 @@ struct GuestAgentEntity: TransientAppEntity {
             switch field {
             case .role: role = line.role.rawValue
             case .user: user = line.user
-            case .status: status = line.status
+            case .status: status = VMGuestAgentStatus(line.status)
             case .version: version = line.version
             }
         }
@@ -41,6 +41,6 @@ struct GuestAgentEntity: TransientAppEntity {
     var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(
             title: "\(VMAgentRole(rawValue: role)?.title(user: user) ?? role)",
-            subtitle: "\(AgentStatus.Kind(rawValue: status)?.title ?? status)")
+            subtitle: "\(status.agentStatus.title)")
     }
 }
