@@ -292,9 +292,10 @@ package final class VMLibraryViewModel {
     package var capabilities: VMCapabilityCatalog { library.capabilities }
 
     /// What keeps this process, on this Mac, from passing a host USB accessory
-    /// through to a guest, or `nil` when nothing does. Under a gap, a surface
+    /// through to a guest, or `nil` when nothing does. Under a gap, a control
     /// that offers passthrough still shows, dimmed, saying the gap's
-    /// ``USBAccessoryPassthrough/Gap/reason``.
+    /// ``USBAccessoryPassthrough/Gap/reason`` — the sentence every USB verb
+    /// refuses with.
     package var usbPassthroughGap: USBAccessoryPassthrough.Gap? { library.usbPassthroughGap }
 
     package func snapshotSizes(for instance: VMInstance) async -> [UUID: SnapshotSize] {

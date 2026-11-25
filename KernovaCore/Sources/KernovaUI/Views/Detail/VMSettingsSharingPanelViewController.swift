@@ -29,7 +29,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     var keptThroughEphemeralRevert: [String] {
         var kept: [String] = []
         if agentSettings.contains(.installReminder) { kept.append(Self.installReminderTitle) }
-        if !instance.usbPairings.isEmpty { kept.append(Self.usbPairingsTitle) }
+        if case .success(let pairings) = pairingsRead, !pairings.isEmpty { kept.append(Self.usbPairingsTitle) }
         return kept
     }
 
@@ -120,11 +120,20 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
 
     // Remembered USB accessories
     private var pairingListStack = NSStackView()
-    /// Names what keeps passthrough from this process, while something does.
-    private var pairingGapNote: GroupedFormStateNote?
+    /// States the refusal the section's read last answered with.
+    private var pairingRefusalNote: GroupedFormStateNote?
+    private var pairingRefusal: String?
     /// The whole section, hidden while it has nothing to say.
     private var pairingSection = NSView()
     private var pairingLoop: ObservationLoop?
+
+    /// This VM's remembered accessories as the command core reads them for
+    /// `kernova usb rules` and Shortcuts, or the refusal it answers with — so
+    /// the section lists what every door lists, and a process that can't pass
+    /// accessories through lists none.
+    private var pairingsRead: Result<[USBPairingSummary], any Error> {
+        Result { try viewModel.commandsLeavingEditsOpen.usbPairings(of: .id(instance.id)) }
+    }
 
     // MARK: Shared Directories
 
@@ -183,8 +192,8 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     // MARK: Remembered USB Accessories
 
     /// The accessories this VM takes back on its own, each with the button that
-    /// forgets it, and what keeps passthrough from this process while something
-    /// does.
+    /// forgets it — or, where the read of them refuses, its refusal, which in
+    /// a process that can't pass accessories through names what it needs.
     ///
     /// Here rather than in the Virtual Machine menu because the rows that most
     /// need removing name hardware that is in a drawer, and a menu can only
@@ -193,8 +202,8 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
     /// already what the host hands this guest while it runs.
     private func buildUSBPairingsSection() -> NSView {
         pairingListStack = makeGroupedFormListStack()
-        let gapNote = GroupedFormStateNote { [weak self] in self?.viewModel.usbPassthroughGap?.reason }
-        pairingGapNote = gapNote
+        let refusalNote = GroupedFormStateNote { [weak self] in self?.pairingRefusal }
+        pairingRefusalNote = refusalNote
         // Not lockable: a remembered accessory is a preference about what to
         // attach, which the pane's read-only state pins none of.
         let section = makeGroupedFormSection([
@@ -208,14 +217,15 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                         "Taking an accessory back from the USB Device menu forgets it, as does removing it here."
                     ),
                 ]),
-            makeGroupedFormCard(rows: [pairingListStack], notes: [gapNote]),
+            makeGroupedFormCard(rows: [pairingListStack], notes: [refusalNote]),
         ])
         pairingSection = section
         return section
     }
 
     private func refreshUSBPairings() {
-        let pairings = instance.usbPairings.pairings
+        let read = pairingsRead
+        let pairings = (try? read.get()) ?? []
         let forgets = viewModel.capabilities.isAvailable(.forgetUSBPairing, on: instance)
         clearGroupedFormStack(pairingListStack)
         for pairing in pairings {
@@ -224,11 +234,15 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             addGroupedFormFullWidth(row, to: pairingListStack)
         }
         pairingListStack.isHidden = pairings.isEmpty
-        pairingGapNote?.refresh()
+        if case .failure(let refusal) = read {
+            pairingRefusal = refusal.localizedDescription
+        } else {
+            pairingRefusal = nil
+        }
+        pairingRefusalNote?.refresh()
         // Absent rather than an empty list: a VM that has never been handed an
-        // accessory, in a process that can pass one through, has nothing to
-        // say about them.
-        pairingSection.isHidden = pairings.isEmpty && viewModel.usbPassthroughGap == nil
+        // accessory, where the read answers, has nothing to say about them.
+        pairingSection.isHidden = pairings.isEmpty && pairingRefusal == nil
     }
 
     /// Re-renders the list whenever the set changes, so an accessory placed or

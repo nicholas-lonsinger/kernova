@@ -188,12 +188,12 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
     /// The Virtual Machine menu's "USB Device" item: a submenu of the live
     /// accessories where this process can pass them through, and otherwise
-    /// dimmed, its tooltip naming what passthrough needs.
+    /// dimmed, its subtitle naming what passthrough needs.
     private func makeUSBAccessoryItem() -> NSMenuItem {
         let item = NSMenuItem(title: USBAccessoryMenu.title, action: nil, keyEquivalent: "")
         if let gap = viewModel.usbPassthroughGap {
             // With no action and no submenu, the menu's autoenabling dims it.
-            item.toolTip = gap.reason
+            item.subtitle = gap.reason
             return item
         }
         let menu = NSMenu(title: USBAccessoryMenu.title)
@@ -403,11 +403,11 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // selection guard so none strands the last selection's: the
         // guest-agent item's title is part of what it reports (see
         // `unavailableTitle`), the Clone items name the preference, and a
-        // clipboard command's tooltip says why it is unavailable.
+        // clipboard command's subtitle says why it is unavailable.
         let target = self.target(of: menuItem, workingInstance: workingInstance)
         switch menuItem.action {
         case #selector(AppDelegate.copyGuestClipboardToMac(_:)), #selector(AppDelegate.copyMacClipboardToGuest(_:)):
-            menuItem.toolTip = target.flatMap { viewModel.capabilities.clipboardCommandsGap(on: $0) }?.reason
+            menuItem.subtitle = target.flatMap { viewModel.capabilities.clipboardCommandsGap(on: $0) }?.reason
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)):
             menuItem.title = GuestAgentDiskControl.unavailableTitle
         case #selector(AppDelegate.cloneVM(_:)):

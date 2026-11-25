@@ -309,7 +309,7 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
         let item = NSMenuItem(title: "Add to Folder", action: nil, keyEquivalent: "")
         guard let folders else {
             item.isEnabled = false
-            item.toolTip = VMOrganizationDirectory.unreadableMessage
+            item.subtitle = VMOrganizationDirectory.unreadableMessage
             return item
         }
         let submenu = NSMenu(title: "Add to Folder")
@@ -343,7 +343,7 @@ final class SidebarViewMenu: NSObject, NSMenuItemValidation {
         let item = NSMenuItem(title: "Tags", action: nil, keyEquivalent: "")
         guard let tags = tags() else {
             item.isEnabled = false
-            item.toolTip = VMOrganizationDirectory.unreadableMessage
+            item.subtitle = VMOrganizationDirectory.unreadableMessage
             return item
         }
         let submenu = NSMenu(title: "Tags")

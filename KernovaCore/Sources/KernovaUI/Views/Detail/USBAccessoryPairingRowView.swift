@@ -1,18 +1,18 @@
 import AppKit
-import KernovaCore
+import KernovaCommandModel
 
-/// One remembered USB accessory: what it is called, where it was and when it
-/// was placed, and the button that forgets it, enabled as `isEnabled` says.
+/// One remembered USB accessory: what it is called, when it was placed, and
+/// the button that forgets it, enabled as `isEnabled` says.
 ///
 /// Built from the pairing alone — the device itself is usually not plugged in,
 /// which is the whole reason this row exists rather than a menu item.
 @MainActor
 final class USBAccessoryPairingRowView: NSView {
-    init(pairing: USBAccessoryPairing, isEnabled: Bool, target: AnyObject, action: Selector) {
+    init(pairing: USBPairingSummary, isEnabled: Bool, target: AnyObject, action: Selector) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
-        let title = NSTextField(labelWithString: pairing.displayName)
+        let title = NSTextField(labelWithString: pairing.name)
         title.font = Typography.body
         title.isSelectable = false
         title.lineBreakMode = .byTruncatingTail
@@ -21,7 +21,7 @@ final class USBAccessoryPairingRowView: NSView {
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         // The same secondary line the shared-directory rows in this card use.
-        let detail = makeGroupedFormSecondaryLabel(Self.detailText(for: pairing))
+        let detail = makeGroupedFormSecondaryLabel(pairing.pairedAt.formatted(date: .abbreviated, time: .shortened))
         detail.font = .preferredFont(forTextStyle: .caption1)
         detail.lineBreakMode = .byTruncatingTail
         detail.maximumNumberOfLines = 1
@@ -79,13 +79,5 @@ final class USBAccessoryPairingRowView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("USBAccessoryPairingRowView does not support NSCoder")
-    }
-
-    /// The secondary line: the port the rule names, when it names one, and when
-    /// the accessory was last placed.
-    static func detailText(for pairing: USBAccessoryPairing) -> String {
-        let placed = pairing.pairedAt.formatted(date: .abbreviated, time: .shortened)
-        guard let label = pairing.namedReceptacleLabel else { return placed }
-        return "\(label) \u{2014} \(placed)"
     }
 }

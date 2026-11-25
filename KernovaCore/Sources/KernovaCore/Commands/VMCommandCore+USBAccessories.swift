@@ -100,7 +100,7 @@ extension VMCommandCore {
     /// Unlike the two listings above, these rows describe hardware that is
     /// usually not plugged in — which is the whole reason they can be listed
     /// and removed at all.
-    func usbPairings(of selector: VMSelector?) throws -> [USBPairingSummary] {
+    package func usbPairings(of selector: VMSelector?) throws -> [USBPairingSummary] {
         try requireUSBAccessoryService()
         let instances = try selector.map { [try resolve($0)] } ?? library.instances
         return instances.flatMap { instance in
