@@ -10,16 +10,16 @@ import KernovaCommandModel
 struct GuestAgentEntity: TransientAppEntity {
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Guest Agent")
 
-    /// ``VMAgentLine/role``, as its wire name.
+    /// ``VMAgentLine/role``.
     @Property(title: "Role")
-    var role: String
+    var role: VMGuestAgentRole
 
     @Property(title: "User")
     var user: String?
 
     /// ``VMAgentLine/status``.
     @Property(title: "Status")
-    var status: String
+    var status: VMGuestAgentLineStatus
 
     @Property(title: "Version")
     var version: String
@@ -30,9 +30,9 @@ struct GuestAgentEntity: TransientAppEntity {
     init(_ line: VMAgentLine) {
         for field in VMAgentLine.Field.allCases {
             switch field {
-            case .role: role = line.role.rawValue
+            case .role: role = VMGuestAgentRole(line.role)
             case .user: user = line.user
-            case .status: status = line.status
+            case .status: status = VMGuestAgentLineStatus(line.status)
             case .version: version = line.version
             }
         }
@@ -40,7 +40,6 @@ struct GuestAgentEntity: TransientAppEntity {
 
     var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(
-            title: "\(VMAgentRole(rawValue: role)?.title(user: user) ?? role)",
-            subtitle: "\(AgentStatus.Kind(rawValue: status)?.title ?? status)")
+            title: "\(role.agentRole.title(user: user))", subtitle: "\(status.lineStatus.title)")
     }
 }

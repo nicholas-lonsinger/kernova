@@ -2,8 +2,7 @@ import AppIntents
 import Foundation
 import KernovaCommandModel
 
-/// Answers a VM's runtime state as the wire name every other front door
-/// reports.
+/// Answers a VM's state, as its ``VMEntity/status`` reads it.
 struct GetVMStateIntent: AppIntent {
     static let title: LocalizedStringResource = "Get Virtual Machine State"
     static let description: IntentDescription? = IntentDescription(
@@ -21,8 +20,8 @@ struct GetVMStateIntent: AppIntent {
     }
 
     @MainActor
-    func perform() async throws -> some IntentResult & ReturnsValue<String> {
-        .result(value: try await gateway.info(vm.id).status)
+    func perform() async throws -> some IntentResult & ReturnsValue<VMState> {
+        .result(value: VMState(try await gateway.info(vm.id).status))
     }
 }
 

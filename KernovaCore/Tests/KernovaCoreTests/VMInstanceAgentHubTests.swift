@@ -24,23 +24,23 @@ struct VMInstanceAgentHubTests {
         session.os = .macOS
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([session]))
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([], away: [(session, false)]))
-        #expect(instance.agentPresentation?.status == .connecting(expected: "1.0"))
+        #expect(instance.agentPresentation?.status == .agent(.connecting(expected: "1.0")))
         instance.agentAbsenceGrace = .milliseconds(10)
         instance.startAgentAbsenceWatch()
         try await instance.agentAbsenceTimerForTesting?.joined()
-        #expect(instance.agentPresentation?.status == .disconnected(last: "1.0"))
-        #expect(instance.agentPresentation?.status.wireName == "disconnected")
+        #expect(instance.agentPresentation?.status == .agent(.disconnected(last: "1.0")))
+        #expect(instance.agentPresentation?.status.kind == .agent(.disconnected))
         #expect(instance.agentPresentation?.windowLines == [.init(title: "Session agent", state: "Disconnected")])
         #expect(
             VMCommandCore.agentLines(of: instance) == [
-                VMAgentLine(role: .session, user: nil, version: "1.0", status: "disconnected")
+                VMAgentLine(role: .session, user: nil, version: "1.0", status: .disconnected)
             ])
         #expect(instance.missingAgentNoticesForTesting.isEmpty)
         #expect(instance.agentExpectedButMissing == false)
         #expect(instance.agentAbsenceTimerForTesting == nil)
         // It comes back: connected again, and the line goes.
         instance.publishAgentHubSnapshotForTesting(Self.snapshot([Self.peer(2, standing: .current)]))
-        #expect(instance.agentPresentation?.status == .current(version: "1.0"))
+        #expect(instance.agentPresentation?.status == .agent(.current(version: "1.0")))
         #expect(
             instance.agentPresentation?.windowLines == [.init(title: "Session agent — pbear", state: "Up to date")])
     }
@@ -135,11 +135,11 @@ struct VMInstanceAgentHubTests {
             ])
         #expect(
             VMCommandCore.agentLines(of: instance) == [
-                VMAgentLine(role: .session, user: "erin", version: "1.0", status: "current"),
-                VMAgentLine(role: .session, user: "pbear", version: "1.0", status: "current"),
-                VMAgentLine(role: .session, user: "bob", version: "1.0", status: "connecting"),
-                VMAgentLine(role: .session, user: "alice", version: "0.9", status: "updating"),
-                VMAgentLine(role: .system, user: nil, version: "1.0", status: "expectedMissing"),
+                VMAgentLine(role: .session, user: "erin", version: "1.0", status: .current),
+                VMAgentLine(role: .session, user: "pbear", version: "1.0", status: .current),
+                VMAgentLine(role: .session, user: "bob", version: "1.0", status: .connecting),
+                VMAgentLine(role: .session, user: "alice", version: "0.9", status: .updating),
+                VMAgentLine(role: .system, user: nil, version: "1.0", status: .expectedMissing),
             ])
     }
 }

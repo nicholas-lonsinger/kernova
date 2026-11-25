@@ -347,7 +347,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                         Self.installReminderTitle, control: installReminderSwitch,
                         info: [
                             .body(
-                                "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (update available, didn't reconnect, unresponsive) are not affected."
+                                "Surfaces the install icon in the sidebar when the guest agent has not yet connected. Turn off to suppress the nudge for this VM. The more urgent indicators (Guest agent update available, Guest agent didn\u{2019}t reconnect, Guest agent not responding) are not affected."
                             )
                         ]),
                     notes: [overrideCaption])

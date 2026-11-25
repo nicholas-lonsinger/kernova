@@ -14,8 +14,8 @@ struct CLIGroupActionTests {
         try KernovaCommand.parseAsRoot(arguments)
     }
 
-    private func summary(_ name: String, status: String = "running") -> VMSummary {
-        VMSummary(id: UUID(), name: name, status: status, ipAddress: .unavailable, heldByAnotherCopy: false)
+    private func summary(_ name: String, status: VMStatus = .running) -> VMSummary {
+        VMSummary(id: UUID(), name: name, status: .runtime(status), ipAddress: .unavailable, heldByAnotherCopy: false)
     }
 
     /// One VM of each outcome a group start can report, in that order.
@@ -31,12 +31,12 @@ struct CLIGroupActionTests {
                 VMGroupActionResult(vm: summary("Paused"), outcome: .done(verb: .resume)),
                 VMGroupActionResult(vm: summary("Up"), outcome: .passedOver(reason: .state)),
                 VMGroupActionResult(
-                    vm: summary("Fresh", status: "initialBoot"), outcome: .passedOver(reason: .guestSetup)),
+                    vm: summary("Fresh", status: .initialBoot), outcome: .passedOver(reason: .guestSetup)),
                 VMGroupActionResult(
-                    vm: summary("Twin", status: "stopped"),
+                    vm: summary("Twin", status: .stopped),
                     outcome: .needsAnswer(verb: .start, question: .confirmationRequired(prompt: prompt))),
                 VMGroupActionResult(
-                    vm: summary("Third", status: "stopped"),
+                    vm: summary("Third", status: .stopped),
                     outcome: .failed(
                         error: .operationFailed(
                             verb: .start, title: nil, message: "macOS allows at most two.", recovery: nil))),
@@ -119,7 +119,7 @@ struct CLIGroupActionTests {
             results: [
                 VMGroupActionResult(
                     vm: VMSummary(
-                        id: id, name: "Web", status: "stopped", ipAddress: .observed("192.168.64.4"),
+                        id: id, name: "Web", status: .runtime(.stopped), ipAddress: .observed("192.168.64.4"),
                         heldByAnotherCopy: false),
                     outcome: .passedOver(reason: .state))
             ])
@@ -145,7 +145,7 @@ struct CLIGroupActionTests {
             action: .stop, groupKind: .smartGroup, groupID: UUID(), groupName: "Running",
             results: [
                 VMGroupActionResult(vm: summary("Web"), outcome: .done(verb: .stop)),
-                VMGroupActionResult(vm: summary("Off", status: "stopped"), outcome: .passedOver(reason: .state)),
+                VMGroupActionResult(vm: summary("Off", status: .stopped), outcome: .passedOver(reason: .state)),
                 VMGroupActionResult(
                     vm: summary("Busy"),
                     outcome: .passedOver(reason: .refused(error: .busy(vm: summary("Busy"), operation: "suspending")))),

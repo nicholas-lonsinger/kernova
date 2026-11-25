@@ -144,9 +144,9 @@ extension AgentStatus {
     /// use.
     var endsAWaitForTheAgent: Bool {
         switch self {
-        case .current: true
-        case .waiting, .connected, .outdated, .reinstallNeeded, .updating, .unresponsive, .expectedMissing,
-            .connecting, .disconnected:
+        case .agent(.current): true
+        case .waiting, .agent(.connected), .agent(.outdated), .agent(.reinstallNeeded), .agent(.updating),
+            .agent(.unresponsive), .agent(.expectedMissing), .agent(.connecting), .agent(.disconnected):
             false
         }
     }

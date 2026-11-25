@@ -22,7 +22,7 @@ enum TableRenderer {
             rows: rows.map {
                 [
                     $0.name,
-                    VMStatus.displayName(forWireName: $0.status, heldByAnotherCopy: $0.heldByAnotherCopy),
+                    $0.status.displayName(heldByAnotherCopy: $0.heldByAnotherCopy),
                     render($0.ipAddress), $0.id.uuidString,
                 ]
             })
@@ -75,8 +75,7 @@ enum TableRenderer {
         switch field {
         case .name: (.name, [info.name])
         case .id: (.identifier, [info.id.uuidString])
-        case .status:
-            (.status, [VMStatus.displayName(forWireName: info.status, heldByAnotherCopy: info.heldByAnotherCopy)])
+        case .status: (.status, [info.status.displayName(heldByAnotherCopy: info.heldByAnotherCopy)])
         // Status reads it.
         case .heldByAnotherCopy: nil
         // Status names the state the group coarsens.
@@ -98,7 +97,7 @@ enum TableRenderer {
         case .networkMembership, .networkName: nil
         case .macAddress: info.macAddress.map { (.macAddress, [$0]) }
         case .ipAddress: (.ipAddress, [render(info.ipAddress)])
-        case .agentStatus: (.guestAgent, [info.agentStatus ?? "\u{2013}"] + info.agents.map(render))
+        case .agentStatus: (.guestAgent, [info.agentStatus?.rawValue ?? "\u{2013}"] + info.agents.map(render))
         // Guest Agent lists them under the status.
         case .agents: nil
         case .guestAgent: info.guestAgent.map { (.agentVersion, [$0.displayName]) }
@@ -443,7 +442,7 @@ enum TableRenderer {
     private static func part(showing field: VMAgentLine.Field, of agent: VMAgentLine) -> (AgentPart, String)? {
         switch field {
         case .role, .user: nil
-        case .status: (.status, agent.status)
+        case .status: (.status, agent.status.rawValue)
         case .version: agent.version.isEmpty ? nil : (.version, agent.version)
         }
     }

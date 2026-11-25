@@ -347,7 +347,7 @@
 			<property name="user" code="KvUr" type="text" access="r" description="The user a session agent runs for, or missing value for the system service or a session agent that names none.">
 				<cocoa key="user"/>
 			</property>
-			<property name="status" code="KvSu" type="text" access="r" description="How it stands, in the terms agent status uses: current, connected, outdated, updating or unresponsive while connected; updating while it relaunches into an update and connecting while it is otherwise away; expectedMissing when it didn&#8217;t reconnect, and disconnected when it left and its wait passed.">
+			<property name="status" code="KvSu" type="text" access="r" description="How it stands, in the terms agent status uses: current, connected, outdated, reinstallNeeded, updating or unresponsive while connected; updating while it relaunches into an update and connecting while it is otherwise away; expectedMissing when it didn&#8217;t reconnect, and disconnected when it left and its wait passed.">
 				<cocoa key="status"/>
 			</property>
 			<property name="version" code="vers" type="text" access="r" description="The version it reports, or last reported while away, empty when it reports none.">

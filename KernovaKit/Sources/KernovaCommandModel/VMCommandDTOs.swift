@@ -10,10 +10,8 @@ public struct VMSummary: Codable, Sendable, Hashable {
     public let id: UUID
     /// The VM's display name, which is not unique.
     public let name: String
-    /// The VM's runtime status, as its stable wire name. A VM whose bundle is
-    /// still being written by a create, clone or import reports `preparing`,
-    /// which is not a ``VMStatus`` value.
-    public let status: String
+    /// The VM's status.
+    public let status: VMReportedStatus
     /// What the guest's address resolves to on the network its mode joins.
     public let ipAddress: GuestIPAddress
     /// Whether the app last found another running copy of Kernova holding the
@@ -22,7 +20,7 @@ public struct VMSummary: Codable, Sendable, Hashable {
 
     /// Names one VM.
     public init(
-        id: UUID, name: String, status: String, ipAddress: GuestIPAddress,
+        id: UUID, name: String, status: VMReportedStatus, ipAddress: GuestIPAddress,
         heldByAnotherCopy: Bool
     ) {
         self.id = id
@@ -95,10 +93,8 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let id: UUID
     /// The VM's display name.
     public let name: String
-    /// The VM's runtime status, as its stable wire name. A VM whose bundle is
-    /// still being written by a create, clone or import reports `preparing`,
-    /// which is not a ``VMStatus`` value.
-    public let status: String
+    /// The VM's status.
+    public let status: VMReportedStatus
     /// Which guest the VM runs.
     public let guestOS: VMGuestOS
     /// Virtual CPUs the guest is configured with.
@@ -118,9 +114,9 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public let macAddress: String?
     /// What the guest's address resolves to on the network its mode joins.
     public let ipAddress: GuestIPAddress
-    /// The guest-agent install and connectivity state, as its wire name, `nil`
-    /// when the VM has no agent channel.
-    public let agentStatus: String?
+    /// The guest-agent install and connectivity state, `nil` when the VM has
+    /// no agent channel.
+    public let agentStatus: VMAgentStatus?
     /// Whether the bundle holds a suspended session.
     public let hasSavedState: Bool
     /// The Kernova version and build that wrote that session's saved state,
@@ -178,7 +174,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
     public init(
         id: UUID,
         name: String,
-        status: String,
+        status: VMReportedStatus,
         guestOS: VMGuestOS,
         cpuCount: Int,
         memoryBytes: UInt64,
@@ -187,7 +183,7 @@ public struct VMInfo: Codable, Sendable, Hashable {
         networkName: VMNetworkName?,
         macAddress: String?,
         ipAddress: GuestIPAddress,
-        agentStatus: String?,
+        agentStatus: VMAgentStatus?,
         hasSavedState: Bool,
         savedStateKernovaVersion: String?,
         isEphemeral: Bool,
@@ -236,12 +232,12 @@ public struct VMAgentLine: Codable, Sendable, Hashable {
     public let role: VMAgentRole
     /// The user a session agent runs for, `nil` for the system agent or one that names none.
     public let user: String?
-    /// How it stands, in ``VMInfo/agentStatus``'s vocabulary: `current`, `connected`, `outdated`,
-    /// `updating` or `unresponsive` for a connected agent; `updating` for one away relaunching into an
-    /// update and `connecting` for any other away agent; `expectedMissing` for one the session warns
-    /// didn't reconnect, and `disconnected` for one that left this session and whose grace passed, each
-    /// at the version it last reported.
-    public let status: String
+    /// How it stands: `current`, `connected`, `outdated`, `reinstallNeeded`, `updating` or
+    /// `unresponsive` for a connected agent; `updating` for one away relaunching into an update and
+    /// `connecting` for any other away agent; `expectedMissing` for one the session warns didn't
+    /// reconnect, and `disconnected` for one that left this session and whose grace passed, each at the
+    /// version it last reported.
+    public let status: VMAgentLineStatus
     /// The version the agent reports, empty when it reports none.
     public let version: String
 
@@ -254,7 +250,7 @@ public struct VMAgentLine: Codable, Sendable, Hashable {
     private typealias CodingKeys = Field
 
     /// Describes one agent.
-    public init(role: VMAgentRole, user: String?, version: String, status: String) {
+    public init(role: VMAgentRole, user: String?, version: String, status: VMAgentLineStatus) {
         self.role = role
         self.user = user
         self.version = version
@@ -263,7 +259,7 @@ public struct VMAgentLine: Codable, Sendable, Hashable {
 }
 
 /// Which of a guest's Kernova agents one is.
-public enum VMAgentRole: String, Codable, Sendable {
+public enum VMAgentRole: String, Codable, CaseIterable, Sendable {
     /// One GUI session's.
     case session
     /// The guest's as a whole.
@@ -896,11 +892,11 @@ public enum CommandErrorDTO: Codable, Sendable, Hashable {
     /// every other verb. `processEnd` is how to end the VM's process, while
     /// that state is a Force Stop waiting on it.
     case invalidState(
-        vm: VMSummary, current: String, allowed: [VMVerb], settings: [ConfigurationEntry] = [],
+        vm: VMSummary, current: VMStatus, allowed: [VMVerb], settings: [ConfigurationEntry] = [],
         processEnd: VMProcessEndInstruction? = nil)
     /// The VM's current state takes the verb, but not this change of it: only
     /// a stopped VM takes `change`.
-    case changeTakesStoppedVM(vm: VMSummary, current: String, change: StoppedVMChange)
+    case changeTakesStoppedVM(vm: VMSummary, current: VMStatus, change: StoppedVMChange)
     /// The VM has work in flight that the verb would race. `processEnd` is
     /// how to end the VM's process, while that work is a Force Stop waiting
     /// on it.
@@ -1050,7 +1046,7 @@ extension CommandErrorDTO {
             // run: when that leaves none of the admitted verbs, neither
             // sentence about them is true.
             {
-                let state = VMStatus.phrase(forWireName: current, heldByAnotherCopy: false)
+                let state = current.phrase
                 let refused = settings.enumerated().map { index, entry in
                     index == 0
                         ? "\(entry.key) cannot be set to \u{201C}\(entry.value)\u{201D}"
@@ -1072,9 +1068,7 @@ extension CommandErrorDTO {
                 return [opening, accepted, processEnd?.text].compactMap(\.self).joined(separator: " ")
             }()
         case .changeTakesStoppedVM(let vm, let current, let change):
-            "\u{201C}\(vm.name)\u{201D} is "
-                + "\(VMStatus.phrase(forWireName: current, heldByAnotherCopy: false)). "
-                + change.sentence
+            "\u{201C}\(vm.name)\u{201D} is \(current.phrase). " + change.sentence
         case .busy(let vm, let operation, let processEnd):
             "\u{201C}\(vm.name)\u{201D} is busy \(operation). Wait for it to finish, then try again."
                 + (processEnd.map { " " + $0.text } ?? "")

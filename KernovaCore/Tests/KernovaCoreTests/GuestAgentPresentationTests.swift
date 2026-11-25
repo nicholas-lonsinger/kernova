@@ -1,6 +1,7 @@
 import Foundation
 import KernovaAgentCore
 import KernovaAgentHost
+import KernovaCommandModel
 import KernovaTestSupport
 import KernovaWire
 import Testing
@@ -32,10 +33,12 @@ struct GuestAgentPresentationTests {
     @Test(
         "An agent that can't take the update in place makes the presentation reinstall-needed for its reason, ahead of another outdated one",
         arguments: [
-            (PeerSummary.InBandUpdate.launchRefused, AgentStatus.ReinstallReason.launchRefused),
+            (PeerSummary.InBandUpdate.launchRefused, AgentLineStatus.ReinstallReason.launchRefused),
             (.notTeamSigned, .notTeamSigned),
         ])
-    func hubWithAPeerThatCantUpdateInPlace(update: PeerSummary.InBandUpdate, reason: AgentStatus.ReinstallReason) {
+    func hubWithAPeerThatCantUpdateInPlace(
+        update: PeerSummary.InBandUpdate, reason: AgentLineStatus.ReinstallReason
+    ) {
         let presentation = GuestAgentPresentation(
             hub: Self.snapshot([
                 Self.peer(1, version: "0.9", standing: .outdated(offeredVersionLabel: "1.0", update: .unavailable)),
@@ -43,8 +46,8 @@ struct GuestAgentPresentationTests {
                     3, role: .systemPeer, version: "0.8",
                     standing: .outdated(offeredVersionLabel: "1.0", update: update)),
             ]))
-        #expect(presentation.status == .reinstallNeeded(installed: "0.8", bundled: "1.0", reason: reason))
-        #expect(presentation.status.wireName == "reinstallNeeded")
+        #expect(presentation.status == .agent(.reinstallNeeded(installed: "0.8", bundled: "1.0", reason: reason)))
+        #expect(presentation.status.kind == .agent(.reinstallNeeded))
         #expect(
             presentation.windowLines == [
                 .init(title: "Session agent — pbear", state: "Out of date; this agent can\u{2019}t update itself"),
@@ -58,10 +61,10 @@ struct GuestAgentPresentationTests {
             hub: Self.snapshot([
                 Self.peer(2, version: "1.1", isResponsive: false), Self.peer(1, role: .systemPeer, isResponsive: false),
             ]))
-        #expect(unresponsive.status == .unresponsive(version: "1.1"))
+        #expect(unresponsive.status == .agent(.unresponsive(version: "1.1")))
         let mixed = GuestAgentPresentation(
             hub: Self.snapshot([Self.peer(2, role: .systemPeer), Self.peer(1, version: "0.9", isResponsive: false)]))
-        #expect(mixed.status == .unresponsive(version: "0.9"))
+        #expect(mixed.status == .agent(.unresponsive(version: "0.9")))
         #expect(mixed.agents.map(\.state) == ["Up to date", "Not responding"])
     }
 }

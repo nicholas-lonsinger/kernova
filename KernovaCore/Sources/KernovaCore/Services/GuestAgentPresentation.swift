@@ -101,10 +101,10 @@ package struct GuestAgentPresentation: Equatable, Sendable {
         /// connecting for any other away one, and at its last-seen version
         /// expected-missing for a scope that didn't reconnect and disconnected
         /// for one that disconnected.
-        package var status: AgentStatus {
+        package var status: AgentLineStatus {
             switch standing {
             case .connected(let standing, let isResponsive):
-                return GuestAgentPresentation.status(of: [(standing, isResponsive, version)])
+                return GuestAgentPresentation.status(of: (standing, isResponsive, version), beside: [])
             case .relaunching(let standing, _):
                 guard case .outdated(let offered, _) = standing else {
                     return .updating(installed: version, bundled: "")
@@ -255,17 +255,21 @@ package struct GuestAgentPresentation: Equatable, Sendable {
     /// current only when every agent is, and connected when the host bundles
     /// nothing to judge any of them against.
     package static func status(of peers: [PeerSummary]) -> AgentStatus {
-        status(of: peers.map { ($0.standing, $0.isResponsive, $0.versionLabel) })
+        let agents: [Agent] = peers.map { ($0.standing, $0.isResponsive, $0.versionLabel) }
+        guard let newest = agents.first else { return .waiting }
+        return .agent(status(of: newest, beside: Array(agents.dropFirst())))
     }
 
-    /// The same, of agents given by how each stands, whether it answers, and
-    /// its version.
-    fileprivate static func status(
-        of agents: [(standing: PeerSummary.Standing, isResponsive: Bool, version: String)]
-    ) -> AgentStatus {
-        guard let newest = agents.first else { return .waiting }
-        var outdated: AgentStatus?
-        var updating: AgentStatus?
+    /// One agent, as the status reads it: how it stands, whether it answers,
+    /// and its version.
+    fileprivate typealias Agent = (standing: PeerSummary.Standing, isResponsive: Bool, version: String)
+
+    /// How `newest` and the agents `older` than it stand as one, by the
+    /// precedence ``status(of:)`` states.
+    fileprivate static func status(of newest: Agent, beside older: [Agent]) -> AgentLineStatus {
+        var outdated: AgentLineStatus?
+        var updating: AgentLineStatus?
+        let agents = [newest] + older
         for agent in agents {
             guard case .outdated(let offered, let update) = agent.standing else { continue }
             switch update {

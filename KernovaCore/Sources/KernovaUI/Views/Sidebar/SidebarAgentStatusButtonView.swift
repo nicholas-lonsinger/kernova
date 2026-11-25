@@ -1,6 +1,7 @@
 import AppKit
 import KernovaAgentHost
 import KernovaAppKitShared
+import KernovaCommandModel
 import KernovaCore
 
 /// Trailing accessory shown in the sidebar row when the guest agent needs
@@ -148,41 +149,42 @@ final class SidebarAgentStatusButtonView: NSView {
 
     static func symbolName(for status: AgentStatus) -> String {
         switch status {
-        case .waiting, .disconnected: "exclamationmark.circle.fill"
-        case .outdated: "arrow.triangle.2.circlepath.circle.fill"
-        case .updating: "arrow.triangle.2.circlepath.circle.fill"
-        case .connecting: "arrow.triangle.2.circlepath.circle.fill"
-        case .current, .connected: "checkmark.circle.fill"
-        case .unresponsive: "wifi.exclamationmark"
-        case .expectedMissing, .reinstallNeeded: "exclamationmark.triangle.fill"
+        case .waiting, .agent(.disconnected): "exclamationmark.circle.fill"
+        case .agent(.outdated): "arrow.triangle.2.circlepath.circle.fill"
+        case .agent(.updating): "arrow.triangle.2.circlepath.circle.fill"
+        case .agent(.connecting): "arrow.triangle.2.circlepath.circle.fill"
+        case .agent(.current), .agent(.connected): "checkmark.circle.fill"
+        case .agent(.unresponsive): "wifi.exclamationmark"
+        case .agent(.expectedMissing), .agent(.reinstallNeeded): "exclamationmark.triangle.fill"
         }
     }
 
     static func symbolColor(for status: AgentStatus) -> NSColor {
         switch status {
-        case .waiting, .disconnected: StatusColor.inactive
-        case .outdated: StatusColor.warning
-        case .updating: StatusColor.inactive
-        case .connecting: StatusColor.inactive
-        case .current, .connected: StatusColor.running
-        case .unresponsive: StatusColor.warning
-        case .expectedMissing, .reinstallNeeded: StatusColor.warning
+        case .waiting, .agent(.disconnected): StatusColor.inactive
+        case .agent(.outdated): StatusColor.warning
+        case .agent(.updating): StatusColor.inactive
+        case .agent(.connecting): StatusColor.inactive
+        case .agent(.current), .agent(.connected): StatusColor.running
+        case .agent(.unresponsive): StatusColor.warning
+        case .agent(.expectedMissing), .agent(.reinstallNeeded): StatusColor.warning
         }
     }
 
+    /// The badge's tooltip and accessibility description: the status's
+    /// ``VMAgentStatus/title``, then the versions it carries.
     static func helpText(for status: AgentStatus) -> String {
-        switch status {
-        case .waiting: "Guest agent not installed"
-        case .outdated(let installed, let bundled):
-            "Guest agent update available (\(installed) → \(bundled))"
-        case .reinstallNeeded(let installed, let bundled, _):
-            "Guest agent can't update in place (\(installed) → \(bundled))"
-        case .updating(let installed, let bundled): "Guest agent updating (\(installed) → \(bundled))"
-        case .connecting(let expected): "Connecting to guest agent (was \(expected))"
-        case .current(let version), .connected(let version): "Guest agent connected (\(version))"
-        case .unresponsive(let version): "Guest agent unresponsive (\(version))"
-        case .expectedMissing(let expected): "Guest agent didn't reconnect (was \(expected))"
-        case .disconnected(let last): "Guest agent disconnected (was \(last))"
-        }
+        let versions: String? =
+            switch status {
+            case .waiting: nil
+            case .agent(.outdated(let installed, let bundled)), .agent(.reinstallNeeded(let installed, let bundled, _)),
+                .agent(.updating(let installed, let bundled)):
+                "\(installed) → \(bundled)"
+            case .agent(.connecting(let expected)), .agent(.expectedMissing(let expected)): "was \(expected)"
+            case .agent(.disconnected(let last)): "was \(last)"
+            case .agent(.current(let version)), .agent(.connected(let version)), .agent(.unresponsive(let version)):
+                version
+            }
+        return status.kind.title + (versions.map { " (\($0))" } ?? "")
     }
 }

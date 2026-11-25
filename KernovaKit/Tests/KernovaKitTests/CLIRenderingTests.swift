@@ -10,19 +10,19 @@ import Testing
 struct CLIRenderingTests {
     private let alpha = VMSummary(
         id: UUID(uuidString: "11111111-2222-3333-4444-555555555555") ?? UUID(),
-        name: "Alpha", status: "running", ipAddress: .observed("192.168.64.4"), heldByAnotherCopy: false)
+        name: "Alpha", status: .runtime(.running), ipAddress: .observed("192.168.64.4"), heldByAnotherCopy: false)
     private let longName = VMSummary(
         id: UUID(uuidString: "66666666-7777-8888-9999-000000000000") ?? UUID(),
-        name: "A Much Longer Name", status: "initialBoot", ipAddress: .notObserved, heldByAnotherCopy: false)
+        name: "A Much Longer Name", status: .runtime(.initialBoot), ipAddress: .notObserved, heldByAnotherCopy: false)
 
     private func info(
         ipAddress: GuestIPAddress = .observed("192.168.64.4"), memoryBytes: UInt64 = 8 << 30,
         networkMembership: String = "common", networkName: VMNetworkName? = nil,
-        agentStatus: String? = "current", agents: [VMAgentLine] = [],
+        agentStatus: VMAgentStatus? = .agent(.current), agents: [VMAgentLine] = [],
         hasSavedState: Bool = false, savedStateKernovaVersion: String? = nil
     ) -> VMInfo {
         VMInfo(
-            id: alpha.id, name: "Alpha", status: "running", guestOS: .macOS, cpuCount: 4,
+            id: alpha.id, name: "Alpha", status: .runtime(.running), guestOS: .macOS, cpuCount: 4,
             memoryBytes: memoryBytes, networkMode: .nat, networkMembership: networkMembership,
             networkName: networkName, macAddress: "aa:bb:cc:dd:ee:ff",
             ipAddress: ipAddress, agentStatus: agentStatus,
@@ -55,7 +55,7 @@ struct CLIRenderingTests {
     @Test("A VM another copy holds reads as in use by it, in the listing and in info")
     func heldByAnotherCopyReplacesTheStatus() throws {
         let held = VMSummary(
-            id: alpha.id, name: "Alpha", status: "stopped", ipAddress: .notObserved,
+            id: alpha.id, name: "Alpha", status: .runtime(.stopped), ipAddress: .notObserved,
             heldByAnotherCopy: true)
         let listing = TableRenderer.render([held], quiet: false).components(separatedBy: "\n")
         #expect(listing[1].contains("In use by another copy of Kernova"))
@@ -63,7 +63,7 @@ struct CLIRenderingTests {
 
         let base = info()
         let heldInfo = VMInfo(
-            id: base.id, name: base.name, status: "stopped", guestOS: base.guestOS,
+            id: base.id, name: base.name, status: .runtime(.stopped), guestOS: base.guestOS,
             cpuCount: base.cpuCount, memoryBytes: base.memoryBytes,
             networkMode: base.networkMode, networkMembership: base.networkMembership, networkName: nil,
             macAddress: base.macAddress, ipAddress: .notObserved,

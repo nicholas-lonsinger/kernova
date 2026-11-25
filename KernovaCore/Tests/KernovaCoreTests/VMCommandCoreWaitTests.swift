@@ -187,7 +187,7 @@ struct VMCommandCoreWaitTests {
 
         let met = try await wait.joined()
         #expect(met.id == alpha.id)
-        #expect(met.status == VMStatus.running.rawValue)
+        #expect(met.status == .runtime(.running))
     }
 
     @Test(
@@ -219,12 +219,13 @@ struct VMCommandCoreWaitTests {
 
     @Test("Only an agent connected and current ends a wait for the agent")
     func onlyACurrentAgentEndsTheAgentWait() {
-        #expect(AgentStatus.current(version: "2.0").endsAWaitForTheAgent)
+        #expect(AgentStatus.agent(.current(version: "2.0")).endsAWaitForTheAgent)
         let others: [AgentStatus] = [
-            .waiting, .connected(version: "2.0"), .outdated(installed: "1.0", bundled: "2.0"),
-            .reinstallNeeded(installed: "1.0", bundled: "2.0", reason: .launchRefused),
-            .updating(installed: "1.0", bundled: "2.0"), .unresponsive(version: "2.0"),
-            .expectedMissing(expected: "2.0"), .connecting(expected: "2.0"), .disconnected(last: "2.0"),
+            .waiting, .agent(.connected(version: "2.0")), .agent(.outdated(installed: "1.0", bundled: "2.0")),
+            .agent(.reinstallNeeded(installed: "1.0", bundled: "2.0", reason: .launchRefused)),
+            .agent(.updating(installed: "1.0", bundled: "2.0")), .agent(.unresponsive(version: "2.0")),
+            .agent(.expectedMissing(expected: "2.0")), .agent(.connecting(expected: "2.0")),
+            .agent(.disconnected(last: "2.0")),
         ]
         for status in others {
             #expect(!status.endsAWaitForTheAgent, "\(status)")
