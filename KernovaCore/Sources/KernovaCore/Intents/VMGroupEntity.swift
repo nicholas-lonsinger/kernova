@@ -56,10 +56,10 @@ struct VMGroupEntity: AppEntity {
 /// `suggestedEntities()` lists every group for a picker, and a typed name
 /// resolves as a typed VM name does (``VMIntentGateway/groups(matching:)``).
 ///
-/// Shortcuts' Find action for groups runs as this property query
-/// (``FindQuery``), which filters and sorts the groups in memory, in
-/// ``VMIntentGateway/groups()``'s order until a sort is chosen: the smart
-/// groups, then the folders, each in the order the sidebar shows them.
+/// Find VM Group runs as this property query (``FindQuery``), which filters
+/// and sorts the groups in memory, in ``VMIntentGateway/groups()``'s order
+/// until a sort is chosen: the smart groups, then the folders, each in the
+/// order the sidebar shows them.
 struct VMGroupEntityQuery: EntityStringQuery, FindQuery {
     typealias ComparatorMappingType = FindPredicate<VMGroupEntity>
 

@@ -50,9 +50,8 @@ struct NetworkEntity: AppEntity {
 /// `suggestedEntities()` lists every network for a picker, and a typed name
 /// matches as the sidebar's search does (``SidebarNameSearch``).
 ///
-/// Shortcuts' Find action for networks runs as this property query
-/// (``FindQuery``), which filters and sorts the networks in memory, in name
-/// order until a sort is chosen.
+/// Find Network runs as this property query (``FindQuery``), which filters
+/// and sorts the networks in memory, in name order until a sort is chosen.
 struct NetworkEntityQuery: EntityStringQuery, FindQuery {
     typealias ComparatorMappingType = FindPredicate<NetworkEntity>
 
