@@ -51,7 +51,8 @@ struct KernovaScriptingDefinitionTests {
             "start": "virtual machine", "stop": "virtual machine", "restart": "virtual machine",
             "pause": "virtual machine", "resume": "virtual machine", "suspend": "virtual machine",
             "reveal": "virtual machine", "revert to": "snapshot", "cancel guest setup": "virtual machine",
-            "cancel copy": "virtual machine", "change": "setting",
+            "cancel copy": "virtual machine", "change": "setting", "attach": "USB accessory",
+            "detach": "USB accessory",
         ]
         #expect(Set(try values("command", "name", in: suite)) == Set(addressed.keys).union(["import"]))
 
@@ -87,7 +88,25 @@ struct KernovaScriptingDefinitionTests {
             (
                 "virtual machine", VMScriptObject.self,
                 VMInfo.Field.allCases.compactMap(VMScriptObject.key(carrying:))
-                    + [VMScriptObject.storageDisksKey, VMScriptObject.snapshotsKey, VMScriptObject.settingsKey]
+                    + [
+                        VMScriptObject.storageDisksKey, VMScriptObject.snapshotsKey, VMScriptObject.settingsKey,
+                        VMScriptObject.sharedDirectoriesKey, VMScriptObject.usbAccessoriesKey,
+                        VMScriptObject.rememberedUSBAccessoriesKey,
+                    ]
+            ),
+            (
+                "shared directory", VMSharedDirectoryScriptObject.self,
+                SharedDirectorySummary.Field.allCases.map(VMSharedDirectoryScriptObject.key(carrying:))
+                    // The folder's own name, which the path ends in.
+                    + [#keyPath(VMSharedDirectoryScriptObject.name)]
+            ),
+            (
+                "USB accessory", VMUSBAccessoryScriptObject.self,
+                USBAccessorySummary.Field.allCases.compactMap(VMUSBAccessoryScriptObject.key(carrying:))
+            ),
+            (
+                "remembered USB accessory", VMRememberedUSBAccessoryScriptObject.self,
+                USBPairingSummary.Field.allCases.compactMap(VMRememberedUSBAccessoryScriptObject.key(carrying:))
             ),
             (
                 // The keyspace's entry and its key's descriptor, but for

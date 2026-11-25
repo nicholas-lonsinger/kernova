@@ -513,9 +513,10 @@ final class VMChangeScriptCommand: VMScriptCommand {
 // MARK: - Standard Suite
 
 /// The Standard Suite's `delete … [with confirmation] [with immediate
-/// deletion]`: a delete of a virtual machine or a snapshot, or of a list of
-/// references, goes to ``VMScriptingGateway/delete(_:in:for:)``, and every
-/// other delete is Cocoa's own.
+/// deletion]`: a delete of a virtual machine, a snapshot, a shared directory,
+/// a USB accessory or a remembered USB accessory, or of a list of references,
+/// goes to ``VMScriptingGateway/delete(_:in:for:)``, and every other delete is
+/// Cocoa's own.
 @MainActor
 @objc(VMDeleteScriptCommand)
 final class VMDeleteScriptCommand: NSDeleteCommand {
@@ -523,11 +524,16 @@ final class VMDeleteScriptCommand: NSDeleteCommand {
     /// declares it.
     nonisolated static let immediateDeletionKey = "ImmediateDeletion"
 
+    /// The element keys whose delete the gateway answers.
+    nonisolated private static let handled: Set = [
+        VMScriptingRoot.virtualMachinesKey, VMScriptObject.snapshotsKey, VMScriptObject.sharedDirectoriesKey,
+        VMScriptObject.usbAccessoriesKey, VMScriptObject.rememberedUSBAccessoriesKey,
+    ]
+
     /// A selector hop to the main actor, as ``VMScriptCommand/execute()``
     /// takes, for a delete the gateway answers.
     nonisolated override func performDefaultImplementation() -> Any? {
-        let handled = [VMScriptingRoot.virtualMachinesKey, VMScriptObject.snapshotsKey]
-        guard directParameter is [Any] || handled.contains(where: { $0 == splitElement?.key }) else {
+        guard directParameter is [Any] || splitElement.map({ Self.handled.contains($0.key) }) == true else {
             return super.performDefaultImplementation()
         }
         performSelector(onMainThread: #selector(deleteObjects), with: nil, waitUntilDone: true)
@@ -640,45 +646,128 @@ extension NSScriptCommand {
 }
 
 /// The Standard Suite's `make`: a snapshot is taken by
-/// ``VMScriptObject/makeSnapshot(name:notes:)``, and every other class's make
-/// is Cocoa's own.
+/// ``VMScriptObject/makeSnapshot(name:notes:)``, a folder shared by
+/// ``VMScriptObject/makeSharedDirectory(path:readOnly:)``, and every other
+/// class's make is Cocoa's own.
 @MainActor
 @objc(VMCreateScriptCommand)
 final class VMCreateScriptCommand: NSCreateCommand {
     /// The Cocoa key of `make`'s `at`, as the dictionary declares it.
     nonisolated private static let locationKey = "Location"
 
+    /// An element of a VM whose make Kernova answers itself.
+    private enum Made {
+        case snapshot
+        case sharedDirectory
+
+        /// What `description`, the class a make names, makes; `nil` for a
+        /// class whose make is Cocoa's own.
+        init?(_ description: NSScriptClassDescription) {
+            switch description.implementationClassName {
+            case NSStringFromClass(VMSnapshotScriptObject.self): self = .snapshot
+            case NSStringFromClass(VMSharedDirectoryScriptObject.self): self = .sharedDirectory
+            default: return nil
+            }
+        }
+
+        /// The VM element it is made in.
+        var key: String {
+            switch self {
+            case .snapshot: VMScriptObject.snapshotsKey
+            case .sharedDirectory: VMScriptObject.sharedDirectoriesKey
+            }
+        }
+
+        /// What a make naming no single VM reads back.
+        var unplaced: String {
+            switch self {
+            case .snapshot: "Name the virtual machine to take a snapshot of."
+            case .sharedDirectory: "Name the virtual machine to share a folder with."
+            }
+        }
+    }
+
     /// A selector hop to the main actor, as ``VMScriptCommand/execute()``
-    /// takes, for a snapshot's make.
+    /// takes, for a make Kernova answers itself.
     nonisolated override func performDefaultImplementation() -> Any? {
-        guard createClassDescription.implementationClassName == NSStringFromClass(VMSnapshotScriptObject.self)
-        else { return super.performDefaultImplementation() }
-        performSelector(onMainThread: #selector(makeSnapshot), with: nil, waitUntilDone: true)
+        guard Made(createClassDescription) != nil else { return super.performDefaultImplementation() }
+        performSelector(onMainThread: #selector(makeElement), with: nil, waitUntilDone: true)
         return nil
     }
 
-    /// Where the hop lands, on the main actor: takes a snapshot of the one VM
-    /// the make names, or records why it names none.
-    @objc private func makeSnapshot() {
-        guard let vm = virtualMachine() else { return }
+    /// Where the hop lands, on the main actor: makes the element in the one
+    /// VM the make names, or records why it names none.
+    @objc private func makeElement() {
+        guard let made = Made(createClassDescription), let vm = virtualMachine(making: made) else { return }
         let properties = resolvedKeyDictionary
-        vm.makeSnapshot(
-            name: Self.text(properties[#keyPath(VMSnapshotScriptObject.name)]),
-            notes: Self.text(properties[#keyPath(VMSnapshotScriptObject.notes)]))
+        switch made {
+        case .snapshot:
+            vm.makeSnapshot(
+                name: Self.text(properties[#keyPath(VMSnapshotScriptObject.name)]),
+                notes: Self.text(properties[#keyPath(VMSnapshotScriptObject.notes)]))
+        case .sharedDirectory:
+            let path: String
+            do {
+                path = try folderPath()
+            } catch let refusal as CommandError {
+                refuse(refusal)
+                return
+            } catch {
+                refuse(Int(errAEEventFailed), error.localizedDescription)
+                return
+            }
+            let readOnly = properties[#keyPath(VMSharedDirectoryScriptObject.readOnly)]
+            vm.makeSharedDirectory(path: path, readOnly: Self.flag(readOnly))
+        }
     }
 
-    /// The VM the make names: `at`'s container when it is a VM's snapshots,
-    /// or else, with no `at`, the `tell` block's subject — `tell virtual
-    /// machine … to make new snapshot`, whose target travels only as the
-    /// event's subject attribute, the container Cocoa's own make inserts into.
+    /// The full path of the folder the make's `with properties` record names
+    /// as its `path`: a file reference's own — `POSIX file "…"`, an alias,
+    /// what `choose folder` answers — or text read as
+    /// ``UserHome/fullPath(_:of:)`` reads it: the path the core's add takes,
+    /// for the reason ``VMImportScriptCommand`` states for a bundle.
+    ///
+    /// A file reference is read off the event as the script sent it:
+    /// ``resolvedKeyDictionary`` holds it coerced to the text the dictionary
+    /// declares, an HFS path (observed on macOS 27).
+    private func folderPath() throws -> String {
+        let given = appleEvent?.paramDescriptor(forKeyword: keyAEPropData)?.forKeyword(Self.pathCode)
+        if let given, Self.fileTypes.contains(given.descriptorType), let url = given.fileURLValue {
+            return url.path(percentEncoded: false)
+        }
+        guard let text = Self.text(resolvedKeyDictionary[#keyPath(VMSharedDirectoryScriptObject.path)]) else {
+            throw CommandError.invalidArgument("Name the folder to share, with properties {path:\u{2026}}.")
+        }
+        return try UserHome.fullPath(text, of: "A folder")
+    }
+
+    /// The code the dictionary gives a shared directory's `path`.
+    private static let pathCode = FourCharCode(scriptingCode: "KvPa")
+
+    /// The descriptor types AppleScript sends a file reference as.
+    private static let fileTypes: Set<DescType> = [typeFileURL, typeAlias, typeBookmarkData]
+
+    /// `value` as the boolean the dictionary declares the property as, false
+    /// for none.
+    private static func flag(_ value: Any?) -> Bool {
+        guard let value else { return false }
+        return (NSScriptCoercionHandler.shared().coerceValue(value, to: NSNumber.self) as? NSNumber)?.boolValue
+            ?? false
+    }
+
+    /// The VM the make of `made` names: `at`'s container when it is that VM
+    /// element, or else, with no `at`, the `tell` block's subject — `tell
+    /// virtual machine … to make new snapshot`, whose target travels only as
+    /// the event's subject attribute, the container Cocoa's own make inserts
+    /// into.
     ///
     /// `nil`, with the refusal recorded, for a reference that names nothing
     /// and for one that names no single VM.
-    private func virtualMachine() -> VMScriptObject? {
+    private func virtualMachine(making made: Made) -> VMScriptObject? {
         guard let location = arguments?[Self.locationKey] as? NSPositionalSpecifier else {
-            guard let subject = Self.subject(of: appleEvent) else { return unplaced() }
+            guard let subject = Self.subject(of: appleEvent) else { return unplaced(made) }
             guard let evaluated = subject.objectsByEvaluatingSpecifier else { return failure(evaluating: subject) }
-            return evaluated as? VMScriptObject ?? unplaced()
+            return evaluated as? VMScriptObject ?? unplaced(made)
         }
         // Evaluated before the location is: after the location's evaluation
         // finds no place for a snapshot in a network, the same reference
@@ -689,9 +778,8 @@ final class VMCreateScriptCommand: NSCreateCommand {
         }
         location.setInsertionClassDescription(createClassDescription)
         location.evaluate()
-        guard location.insertionKey == VMScriptObject.snapshotsKey,
-            let vm = location.insertionContainer as? VMScriptObject
-        else { return unplaced() }
+        guard location.insertionKey == made.key, let vm = location.insertionContainer as? VMScriptObject
+        else { return unplaced(made) }
         return vm
     }
 
@@ -714,16 +802,16 @@ final class VMCreateScriptCommand: NSCreateCommand {
         return nil
     }
 
-    /// Refuses a make that names no single VM for the snapshot to be taken
-    /// of, in place of the bare error Cocoa's search for a place recorded.
-    private func unplaced() -> VMScriptObject? {
-        refuse(Int(errAECantPutThatThere), "Name the virtual machine to take a snapshot of.")
+    /// Refuses a make of `made` that names no single VM to make it in, in
+    /// place of the bare error Cocoa's search for a place recorded.
+    private func unplaced(_ made: Made) -> VMScriptObject? {
+        refuse(Int(errAECantPutThatThere), made.unplaced)
         scriptErrorOffendingObjectDescriptor = nil
         return nil
     }
 
     /// `value` as the text the dictionary declares the property as, `nil` for
-    /// none: `with properties` arrives uncoerced.
+    /// none.
     private static func text(_ value: Any?) -> String? {
         guard let value else { return nil }
         return NSScriptCoercionHandler.shared().coerceValue(value, to: NSString.self) as? String

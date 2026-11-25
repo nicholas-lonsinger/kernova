@@ -501,7 +501,7 @@ extension VMCommandCore {
     }
 }
 
-extension SnapshotSelection {
+extension NamedSelection {
     /// What an in-app surface refuses `text` with when it names every snapshot
     /// in `candidates`: each one's name with the identifier that names it
     /// alone.
@@ -509,7 +509,19 @@ extension SnapshotSelection {
         _ text: String, among candidates: [Candidate], id: (Candidate) -> UUID,
         name: (Candidate) -> String
     ) -> String {
-        "\u{201C}\(text)\u{201D} names \(candidates.count) snapshots. Use one of their identifiers instead: "
-            + candidates.map { "\(name($0)) (\(id($0).uuidString))" }.joined(separator: ", ") + "."
+        ambiguity(
+            text, among: candidates, plural: "snapshots", namedAloneBy: "identifiers",
+            label: { "\(name($0)) (\(id($0).uuidString))" })
+    }
+
+    /// What an in-app surface refuses `text` with when it names every one of
+    /// `candidates`, `plural` of their kind: each one as `label` lists it, by
+    /// what names it alone — `namedAloneBy`, in the plural.
+    package static func ambiguity(
+        _ text: String, among candidates: [Candidate], plural: String, namedAloneBy identifiers: String,
+        label: (Candidate) -> String
+    ) -> String {
+        "\u{201C}\(text)\u{201D} names \(candidates.count) \(plural). Use one of their \(identifiers) instead: "
+            + candidates.map(label).joined(separator: ", ") + "."
     }
 }

@@ -691,7 +691,7 @@ package enum VMConfigurationKeyRegistry {
             // What a read answers while the mode is off, so it writes back as
             // no change.
             guard !trimmed.isEmpty else { return { _ in } }
-            switch SnapshotSelection(
+            switch NamedSelection(
                 trimmed, in: context.snapshots.ordered, id: \.id, name: \.name)
             {
             case .found(let snapshot):
@@ -701,7 +701,7 @@ package enum VMConfigurationKeyRegistry {
                     "This virtual machine has no snapshot \u{201C}\(trimmed)\u{201D}.")
             case .ambiguous(let candidates):
                 throw CommandError.invalidArgument(
-                    SnapshotSelection.ambiguity(trimmed, among: candidates, id: \.id, name: \.name))
+                    NamedSelection.ambiguity(trimmed, among: candidates, id: \.id, name: \.name))
             }
         })
 
