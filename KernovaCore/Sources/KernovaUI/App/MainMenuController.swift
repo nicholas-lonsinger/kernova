@@ -50,7 +50,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
 
     /// The "USB Device" submenu, retained so it can be rebuilt from the live
     /// accessory list when it opens. `nil` in a process that cannot pass
-    /// accessories through, where the item is never created at all.
+    /// accessories through, whose item has no submenu.
     private var usbAccessoryMenu: NSMenu?
     /// What that submenu currently lists, for the reason
     /// ``revertSnapshotMenuModel`` exists.
@@ -184,6 +184,24 @@ final class MainMenuController: NSObject, NSMenuDelegate {
             hasCollapsedSection: expansion.contains(false), hasExpandedSection: expansion.contains(true),
             selectedGroup: sidebar?.selectedGroupMenu(values: values))
         for (index, item) in items.enumerated() { viewMenu.insertItem(item, at: index) }
+    }
+
+    /// The Virtual Machine menu's "USB Device" item: a submenu of the live
+    /// accessories where this process can pass them through, and otherwise
+    /// dimmed, its subtitle naming what passthrough needs.
+    private func makeUSBAccessoryItem() -> NSMenuItem {
+        let item = NSMenuItem(title: USBAccessoryMenu.title, action: nil, keyEquivalent: "")
+        if let gap = viewModel.usbPassthroughGap {
+            // With no action and no submenu, the menu's autoenabling dims it.
+            item.subtitle = gap.reason
+            return item
+        }
+        let menu = NSMenu(title: USBAccessoryMenu.title)
+        menu.delegate = self
+        item.submenu = menu
+        usbAccessoryMenu = menu
+        rebuildUSBAccessoryMenu(menu, for: activeInstance)
+        return item
     }
 
     /// Rebuilds the USB submenu from the accessories macOS has assigned to
@@ -385,11 +403,11 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // selection guard so none strands the last selection's: the
         // guest-agent item's title is part of what it reports (see
         // `unavailableTitle`), the Clone items name the preference, and a
-        // clipboard command's tooltip says why it is unavailable.
+        // clipboard command's subtitle says why it is unavailable.
         let target = self.target(of: menuItem, workingInstance: workingInstance)
         switch menuItem.action {
         case #selector(AppDelegate.copyGuestClipboardToMac(_:)), #selector(AppDelegate.copyMacClipboardToGuest(_:)):
-            menuItem.toolTip = target.flatMap { viewModel.capabilities.clipboardCommandsGap(on: $0) }?.reason
+            menuItem.subtitle = target.flatMap { viewModel.capabilities.clipboardCommandsGap(on: $0) }?.reason
         case #selector(AppDelegate.toggleGuestAgentDisk(_:)):
             menuItem.title = GuestAgentDiskControl.unavailableTitle
         case #selector(AppDelegate.cloneVM(_:)):
@@ -618,18 +636,7 @@ final class MainMenuController: NSObject, NSMenuDelegate {
         // Seeded so the parent item is never a live entry onto an empty submenu.
         rebuildRevertSnapshotMenu(revertMenu, for: activeInstance)
         vmMenu.addItem(revertItem)
-        // The capability is a property of this build's signature and the Mac's
-        // macOS, so a process without it never grows the item — there is
-        // nothing here to disable, and nothing to explain.
-        if viewModel.supportsUSBAccessories {
-            let usbItem = NSMenuItem(title: USBAccessoryMenu.title, action: nil, keyEquivalent: "")
-            let usbMenu = NSMenu(title: USBAccessoryMenu.title)
-            usbMenu.delegate = self
-            usbItem.submenu = usbMenu
-            usbAccessoryMenu = usbMenu
-            rebuildUSBAccessoryMenu(usbMenu, for: activeInstance)
-            vmMenu.addItem(usbItem)
-        }
+        vmMenu.addItem(makeUSBAccessoryItem())
         vmMenu.delegate = self
         virtualMachineMenu = vmMenu
         vmMenu.addItem(.separator())
