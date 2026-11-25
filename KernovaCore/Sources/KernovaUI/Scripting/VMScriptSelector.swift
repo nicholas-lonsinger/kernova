@@ -50,9 +50,9 @@ enum VMScriptSelector {
 
     /// The VMs `parameter` addresses, as ``selectors(addressing:in:)`` reads
     /// them, and whether it addresses them as a list — a list of references,
-    /// or one reference Cocoa evaluated to a list, such as `every virtual
-    /// machine whose …` — which is what a verb answering one result for each
-    /// answers as a list.
+    /// or one reference that names a list, such as `every virtual machine
+    /// whose …` or a range — which is what a verb answering one result for
+    /// each answers as a list.
     ///
     /// Empty when a specifier evaluated to nothing — `every virtual machine`
     /// of an empty library, a `whose` test nothing satisfies — which is a verb
@@ -241,8 +241,8 @@ enum VMScriptSelector {
     }
 
     /// What `specifier` evaluates to — against `containers`, or else its own
-    /// container chain — each of it an `Element`, in order, and whether Cocoa
-    /// answered a list.
+    /// container chain — each of it an `Element`, in order, and whether it
+    /// names a list, as ``evaluate(_:in:)`` reads it.
     ///
     /// A list Cocoa answers for each of several containers — `every snapshot
     /// of every virtual machine` — is read through.
@@ -258,7 +258,8 @@ enum VMScriptSelector {
 
     /// What `specifier` evaluates to — against `containers`, or else its own
     /// container chain — read through every level of list, in order, and
-    /// whether Cocoa answered a list.
+    /// whether it names a list (``namesAList(_:)``), or is evaluated against
+    /// a list of containers, however many elements it evaluated to.
     ///
     /// - Throws: ``VMScriptEvaluationFailure`` when Cocoa could not evaluate
     ///   the specifier.
@@ -270,7 +271,27 @@ enum VMScriptSelector {
             throw VMScriptEvaluationFailure(specifier)
         }
         func items(_ value: Any) -> [Any] { (value as? [Any])?.flatMap(items) ?? [value] }
-        return (items(evaluated), evaluated is [Any])
+        return (items(evaluated), containers is [Any] || namesAList(specifier))
+    }
+
+    /// Whether `specifier` names its elements as a list: a range, a `whose`
+    /// test, `every` element, or anything of a container so named. An index,
+    /// a name, an id, or `before` or `after` one, names one element of each
+    /// container.
+    ///
+    /// Read from the form, never the value: Cocoa answers a single object for
+    /// a range its container's ``VMScriptContainer`` evaluated to one element
+    /// (observed on macOS 27).
+    private static func namesAList(_ specifier: NSScriptObjectSpecifier) -> Bool {
+        if let container = specifier.container, namesAList(container) { return true }
+        switch specifier {
+        case is NSRangeSpecifier, is NSWhoseSpecifier:
+            return true
+        case is NSPropertySpecifier:
+            return specifier.containerClassDescription?.toManyRelationshipKeys.contains(specifier.key) ?? false
+        default:
+            return false
+        }
     }
 
     /// `items`, each of it an `Element`.

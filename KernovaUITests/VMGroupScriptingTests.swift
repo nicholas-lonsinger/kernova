@@ -65,21 +65,36 @@ struct VMGroupScriptingTests {
     }
 
     /// The ways a script names the VMs a verb lands on, and the names of
-    /// those VMs, in order.
+    /// those VMs, in order. The library holds Alpha, Beta and Gamma, and the
+    /// folder One holds Beta alone.
     enum VMForm: CaseIterable, Sendable {
         /// `virtual machine "alpha"`, a name the core resolves ignoring case.
         case named
+        /// `virtual machine 2`, an index Cocoa evaluates.
+        case indexed
         /// `{virtual machine id "<Beta's>", virtual machine "Alpha"}`.
         case list
         /// `every virtual machine whose name is "Beta"`.
         case whose
+        /// `every virtual machine of folder "One"`.
+        case every
+        /// `virtual machine 1 of every folder whose name is "One"`.
+        case ofEvery
+        /// `virtual machines "Beta" thru "Beta"`.
+        case namedRange
 
         /// The event's reference, and the names of the VMs it lands on.
         @MainActor
         fileprivate func reference(beta: UUID) -> (NSAppleEventDescriptor, [String]) {
+            let one = ScriptEvent.every(
+                "KvGF",
+                whose: ScriptEvent.equals(
+                    ScriptEvent.property("pnam", of: ScriptEvent.examined), NSAppleEventDescriptor(string: "One")))
             switch self {
             case .named:
                 return (ScriptEvent.element("KvVM", named: "alpha"), ["Alpha"])
+            case .indexed:
+                return (ScriptEvent.element("KvVM", at: 2), ["Beta"])
             case .list:
                 let list = NSAppleEventDescriptor.list()
                 list.insert(ScriptEvent.element("KvVM", id: beta.uuidString), at: 1)
@@ -91,17 +106,38 @@ struct VMGroupScriptingTests {
                     ScriptEvent.every("KvVM", whose: ScriptEvent.equals(name, NSAppleEventDescriptor(string: "Beta"))),
                     ["Beta"]
                 )
+            case .every:
+                return (ScriptEvent.every("KvVM", of: ScriptEvent.element("KvGF", named: "One")), ["Beta"])
+            case .ofEvery:
+                return (ScriptEvent.element("KvVM", at: 1, of: one), ["Beta"])
+            case .namedRange:
+                return (
+                    ScriptEvent.range(
+                        "KvVM", from: ScriptEvent.rangeEnd("KvVM", named: "Beta"),
+                        thru: ScriptEvent.rangeEnd("KvVM", named: "Beta")),
+                    ["Beta"]
+                )
+            }
+        }
+
+        /// Whether the form names a list, which a verb answers as one however
+        /// many VMs it acted on.
+        var namesAList: Bool {
+            switch self {
+            case .named, .indexed: false
+            case .list, .whose, .every, .ofEvery, .namedRange: true
             }
         }
     }
 
     @Test(
-        "A verb given VMs answers each one it acted on by identifier: a reference for one, a list in order for several",
+        "A verb given VMs answers each one it acted on by identifier: a reference for one named alone, a list in order for a list, a range, every or whose",
         arguments: ["Strt", "Stop", "Susp", "Rstr"], VMForm.allCases)
     func aVerbAnswersTheVMsItActedOn(verb: String, form: VMForm) async throws {
         let wired = WiredCommandCore(virtualization: MockVirtualizationService())
         let phase: VMLifecyclePhase = verb == "Strt" ? .stopped : .running(sessionID: UUID())
         let vms = ["Alpha", "Beta", "Gamma"].map { wired.register(name: $0, phase: phase) }
+        try wired.library.organization.createFolder(named: "One", members: [vms[1].id])
         let host = ScriptHost()
         let gateway = await makeGateway(wired, host: host)
         let (reference, named) = form.reference(beta: vms[1].id)
@@ -110,7 +146,7 @@ struct VMGroupScriptingTests {
 
         #expect(reply.errorNumber == 0, "\(reply.errorString ?? "")")
         let answer = try #require(reply.descriptor)
-        #expect(answer.descriptorType == (form == .named ? typeObjectSpecifier : typeAEList))
+        #expect(answer.descriptorType == (form.namesAList ? typeAEList : typeObjectSpecifier))
         for item in answer.items {
             #expect(item.forKeyword(ScriptEvent.code("form"))?.enumCodeValue == ScriptEvent.code("ID  "))
         }
