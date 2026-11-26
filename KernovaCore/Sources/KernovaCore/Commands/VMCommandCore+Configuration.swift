@@ -411,6 +411,10 @@ extension VMCommandCore {
     /// the wire where ``addSharedDirectories(_:paths:)`` is not, so named by
     /// path rather than by pick.
     ///
+    /// The share answered is one the guest reaches as `readOnly` says: a
+    /// folder the VM already shares with the other access is refused, since an
+    /// add changes no share it finds.
+    ///
     /// Resolve, gate, then grant: the VM and its state decide the answer before
     /// the authority is consulted, so a selector no VM answers to and a VM that
     /// takes no added share are both refused without a panel ever going up. The
@@ -433,15 +437,31 @@ extension VMCommandCore {
         let instance = try resolve(selector)
         _ = try requireSharedDirectories(.add, on: instance)
         let named = Self.comparablePath(path)
-        if let shared = sharedDirectory(at: named, on: instance) { return SharedDirectorySummary(shared) }
+        if let shared = try share(at: named, on: instance, sharedReadOnly: readOnly) { return shared }
 
         let folder = try await requireSourceAuthority(.editSharedDirectory)
             .readableURL(for: URL(fileURLWithPath: named), as: .sharedDirectory)
         try Self.requireDirectory(folder)
         let picked = PickedFile(picking: folder)
         try addSharedDirectories([picked], readOnly: readOnly, to: instance)
-        guard let shared = sharedDirectory(at: picked.path, on: instance) else {
+        guard let shared = try share(at: picked.path, on: instance, sharedReadOnly: readOnly) else {
             throw itemNotFound(instance, item: "shared directory \u{201C}\(picked.path)\u{201D}")
+        }
+        return shared
+    }
+
+    /// The share the folder at `path` fills on the VM, `nil` when it shares
+    /// none, refused when the guest reaches it with the access `readOnly` is
+    /// not.
+    private func share(
+        at path: String, on instance: VMInstance, sharedReadOnly readOnly: Bool
+    ) throws -> SharedDirectorySummary? {
+        guard let shared = sharedDirectory(at: path, on: instance) else { return nil }
+        guard shared.readOnly == readOnly else {
+            let access = shared.readOnly ? "as read only" : "not as read only"
+            throw CommandError.invalidArgument(
+                "\u{201C}\(instance.name)\u{201D} already shares \u{201C}\(shared.path)\u{201D} \(access), and adding it again does not change that."
+            )
         }
         return SharedDirectorySummary(shared)
     }

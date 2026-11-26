@@ -27,7 +27,7 @@ struct FindSharedDirectoriesIntent: AppIntent {
 struct AddSharedDirectoryIntent: AppIntent {
     static let title: LocalizedStringResource = "Add Shared Directory"
     static let description: IntentDescription? = IntentDescription(
-        "Shares the folder at a full path, starting with “/” or “~/”, with a virtual machine’s guest and returns the shared directory. When Kernova can’t already read the folder, it comes to the front and asks for it in an open panel, and shares the folder chosen there. A folder the virtual machine already shares is left as it is. With Read Only on, the guest can read the folder but not write to it.",
+        "Shares the folder at a full path, starting with “/” or “~/”, with a virtual machine’s guest and returns the shared directory. When Kernova can’t already read the folder, it comes to the front and asks for it in an open panel, and shares the folder chosen there. A folder the virtual machine already shares is left as it is, and adding it with a different Read Only is refused. With Read Only on, the guest can read the folder but not write to it.",
         categoryName: "Virtual Machines",
         resultValueName: "Shared Directory")
 
