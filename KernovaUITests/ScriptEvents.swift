@@ -65,6 +65,19 @@ enum ScriptEvent {
         reference(elementClass, form: "test", test, of: container)
     }
 
+    /// `<class>s "<start>" thru "<stop>" of <container>`, each end named as
+    /// AppleScript names it: in the container the range is taken in.
+    static func elements(
+        _ elementClass: String, named start: String, through stop: String,
+        of container: NSAppleEventDescriptor = application
+    ) -> NSAppleEventDescriptor {
+        let inRange = NSAppleEventDescriptor(descriptorType: code("ccnt"), data: nil)!
+        let range = record(as: "rang")
+        range.setDescriptor(element(elementClass, named: start, of: inRange), forKeyword: code("star"))
+        range.setDescriptor(element(elementClass, named: stop, of: inRange), forKeyword: code("stop"))
+        return reference(elementClass, form: "rang", range, of: container)
+    }
+
     /// `<property> of <container>`.
     static func property(_ property: String, of container: NSAppleEventDescriptor) -> NSAppleEventDescriptor {
         reference("prop", form: "prop", NSAppleEventDescriptor(typeCode: code(property)), of: container)

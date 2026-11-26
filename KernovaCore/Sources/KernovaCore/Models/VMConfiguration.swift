@@ -279,23 +279,24 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     // MARK: - Storage Disks
 
     /// Ordered list of disks attached on `vzConfig.storageDevices`; position [0]
-    /// boots first on EFI guests.
+    /// boots first on EFI guests. Each label is the disk's own (``NamedList``).
     ///
     /// `nil` or empty both mean "use defaults" — see
     /// ``effectiveStorageDisks(layout:)``, the one place that synthesizes the
     /// main-disk entry a VM with no configured disks boots from.
-    var storageDisks: [StorageDisk]?
+    var storageDisks: NamedList<StorageDisk>?
 
     /// The disks this VM actually attaches: the configured list when non-empty,
-    /// otherwise the synthesized main disk at the bundle's `Disk.asif`.
-    package func effectiveStorageDisks(layout: VMBundleLayout) -> [StorageDisk] {
+    /// otherwise the synthesized main disk at the bundle's `Disk.asif` — the
+    /// list a disk joins, which its label is its own in.
+    package func effectiveStorageDisks(layout: VMBundleLayout) -> NamedList<StorageDisk> {
         if let configured = storageDisks, !configured.isEmpty { return configured }
         return [StorageDisk.mainDisk(layout: layout)]
     }
 
     /// Assigns `disks`, storing `nil` for an empty list so `config.json` never
     /// carries an empty array.
-    mutating func setStorageDisks(_ disks: [StorageDisk]) {
+    mutating func setStorageDisks(_ disks: NamedList<StorageDisk>) {
         storageDisks = disks.isEmpty ? nil : disks
     }
 
@@ -472,7 +473,7 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.kernelCommandLine = kernelCommandLine
         self.kernelBookmark = kernelBookmark
         self.initrdBookmark = initrdBookmark
-        self.storageDisks = storageDisks
+        self.storageDisks = storageDisks.map(NamedList.init(repairing:))
         self.removableMedia = removableMedia
         self.sharedDirectories = sharedDirectories
         self.installContext = installContext
@@ -558,7 +559,7 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
             String?.self, forKey: .kernelCommandLine, default: Defaults.kernelCommandLine, in: decoder)
         self.kernelBookmark = try c.decodeIfPresent(Data.self, forKey: .kernelBookmark)
         self.initrdBookmark = try c.decodeIfPresent(Data.self, forKey: .initrdBookmark)
-        self.storageDisks = try c.decodeIfPresent([StorageDisk].self, forKey: .storageDisks)
+        self.storageDisks = try c.decodeIfPresent(NamedList<StorageDisk>.self, forKey: .storageDisks)
         self.removableMedia = try c.decodeIfPresent([RemovableMediaItem].self, forKey: .removableMedia)
         self.sharedDirectories = try c.decodeIfPresent([SharedDirectory].self, forKey: .sharedDirectories)
         self.installContext = try c.decodeIfPresent(MacOSInstallContext.self, forKey: .installContext)
@@ -875,10 +876,10 @@ extension VMConfiguration {
             initrdPath = path
             initrdBookmark = bookmark
         case .storageDisk:
-            guard let index = storageDisks?.firstIndex(where: { $0.id == reference.id })
-            else { return }
-            storageDisks?[index].path = path
-            storageDisks?[index].bookmark = bookmark
+            storageDisks?.update(reference.id) { disk in
+                disk.path = path
+                disk.bookmark = bookmark
+            }
         case .removableMedia:
             guard let index = removableMedia?.firstIndex(where: { $0.id == reference.id })
             else { return }

@@ -90,13 +90,6 @@ package struct StorageDisk: Codable, Sendable, Equatable {
         return (ext == "iso" || ext == "dmg") ? .usbMassStorage : .virtio
     }
 
-    /// A label derived from `base` that is none of `existingLabels`
-    /// (``NameRule/firstAvailable(_:among:)``). Only machine-generated
-    /// defaults are uniqued; explicit user renames are left exactly as typed.
-    static func uniqueLabel(base: String, existingLabels: [String]) -> String {
-        NameRule.firstAvailable(base, among: existingLabels)
-    }
-
     /// Synthesizes the default main-disk entry for a VM whose `storageDisks`
     /// list is empty or absent.
     ///
@@ -122,6 +115,22 @@ package struct StorageDisk: Codable, Sendable, Equatable {
     package var blockDeviceIdentifier: String {
         String(id.uuidString.prefix(20))
     }
+}
+
+extension StorageDisk: ListNamed {
+    package var listedName: String {
+        get { label }
+        set { label = newValue }
+    }
+
+    /// Its image's file name without the extension, or "Disk" where that
+    /// names nothing, as an image named for its identifier does.
+    package var nameBase: String {
+        let stem = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        return NameRule.isWellFormed(stem, identifiers: Self.identifiers) ? stem : "Disk"
+    }
+
+    package static let identifiers = NameRule.Identifiers.uuid
 }
 
 /// A USB mass storage device on the XHCI controller's `usbDevices` list.

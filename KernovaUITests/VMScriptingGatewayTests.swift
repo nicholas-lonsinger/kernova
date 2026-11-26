@@ -241,7 +241,7 @@ struct VMScriptingGatewayTests {
             $0.networkEnabled = true
             $0.networkMode = mode
             $0.macAddress = "02:4b:4e:56:0c:01"
-            $0.storageDisks = disks.isEmpty ? nil : disks
+            $0.storageDisks = disks.isEmpty ? nil : NamedList(repairing: disks)
         }
     }
 
@@ -417,6 +417,56 @@ struct VMScriptingGatewayTests {
         #expect(disk.capacity == 100)
         #expect(disk.usedSpace == 2.5)
         #expect(gateway.suspended.isEmpty)
+    }
+
+    @Test(
+        "A configuration storing one label on two disks reads as labels of their own, each addressing the disk it was read from, and a range ending at a label starts at that one"
+    )
+    func everyLabelAScriptReadsAddressesItsOwnDisk() async throws {
+        let wired = WiredCommandCore()
+        let alpha = wired.register(name: "Alpha") {
+            $0.storageDisks = [
+                StorageDisk(path: "/Volumes/A/one.img"), StorageDisk(path: "/Volumes/B/two.img"),
+                StorageDisk(path: "/Volumes/C/three.img", label: "Boot"),
+            ]
+        }
+        // Two images named alike in different folders, as #2148 found them.
+        alpha.seedConfigurationJSON { config in
+            guard var disks = config["storageDisks"] as? [[String: Any]] else { return }
+            disks[0]["label"] = "Data"
+            disks[1]["label"] = "data"
+            config["storageDisks"] = disks
+        }
+        let host = ScriptHost()
+        let gateway = await makeLandedGateway(wired, runtime: host.runtime)
+        let vm = Self.vm(named: "Alpha")
+        func read(_ property: String, _ reference: NSAppleEventDescriptor) async throws -> ScriptReply {
+            try await host.send(ScriptEvent.get(ScriptEvent.property(property, of: reference)), to: gateway)
+        }
+
+        let names = try await read("pnam", ScriptEvent.every("KvSD", of: vm)).items.compactMap(\.stringValue)
+        let ids = try await read("ID  ", ScriptEvent.every("KvSD", of: vm)).items.compactMap(\.stringValue)
+        var addressed: [String?] = []
+        for name in names {
+            addressed.append(
+                try await read("ID  ", ScriptEvent.element("KvSD", named: name, of: vm)).descriptor?.stringValue)
+        }
+        let ranged = try await read("ID  ", ScriptEvent.elements("KvSD", named: "Data", through: "Boot", of: vm)).items
+            .compactMap(\.stringValue)
+
+        #expect(names.count == 3, "\(names)")
+        for (index, name) in names.enumerated() {
+            for later in names[(index + 1)...] {
+                // Cocoa Scripting's own comparison, which finds a script's
+                // element by name.
+                let related =
+                    (name as NSString).caseInsensitiveCompare(later) == .orderedSame
+                    || (later as NSString).caseInsensitiveCompare(name) == .orderedSame
+                #expect(!related, "\(names)")
+            }
+        }
+        #expect(addressed == ids.map(Optional.some), "\(names) addressed \(addressed), read from \(ids)")
+        #expect(ranged.first != nil && ranged.first == names.firstIndex(of: "Data").map { ids[$0] })
     }
 
     @Test("A disk whose image can't be read answers its sizes with missing value")

@@ -290,6 +290,21 @@ extension VMInstance {
         refreshBundle { try $0.bundle.commitSnapshotManifest { _ in } }
     }
 
+    /// Rewrites this fixture VM's `config.json` as `edit` leaves the JSON
+    /// object it holds — names and all, as a hand edit or another build could
+    /// have written it — and has the bundle read it back.
+    func seedConfigurationJSON(_ edit: (inout [String: Any]) -> Void) {
+        let path = VMBundleLayout.configRelativePath
+        seedBundleFiles { files in
+            guard let data = files.data(atRelativePath: path, in: bundleURL),
+                var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            else { preconditionFailure("'\(name)' holds no config.json object to edit") }
+            edit(&object)
+            files.setData(try? JSONSerialization.data(withJSONObject: object), atRelativePath: path, in: bundleURL)
+        }
+        refreshBundle { try $0.bundle.commitConfiguration { _ in } }
+    }
+
     /// Puts a manifest recording `snapshots`, names and all, in this fixture
     /// VM's bundle — as a hand edit or another build could have written it —
     /// and has the bundle read it back.

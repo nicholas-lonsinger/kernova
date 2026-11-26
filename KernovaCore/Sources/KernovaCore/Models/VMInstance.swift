@@ -537,7 +537,7 @@ package final class VMInstance {
     // MARK: - VM Bundle Paths (forwarded from VMBundleLayout)
 
     /// ``VMConfiguration/effectiveStorageDisks(layout:)`` for this instance's bundle.
-    package var effectiveStorageDisks: [StorageDisk] {
+    package var effectiveStorageDisks: NamedList<StorageDisk> {
         configuration.effectiveStorageDisks(layout: bundleLayout)
     }
 

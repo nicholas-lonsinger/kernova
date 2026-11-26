@@ -360,7 +360,7 @@
 			<property name="id" code="ID  " type="text" access="r" description="Its stable identifier, which a storage disk edit names it by.">
 				<cocoa key="uniqueID"/>
 			</property>
-			<property name="name" code="pnam" type="text" access="r" description="Its label.">
+			<property name="name" code="pnam" type="text" access="r" description="Its label, unique among its virtual machine&#8217;s storage disks ignoring case.">
 				<cocoa key="name"/>
 			</property>
 			<property name="kind" code="KvKd" type="storage disk kind" access="r" description="The bus the guest sees it on.">

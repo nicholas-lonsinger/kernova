@@ -253,17 +253,18 @@ package struct VMCapturedNetwork: Sendable, Equatable, Codable {
 /// captured with — the part of what a revert installs that decides which
 /// disk images the VM has open.
 package struct VMCapturedDiskImages: Sendable, Equatable, Codable {
-    var storageDisks: [StorageDisk]?
+    var storageDisks: NamedList<StorageDisk>?
     var removableMedia: [RemovableMediaItem]?
 
     package init(storageDisks: [StorageDisk]?, removableMedia: [RemovableMediaItem]?) {
-        self.storageDisks = storageDisks
+        self.storageDisks = storageDisks.map(NamedList.init(repairing:))
         self.removableMedia = removableMedia
     }
 
     /// What `configuration` carries.
     package init(_ configuration: VMConfiguration) {
-        self.init(storageDisks: configuration.storageDisks, removableMedia: configuration.removableMedia)
+        storageDisks = configuration.storageDisks
+        removableMedia = configuration.removableMedia
     }
 }
 

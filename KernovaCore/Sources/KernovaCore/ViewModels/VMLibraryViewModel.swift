@@ -362,7 +362,10 @@ package final class VMLibraryViewModel {
         }
     }
 
+    /// Renames a storage disk; an empty label is a no-op, since the inline
+    /// field commits on end-editing whether or not the text changed.
     package func renameStorageDisk(_ disk: UUID, newLabel: String, on instance: VMInstance) {
+        guard !NameRule.trimmed(newLabel).isEmpty else { return }
         runEdit(on: instance) {
             try self.verbs().renameStorageDisk(.id(instance.id), disk: disk, to: newLabel)
         }
@@ -414,7 +417,10 @@ package final class VMLibraryViewModel {
         runEdit(on: instance) { try self.verbs().ejectRemovableMedia(.id(instance.id), item: item) }
     }
 
+    /// Renames a removable medium; an empty label is a no-op, as a storage
+    /// disk's is.
     package func renameRemovableMedia(_ item: UUID, newLabel: String, on instance: VMInstance) {
+        guard !NameRule.trimmed(newLabel).isEmpty else { return }
         runEdit(on: instance) {
             try self.verbs().renameRemovableMedia(.id(instance.id), item: item, to: newLabel)
         }

@@ -375,8 +375,8 @@ struct VMLibraryViewModelTests {
         storageDisks: (VMBundleLayout) -> [StorageDisk]
     ) -> VMInstance {
         library.admitFixture(phase: phase) { config in
-            config.storageDisks = storageDisks(
-                VMBundleLayout(bundleURL: VMInstanceFixture.bundleURL(for: config.id)))
+            config.storageDisks = NamedList(
+                repairing: storageDisks(VMBundleLayout(bundleURL: VMInstanceFixture.bundleURL(for: config.id))))
         }
     }
 

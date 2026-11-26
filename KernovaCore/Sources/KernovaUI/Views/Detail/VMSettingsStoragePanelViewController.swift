@@ -145,7 +145,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
 
     // MARK: - Read accessors (materialize defaults)
 
-    private var currentStorageDisks: [StorageDisk] {
+    private var currentStorageDisks: NamedList<StorageDisk> {
         instance.effectiveStorageDisks
     }
 
@@ -437,7 +437,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     @objc private func editBootOrderTapped() {
         guard let window = view.window else { return }
         let sheet = StorageDiskReorderSheetContentViewController(
-            disks: currentStorageDisks, sizes: attachmentSizes, missing: missingStorageDiskIDs)
+            disks: Array(currentStorageDisks), sizes: attachmentSizes, missing: missingStorageDiskIDs)
         sheet.onReorder = { [weak self] disks in
             guard let self else { return }
             viewModel.reorderStorageDisks(disks.map(\.id), on: instance)

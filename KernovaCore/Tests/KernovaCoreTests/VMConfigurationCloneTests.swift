@@ -57,7 +57,7 @@ struct VMConfigurationCloneTests {
             ),
         ]
         var config = makeConfig()
-        config.storageDisks = disks
+        config.storageDisks = NamedList(repairing: disks)
         let clone = config.clonedForNewInstance(existingNames: [])
 
         #expect(clone.storageDisks?[0].path == "Disk.asif")
