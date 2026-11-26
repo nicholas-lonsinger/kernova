@@ -40,6 +40,7 @@ struct GuestAgentEntity: TransientAppEntity {
 
     var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(
-            title: "\(role.agentRole.title(user: user))", subtitle: "\(status.lineStatus.title)")
+            title: "\(role.agentRole.title(user: user))",
+            subtitle: VMGuestAgentLineStatus.caseDisplayRepresentations[status]?.title)
     }
 }
