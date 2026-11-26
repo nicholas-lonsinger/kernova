@@ -411,9 +411,10 @@ extension VMCommandCore {
     /// the wire where ``addSharedDirectories(_:paths:)`` is not, so named by
     /// path rather than by pick.
     ///
-    /// Resolve, gate, then grant: the VM and its state decide the answer before
-    /// the authority is consulted, so a selector no VM answers to and a VM that
-    /// takes no added share are both refused without a panel ever going up. The
+    /// Resolve, gate, then grant: the VM, its state and what `path` names decide
+    /// the answer before the authority is consulted, so a selector no VM
+    /// answers to, a VM that takes no added share and a path that is no folder
+    /// are all refused without a panel ever going up. The
     /// grant is asked for last because only the app can obtain one for a path a
     /// sandboxed client named, and the bookmark is minted from that path once
     /// it is readable — a share is reopened at every boot.
@@ -435,13 +436,13 @@ extension VMCommandCore {
         if let shared = sharedDirectory(at: named, on: instance) { return SharedDirectorySummary(shared) }
 
         let folder = URL(fileURLWithPath: named)
+        try Self.requireDirectory(folder)
         try await requireSourceAuthority(.editSharedDirectory)
             .requireReadAccess(to: folder, as: .sharedDirectory)
-        try Self.requireDirectory(folder)
-        let picked = PickedFile(picking: folder)
-        try addSharedDirectories([picked], readOnly: readOnly, to: instance)
-        guard let shared = sharedDirectory(at: picked.path, on: instance) else {
-            throw itemNotFound(instance, item: "shared directory \u{201C}\(picked.path)\u{201D}")
+        let file = PickedFile(picking: folder)
+        try addSharedDirectories([file], readOnly: readOnly, to: instance)
+        guard let shared = sharedDirectory(at: file.path, on: instance) else {
+            throw itemNotFound(instance, item: "shared directory \u{201C}\(file.path)\u{201D}")
         }
         return SharedDirectorySummary(shared)
     }

@@ -14,25 +14,21 @@ import UniformTypeIdentifiers
 /// around it — admits it, and any other answer is a refusal.
 ///
 /// No bookmark is captured here — a caller that needs the grant to outlive the
-/// call mints one from the named URL once this returns.
+/// app's run mints one from the named URL.
 @MainActor
 final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "PowerboxSourceAuthority")
 
-    /// Puts the panel up and answers how the user dismissed it.
-    private let present: @MainActor (NSOpenPanel) async -> NSApplication.ModalResponse
-
-    init(
-        present: @escaping @MainActor (NSOpenPanel) async -> NSApplication.ModalResponse = {
-            await $0.begin()
-        }
-    ) {
-        self.present = present
-    }
-
     func requireReadAccess(to url: URL, as source: SandboxedSource) async throws {
         guard !Self.isReadable(url) else { return }
+        // A path the sandbox does not admit still answers whether anything is
+        // at it (docs/research/2026-11-18-pasteboard-file-grants.md,
+        // observation 8), and no grant makes a missing file readable.
+        guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else {
+            throw CommandError.invalidArgument(
+                "Nothing is at \u{201C}\(url.path(percentEncoded: false))\u{201D}.")
+        }
         Self.logger.log(
             .notice,
             "Asking for permission to read '\(url.lastPathComponent, privacy: .public)'")
@@ -65,7 +61,7 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
             "Kernova needs your permission to read \u{201C}\(url.lastPathComponent)\u{201D}."
 
         let response = await withTaskCancellationHandler {
-            await present(panel)
+            await panel.begin()
         } onCancel: {
             // The caller is gone, and a panel nobody is waiting on is a
             // question left on the Mac's screen that no answer reaches. Ending

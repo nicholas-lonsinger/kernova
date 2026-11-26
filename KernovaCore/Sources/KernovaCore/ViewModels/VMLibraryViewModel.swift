@@ -441,8 +441,8 @@ package final class VMLibraryViewModel {
         }
     }
 
-    /// Wires what turns a path an out-of-process client named into a URL this
-    /// sandboxed process may read.
+    /// Wires what gets this sandboxed process read access to a path an
+    /// out-of-process client named.
     ///
     /// Set rather than injected: the panel behind it has to bring the app
     /// forward, which only the residency controller can do.
