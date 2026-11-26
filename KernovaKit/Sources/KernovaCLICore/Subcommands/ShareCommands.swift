@@ -63,7 +63,8 @@ extension KernovaCommand.Share {
             abstract: "Share a folder with a virtual machine's guest.",
             discussion: "Kernova asks for permission on this Mac's screen when the folder is "
                 + "not one it may already read, and this command waits for the answer. A folder "
-                + "the virtual machine already shares is left as it is.")
+                + "the virtual machine already shares is left as it is, and adding it with "
+                + "different access is refused.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)

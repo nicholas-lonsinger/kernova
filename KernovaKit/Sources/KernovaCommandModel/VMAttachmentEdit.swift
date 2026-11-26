@@ -53,7 +53,8 @@ public enum RemovableMediaEdit: Codable, Sendable, Hashable {
 /// for `path` and mints the bookmark, which a sandboxed client holds nothing to
 /// hand over.
 public enum SharedDirectoryEdit: Codable, Sendable, Hashable {
-    /// Shares `path` with the guest, skipping a folder the VM already shares.
+    /// Shares `path` with the guest, skipping a folder the VM already shares
+    /// that way and refusing one it shares with the other access.
     case add(path: String, readOnly: Bool)
     /// Drops the entry. The folder itself is never touched.
     case remove(directory: UUID)

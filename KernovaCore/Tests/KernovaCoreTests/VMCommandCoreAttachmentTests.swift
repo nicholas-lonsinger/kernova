@@ -471,6 +471,27 @@ struct VMCommandCoreAttachmentTests {
         #expect(single.configuration.sharedDirectories == [only])
     }
 
+    @Test(
+        "Adding a folder the VM already shares answers that share with the access asked for, and is refused with the other",
+        arguments: [false, true], [false, true])
+    func addingASharedFolderIsRefusedWithTheOtherAccess(held: Bool, asked: Bool) async throws {
+        let harness = makeHarness()
+        let shared = SharedDirectory(path: try folder("shared"), readOnly: held)
+        let instance = makeInstance(in: harness) { $0.sharedDirectories = [shared] }
+
+        let answered: SharedDirectorySummary?
+        do {
+            answered = try await harness.core.addSharedDirectory(
+                .id(instance.id), path: shared.path, readOnly: asked)
+        } catch CommandError.invalidArgument {
+            answered = nil
+        }
+
+        #expect(answered?.readOnly == (held == asked ? asked : nil))
+        #expect(instance.configuration.sharedDirectories == [shared])
+        #expect(harness.authority.requests.isEmpty)
+    }
+
     // MARK: - State gates
 
     @Test("A medium ejected while sharing resolves is refused, and its file is left alone")
