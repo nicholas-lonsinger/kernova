@@ -36,7 +36,7 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     private lazy var nameRefusalLabel = GroupedFormStateNote { [unowned self] in
         nameRefusal(nameField.stringValue)
     }
-    private let confirmButton = NSButton()
+    private lazy var confirmButton = NSButton(title: "Take Snapshot", target: self, action: #selector(confirmTapped))
 
     private static let sheetWidth: CGFloat = 520
     private static let padding: CGFloat = 20
@@ -211,9 +211,6 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         // No ellipsis on the action button itself; the ellipsis lives on the menu
         // item and footer link that open this sheet.
         let confirm = confirmButton
-        confirm.title = "Take Snapshot"
-        confirm.target = self
-        confirm.action = #selector(confirmTapped)
         confirm.bezelStyle = .push
         confirm.keyEquivalent = "\r"
         refreshNameRefusal()

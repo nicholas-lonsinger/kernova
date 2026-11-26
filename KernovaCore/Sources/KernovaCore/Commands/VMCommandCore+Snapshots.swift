@@ -465,9 +465,9 @@ extension VMCommandCore {
     /// editor was open must not raise an alert about a rename nobody made.
     package func renameSnapshot(_ selector: VMSelector, snapshot id: UUID, to newName: String) throws {
         let instance = try resolve(selector)
+        guard let snapshot = instance.snapshotManifest.snapshot(id: id) else { return }
         let name = try snapshotName(on: instance) { try $0.snapshots.validatedName(newName, for: id) }
-        guard let snapshot = instance.snapshotManifest.snapshot(id: id), snapshot.name != name
-        else { return }
+        guard snapshot.name != name else { return }
         try require(.renameSnapshot, on: instance)
         try edit(.renameSnapshot, on: instance, verb: .renameSnapshot) { permit in
             try commitSnapshotManifest(permit, verb: .renameSnapshot) { try $0.rename(id: id, to: name) }
