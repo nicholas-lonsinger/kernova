@@ -111,29 +111,46 @@ linux_tests_container_up() {
 LINUX_TESTS_IMAGES_KEPT=3
 
 # linux_tests_container_image <tree-ish> — makes sure this Mac holds the image
-# for <tree-ish>'s recipe, building it when it does not, then deletes every
+# for <tree-ish>'s recipe. When it does not, builds it, then deletes every
 # kernova-linux-tests image past the LINUX_TESTS_IMAGES_KEPT built last; an
 # image another session deleted first is no failure, and a base image is never
-# deleted. Fails, printing what is missing on stdout, when the image cannot be
-# built; a deletion that fails is reported and the image stays usable.
+# deleted. One session builds at a time, and the builder is stopped when its
+# build ends. Fails, printing what is missing on stdout, when the image cannot
+# be built; a deletion that fails is reported and the image stays usable.
 linux_tests_container_image() {
-    local image base stale
+    local image base
     if ! { image=$(linux_tests_image "$1") && base=$(linux_tests_base "$1"); }; then
         echo "a recipe for their image in $1: Tools/linux-tests.Containerfile and .swift-version"
         return 1
     fi
     container image inspect "$image" >/dev/null 2>&1 && return 0
-    echo "Building $image on $base" >&2
-    if ! linux_tests_build_image container "$1" --platform linux/arm64 --progress plain >&2; then
-        echo "their image $image, which \`container build\` did not build on $base (its output is above)"
-        return 1
-    fi
-    # shellcheck disable=SC2086 # one image name per word
-    if ! { stale=$(container image list --format json | jq -r --argjson kept "$LINUX_TESTS_IMAGES_KEPT" '
-        [.[] | select(.configuration.name | startswith("docker.io/library/kernova-linux-tests:"))]
-        | sort_by(.configuration.descriptor.annotations["org.opencontainers.image.created"] // "") | reverse
-        | .[$kept:][].configuration.name') && { [ -z "$stale" ] || container image delete --force $stale >&2; }; }; then
-        echo "Could not delete the kernova-linux-tests images past the $LINUX_TESTS_IMAGES_KEPT built last" >&2
-    fi
-    return 0
+    (
+        # `container build` starts a VM, the builder, that every build on this
+        # Mac shares and nothing stops afterwards. `container builder stop`
+        # ends a build in progress ("Stream unexpectedly closed", container
+        # 1.7.1), so the builds take turns on a lock that dies with its holder.
+        if ! { root=$(container system status --format json | jq -er .paths.appRoot) && exec 9<"$root"; }; then
+            echo "container's data folder, which \`container system status\` did not name"
+            exit 1
+        fi
+        if ! lockf -s -t 0 9; then
+            echo "Waiting for another session's image build" >&2
+            lockf 9 || { echo "a lock on container's data folder $root"; exit 1; }
+        fi
+        container image inspect "$image" >/dev/null 2>&1 && exit 0
+        trap 'container builder stop >&2' EXIT
+        echo "Building $image on $base" >&2
+        if ! linux_tests_build_image container "$1" --platform linux/arm64 --progress plain >&2; then
+            echo "their image $image, which \`container build\` did not build on $base (its output is above)"
+            exit 1
+        fi
+        # shellcheck disable=SC2086 # one image name per word
+        if ! { stale=$(container image list --format json | jq -r --argjson kept "$LINUX_TESTS_IMAGES_KEPT" '
+            [.[] | select(.configuration.name | startswith("docker.io/library/kernova-linux-tests:"))]
+            | sort_by(.configuration.descriptor.annotations["org.opencontainers.image.created"] // "") | reverse
+            | .[$kept:][].configuration.name') && { [ -z "$stale" ] || container image delete --force $stale >&2; }; }; then
+            echo "Could not delete the kernova-linux-tests images past the $LINUX_TESTS_IMAGES_KEPT built last" >&2
+        fi
+        exit 0
+    )
 }
