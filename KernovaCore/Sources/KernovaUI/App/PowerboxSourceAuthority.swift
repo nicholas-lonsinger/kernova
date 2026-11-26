@@ -25,9 +25,9 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
         // A path the sandbox does not admit still answers whether anything is
         // at it (docs/research/2026-11-18-pasteboard-file-grants.md,
         // observation 8), and no grant makes a missing file readable.
-        guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else {
-            throw CommandError.invalidArgument(
-                "Nothing is at \u{201C}\(url.path(percentEncoded: false))\u{201D}.")
+        let named = VMCommandCore.comparablePath(url.path(percentEncoded: false))
+        guard FileManager.default.fileExists(atPath: named) else {
+            throw CommandError.invalidArgument("Nothing is at \u{201C}\(named)\u{201D}.")
         }
         Self.logger.log(
             .notice,
@@ -71,6 +71,9 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
         }
 
         guard response == .OK, let picked = panel.url else {
+            Self.logger.log(
+                .notice,
+                "Permission to read '\(url.lastPathComponent, privacy: .public)' was not given")
             throw CommandError.operationFailed(
                 verb: source.verb,
                 message:
@@ -78,10 +81,15 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
             )
         }
         guard Self.isReadable(url) else {
+            let given = VMCommandCore.comparablePath(picked.path(percentEncoded: false))
+            Self.logger.log(
+                .notice,
+                "Given '\(picked.lastPathComponent, privacy: .public)', which leaves '\(url.lastPathComponent, privacy: .public)' unreadable"
+            )
             throw CommandError.operationFailed(
                 verb: source.verb,
                 message:
-                    "Kernova was given \u{201C}\(picked.path(percentEncoded: false))\u{201D}, and still can\u{2019}t read \u{201C}\(url.path(percentEncoded: false))\u{201D}."
+                    "Kernova was given \u{201C}\(given)\u{201D}, and still can\u{2019}t read \u{201C}\(named)\u{201D}."
             )
         }
     }
