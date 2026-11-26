@@ -1,5 +1,6 @@
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 import KernovaLogging
 
 /// How bundles on disk become library membership: the library read, the
@@ -35,6 +36,9 @@ extension VMLibrary {
     ///
     /// With `reportingUnreadable` false, a file the read finds unreadable is
     /// recorded for the next report to name, and nothing comes on screen now.
+    ///
+    /// A VM whose hold has ended stores the name it goes by from here on
+    /// (``persistAssignedNames()``).
     func refreshFromOtherCopies(only ids: Set<UUID>? = nil, reportingUnreadable: Bool = true) {
         networks.reload()
         organization.reload()
@@ -42,6 +46,7 @@ extension VMLibrary {
         for instance in instances where ids?.contains(instance.id) ?? true {
             refreshFromOtherCopies(of: instance)
         }
+        persistAssignedNames()
         if reportingUnreadable { reportNewlyUnreadable() }
     }
 
@@ -271,6 +276,7 @@ extension VMLibrary {
         // A session a copy of Kernova died under was never settled, and taking
         // the lock is what shows no copy runs it now.
         for instance in unsettled { instance.activity.settleUnsettledSessionAtLaunch() }
+        persistAssignedNames()
         admitUnreadable(scan.unreadable)
         for bundle in scan.unreadable {
             recordUnreadable([bundle.file], under: bundle.url)
@@ -566,6 +572,7 @@ extension VMLibrary {
             case .adopted(let instance), .alreadyAdopted(let instance), .rebound(let instance):
                 macAddresses.logDuplicateMACAddressHolders()
                 for followUp in whenAdopted?(instance) ?? [] { instance.activity.follow(followUp) }
+                persistAssignedNames()
                 return instance
             case .publishing, .duplicate:
                 throw ArrivalError.identifierInUse(name: arrival.name)
@@ -669,10 +676,8 @@ extension VMLibrary {
             }
             return url.deletingPathExtension().lastPathComponent
         }
-        let name = UniqueName.firstAvailable(
-            prefix: sourceURL.deletingPathExtension().lastPathComponent,
-            existing: onDiskStems + inFlightStems,
-            caseInsensitive: true)
+        let name = NameRule.firstAvailable(
+            sourceURL.deletingPathExtension().lastPathComponent, among: onDiskStems + inFlightStems)
         return vmsDir.appendingPathComponent(
             "\(name).\(VMBundleFormat.fileExtension)", isDirectory: true)
     }

@@ -36,6 +36,7 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing {
         var lockedElsewhere: Set<URL> = []
         var lockedByThisCopy: Set<URL> = []
         var lockErrors: [URL: any Error] = [:]
+        var datesAdded: [URL: Date] = [:]
         /// Which bundle each live holder locks, re-keyed with its bundle.
         var holders: [UUID: URL] = [:]
 
@@ -161,9 +162,19 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing {
             if $0.lockedElsewhere.remove(Self.key(source)) != nil {
                 $0.lockedElsewhere.insert(Self.key(destination))
             }
+            if let added = $0.datesAdded.removeValue(forKey: Self.key(source)) {
+                $0.datesAdded[Self.key(destination)] = added
+            }
             guard let files = $0.bundles.removeValue(forKey: Self.key(source)) else { return }
             $0.bundles[Self.key(destination)] = files
         }
+    }
+
+    /// Makes `date` the one the bundle at `url` was added to its directory
+    /// on, as the file system would answer; `nil`, a volume that keeps none.
+    func setDateAdded(_ date: Date?, at url: URL) {
+        if let target { return target.setDateAdded(date, at: url) }
+        state.withLock { $0.datesAdded[Self.key(url)] = date }
     }
 
     // MARK: - Run lock
@@ -225,7 +236,10 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing {
 
     func removeBundle(at url: URL) {
         if let target { return target.removeBundle(at: url) }
-        state.withLock { _ = $0.bundles.removeValue(forKey: Self.key(url)) }
+        state.withLock {
+            $0.bundles.removeValue(forKey: Self.key(url))
+            $0.datesAdded.removeValue(forKey: Self.key(url))
+        }
     }
 
     /// Moves every bundle this store holds into `other` and forwards every
@@ -236,7 +250,9 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing {
             for (url, files) in state.bundles {
                 for (path, data) in files { other.setData(data, atRelativePath: path, in: url) }
             }
+            for (url, date) in state.datesAdded { other.setDateAdded(date, at: url) }
             state.bundles.removeAll()
+            state.datesAdded.removeAll()
             state.target = other
         }
     }
@@ -350,6 +366,14 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing {
         if let target { return try target.isBundleLockedElsewhere(at: bundleURL) }
         let key = Self.key(bundleURL)
         return state.withLock { $0.lockedElsewhere.contains(key) || $0.lockedByThisCopy.contains(key) }
+    }
+
+    /// What ``setDateAdded(_:at:)`` set for a bundle this store holds,
+    /// `nil` when nothing did; the file system's answer for any other.
+    func dateAdded(ofBundleAt bundleURL: URL) -> Date? {
+        if let target { return target.dateAdded(ofBundleAt: bundleURL) }
+        guard holds(bundleURL) else { return disk.dateAdded(ofBundleAt: bundleURL) }
+        return state.withLock { $0.datesAdded[Self.key(bundleURL)] }
     }
 
     func reading<T>(_ bundleURL: URL, _ body: (any VMBundleFileReading) throws -> T) throws -> T {

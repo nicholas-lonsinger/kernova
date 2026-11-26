@@ -1,5 +1,6 @@
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 
 /// When a key takes a write, and which capability answers that for a given VM.
 ///
@@ -545,9 +546,7 @@ package enum VMConfigurationKeyRegistry {
         guard let networks = networks.listed else {
             throw CommandError.invalidArgument(VMNetworkDirectory.unreadableMessage)
         }
-        if let network = networks.first(where: {
-            $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
-        }) {
+        if let network = NameRule.sibling(named: trimmed, in: networks, name: \.name) {
             return .network(network.id)
         }
         let named = networks.map(\.name)

@@ -22,12 +22,8 @@ struct CommandErrorAppleEventsTests {
 
     @Test("A VM the event could not name is an object that isn't there")
     func addressingFailuresAreNoSuchObject() {
-        let vm = makeSummary()
         #expect(
             CommandError.notFound(.name("Alpha")).appleEventErrorNumber == Int(errAENoSuchObject))
-        #expect(
-            CommandError.ambiguous(selector: .name("Alpha"), candidates: [vm, vm])
-                .appleEventErrorNumber == Int(errAENoSuchObject))
     }
 
     @Test("Everything the verb itself refused is an event that failed")

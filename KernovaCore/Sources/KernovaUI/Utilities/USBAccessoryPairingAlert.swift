@@ -76,14 +76,6 @@ enum USBAccessoryPairingAlert {
 
     /// The popup listing every guest that could take the accessory, one row
     /// per candidate and each row tagged with the candidate it stands for.
-    ///
-    /// Built item by item rather than through `addItem(withTitle:)`, which
-    /// treats a title as an identity: adding one an existing item already
-    /// carries moves that item to the end instead of adding a row. Nothing
-    /// makes VM names unique, so two guests called the same thing would
-    /// otherwise produce one row fewer than there are candidates and shift
-    /// every row's meaning — handing the accessory to a guest the user did not
-    /// pick, and writing the pairing against it.
     private static func makeChooser(for candidates: [VMInstance]) -> NSPopUpButton {
         let popUp = NSPopUpButton(frame: .zero, pullsDown: false)
         popUp.translatesAutoresizingMaskIntoConstraints = false

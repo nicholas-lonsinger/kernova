@@ -153,6 +153,33 @@ struct VMStorageServiceTests {
         }
     }
 
+    @Test("Publishing a staged bundle dates it as added to the library then, and a write inside it leaves that date")
+    func publicationDatesABundleAndAWriteInsideLeavesIt() throws {
+        func configuration(_ name: String) -> VMConfiguration {
+            VMConfiguration(
+                name: name, guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
+                memorySizeInGB: VMGuestOS.linux.hostMemorySize)
+        }
+        let second = configuration("Second")
+        let first = configuration("First")
+        // Staged in the other order, so a date the staging directory gave
+        // would order them the other way.
+        let stagedSecond = try stageBundle(second)
+        let stagedFirst = try stageBundle(first)
+        let firstURL = try service.bundleURL(for: first)
+        let secondURL = try service.bundleURL(for: second)
+        try service.publishBundle(from: stagedFirst, to: firstURL)
+        try service.publishBundle(from: stagedSecond, to: secondURL)
+        let access = CoordinatedBundleFileAccess()
+        let firstAdded = try #require(access.dateAdded(ofBundleAt: firstURL))
+        let secondAdded = try #require(access.dateAdded(ofBundleAt: secondURL))
+
+        try writer(firstURL).update(.configuration) { $0.name = "Renamed" }
+
+        #expect(firstAdded < secondAdded)
+        #expect(access.dateAdded(ofBundleAt: firstURL) == firstAdded)
+    }
+
     @Test("Reclaiming keeps a bundle another running process is staging, and this process's own")
     func reclaimKeepsBundlesLiveProcessesAreStaging() async throws {
         let other = otherProcess()

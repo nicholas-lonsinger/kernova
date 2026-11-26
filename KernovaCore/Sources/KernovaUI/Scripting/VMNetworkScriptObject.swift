@@ -47,9 +47,6 @@ package final class VMNetworkScriptObject: NSObject {
 
     /// The named-element accessor Cocoa resolves `virtual machine "…" of
     /// network …` through — see ``VMScriptingGateway/virtualMachine(named:in:)``.
-    ///
-    /// Cocoa's own answer is the first member whose name matches, and several
-    /// VMs can share a name.
     @objc(valueInVirtualMachinesWithName:)
     func valueInVirtualMachines(withName name: String) -> VMScriptObject? {
         gateway?.virtualMachine(named: name, in: VMNameScope(network))

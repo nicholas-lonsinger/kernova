@@ -55,14 +55,8 @@ package class VMScriptingRoot: NSObject, NSApplicationDelegate {
         scriptingGateway?.virtualMachines() ?? []
     }
 
-    /// The named-element accessor Cocoa resolves `virtual machine "…"` through.
-    ///
-    /// Cocoa's own answer, without this, is the first VM whose name matches
-    /// case-insensitively — which for two VMs sharing a display name is
-    /// whichever the library lists first, described to the script as though it
-    /// were the one asked for. ``VMScriptingGateway/virtualMachine(named:in:)``
-    /// resolves the name through the core instead, and a name the core refuses
-    /// — as ambiguous, or as unknown — reads back in the core's words.
+    /// The named-element accessor Cocoa resolves `virtual machine "…"` through
+    /// — see ``VMScriptingGateway/virtualMachine(named:in:)``.
     @objc(valueInVirtualMachinesWithName:)
     func valueInVirtualMachines(withName name: String) -> VMScriptObject? {
         scriptingGateway?.virtualMachine(named: name)

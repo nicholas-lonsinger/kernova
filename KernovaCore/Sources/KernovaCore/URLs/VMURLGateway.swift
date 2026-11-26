@@ -11,7 +11,7 @@ import KernovaLogging
 /// machine named…", so every route awaits ``LibraryReadiness`` first.
 /// **Addressing:** a
 /// link carries text a person wrote, so it addresses VMs by
-/// ``VMSelector/idOrName(_:)`` and the ambiguity refusal can fire here.
+/// ``VMSelector/idOrName(_:)``.
 ///
 /// It presents its own refusals, unlike ``VMIntentGateway``: a link has nobody
 /// to answer to, so the app is the only place its refusal can land — and it

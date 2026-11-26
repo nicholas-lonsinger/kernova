@@ -9,8 +9,7 @@ enum TableRenderer {
     /// A listing, one VM per line.
     ///
     /// Name first because that is what a person scans for, and the identifier
-    /// last because it is 36 characters nobody reads unless two VMs share a
-    /// name.
+    /// last because it is 36 characters few read.
     ///
     /// `quiet` prints names alone — `.idOrName` accepts one back, so a name is
     /// what a shell loop feeds to the next command.

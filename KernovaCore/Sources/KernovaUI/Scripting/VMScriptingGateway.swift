@@ -20,8 +20,8 @@ import KernovaLogging
 /// gateway answers itself, runs its verb on what such a dispatch addressed,
 /// once it returns; its own dispatch only suspends it.
 /// **Addressing:** a script names a VM the way a person does, so this addresses
-/// VMs by ``VMSelector/name(_:)`` as readily as by identifier and the ambiguity
-/// refusal can fire here — on a verb and on a read alike.
+/// VMs by ``VMSelector/name(_:)`` as readily as by identifier — on a verb and
+/// on a read alike.
 ///
 /// It presents nothing: a refusal leaves as the ``CommandError`` the core
 /// threw, which the command that asked turns into the script error the event
@@ -81,16 +81,13 @@ final class VMScriptingGateway {
         return commands.list(.all).compactMap { object(for: $0.id) }
     }
 
-    /// The one VM called `name`, resolved by the core — among `scope`'s
-    /// members when it is given — or nothing, with the command asking
-    /// deferred, until the library has landed.
+    /// The VM called `name`, resolved by the core — among `scope`'s members
+    /// when it is given — or nothing, with the command asking deferred, until
+    /// the library has landed.
     ///
-    /// Cocoa's own name lookup answers with the first match, which for two VMs
-    /// sharing a display name is whichever the container happens to list
-    /// first. The core refuses that name instead, with the candidates, and a
-    /// name no VM answers to in its own words too — both recorded on the
-    /// command being answered, so the script reads the refusal every other door
-    /// shows rather than a bare "can't get".
+    /// A name no VM goes by is refused in the core's words, recorded on the
+    /// command being answered, so the script reads the refusal every other
+    /// door shows rather than a bare "can't get".
     func virtualMachine(named name: String, in scope: VMNameScope? = nil) -> VMScriptObject? {
         guard !deferUntilLanded() else { return nil }
         do {

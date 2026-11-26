@@ -709,9 +709,10 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         return clone
     }
 
-    /// Generates a unique clone name by appending " Copy", " Copy 2", etc.
+    /// The clone name none of `existingNames` is: "`baseName` Copy", then
+    /// "`baseName` Copy 2", … (``NameRule/firstAvailable(_:among:)``).
     static func generateCloneName(baseName: String, existingNames: [String]) -> String {
-        UniqueName.firstAvailable(prefix: "\(baseName) Copy", existing: existingNames)
+        NameRule.firstAvailable("\(baseName) Copy", among: existingNames)
     }
 
     // MARK: - Computed

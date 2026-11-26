@@ -1,5 +1,6 @@
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 
 /// What a snapshot captured, which decides what reverting to it produces.
 package enum VMSnapshotKind: String, Codable, Sendable {
@@ -303,10 +304,11 @@ package struct VMSnapshotManifest: Sendable, Equatable {
         return ordered.first?.id
     }
 
-    /// A default name for a new snapshot that doesn't collide with an existing
-    /// one — `"Snapshot"`, then `"Snapshot 2"`, `"Snapshot 3"`, …
+    /// A default name for a new snapshot that is none of the existing ones'
+    /// (``NameRule/firstAvailable(_:among:)``) — `"Snapshot"`, then
+    /// `"Snapshot 2"`, `"Snapshot 3"`, …
     package var defaultNewName: String {
-        UniqueName.firstAvailable(prefix: "Snapshot", existing: snapshots.map(\.name))
+        NameRule.firstAvailable("Snapshot", among: snapshots.map(\.name))
     }
 
     /// Adds `snapshot` and marks it current.

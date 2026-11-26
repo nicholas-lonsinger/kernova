@@ -35,21 +35,22 @@ extension VMCommandCore {
 
     // MARK: - Rename
 
-    /// Renames a VM to `newName` trimmed (``trimmedName(_:)``); an unchanged
-    /// name is a no-op.
+    /// Renames a VM to `newName` as ``VMLibrary/validatedName(_:for:)`` takes
+    /// it, refusing a name another VM or arrival goes by; a name its bundle
+    /// already stores is a no-op.
     ///
     /// What the rename takes is wider than what the sidebar and the settings
     /// pane offer — ``VMCapabilityCatalog/accepts(_:on:)`` states the split.
     package func rename(_ selector: VMSelector, to newName: String) throws {
         let instance = try resolve(selector)
-        let trimmed = try Self.trimmedName(newName)
-        guard trimmed != instance.name else { return }
+        let name = try library.validatedName(newName, for: instance.id)
+        guard name != instance.bundle.configuration.name else { return }
         try require(.rename, on: instance)
         logger.log(
             .debug,
-            "Renaming '\(instance.name, privacy: .public)' to '\(trimmed, privacy: .public)'")
+            "Renaming '\(instance.name, privacy: .public)' to '\(name, privacy: .public)'")
         let write = try edit(VMCapability.rename, on: instance, verb: .rename) { permit in
-            library.updateConfiguration(permit) { $0.name = trimmed }
+            library.updateConfiguration(permit) { $0.name = name }
         }
         switch write {
         case .saved:
@@ -66,8 +67,9 @@ extension VMCommandCore {
     }
 
     /// `name` with its surrounding whitespace and line breaks gone, the name a
-    /// rename writes — refusing one that carries nothing else, which a script
-    /// or a Shortcut can supply from a variable that resolves to nothing.
+    /// snapshot rename writes — refusing one that carries nothing else, which
+    /// a script or a Shortcut can supply from a variable that resolves to
+    /// nothing.
     nonisolated static func trimmedName(_ name: String) throws -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -121,12 +123,17 @@ extension VMCommandCore {
     /// reach the user as a failure nobody asked for.
     ///
     /// Refuses what that verb refuses: a password macOS will not take, and one
-    /// given for a configuration naming no account.
+    /// given for a configuration naming no account. Refuses too a name
+    /// ``VMLibrary/validatedName(_:for:)`` refuses — one another VM or arrival
+    /// goes by — and writes the name trimmed.
     @discardableResult
     func create(
-        configuration: VMConfiguration, diskSizeInGB: Int, startAfterCreate: Bool,
+        configuration requested: VMConfiguration, diskSizeInGB: Int, startAfterCreate: Bool,
         guestAccountPassword: String?
     ) throws -> VMSummary {
+        var named = requested
+        named.name = try library.validatedName(requested.name, for: nil)
+        let configuration = named
         let bundleURL: URL
         let staged: VMStagedBundle
         do {
@@ -231,8 +238,8 @@ extension VMCommandCore {
 
         // Arrivals included, so two clones taken in quick succession never pick
         // the same name.
-        let existingNames = library.entries.map(\.name)
-        var clonedConfig = instance.configuration.clonedForNewInstance(existingNames: existingNames)
+        var clonedConfig = instance.configuration.clonedForNewInstance(
+            existingNames: library.names(excluding: nil))
 
         if generateNewID {
             // A source with no address and no device leaves minting to the
@@ -698,9 +705,14 @@ extension VMCommandCore {
 
             var hostState = source.hostState
             hostState.arriveAsCopy()
+            // The source's name where no VM or arrival goes by it, else the
+            // first free one from it, written into the copy it arrives as.
+            var named = config
+            named.name = library.freeName(from: config.name)
+            let name = named.name
             return .started(
                 library.beginArrival(
-                    kind: .importing, configuration: config,
+                    kind: .importing, configuration: named,
                     destination: library.reserveDestination(for: sourceURL, in: vmsDir),
                     staged: try VMStagedBundle.mint(in: storageService),
                     source: .importing(sourceURL),
@@ -709,6 +721,7 @@ extension VMCommandCore {
                     write: { [logger] staged in
                         try await Self.runBoundedCopy {
                             try withExtendedLifetime(access) { try VMBundleItems.copy(sourceURL, to: staged.url) }
+                            try Self.name(staged, name)
                             if let repaired = try staged.arriveHostStateAsCopy() {
                                 logger.log(
                                     .notice,
@@ -723,6 +736,20 @@ extension VMCommandCore {
                 "Failed to import VM from \(sourceURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)"
             )
             throw CommandError.failed(verb: .importVM, error: error)
+        }
+    }
+
+    /// Writes `name` into the `config.json` an import copied into `staged`,
+    /// where it stores another.
+    ///
+    /// A `config.json` a strict read refuses stays as the copy left it: the
+    /// bundle publishes as a row Kernova can't read, which no name addresses,
+    /// and is named once the config check has repaired it.
+    nonisolated private static func name(_ staged: VMStagedBundle, _ name: String) throws {
+        do {
+            try staged.update(.configuration) { $0.name = name }
+        } catch is UnreadableConfigFile {
+            return
         }
     }
 

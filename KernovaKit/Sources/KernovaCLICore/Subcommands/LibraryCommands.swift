@@ -178,16 +178,16 @@ extension KernovaCommand {
         static let configuration = CommandConfiguration(
             commandName: "rename",
             abstract: "Rename a virtual machine.",
-            discussion: "A display name is a label rather than an identifier, so one another "
-                + "virtual machine already carries is accepted — and a later command naming it "
-                + "exits 4 rather than choosing between them.")
+            discussion: "A name is a virtual machine's own in the library, ignoring case, so one "
+                + "another virtual machine already goes by is refused, as is one that spells an "
+                + "identifier.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)
         var vm: String
 
         /// What to call it instead.
-        @Argument(help: "The new display name.")
+        @Argument(help: "The new name.")
         var newName: String
 
         /// The options every subcommand carries.

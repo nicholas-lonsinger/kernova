@@ -161,7 +161,7 @@ struct VMCapabilityAgreementTests {
         case .busy, .invalidState, .changeTakesStoppedVM, .notFound, .conflict,
             .unsupportedByBuild, .unsupportedByMacOS, .terminating, .heldByAnotherCopy:
             true
-        case .itemNotFound, .itemNotFoundOnHost, .ambiguous, .confirmationRequired,
+        case .itemNotFound, .itemNotFoundOnHost, .confirmationRequired,
             .guestAccountPasswordRequired, .invalidArgument, .stepRequired,
             .unsupported, .timedOut, .waitEnded,
             .operationFailed, .filesKept, .shutdownNotCarriedOut, .restartCancelledByStop:

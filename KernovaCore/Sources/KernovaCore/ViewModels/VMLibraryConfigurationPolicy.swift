@@ -1,15 +1,26 @@
 import Foundation
 
 /// The configuration policy every bundle a ``VMLibrary`` builds answers to:
-/// the MAC-address and disk-image refusals across the library's VMs, and the
+/// the MAC-address and disk-image refusals across the library's VMs, the
 /// live policy, the removable-media reconcile and the guest-address watch a
-/// moved configuration starts.
+/// moved configuration starts, and the names the library gives its VMs.
 @MainActor
 final class VMLibraryConfigurationPolicy {
     private let macAddresses: VMMACAddressRegistry
     private let liveIdentities: VMLiveIdentities
     private let removableMedia: VMRemovableMediaReconciler
     private let guestAddresses: GuestAddressObserver
+
+    /// Gives every VM of the library its name again
+    /// (``VMLibrary/reassignNames()``); the library sets it once it is made.
+    var onNamingInputsMoved: (@MainActor () -> Void)?
+
+    /// A bundle's stored name, creation date or date added moved — by a
+    /// commit, a re-read, or a read of where it lives now — so the names the
+    /// library gives are worked out again.
+    func namingInputsMoved() {
+        onNamingInputsMoved?()
+    }
 
     init(
         macAddresses: VMMACAddressRegistry, liveIdentities: VMLiveIdentities,

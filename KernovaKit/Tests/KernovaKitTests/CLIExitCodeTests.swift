@@ -23,7 +23,6 @@ struct CLIExitCodeTests {
             (.itemNotFound(vm: vm, item: "snapshot with the identifier 7"), .notFound),
             // And one the host answered for, naming nothing on a VM at all.
             (.itemNotFoundOnHost(item: "USB accessory with the identifier 7"), .notFound),
-            (.ambiguous(selector: .idOrName("Alpha"), candidates: [vm]), .ambiguous),
             (.invalidState(vm: vm, current: .running, allowed: [.stop]), .refusedByState),
             (
                 .changeTakesStoppedVM(

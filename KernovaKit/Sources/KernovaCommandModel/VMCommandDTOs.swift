@@ -3,12 +3,12 @@ import Foundation
 /// One VM, as much of it as any refusal or listing needs to name it.
 ///
 /// The app's command core's own result type, not a serialization mirror of
-/// one: the wire envelope encodes this value directly, so a listing and an
-/// ambiguity refusal describe a VM identically whichever door asked.
+/// one: the wire envelope encodes this value directly, so a listing and a
+/// refusal describe a VM identically whichever door asked.
 public struct VMSummary: Codable, Sendable, Hashable {
     /// The VM's stable identifier.
     public let id: UUID
-    /// The VM's display name, which is not unique.
+    /// The VM's name, its own in the library.
     public let name: String
     /// The VM's status.
     public let status: VMReportedStatus
@@ -885,8 +885,6 @@ public struct FilesKept: Codable, Sendable, Hashable {
 public enum CommandErrorDTO: Codable, Sendable, Hashable {
     /// No VM answers to the selector.
     case notFound(selector: VMSelector)
-    /// More than one VM answers to the selector.
-    case ambiguous(selector: VMSelector, candidates: [VMSummary])
     /// The VM's current state does not admit the verb. `settings` names the
     /// assignments a refused `setConfiguration` would have made, empty for
     /// every other verb. `processEnd` is how to end the VM's process, while
@@ -1005,7 +1003,7 @@ extension CommandErrorDTO {
     /// The heading a surface shows this refusal under.
     public var title: String {
         switch self {
-        case .notFound, .itemNotFound, .itemNotFoundOnHost, .ambiguous, .busy, .heldByAnotherCopy,
+        case .notFound, .itemNotFound, .itemNotFoundOnHost, .busy, .heldByAnotherCopy,
             .unsupported, .unsupportedByBuild, .unsupportedByMacOS, .invalidState, .changeTakesStoppedVM,
             .timedOut, .waitEnded, .invalidArgument, .terminating:
             "Error"
@@ -1034,11 +1032,6 @@ extension CommandErrorDTO {
             "\u{201C}\(vm.name)\u{201D} has no \(item)."
         case .itemNotFoundOnHost(let item):
             "Kernova has no \(item)."
-        case .ambiguous(let selector, let candidates):
-            "\u{201C}\(selector.displayText)\u{201D} names \(candidates.count) virtual machines. "
-                + "Use one of their identifiers instead: "
-                + candidates.map { "\($0.name) (\($0.id.uuidString))" }.joined(separator: ", ")
-                + "."
         case .invalidState(let vm, let current, let allowed, let settings, let processEnd):
             // A refused setting is named by its key and the value asked for,
             // the spelling `set` takes. A verb every state admits is left out,

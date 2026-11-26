@@ -43,7 +43,9 @@ ones open in `AppResidencyController.registerAutomationFrontDoors`:
 
 `VMInstance` is the `@MainActor` runtime owner of one VM: it reads its state
 off its `VMBundle`, and its `VMActivity` holds at most one `VMSessionContext`,
-whose `VMSession` actor alone touches the `VZVirtualMachine`.
+whose `VMSession` actor alone touches the `VZVirtualMachine`. Its name is the
+one `VMLibrary` gives it among every entry it lists
+(`VMLibrary+Names.swift`), which its bundle stores only as a claim.
 
 `VMBundle` holds a library bundle's committed state. It writes the state files
 through `VMBundleFiles` over the `VMBundleFileAccessing` seam, the machine

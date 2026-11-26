@@ -125,8 +125,12 @@ package final class VMLibrary: VMAdmissionPeers {
     /// once: the VMs, and the arrivals becoming ones.
     ///
     /// Written only in this file, where ``adopt(_:)`` is the one path a `.vm`
-    /// entry enters by.
-    package private(set) var entries: [LibraryEntry] = []
+    /// entry enters by. Every change gives the names out again
+    /// (``reassignNames()``), so no entry is listed under a name another goes
+    /// by.
+    package private(set) var entries: [LibraryEntry] = [] {
+        didSet { reassignNames() }
+    }
 
     /// The VMs, in manual order.
     package var instances: [VMInstance] { entries.compactMap(\.vm) }
@@ -593,6 +597,7 @@ package final class VMLibrary: VMAdmissionPeers {
         macAddresses.roster = self
         liveIdentities.roster = self
         guestAddresses.roster = self
+        configurationPolicy.onNamingInputsMoved = { [weak self] in self?.reassignNames() }
         Task { [weak self, agents = bundleProducts.guestAgents] in
             let hashes = await agents.payloadHashes()
             self?.bundledPayloadHashes = hashes
@@ -672,6 +677,9 @@ package final class VMLibrary: VMAdmissionPeers {
                 "'\(instance.name, privacy: .public)' moved to \(url.lastPathComponent, privacy: .public) — re-bound to its new bundle"
             )
             instance.rebind(to: bundleFactory.make(scanned.read))
+            // The bundle where the VM lives now may store another name, and
+            // joined the VMs folder at another time.
+            reassignNames()
             recordUnreadable(of: scanned.read)
             return .rebound(instance)
         }
