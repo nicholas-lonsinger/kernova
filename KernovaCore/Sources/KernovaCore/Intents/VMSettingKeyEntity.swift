@@ -27,9 +27,13 @@ struct VMSettingKeyEntity: AppEntity {
 
 /// How Shortcuts finds the setting an intent reads or writes.
 ///
-/// Every method forwards to ``VMIntentGateway``, as ``NetworkEntityQuery``'s
-/// do: the keyspace is fully enumerable, so `allEntities()` gives Shortcuts a
-/// picker, and a typed name resolves through a case-insensitive contains match.
+/// Every method forwards to ``VMIntentGateway``: `allEntities()` lists the
+/// whole keyspace for a picker, and a typed name matches as the sidebar's
+/// search does (``SidebarNameSearch``).
+///
+/// Unlike the ``FindQuery`` conformers, it is an `EnumerableEntityQuery`,
+/// whose entities Shortcuts filters itself: the entity has no properties, so
+/// Shortcuts' Find has nothing to filter it by.
 struct VMSettingKeyEntityQuery: EntityStringQuery, EnumerableEntityQuery {
     @Dependency private var gateway: VMIntentGateway
 

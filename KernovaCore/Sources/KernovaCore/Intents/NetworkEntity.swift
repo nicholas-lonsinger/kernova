@@ -46,11 +46,15 @@ struct NetworkEntity: AppEntity {
 
 /// How Shortcuts finds the network an intent acts on.
 ///
-/// Every method forwards to ``VMIntentGateway``, as ``VMEntityQuery``'s do: the
-/// networks are few and fully enumerable, so `allEntities()` gives Shortcuts a
-/// picker — and a Find Networks action — and a typed name resolves through a
-/// case-insensitive contains match.
-struct NetworkEntityQuery: EntityStringQuery, EnumerableEntityQuery {
+/// Every method forwards to ``VMIntentGateway``, as ``VMEntityQuery``'s do:
+/// `suggestedEntities()` lists every network for a picker, and a typed name
+/// matches as the sidebar's search does (``SidebarNameSearch``).
+///
+/// Find Network runs as this property query (``FindQuery``), which filters
+/// and sorts the networks in memory, in name order until a sort is chosen.
+struct NetworkEntityQuery: EntityStringQuery, FindQuery {
+    typealias ComparatorMappingType = FindPredicate<NetworkEntity>
+
     static let findIntentDescription: IntentDescription? = IntentDescription(
         "Finds the library's named networks, each with the virtual machines on it.",
         categoryName: "Networks",
@@ -66,7 +70,39 @@ struct NetworkEntityQuery: EntityStringQuery, EnumerableEntityQuery {
         try await gateway.networks(matching: string)
     }
 
-    func allEntities() async throws -> [NetworkEntity] {
+    func suggestedEntities() async throws -> [NetworkEntity] {
         try await gateway.networks()
+    }
+
+    func entities(
+        matching comparators: [ComparatorMappingType],
+        mode: ComparatorMode,
+        sortedBy: [EntityQuerySort<NetworkEntity>],
+        limit: Int?
+    ) async throws -> [NetworkEntity] {
+        try Self.ordered(try await gateway.networks(meeting: comparators, mode: mode), by: sortedBy, limit: limit)
+    }
+
+    nonisolated(unsafe) static let properties = QueryProperties {
+        Property(\NetworkEntity.$name) {
+            EqualToComparator { value in FindPredicate { VMCommandCore.name($0.name, isNamedBy: value) } }
+            NotEqualToComparator { value in FindPredicate { !VMCommandCore.name($0.name, isNamedBy: value) } }
+            ContainsComparator { value in FindPredicate { SidebarNameSearch(text: value).admits($0.name) } }
+        }
+        Property(\NetworkEntity.$kind) {
+            EqualToComparator { value in FindPredicate { $0.kind == value } }
+            NotEqualToComparator { value in FindPredicate { $0.kind != value } }
+        }
+    }
+
+    nonisolated(unsafe) static let sortingOptions = SortingOptions {
+        SortableBy(\NetworkEntity.$name)
+    }
+
+    static func sorted(
+        _ entities: [NetworkEntity], by key: PartialKeyPath<NetworkEntity>, ascending: Bool
+    ) -> [NetworkEntity] {
+        let name: PartialKeyPath<NetworkEntity> = \NetworkEntity.$name
+        return key == name ? sorted(entities, byTitle: \.name, ascending: ascending) : entities
     }
 }

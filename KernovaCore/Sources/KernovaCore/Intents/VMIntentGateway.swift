@@ -96,36 +96,46 @@ package final class VMIntentGateway {
     ///
     /// Each condition is resolved, a listing's refusal included, in the same
     /// main-actor step as the read it narrows, so it answers for exactly the
-    /// VMs read. An `or` over no conditions keeps every VM: a Shortcut that
-    /// names no filter is asking for the library, not for nothing.
+    /// VMs read.
     func vms(
         meeting conditions: [VMEntityQuery.Condition], mode: EntityQueryComparatorMode
     ) async throws -> [VMEntity] {
         try await perform(.list, on: nil) {
             let predicates = try conditions.map(self.predicate(for:))
-            let library = self.everyVM()
-            let found = library.filter { vm in
-                switch mode {
-                case .and: predicates.allSatisfy { $0(vm) }
-                case .or: predicates.isEmpty || predicates.contains { $0(vm) }
-                }
-            }
-            self.logger.log(
-                .notice,
-                "Find matched \(found.count, privacy: .public) of \(library.count, privacy: .public) VMs under \(conditions.count, privacy: .public) condition(s)"
-            )
-            return found
+            return self.found(self.everyVM(), meeting: predicates, mode: mode, noun: "VMs")
         }
     }
 
+    /// Of `entities`, in their order, those `predicates` admit as `mode`
+    /// combines them, logging how many of the `noun` a Find matched.
+    ///
+    /// An `or` over no predicates keeps every entity: a Shortcut that names
+    /// no filter is asking for all of them, not for nothing.
+    private func found<Entity>(
+        _ entities: [Entity], meeting predicates: [FindPredicate<Entity>], mode: EntityQueryComparatorMode,
+        noun: String
+    ) -> [Entity] {
+        let found = entities.filter { entity in
+            switch mode {
+            case .and: predicates.allSatisfy { $0.admits(entity) }
+            case .or: predicates.isEmpty || predicates.contains { $0.admits(entity) }
+            }
+        }
+        logger.log(
+            .notice,
+            "Find matched \(found.count, privacy: .public) of \(entities.count, privacy: .public) \(noun, privacy: .public) under \(predicates.count, privacy: .public) condition(s)"
+        )
+        return found
+    }
+
     /// What `condition` admits.
-    private func predicate(for condition: VMEntityQuery.Condition) throws -> (VMEntity) -> Bool {
+    private func predicate(for condition: VMEntityQuery.Condition) throws -> FindPredicate<VMEntity> {
         switch condition {
         case .admits(let admits):
-            return admits
+            return FindPredicate(admits)
         case .listed(let query, let negated):
             let listed = Set(commands.list(try commands.selection(for: query, verb: .list)).map(\.id))
-            return { listed.contains($0.id) != negated }
+            return FindPredicate { listed.contains($0.id) != negated }
         case .naming(let network, let holds):
             return try predicate(for: holds(try commands.namedNetwork(network, verb: .list).id))
         case .spelling(let membership, let holds):
@@ -570,9 +580,12 @@ package final class VMIntentGateway {
         return await configurationKeys().filter { wanted.contains($0.id) }
     }
 
-    /// Every key whose name contains `text`, ignoring case.
+    /// Every key whose name the library's search for `text` admits
+    /// (``SidebarNameSearch/admits(_:)``) — matched as ``vms(matching:)``
+    /// matches a VM.
     func configurationKeys(matching text: String) async -> [VMSettingKeyEntity] {
-        await configurationKeys().filter { $0.id.localizedCaseInsensitiveContains(text) }
+        let search = SidebarNameSearch(text: text)
+        return await configurationKeys().filter { search.admits($0.id) }
     }
 
     /// ``VMCommandCore/configuration(_:key:)``, answering the value alone.
@@ -606,9 +619,20 @@ package final class VMIntentGateway {
         return try await networks().filter { wanted.contains($0.id) }
     }
 
-    /// Every network whose name contains `text`, ignoring case.
+    /// Every network whose name the library's search for `text` admits
+    /// (``SidebarNameSearch/admits(_:)``) — matched as ``vms(matching:)``
+    /// matches a VM.
     func networks(matching text: String) async throws -> [NetworkEntity] {
-        try await networks().filter { $0.name.localizedCaseInsensitiveContains(text) }
+        let search = SidebarNameSearch(text: text)
+        return try await networks().filter { search.admits($0.name) }
+    }
+
+    /// The networks a Find's `predicates` admit as `mode` combines them,
+    /// ordered by name.
+    func networks(
+        meeting predicates: [FindPredicate<NetworkEntity>], mode: EntityQueryComparatorMode
+    ) async throws -> [NetworkEntity] {
+        found(try await networks(), meeting: predicates, mode: mode, noun: "networks")
     }
 
     func createNetwork(name: String, kind: NetworkKind) async throws -> NetworkEntity {
@@ -652,6 +676,14 @@ package final class VMIntentGateway {
     func groups(matching text: String) async throws -> [VMGroupEntity] {
         let search = SidebarNameSearch(text: text)
         return try await groups().filter { search.admits($0.name) }
+    }
+
+    /// The groups a Find's `predicates` admit as `mode` combines them, in
+    /// ``groups()``'s order.
+    func groups(
+        meeting predicates: [FindPredicate<VMGroupEntity>], mode: EntityQueryComparatorMode
+    ) async throws -> [VMGroupEntity] {
+        found(try await groups(), meeting: predicates, mode: mode, noun: "groups")
     }
 
     /// Takes `action` on every VM in `group`, answering the VMs it was done to,

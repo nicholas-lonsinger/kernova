@@ -177,17 +177,14 @@ package struct VMEntity: IndexedEntity {
 /// for a picker, and a typed name matches as the sidebar's search does
 /// (``SidebarNameSearch``).
 ///
-/// Find Virtual Machine runs as this property query, which filters and sorts
-/// the library in memory, in library order until a sort is chosen; a
-/// condition `kernova list` also takes is its listing
-/// (``Condition/listed(_:negated:)``). It is no `EnumerableEntityQuery`, whose
-/// entities Shortcuts filters itself, as that protocol's documentation says.
-/// On macOS 27.2, Shortcuts filtered a query adopting both protocols itself
-/// too, and never called ``entities(matching:mode:sortedBy:limit:)``.
-package struct VMEntityQuery: EntityStringQuery, EntityPropertyQuery {
+/// Find Virtual Machine runs as this property query (``FindQuery``), which
+/// filters and sorts the library in memory, in library order until a sort is
+/// chosen; a condition `kernova list` also takes is its listing
+/// (``Condition/listed(_:negated:)``).
+package struct VMEntityQuery: EntityStringQuery, FindQuery {
     /// One condition a Find puts on the VMs it answers, as the comparator a
     /// Shortcut chose makes it.
-    package enum Condition: Sendable {
+    package enum Condition: FindComparison {
         /// Holds for each VM the predicate admits.
         case admits(@Sendable (VMEntity) -> Bool)
         /// Holds for each VM `kernova list` lists for the query, refusing
@@ -292,22 +289,6 @@ package struct VMEntityQuery: EntityStringQuery, EntityPropertyQuery {
         try Self.ordered(try await gateway.vms(meeting: comparators, mode: mode), by: sortedBy, limit: limit)
     }
 
-    /// The sort and truncation a property query asks of `entities`, given in
-    /// library order.
-    ///
-    /// - Throws: ``CommandError/invalidArgument(_:)`` for a negative `limit`,
-    ///   which the framework types as any `Int` and `prefix` traps on.
-    static func ordered(
-        _ entities: [VMEntity], by sortedBy: [EntityQuerySort<VMEntity>], limit: Int?
-    ) throws -> [VMEntity] {
-        let ordered = sortedBy.first.map { sorted(entities, by: $0.by, ascending: $0.order == .ascending) } ?? entities
-        guard let limit else { return ordered }
-        guard limit >= 0 else {
-            throw CommandError.invalidArgument("A Find\u{2019}s limit is a number of virtual machines, not \(limit).")
-        }
-        return Array(ordered.prefix(limit))
-    }
-
     // Both tables are spelled as stored properties with an inline builder,
     // which is the only shape the App Intents metadata processor parses — a
     // computed property returning the same value exports no metadata at all,
@@ -381,10 +362,6 @@ package struct VMEntityQuery: EntityStringQuery, EntityPropertyQuery {
 
     // MARK: - Sorting
 
-    /// `entities`, given in library order, ordered by the property `key`
-    /// names; one naming a property this query does not offer to sort on
-    /// leaves them as given.
-    ///
     /// Name, Date Created and Last Run take ``VMLibrarySort``'s order — its
     /// one direction ascending by name and descending by either date — and
     /// that order reversed the other way. State ascends as its titles read,
@@ -403,8 +380,7 @@ package struct VMEntityQuery: EntityStringQuery, EntityPropertyQuery {
             case name: (VMLibrarySort.name.ordered(entities, by: \.sortKeys), true)
             case createdAt: (VMLibrarySort.dateCreated.ordered(entities, by: \.sortKeys), false)
             case lastRunAt: (VMLibrarySort.lastRun.ordered(entities, by: \.sortKeys), false)
-            case status:
-                (entities.sorted { stateTitle($0).localizedStandardCompare(stateTitle($1)) == .orderedAscending }, true)
+            case status: (sorted(entities, byTitle: stateTitle, ascending: true), true)
             case snapshotCount: (entities.sorted { $0.snapshotCount < $1.snapshotCount }, true)
             default: (entities, ascending)
             }
