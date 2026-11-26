@@ -99,17 +99,6 @@ extension VMCommandCore {
             .map(summary(of:))
     }
 
-    /// The one group `reference` names, with its members, read as
-    /// ``groups()`` reads each.
-    ///
-    /// - Throws: ``CommandError/itemNotFoundOnHost(item:)`` for a group the
-    ///   library does not list, and ``CommandError/operationFailed(verb:title:message:recovery:)``
-    ///   when the library's groups cannot be read.
-    package func group(_ reference: VMGroupReference) throws -> GroupSummary {
-        library.refreshFromOtherCopies()
-        return summary(of: try group(reference, verb: .groups))
-    }
-
     /// `group` with the entries it holds, in its order.
     private func summary(of group: VMResolvedGroup) -> GroupSummary {
         GroupSummary(
@@ -202,11 +191,13 @@ extension VMCommandCore {
     private func group(
         _ reference: VMGroupReference, in organization: VMOrganizationDirectory.File
     ) throws -> VMResolvedGroup {
-        guard let group = VMResolvedGroup(reference, in: organization) else {
-            throw CommandError.itemNotFoundOnHost(
-                item: "\(reference.kind.noun) named \u{201C}\(reference.name)\u{201D}")
-        }
+        guard let group = VMResolvedGroup(reference, in: organization) else { throw Self.noGroup(reference) }
         return group
+    }
+
+    /// The refusal for `reference` naming no group the library lists.
+    package static func noGroup(_ reference: VMGroupReference) -> CommandError {
+        .itemNotFoundOnHost(item: "\(reference.kind.noun) named \u{201C}\(reference.name)\u{201D}")
     }
 
     /// The entries the group `reference` names holds.

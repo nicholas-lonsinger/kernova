@@ -56,7 +56,7 @@ package class VMScriptingRoot: NSObject, NSApplicationDelegate {
     }
 
     /// The named-element accessor Cocoa resolves `virtual machine "…"` through
-    /// — see ``VMScriptingGateway/virtualMachine(named:in:)``.
+    /// — see ``VMScriptingGateway/virtualMachine(named:)``.
     @objc(valueInVirtualMachinesWithName:)
     func valueInVirtualMachines(withName name: String) -> VMScriptObject? {
         scriptingGateway?.virtualMachine(named: name)
@@ -75,8 +75,7 @@ package class VMScriptingRoot: NSObject, NSApplicationDelegate {
     }
 
     /// The named-element accessor Cocoa resolves `smart group "…"` through,
-    /// by the core's rule for naming a group — see
-    /// ``VMScriptingGateway/group(_:named:)``.
+    /// among ``smartGroups`` — see ``VMScriptingGateway/group(_:named:)``.
     @objc(valueInSmartGroupsWithName:)
     func valueInSmartGroups(withName name: String) -> VMGroupScriptObject? {
         scriptingGateway?.group(.smartGroup, named: name)

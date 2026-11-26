@@ -219,10 +219,9 @@ package final class VMCommandCore {
 
     // MARK: - Resolution
 
-    /// The library row `selector` names, a VM's or an arrival's — among the
-    /// rows `scope` identifies, when it is given, such as a network's members.
-    func resolveEntry(_ selector: VMSelector, among scope: Set<UUID>? = nil) throws -> AddressableEntry {
-        let entries = library.entries.compactMap(\.addressable).filter { scope?.contains($0.id) ?? true }
+    /// The library row `selector` names, a VM's or an arrival's.
+    func resolveEntry(_ selector: VMSelector) throws -> AddressableEntry {
+        let entries = library.entries.compactMap(\.addressable)
         let found: AddressableEntry? =
             switch selector {
             case .id(let id): entries.first { $0.id == id }
@@ -637,10 +636,9 @@ package final class VMCommandCore {
     // command socket is how a script sees that copy's work, and it runs
     // without this copy ever becoming active.
 
-    /// The read of the row `selector` names, among `scope` when it is given
-    /// (``resolveEntry(_:among:)``).
-    package func info(_ selector: VMSelector, among scope: Set<UUID>? = nil) throws -> VMInfo {
-        let entry = try resolveEntry(selector, among: scope)
+    /// The read of the row `selector` names (``resolveEntry(_:)``).
+    package func info(_ selector: VMSelector) throws -> VMInfo {
+        let entry = try resolveEntry(selector)
         entry.vm?.activity.refreshFromBundle()
         return info(entry)
     }

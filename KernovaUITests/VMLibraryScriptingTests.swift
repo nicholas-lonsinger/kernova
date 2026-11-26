@@ -197,6 +197,44 @@ struct VMLibraryScriptingTests {
         #expect(ranged.first != nil && ranged.first == names.firstIndex(of: "Build").map { ids[$0] })
     }
 
+    /// A container a script names VMs in, as the words that follow a VM's
+    /// reference.
+    enum NamingContainer: CaseIterable, Sendable {
+        case application
+        /// A folder holding the VMs in another order than the library's.
+        case folder
+
+        var suffix: String {
+            switch self {
+            case .application: ""
+            case .folder: #" of folder "F""#
+            }
+        }
+    }
+
+    @Test(
+        "Text that two VMs' names both match names, alone, the VM a range starting at it starts at, in the application and in a folder whose order is not the library's",
+        arguments: NamingContainer.allCases)
+    func aNameAloneAndARangeStartScanOneOrder(container: NamingContainer) async throws {
+        let wired = WiredCommandCore()
+        // Cocoa's comparison finds "\u{1FF6}" the same as each of the first
+        // two names, which are not one name.
+        let first = wired.register(name: "\u{03A9}\u{0399}")
+        let second = wired.register(name: "\u{03A9}\u{0342}")
+        let other = wired.register(name: "Other")
+        try wired.library.organization.createFolder(named: "F", members: [second.id, first.id, other.id])
+        let host = ScriptHost()
+        let gateway = await makeGateway(wired, host: host)
+
+        let named = try host.run("id of virtual machine \"\u{1FF6}\"\(container.suffix)", on: gateway).stringValue
+        let ranged = try host.run(
+            "id of virtual machines \"\u{1FF6}\" thru \"Other\"\(container.suffix)", on: gateway
+        ).items.compactMap(\.stringValue)
+
+        #expect(named != nil)
+        #expect(ranged.first == named, "\(ranged) began elsewhere than \(named ?? "nothing")")
+    }
+
     // MARK: - Duplicate
 
     @Test(
