@@ -557,14 +557,17 @@ extension VMCommandCore {
         // again only of the shares the file holds that this list did not,
         // which another writer put there.
         let held = instance.configuration.sharedDirectories ?? []
-        var adding: [SharedDirectory] = []
-        for file in files where !(Array(held) + adding).contains(where: { $0.answers(to: file.path) }) {
-            adding.append(SharedDirectory(sharing: file.path, id: UUID(), readOnly: readOnly, bookmark: file.bookmark))
+        var adding: [(share: SharedDirectory, folder: NamedFolder)] = []
+        for file in files {
+            let folder = NamedFolder(file.path)
+            guard !(Array(held) + adding.map(\.share)).contains(where: { $0.answers(to: folder) }) else { continue }
+            adding.append(
+                (SharedDirectory(sharing: file.path, id: UUID(), readOnly: readOnly, bookmark: file.bookmark), folder))
         }
         let heldIDs = Set(held.map(\.id))
         try writeSharedDirectories(of: instance, as: capability) { directories in
             let unseen = directories.filter { !heldIDs.contains($0.id) }
-            for share in adding where !unseen.contains(where: { $0.answers(to: share.path) }) {
+            for (share, folder) in adding where !unseen.contains(where: { $0.answers(to: folder) }) {
                 directories.append(share)
             }
         }

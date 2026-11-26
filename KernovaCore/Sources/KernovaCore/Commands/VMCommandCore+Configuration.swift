@@ -459,7 +459,8 @@ extension VMCommandCore {
     private func share(
         at path: String, on instance: VMInstance, sharedReadOnly readOnly: Bool
     ) throws -> SharedDirectorySummary? {
-        let answering = (instance.configuration.sharedDirectories ?? []).filter { $0.answers(to: path) }
+        let folder = NamedFolder(path)
+        let answering = (instance.configuration.sharedDirectories ?? []).filter { $0.answers(to: folder) }
         if let other = answering.first(where: { $0.readOnly != readOnly }) {
             let access = other.readOnly ? "as read only" : "not as read only"
             throw CommandError.invalidArgument(
@@ -481,7 +482,8 @@ extension VMCommandCore {
     /// answers to it (``SharedDirectory/answers(to:)``). `nil` when none does.
     private func sharedDirectory(at path: String, on instance: VMInstance) -> SharedDirectory? {
         let directories = instance.configuration.sharedDirectories ?? []
-        return directories.first { $0.isListed(at: path) } ?? directories.first { $0.answers(to: path) }
+        let folder = NamedFolder(path)
+        return directories.first { $0.isListed(at: folder) } ?? directories.first { $0.answers(to: folder) }
     }
 
     /// Refuses a path naming anything but a folder.
@@ -519,31 +521,39 @@ extension SharedDirectorySummary {
     }
 }
 
+/// The folder a path names, as shares are asked whether they answer to it
+/// (``SharedDirectory/answers(to:)``): the path's
+/// ``FileIdentity/spelling(_:)``, and the identity of the folder there, links
+/// followed.
+struct NamedFolder {
+    let spelling: String
+    let identity: FileIdentity?
+
+    init(_ path: String) {
+        let url = URL(fileURLWithPath: path)
+        spelling = FileIdentity.spelling(url)
+        identity = FileIdentity(at: url.resolvingSymlinksInPath())
+    }
+}
+
 extension SharedDirectory {
-    /// Whether the share answers to the folder at `path`: it is listed at
-    /// `path` (``isListed(at:)``), or the file system reports the folder at
-    /// `path`, links followed, to be the share's — the one its bookmark opens,
-    /// else the one at its listed path.
+    /// Whether the share answers to `folder`: it is listed at the folder's
+    /// path (``isListed(at:)``), or the file system reports the folder there
+    /// to be the share's — the one its bookmark resolves to, else the one at
+    /// its listed path, links followed.
     ///
     /// So a share whose folder is gone or unreadable still answers to the path
     /// its listing shows.
-    func answers(to path: String) -> Bool {
-        isListed(at: path) || holdsFolder(at: URL(fileURLWithPath: path))
+    func answers(to folder: NamedFolder) -> Bool {
+        guard !isListed(at: folder) else { return true }
+        guard let identity = folder.identity else { return false }
+        let target = bookmark.flatMap(SecurityScopedBookmark.resolvedTargetPath) ?? path
+        return FileIdentity(at: URL(fileURLWithPath: target).resolvingSymlinksInPath()) == identity
     }
 
-    /// Whether `path` is the share's listed path, both as
+    /// Whether the share is listed at `folder`'s path, both as
     /// ``FileIdentity/spelling(_:)`` spells them.
-    func isListed(at path: String) -> Bool {
-        FileIdentity.spelling(URL(fileURLWithPath: self.path)) == FileIdentity.spelling(URL(fileURLWithPath: path))
-    }
-
-    private func holdsFolder(at url: URL) -> Bool {
-        SecurityScopedBookmark.withResolvedURL(
-            bookmark: bookmark, fallback: URL(fileURLWithPath: path),
-            options: SecurityScopedBookmark.advisoryResolution
-        ) { folder in
-            guard let shared = FileIdentity(at: folder.resolvingSymlinksInPath()) else { return false }
-            return FileIdentity(at: url.resolvingSymlinksInPath()) == shared
-        }
+    func isListed(at folder: NamedFolder) -> Bool {
+        FileIdentity.spelling(URL(fileURLWithPath: path)) == folder.spelling
     }
 }
