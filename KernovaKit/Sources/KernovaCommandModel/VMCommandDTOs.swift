@@ -406,7 +406,9 @@ public struct USBAccessorySummary: Codable, Sendable, Hashable {
     /// The accessory's IORegistry ID, and what an attach names it by. Valid
     /// only while this Kernova process keeps holding the accessory.
     public let registryID: UInt64
-    /// What a surface calls this accessory.
+    /// What a surface calls this accessory, its own among the accessories
+    /// Kernova lists: qualified by its port, serial number or registry ID where
+    /// another would read alike.
     public let name: String
     /// `idVendor` from the device descriptor.
     public let vendorID: UInt16
@@ -453,8 +455,10 @@ public struct USBPairingSummary: Codable, Sendable, Hashable {
     /// The durable key the accessory answers to, and what `usb forget` takes
     /// back. Stable across a replug and a restart.
     public let key: String
-    /// What a surface calls this accessory, qualified by the port when the rule
-    /// names one port in particular.
+    /// What a surface calls this accessory, its own among the virtual
+    /// machine's: qualified by the port when the rule names one port in
+    /// particular, and by its serial number or key where another would read
+    /// alike.
     public let name: String
     /// When an attach someone asked for last remembered the accessory for that
     /// virtual machine; passing it through again automatically leaves this as

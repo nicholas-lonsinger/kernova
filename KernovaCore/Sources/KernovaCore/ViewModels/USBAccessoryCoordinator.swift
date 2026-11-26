@@ -10,8 +10,8 @@ import KernovaLogging
 package struct USBAccessoryPairingRequest {
     /// Identifies this prompt, so a second answer to it is ignored.
     let id: UUID
-    /// The accessory, named the way a listing would name it — qualified by its
-    /// receptacle where another accessory would read identically.
+    /// The accessory, named the way a listing would name it
+    /// (``USBAccessoryInfo/listingNames(attached:assigned:)``).
     package let accessory: USBAccessorySummary
     /// The guests that could take it, in library order.
     package let candidates: [VMInstance]
@@ -378,8 +378,8 @@ final class USBAccessoryCoordinator {
         library.instances.filter { $0.attachableSessionID != nil }
     }
 
-    /// One accessory as a prompt names it — qualified by its receptacle where
-    /// another accessory Kernova holds would read identically.
+    /// One accessory as a prompt names it, as a listing does
+    /// (``USBAccessoryInfo/listingNames(attached:assigned:)``).
     private func summary(of info: USBAccessoryInfo) -> USBAccessorySummary {
         USBAccessorySummary(
             info,

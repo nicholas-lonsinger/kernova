@@ -160,7 +160,7 @@
 				<accessor style="range"/>
 				<accessor style="test"/>
 			</element>
-			<element type="USB accessory" access="r" description="The USB accessories you&#8217;ve assigned to Kernova in macOS&#8217;s Virtual Machine Accessories menu extra that no virtual machine holds: the ones attach takes. USB accessory &#8220;&#8230;&#8221; names one by its id or its name, and refuses a name several of them carry, listing their ids.">
+			<element type="USB accessory" access="r" description="The USB accessories you&#8217;ve assigned to Kernova in macOS&#8217;s Virtual Machine Accessories menu extra that no virtual machine holds: the ones attach takes. USB accessory &#8220;&#8230;&#8221; names one by its id or its name.">
 				<cocoa key="usbAccessories"/>
 				<accessor style="index"/>
 				<accessor style="name"/>
@@ -278,7 +278,7 @@
 				<accessor style="range"/>
 				<accessor style="test"/>
 			</element>
-			<element type="USB accessory" access="r" description="The USB accessories its guest holds: the ones detach takes back. USB accessory &#8220;&#8230;&#8221; names one by its id or its name, and refuses a name several of them carry, listing their ids.">
+			<element type="USB accessory" access="r" description="The USB accessories its guest holds: the ones detach takes back. USB accessory &#8220;&#8230;&#8221; names one by its id or its name.">
 				<cocoa key="usbAccessories"/>
 				<accessor style="index"/>
 				<accessor style="name"/>
@@ -286,7 +286,7 @@
 				<accessor style="range"/>
 				<accessor style="test"/>
 			</element>
-			<element type="remembered USB accessory" description="The USB accessories it takes back automatically, plugged in or not. Remembered USB accessory &#8220;&#8230;&#8221; names one by its key or its name, and refuses a name several of them carry, listing their keys.">
+			<element type="remembered USB accessory" description="The USB accessories it takes back automatically, plugged in or not. Remembered USB accessory &#8220;&#8230;&#8221; names one by its key or its name.">
 				<cocoa key="rememberedUSBAccessories"/>
 				<accessor style="index"/>
 				<accessor style="name"/>
@@ -443,7 +443,7 @@
 			<property name="id" code="ID  " type="text" access="r" description="Its identifier, which lasts until it is unplugged or detached.">
 				<cocoa key="uniqueID"/>
 			</property>
-			<property name="name" code="pnam" type="text" access="r" description="What the accessory calls itself, qualified by its port where two accessories would read alike.">
+			<property name="name" code="pnam" type="text" access="r" description="What the accessory calls itself, unique among the accessories Kernova lists ignoring case: where another would read alike, or the name is only digits, as an id is, followed by its port, else its serial number, else its id.">
 				<cocoa key="name"/>
 			</property>
 			<property name="vendor ID" code="KvVd" type="integer" access="r" description="The vendor identifier its device descriptor reports.">
@@ -459,7 +459,7 @@
 
 		<class name="remembered USB accessory" code="KvRA" plural="remembered USB accessories" description="A USB accessory a virtual machine takes back automatically whenever both are available, plugged in or not. Attaching an accessory remembers it, and detaching it or deleting this forgets it. USB accessory passthrough needs macOS 27 or later.">
 			<cocoa class="VMRememberedUSBAccessoryScriptObject"/>
-			<property name="name" code="pnam" type="text" access="r" description="What the accessory is called, qualified by its port when Kernova recognizes it by the port it&#8217;s plugged into.">
+			<property name="name" code="pnam" type="text" access="r" description="What the accessory is called, qualified by its port when Kernova recognizes it by the port it&#8217;s plugged into, and unique among its virtual machine&#8217;s remembered USB accessories ignoring case: where another would read alike, followed by its serial number, else its key.">
 				<cocoa key="name"/>
 			</property>
 			<property name="key" code="KvKy" type="text" access="r" description="What Kernova recognizes it by, the key a USB accessory carries while it is plugged in.">

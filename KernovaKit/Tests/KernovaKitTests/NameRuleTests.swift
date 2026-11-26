@@ -112,6 +112,81 @@ struct NameRuleTests {
         }
     }
 
+    /// One item a listing names, as a USB accessory is: the name the device
+    /// reports, the receptacle and serial it may have, and its registry ID.
+    private struct Listed: Equatable {
+        let name: String
+        let receptacle: String?
+        let serial: String?
+        let id: String
+
+        var qualifiers: [String] { [receptacle, serial].compactMap { $0 } + [id] }
+    }
+
+    /// Every list of up to three items drawn from twins in either case, a
+    /// name of their own, a name a registry ID could be, and one receptacle
+    /// and one serial, each had or not — so two can share either — each item
+    /// with an ID of its own.
+    private static let everyListed: [[Listed]] = {
+        let choices = ["SanDisk", "sandisk", "Drive", "1234"].flatMap { name in
+            [nil, "Port 1"].flatMap { receptacle in
+                [nil, "S1"].map { (name, receptacle, $0) }
+            }
+        }
+        var lists: [[Listed]] = [[]]
+        var longest: [[Listed]] = [[]]
+        for _ in 0..<3 {
+            longest = longest.flatMap { list in
+                choices.map { list + [Listed(name: $0.0, receptacle: $0.1, serial: $0.2, id: "90\(list.count)")] }
+            }
+            lists += longest
+        }
+        return lists
+    }()
+
+    /// Every ordering of `items`.
+    private static func permutations<Item>(_ items: [Item]) -> [[Item]] {
+        guard let first = items.first else { return [[]] }
+        return permutations(Array(items.dropFirst())).flatMap { rest in
+            (0...rest.count).map { index in
+                var ordering = rest
+                ordering.insert(first, at: index)
+                return ordering
+            }
+        }
+    }
+
+    @Test(
+        "Every list of items is listed under names Cocoa's matcher relates no two of and none of them digits alone, the same for an item whatever their order; an item no other reads like keeps its own name, and every item another reads like is qualified"
+    )
+    func everyListOfItemsIsListedUnderNamesOfTheirOwn() {
+        let digits = NameRule.Identifiers { !$0.isEmpty && $0.allSatisfy { ("0"..."9").contains($0) } }
+        func listing(_ items: [Listed]) -> [String: String] {
+            let names = NameRule.listing(
+                of: items.map(\.name), qualifiers: items.map(\.qualifiers), identifiers: digits)
+            return Dictionary(uniqueKeysWithValues: zip(items.map(\.id), names))
+        }
+        // Gathered and expected once: an expectation per item and ordering
+        // costs more than the listing it checks.
+        var failures: [String] = []
+        for items in Self.everyListed {
+            let listed = listing(items)
+            for (index, item) in items.enumerated() {
+                let name = listed[item.id] ?? ""
+                let twinned = items.contains { $0.id != item.id && Self.cocoaRelates($0.name, item.name) }
+                let wrong =
+                    digits.contains(name)
+                    || items[(index + 1)...].contains { Self.cocoaRelates(name, listed[$0.id] ?? "") }
+                    || (twinned || digits.contains(item.name) ? name == item.name : name != item.name)
+                if wrong { failures.append("\(items) gave \(listed)") }
+            }
+            if items.count > 1, Self.permutations(items).contains(where: { listing($0) != listed }) {
+                failures.append("\(items) is listed otherwise in another order")
+            }
+        }
+        #expect(failures.isEmpty, "\(failures.count) failures, first \(failures.prefix(3))")
+    }
+
     @Test(
         "Beside every list of siblings, a name a caller chooses is taken, and a name Kernova counts up to is given, only where Cocoa's matcher relates it to none of them"
     )

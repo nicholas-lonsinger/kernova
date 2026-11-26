@@ -528,16 +528,3 @@ extension VMCommandCore {
         }
     }
 }
-
-extension NamedSelection {
-    /// What an in-app surface refuses `text` with when it names every one of
-    /// `candidates`, `plural` of their kind: each one as `label` lists it, by
-    /// what names it alone — `namedAloneBy`, in the plural.
-    package static func ambiguity(
-        _ text: String, among candidates: [Candidate], plural: String, namedAloneBy identifiers: String,
-        label: (Candidate) -> String
-    ) -> String {
-        "\u{201C}\(text)\u{201D} names \(candidates.count) \(plural). Use one of their \(identifiers) instead: "
-            + candidates.map(label).joined(separator: ", ") + "."
-    }
-}

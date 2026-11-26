@@ -219,6 +219,66 @@ public enum NameRule {
         assignment(of: siblings + [proposed], identifiers: identifiers) { _ in fallback }[siblings.count]
     }
 
+    // MARK: - Names Kernova lists
+
+    /// The name each item of a list is listed under, for items whose own
+    /// names Kernova does not give — a USB accessory's, which the device
+    /// reports — as siblings whose class `identifiers` identifies.
+    ///
+    /// An item whose own name, `names[i]`, is well formed and one name with no
+    /// other item's is listed by it. Every other is listed as its name
+    /// followed, in parentheses, by the first of `qualifiers[i]` — most human
+    /// first — that leaves it well formed and one name with no other listed
+    /// name, every item that would still read alike moving on to its next
+    /// qualifier together. An item whose qualifiers all read alike to another's
+    /// takes the first free name counted from its last, in the order of those
+    /// names and qualifiers.
+    ///
+    /// A function of the set: an item is listed by the same name whatever
+    /// order the items come in, and none by its place among them. No two names
+    /// it answers are one name, and none spells an identifier.
+    public static func listing(of names: [String], qualifiers: [[String]], identifiers: Identifiers) -> [String] {
+        let items = names.indices
+        /// Whether some other item's name in `listed` is one name with `item`'s.
+        func readsAlike(_ item: Int, in listed: [Comparand]) -> Bool {
+            items.contains {
+                $0 != item && (listed[item].key == listed[$0].key || listed[item].isRelatedByCocoa(to: listed[$0]))
+            }
+        }
+        let own = names.map(Comparand.init)
+        let keeps = items.map { isWellFormed(names[$0], identifiers: identifiers) && !readsAlike($0, in: own) }
+        var level = items.map { keeps[$0] || qualifiers[$0].isEmpty ? 0 : 1 }
+        func listed(_ item: Int) -> String {
+            level[item] == 0 ? names[item] : "\(names[item]) (\(qualifiers[item][level[item] - 1]))"
+        }
+        while true {
+            let current = items.map(listed)
+            let compared = current.map(Comparand.init)
+            let clashing = items.filter { item in
+                !keeps[item]
+                    && (!isWellFormed(current[item], identifiers: identifiers) || readsAlike(item, in: compared))
+            }
+            let advancing = clashing.filter { level[$0] < qualifiers[$0].count }
+            guard advancing.isEmpty else {
+                for item in advancing { level[item] += 1 }
+                continue
+            }
+            var given = Names(items.filter { !clashing.contains($0) }.map { current[$0] })
+            var listing = current
+            let ordered = clashing.sorted {
+                (current[$0], qualifiers[$0].last ?? "") < (current[$1], qualifiers[$1].last ?? "")
+            }
+            for item in ordered {
+                let free = firstAvailable(current[item]) { candidate in
+                    identifiers.contains(candidate) || given.contains(Comparand(candidate))
+                }
+                given.insert(Comparand(free))
+                listing[item] = free
+            }
+            return listing
+        }
+    }
+
     // MARK: - Typed text
 
     /// Whether `text`, as typed, names `name`: `name.caseInsensitiveCompare(text)`,

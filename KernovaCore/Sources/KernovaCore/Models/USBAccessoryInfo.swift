@@ -1,5 +1,6 @@
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 
 /// A host USB accessory macOS has assigned to Kernova.
 ///
@@ -119,8 +120,10 @@ package struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
 
     /// The name each accessory Kernova knows about is listed under — the
     /// `attached` ones guests hold and the `assigned` ones macOS has handed
-    /// Kernova — qualified by its receptacle where two of them would otherwise
-    /// read identically.
+    /// Kernova — each its own among them (``NameRule/listing(of:qualifiers:identifiers:)``):
+    /// an accessory another reads like, or whose name is all digits as a
+    /// registry ID is, is qualified by its receptacle, else its serial
+    /// number, else its registry ID, whichever first tells it apart.
     ///
     /// Two units of one model are an ordinary thing to own, and a menu
     /// offering the same words twice says nothing about which is which. The
@@ -138,16 +141,23 @@ package struct USBAccessoryInfo: Sendable, Equatable, Identifiable {
     ) -> [UInt64: String] {
         let attachedIDs = Set(attached.map(\.registryID))
         let accessories = attached + assigned.filter { !attachedIDs.contains($0.registryID) }
-        let counts = accessories.reduce(into: [String: Int]()) { $0[$1.displayName, default: 0] += 1 }
-        return accessories.reduce(into: [UInt64: String]()) { names, accessory in
-            guard counts[accessory.displayName, default: 0] > 1,
-                let label = accessory.receptacleLabel
-            else {
-                names[accessory.registryID] = accessory.displayName
-                return
-            }
-            names[accessory.registryID] = "\(accessory.displayName) (\(label))"
-        }
+        let names = NameRule.listing(
+            of: accessories.map(\.displayName),
+            qualifiers: accessories.map {
+                [$0.receptacleLabel, $0.serialNumber].compactMap { $0 } + [String($0.registryID)]
+            },
+            identifiers: registryIDs)
+        return Dictionary(zip(accessories.map(\.registryID), names), uniquingKeysWith: { first, _ in first })
+    }
+
+    /// Text a script reads as a registry ID: all decimal digits.
+    static let registryIDs = NameRule.Identifiers { !$0.isEmpty && $0.allSatisfy { ("0"..."9").contains($0) } }
+
+    /// The serial number its durable key is built on, `nil` when the key
+    /// names its receptacle instead.
+    private var serialNumber: String? {
+        guard let identity, identity.form == .serialNumber else { return nil }
+        return String(identity.key.dropFirst(descriptor.modelKey.count + 1))
     }
 }
 

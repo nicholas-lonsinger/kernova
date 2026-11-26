@@ -234,28 +234,26 @@ struct VMSharingScriptingTests {
 
     // MARK: - Names
 
-    /// The listed things a script names by a name several of them can carry.
+    /// The listed things whose names their devices give.
     enum Listed: CaseIterable, Sendable {
-        /// Two remembered accessories called Drive.
+        /// Two remembered accessories a device calls Drive.
         case rememberedUSBAccessory
-        /// Two attached accessories called SanDisk Ultra.
+        /// Two attached accessories a device calls SanDisk Ultra.
         case usbAccessory
     }
 
     @Test(
-        "A name two of a VM's items carry refuses, naming what names each alone, and changes nothing; that names the one",
+        "Two of a VM's items a device names alike list under names of their own, each addressing the one it was read from, and a range ending at a name starts at that one",
         arguments: Listed.allCases)
-    func aSharedNameRefuses(listed: Listed) async throws {
+    func everyNameAScriptReadsAddressesItsOwnAccessory(listed: Listed) async throws {
         let (wired, service) = try makeUSBHarness()
-        let pairings = ["0403:6001:0100:AAAA", "0403:6001:0100:BBBB"].map {
-            USBAccessoryPairing(key: $0, form: .serialNumber, displayName: "Drive", receptacleLabel: nil)
-        }
-        let devices = [UUID(), UUID()]
         let alpha: VMInstance
         switch listed {
         case .rememberedUSBAccessory:
             alpha = wired.register(name: "Alpha")
-            for pairing in pairings {
+            for key in ["0403:6001:0100:AAAA", "0403:6001:0100:BBBB"] {
+                let pairing = USBAccessoryPairing(
+                    key: key, form: .serialNumber, displayName: "Drive", receptacleLabel: nil)
                 try alpha.activity.edit(.pairingRules) { try wired.library.pairUSBAccessory(pairing, $0) }
             }
         case .usbAccessory:
@@ -265,43 +263,36 @@ struct VMSharingScriptingTests {
                     registryID: UInt64($0), serial: "\($0)", vendorName: "SanDisk", productName: "Ultra")
             }
             service.accessories = units
-            for (unit, device) in zip(units, devices) {
-                service.nextDeviceID = device
+            for unit in units {
+                service.nextDeviceID = UUID()
                 try await wired.core.attachUSBAccessory(.id(alpha.id), accessory: unit.registryID)
             }
         }
         let host = ScriptHost()
         let gateway = await makeGateway(wired, host: host)
         let vm = Self.vm(named: "Alpha")
-
-        let (shared, alone, identifiers): (String, String, [String]) =
-            switch listed {
-            case .rememberedUSBAccessory: ("drive", pairings[1].key, pairings.map(\.key))
-            case .usbAccessory: ("sanDisk ultra", "8", ["7", "8"])
-            }
-        let event = { (name: String) -> NSAppleEventDescriptor in
-            switch listed {
-            case .rememberedUSBAccessory: ScriptEvent.delete(ScriptEvent.element("KvRA", named: name, of: vm))
-            case .usbAccessory: ScriptEvent.verb("Dtch", ScriptEvent.element("KvUA", named: name, of: vm))
-            }
+        let (element, identifier) = listed == .usbAccessory ? ("KvUA", "ID  ") : ("KvRA", "KvKy")
+        func read(_ property: String, _ reference: NSAppleEventDescriptor) async throws -> ScriptReply {
+            try await host.send(ScriptEvent.get(ScriptEvent.property(property, of: reference)), to: gateway)
         }
-        let state = { (alpha.usbPairings.pairings.map(\.key), service.detachedDeviceIDs) }
-        let before = state()
 
-        let refused = try await host.send(event(shared), to: gateway)
-
-        #expect(refused.errorNumber == Int(errAENoSuchObject))
-        for identifier in identifiers {
-            #expect(refused.errorString?.contains(identifier) == true, "\(refused.errorString ?? "")")
+        let names = try await read("pnam", ScriptEvent.every(element, of: vm)).items.compactMap(\.stringValue)
+        let ids = try await read(identifier, ScriptEvent.every(element, of: vm)).items.compactMap(\.stringValue)
+        var addressed: [String?] = []
+        for name in names {
+            addressed.append(
+                try await read(identifier, ScriptEvent.element(element, named: name, of: vm)).descriptor?.stringValue)
         }
-        #expect(state() == before)
+        let range = ScriptEvent.elements(element, named: names.first ?? "", through: names.last ?? "", of: vm)
+        let ranged = try await read(identifier, range).items.compactMap(\.stringValue)
 
-        let named = try await host.send(event(alone), to: gateway)
-
-        #expect(named.errorNumber == 0, "\(named.errorString ?? "")")
-        switch listed {
-        case .rememberedUSBAccessory: #expect(alpha.usbPairings.pairings.map(\.key) == [pairings[0].key])
-        case .usbAccessory: #expect(service.detachedDeviceIDs == [devices[1]])
-        }
+        try #require(names.count == 2, "\(names)")
+        // Cocoa Scripting's own comparison, which finds a script's element by
+        // name.
+        #expect(
+            (names[0] as NSString).caseInsensitiveCompare(names[1]) != .orderedSame
+                && (names[1] as NSString).caseInsensitiveCompare(names[0]) != .orderedSame, "\(names)")
+        #expect(addressed == ids.map(Optional.some), "\(names) addressed \(addressed), read from \(ids)")
+        #expect(ranged == ids, "\(names) ranged over \(ranged), read from \(ids)")
     }
 }
