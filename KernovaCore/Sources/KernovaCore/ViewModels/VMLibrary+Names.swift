@@ -17,8 +17,9 @@ extension VMLibrary {
     package nonisolated static let defaultVMName = "My Virtual Machine"
 
     /// Gives every VM and arrival the name ``assignedNames(_:)`` works out for
-    /// the entries listed now — run whenever the entries change and whenever
-    /// a bundle's stored name, creation date or date added moves
+    /// the entries listed now — run whenever the entries change, once for a
+    /// batch (``changeEntries(_:)``), and whenever a bundle's stored name,
+    /// creation date or date added moves
     /// (``VMLibraryConfigurationPolicy/namingInputsMoved()``).
     func reassignNames() {
         let named = entries.compactMap(\.addressable)
@@ -129,6 +130,16 @@ struct VMNameOrder: Comparable, Sendable {
     let dateAdded: Date?
     let createdAt: Date
     let id: UUID
+    /// `id` spelled out once, for the comparisons a sort makes.
+    private let idText: String
+
+    private init(standing: Standing, dateAdded: Date?, createdAt: Date, id: UUID) {
+        self.standing = standing
+        self.dateAdded = dateAdded
+        self.createdAt = createdAt
+        self.id = id
+        idText = id.uuidString
+    }
 
     /// A published bundle's place: `dateAdded` is when it joined the VMs
     /// folder, `nil` where the volume keeps no such date.
@@ -144,8 +155,8 @@ struct VMNameOrder: Comparable, Sendable {
     }
 
     static func < (lhs: Self, rhs: Self) -> Bool {
-        (lhs.standing.rawValue, lhs.dateAdded ?? .distantPast, lhs.createdAt, lhs.id.uuidString)
-            < (rhs.standing.rawValue, rhs.dateAdded ?? .distantPast, rhs.createdAt, rhs.id.uuidString)
+        (lhs.standing.rawValue, lhs.dateAdded ?? .distantPast, lhs.createdAt, lhs.idText)
+            < (rhs.standing.rawValue, rhs.dateAdded ?? .distantPast, rhs.createdAt, rhs.idText)
     }
 }
 
@@ -155,10 +166,10 @@ extension AddressableEntry {
         switch self {
         case .vm(let instance):
             let bundle = instance.bundle
+            let stored = bundle.configuration
             return VMNameClaim(
-                storedName: bundle.configuration.name,
-                order: .published(
-                    dateAdded: bundle.dateAdded, createdAt: bundle.configuration.createdAt, id: instance.id))
+                storedName: stored.name,
+                order: .published(dateAdded: bundle.dateAdded, createdAt: stored.createdAt, id: instance.id))
         case .arriving(let arrival):
             return VMNameClaim(
                 storedName: arrival.requested.name,

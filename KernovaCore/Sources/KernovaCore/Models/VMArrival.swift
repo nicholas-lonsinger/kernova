@@ -62,7 +62,7 @@ package enum LibraryEntry {
 
 /// A create, clone or import in flight: the bundle it is writing under the
 /// hidden staging directory, until publication renames it to
-/// ``destinationURL`` and ``VMLibrary/adopt(_:publishing:)`` turns it into a
+/// ``destinationURL`` and ``VMLibrary/adopt(_:publishing:into:)`` turns it into a
 /// ``VMInstance``.
 @MainActor
 @Observable

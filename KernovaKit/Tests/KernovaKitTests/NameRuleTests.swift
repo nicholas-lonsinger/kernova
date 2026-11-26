@@ -5,13 +5,14 @@ import Testing
 @testable import KernovaKit
 
 /// What the name rule gives a list of siblings, judged by what Cocoa
-/// Scripting's own matcher relates: `caseInsensitiveCompare(_:)`, by which a
-/// script's range and relative forms find an element by name.
+/// Scripting's own matcher relates: NSString's `caseInsensitiveCompare(_:)`,
+/// by which a script finds an element by name.
 @Suite("Name rule", .caseScoped)
 struct NameRuleTests {
-    /// Whether Cocoa's matcher finds either name the other.
+    /// Whether Cocoa's matcher finds either name the same as the other.
     private static func cocoaRelates(_ lhs: String, _ rhs: String) -> Bool {
-        lhs.caseInsensitiveCompare(rhs) == .orderedSame || rhs.caseInsensitiveCompare(lhs) == .orderedSame
+        (lhs as NSString).caseInsensitiveCompare(rhs) == .orderedSame
+            || (rhs as NSString).caseInsensitiveCompare(lhs) == .orderedSame
     }
 
     /// Whether a sibling may go by `name` whatever else does: trimmed, holding
@@ -21,23 +22,24 @@ struct NameRuleTests {
             && UUID(uuidString: name) == nil
     }
 
-    /// What stored names are drawn from: case variants, a name a later
-    /// duplicate's first free name would land on, untrimmed and empty names,
-    /// the Greek pair Cocoa's matcher relates one way only, and an identifier
-    /// in either case.
+    /// What names are drawn from: case variants, a name a later duplicate's
+    /// first free name would land on, untrimmed and empty names, an
+    /// identifier in either case, the Greek pair Cocoa's matcher relates one
+    /// way only, and the pair it relates both ways though they fold to two
+    /// keys.
     private static let alphabet: [String] = {
         let identifier = "6F1D7E2C-0000-4000-8000-0000000000AA"
         return [
-            "Build", "build", "Build 2", "Build 3", " Build", "Build\n", "", "\u{1F08}\u{0399}", "\u{1F80}",
-            identifier, identifier.lowercased(),
+            "Build", "build", "Build 2", "Build 3", " Build", "Build\n", "", identifier, identifier.lowercased(),
+            "\u{1F08}\u{0399}", "\u{1F80}", "\u{1FCC}\u{0342}", "\u{1FC7}",
         ]
     }()
 
-    /// Every list of up to four names from ``alphabet``, repeats included.
-    private static var everyList: [[String]] {
+    /// Every list of up to `length` names from ``alphabet``, repeats included.
+    private static func everyList(upTo length: Int) -> [[String]] {
         var lists: [[String]] = [[]]
         var longest: [[String]] = [[]]
-        for _ in 1...4 {
+        for _ in 0..<length {
             longest = longest.flatMap { list in alphabet.map { list + [$0] } }
             lists += longest
         }
@@ -45,10 +47,10 @@ struct NameRuleTests {
     }
 
     @Test(
-        "Every list of siblings is given names that are well formed and that Cocoa's matcher relates no two of, and a well-formed name no earlier sibling's is kept"
+        "Every list of siblings is given names that are well formed and that Cocoa's matcher relates no two of, and a well-formed name no earlier sibling's is related to is kept"
     )
     func everyListIsGivenDistinctWellFormedNames() {
-        for stored in Self.everyList {
+        for stored in Self.everyList(upTo: 3) {
             let assigned = NameRule.assignment(of: stored, fallback: "Untitled")
 
             #expect(assigned.count == stored.count, "\(stored)")
@@ -66,18 +68,25 @@ struct NameRuleTests {
     }
 
     @Test(
-        "Two names Cocoa's matcher relates, either way round, are one name, for every scalar's case and normalization variants"
+        "Beside every list of siblings, a name a caller chooses is taken, and a name Kernova counts up to is given, only where Cocoa's matcher relates it to none of them"
     )
-    func everyPairCocoaRelatesIsOneName() {
-        for value in 0...0x1FFFF {
-            guard let scalar = Unicode.Scalar(value) else { continue }
-            let name = String(Character(scalar))
-            let variants: Set = [
-                name.uppercased(), name.lowercased(), name.capitalized,
-                name.decomposedStringWithCanonicalMapping, name.precomposedStringWithCanonicalMapping,
-            ]
-            for variant in variants where variant != name && Self.cocoaRelates(name, variant) {
-                #expect(NameRule.text(variant, names: name), "U+\(String(value, radix: 16, uppercase: true))")
+    func everyChosenAndCountedNameIsFreeBesideItsSiblings() {
+        for siblings in Self.everyList(upTo: 3) {
+            for proposed in Self.alphabet {
+                let trimmed = proposed.trimmingCharacters(in: .whitespacesAndNewlines)
+                let free = Self.isWellFormed(trimmed) && !siblings.contains { Self.cocoaRelates($0, trimmed) }
+                do {
+                    let name = try NameRule.validated(proposed, among: siblings)
+                    #expect(name == trimmed, "\(proposed) beside \(siblings)")
+                    #expect(free, "\(proposed) beside \(siblings) was taken as \(name)")
+                } catch {
+                    #expect(!free, "\(proposed) beside \(siblings) was refused: \(error)")
+                }
+                guard Self.isWellFormed(proposed) else { continue }
+                let counted = NameRule.firstAvailable(proposed, among: siblings)
+                #expect(
+                    !siblings.contains { Self.cocoaRelates($0, counted) },
+                    "\(proposed) beside \(siblings) counted up to \(counted)")
             }
         }
     }

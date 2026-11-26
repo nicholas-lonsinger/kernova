@@ -4,18 +4,28 @@ import Foundation
 /// machine's in its library, a network's, a smart group's, a folder's, a
 /// tag's: what a name may be, when two names are one name, which sibling typed
 /// text names, and the first free name.
+///
+/// Typed text names a sibling as Cocoa Scripting finds an element by name:
+/// the first whose name `caseInsensitiveCompare(_:)` finds the same as the
+/// text, the name receiving it (``text(_:names:)``), so a name alone and a
+/// range's named end are one function over one list. Two names are one name
+/// when that comparison finds either the same as the other, or when they
+/// fold to one key (``isOneName(_:_:)``), so no sibling's name is found the
+/// same as another's. The comparison is not transitive, so that alone does
+/// not keep typed text from being found the same as two siblings' names.
 public enum NameRule {
-    /// A name as sameness reads it: two names are one name exactly when their
-    /// keys are equal, which makes sameness an equivalence.
+    /// A name folded for case and compared by canonical equivalence.
     ///
-    /// `caseInsensitiveCompare(_:)`, by which Cocoa Scripting resolves a
-    /// range's named end, is not one: it finds `"\u{1F08}\u{0399}"` the same as
-    /// `"\u{1F80}"` and not the reverse. Both fold to one key, so no typed text
-    /// that comparison matches to two names can reach two siblings.
-    public struct Key: Hashable, Sendable {
+    /// Two names whose keys are equal are one name even where
+    /// `caseInsensitiveCompare(_:)` relates them neither way, as it does not
+    /// `"\u{1E921}"` and `"\u{1E943}"`, one Adlam letter in its two cases.
+    /// Keys that differ decide nothing: that comparison finds
+    /// `"\u{1FCC}\u{0342}"` and `"\u{1FC7}"` each the same as the other, and
+    /// they fold to two keys.
+    private struct Key: Hashable {
         private let folded: String
 
-        public init(_ name: String) {
+        init(_ name: String) {
             folded = name.folding(options: .caseInsensitive, locale: nil)
         }
     }
@@ -43,6 +53,70 @@ public enum NameRule {
         }
     }
 
+    // MARK: - Sameness
+
+    /// Whether `lhs` and `rhs` are one name: `caseInsensitiveCompare(_:)`
+    /// finds either the same as the other, or they fold to one key.
+    ///
+    /// Not an equivalence — that comparison is neither symmetric nor
+    /// transitive — so a name is checked against every sibling.
+    public static func isOneName(_ lhs: String, _ rhs: String) -> Bool {
+        Names([lhs]).contains(Comparand(rhs))
+    }
+
+    /// A name made ready to be compared many times.
+    private struct Comparand {
+        let name: String
+        let key: Key
+        /// The name as one string object, compared without bridging it again.
+        let compared: NSString
+
+        init(_ name: String) {
+            self.name = name
+            key = Key(name)
+            compared = NSString(string: name)
+        }
+
+        /// Whether `caseInsensitiveCompare(_:)` finds either of the two the
+        /// same as the other.
+        func isRelatedByCocoa(to other: Comparand) -> Bool {
+            // NSString's own call, not `CFStringCompare` with
+            // `.compareCaseInsensitive`, which answers otherwise:
+            // "\u{1FCC}\u{0342}" and "\u{1FC7}" unequal both ways, where
+            // `caseInsensitiveCompare(_:)` and `scriptingIsEqual(to:)` find
+            // them the same (macOS 27.2.1).
+            compared.caseInsensitiveCompare(other.compared as String) == .orderedSame
+                || other.compared.caseInsensitiveCompare(compared as String) == .orderedSame
+        }
+    }
+
+    /// Names a candidate is checked against, each compared at most once per
+    /// check.
+    private struct Names {
+        private var keys = Set<Key>()
+        private(set) var members: [Comparand] = []
+
+        init(_ names: [String] = []) {
+            for name in names { insert(Comparand(name)) }
+        }
+
+        mutating func insert(_ name: Comparand) {
+            keys.insert(name.key)
+            members.append(name)
+        }
+
+        /// The member `candidate` is one name with, if any.
+        func member(sameAs candidate: Comparand) -> Comparand? {
+            if keys.contains(candidate.key) { return members.first { $0.key == candidate.key } }
+            // Every member's key differs from the candidate's here.
+            return members.first { candidate.isRelatedByCocoa(to: $0) }
+        }
+
+        func contains(_ candidate: Comparand) -> Bool {
+            member(sameAs: candidate) != nil
+        }
+    }
+
     // MARK: - Names a caller chooses
 
     /// `proposed` trimmed of whitespace and line breaks, as the name of a
@@ -53,19 +127,18 @@ public enum NameRule {
         let name = trimmed(proposed)
         guard !name.isEmpty else { throw .empty }
         guard UUID(uuidString: name) == nil else { throw .identifier(name) }
-        let key = Key(name)
-        if let holder = siblings.first(where: { Key($0) == key }) { throw .taken(by: holder) }
+        if let holder = Names(Array(siblings)).member(sameAs: Comparand(name)) { throw .taken(by: holder.name) }
         return name
     }
 
     // MARK: - Names Kernova picks
 
-    /// `base` when no name of `taken` is it, else the first of "`base` 2",
-    /// "`base` 3", … none is — counted after the whole of `base`, dots
-    /// included.
+    /// `base` when it is one name with none of `taken`, else the first of
+    /// "`base` 2", "`base` 3", … that is — counted after the whole of `base`,
+    /// dots included.
     public static func firstAvailable(_ base: String, among taken: some Sequence<String>) -> String {
-        let keys = Set(taken.map(Key.init))
-        return firstAvailable(base) { keys.contains(Key($0)) }
+        let taken = Names(Array(taken))
+        return firstAvailable(base) { taken.contains(Comparand($0)) }
     }
 
     /// ``firstAvailable(_:among:)`` with what is taken asked of `isTaken`.
@@ -79,26 +152,31 @@ public enum NameRule {
     }
 
     /// The name each of `stored` goes by, in the order given: a stored name
-    /// that is well formed and that no earlier one took keeps it, and every
-    /// other takes the first well-formed name free (``firstAvailable(_:among:)``)
-    /// from its trimmed self, or from `fallback` when that leaves nothing —
-    /// counted against every stored name and every name already given.
+    /// that is well formed and one name with none already given keeps it,
+    /// and every other takes the first well-formed name
+    /// (``firstAvailable(_:among:)``) from its trimmed self, or from
+    /// `fallback` when that leaves nothing, that is one name with no stored
+    /// name and none already given.
     ///
-    /// Every name it answers is well formed, and no two are one name. Counting
-    /// against the stored names leaves each later sibling's own name for it,
-    /// so a set whose names are already well formed and distinct comes back
-    /// as it is. `fallback` is well formed.
+    /// Every name it answers is well formed, and no two are one name
+    /// (``isOneName(_:_:)``). Counting against the stored names leaves each
+    /// later sibling's own name for it, so a set of well-formed names no two
+    /// of which are one name comes back as it is. `fallback` is well formed.
     public static func assignment(of stored: [String], fallback: String) -> [String] {
-        let storedKeys = Set(stored.map(Key.init))
-        var given = Set<Key>()
-        return stored.map { name in
-            if isWellFormed(name), given.insert(Key(name)).inserted { return name }
-            let base = trimmed(name).isEmpty ? fallback : trimmed(name)
-            let free = firstAvailable(base) { candidate in
-                let key = Key(candidate)
-                return UUID(uuidString: candidate) != nil || storedKeys.contains(key) || given.contains(key)
+        let storedNames = Names(stored)
+        var given = Names()
+        return storedNames.members.map { comparand in
+            if isWellFormed(comparand.name), !given.contains(comparand) {
+                given.insert(comparand)
+                return comparand.name
             }
-            given.insert(Key(free))
+            let base = trimmed(comparand.name).isEmpty ? fallback : trimmed(comparand.name)
+            let free = firstAvailable(base) { candidate in
+                guard UUID(uuidString: candidate) == nil else { return true }
+                let candidate = Comparand(candidate)
+                return storedNames.contains(candidate) || given.contains(candidate)
+            }
+            given.insert(Comparand(free))
             return free
         }
     }
@@ -114,25 +192,23 @@ public enum NameRule {
 
     // MARK: - Typed text
 
-    /// Whether `text`, as typed, is `name`.
+    /// Whether `text`, as typed, names `name`: `name.caseInsensitiveCompare(text)`,
+    /// the call Cocoa Scripting makes of each element's name to find one by
+    /// name.
     public static func text(_ text: String, names name: String) -> Bool {
-        Key(text) == Key(name)
+        (name as NSString).caseInsensitiveCompare(text) == .orderedSame
     }
 
-    /// The sibling among `siblings` that `text`, as typed, names: the one it
-    /// is the name of (``text(_:names:)``).
-    ///
-    /// The first, where several share the name — siblings whose names are not
-    /// held to this rule.
+    /// The first of `siblings` that `text`, as typed, names (``text(_:names:)``),
+    /// in their order — the one Cocoa Scripting finds.
     public static func sibling<Sibling>(
         named text: String, in siblings: [Sibling], name: (Sibling) -> String
     ) -> Sibling? {
-        let key = Key(text)
-        return siblings.first { Key(name($0)) == key }
+        siblings.first { Self.text(text, names: name($0)) }
     }
 
     /// The sibling `text`, as typed, names among `siblings`: the one whose
-    /// identifier it spells, or else the one it is the name of.
+    /// identifier it spells, or else the first it names by name.
     public static func sibling<Sibling>(
         identifiedOrNamedBy text: String, in siblings: [Sibling], id: (Sibling) -> UUID,
         name: (Sibling) -> String

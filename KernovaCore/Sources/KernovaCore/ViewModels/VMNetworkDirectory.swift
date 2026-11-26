@@ -189,7 +189,7 @@ package final class VMNetworkDirectory {
             throw CommandError.invalidArgument(error.sentence(about: "network"))
         }
         let reserved = [VMNetworkMembership.commonValue, VMNetworkMembership.isolatedValue]
-        guard !reserved.contains(where: { NameRule.text($0, names: validated) }) else {
+        guard !reserved.contains(where: { NameRule.isOneName($0, validated) }) else {
             throw spellsAMembership(validated)
         }
         return validated

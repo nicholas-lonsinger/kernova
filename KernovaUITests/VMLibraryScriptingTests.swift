@@ -173,22 +173,28 @@ struct VMLibraryScriptingTests {
     }
 
     @Test(
-        "With two bundles storing one name, a range ending at the name and the name alone address the same virtual machine"
+        "With two bundles another copy holds storing one name, a script reads no name twice, each name it reads addresses the virtual machine it read it from, and a range ending at a name starts at that one"
     )
-    func aRangeEndAndTheNameAloneAddressOneVM() async throws {
+    func everyNameAScriptReadsAddressesItsOwnVM() async throws {
         let wired = WiredCommandCore()
         let builds = [wired.register(name: "Build"), wired.register(name: "Build")]
         wired.register(name: "Other")
+        // Held as another copy of Kernova holds them, so neither bundle can be
+        // given the name it goes by.
+        for build in builds { wired.storage.files.holdElsewhere(build.bundleURL) }
         let host = ScriptHost()
         let gateway = await makeGateway(wired, host: host)
 
-        let named = try host.run(#"id of virtual machine "Build""#, on: gateway).stringValue
+        let names = try host.run("name of every virtual machine", on: gateway).items.compactMap(\.stringValue)
+        let ids = try host.run("id of every virtual machine", on: gateway).items.compactMap(\.stringValue)
+        let addressed = names.map { (try? host.run("id of virtual machine \"\($0)\"", on: gateway))?.stringValue }
         let ranged = try host.run(#"id of virtual machines "Build" thru "Other""#, on: gateway).items
             .compactMap(\.stringValue)
 
-        let build = try #require(builds.first { $0.id.uuidString == named })
-        #expect(ranged.first == build.id.uuidString)
-        #expect(Set(builds.map(\.name)).count == 2)
+        try #require(builds.allSatisfy { wired.storage.bundles[$0.bundleURL]?.name == "Build" })
+        #expect(names.count == 3 && Set(names).count == names.count, "\(names)")
+        #expect(addressed == ids.map(Optional.some), "\(names) addressed \(addressed), read from \(ids)")
+        #expect(ranged.first != nil && ranged.first == names.firstIndex(of: "Build").map { ids[$0] })
     }
 
     // MARK: - Duplicate
