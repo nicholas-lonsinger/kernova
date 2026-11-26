@@ -48,9 +48,9 @@ final class SidebarViewController: NSViewController {
     /// editor, so the rename loop doesn't restart an in-flight edit.
     private var editingNode: SidebarNode?
 
-    /// The text the next group rename the rename pass opens holds in place of
-    /// the group's name: what a refused rename was committed with.
-    private var groupRenameDraft: String?
+    /// The text the next rename the rename pass opens holds in place of the
+    /// name: what a refused rename was committed with.
+    private var renameDraft: String?
 
     /// Builds each section header's menu and a row's folder and tag items; a
     /// pick runs its command.
@@ -404,8 +404,8 @@ final class SidebarViewController: NSViewController {
     }
 
     private func applyRenameState() {
-        let draft = groupRenameDraft
-        groupRenameDraft = nil
+        let draft = renameDraft
+        renameDraft = nil
         guard case .sidebar(let rename)? = viewModel.activeRename, let node = renameNode(for: rename) else {
             endActiveEditingIfNeeded()
             return
@@ -417,7 +417,7 @@ final class SidebarViewController: NSViewController {
         endActiveEditingIfNeeded()
 
         switch node {
-        case let row as SidebarRow: beginRename(of: row)
+        case let row as SidebarRow: beginRename(of: row, holding: draft)
         case let section as SidebarSection: beginRename(of: section, holding: draft)
         default: break
         }
@@ -426,7 +426,9 @@ final class SidebarViewController: NSViewController {
         if editingNode != nil { selectedRowView?.rendersUnemphasized = true }
     }
 
-    private func beginRename(of node: SidebarRow) {
+    /// Opens the rename on `node`'s row, holding `draft` in place of its
+    /// name when one is given.
+    private func beginRename(of node: SidebarRow, holding draft: String?) {
         guard let row = revealedRow(of: node) else { return }
 
         editingNode = node
@@ -443,7 +445,7 @@ final class SidebarViewController: NSViewController {
         if let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: true)
             as? SidebarVMRowCellView
         {
-            cell.beginRename()
+            cell.beginRename(holding: draft)
         }
     }
 
@@ -463,8 +465,29 @@ final class SidebarViewController: NSViewController {
     /// holding `draft` in place of its name when one is given.
     func renameGroup(_ kind: VMGroupKind, _ id: UUID, holding draft: String? = nil) {
         viewModel.renameGroupInSidebar(kind, id)
-        groupRenameDraft = draft
+        renameDraft = draft
         sync()
+    }
+
+    /// Opens a rename of `instance` on its row, holding `draft` in place of
+    /// its name.
+    private func renameVM(_ instance: VMInstance, holding draft: String) {
+        viewModel.renameVMInSidebar(instance)
+        renameDraft = draft
+        sync()
+    }
+
+    /// Renames `instance` to `typed`, the text its row's edit was committed
+    /// with. A name the library refuses opens the edit again, holding that
+    /// name, once the refusal is dismissed — as a group's rename does.
+    private func commitRename(of instance: VMInstance, to typed: String) {
+        attempt(
+            "Couldn\u{2019}t Rename the Virtual Machine",
+            retry: { [weak self, weak instance] in
+                guard let self, let instance else { return }
+                renameVM(instance, holding: typed)
+            }
+        ) { try viewModel.commitRename(for: instance, newName: typed, from: .sidebar) }
     }
 
     private func endActiveEditingIfNeeded() {
@@ -750,7 +773,7 @@ extension SidebarViewController: NSOutlineViewDelegate {
             },
             onCommitRename: { [weak self, weak instance, weak row] newName in
                 guard let self, let instance else { return }
-                self.viewModel.commitRename(for: instance, newName: newName, from: .sidebar)
+                self.commitRename(of: instance, to: newName)
                 self.renameEnded(in: row)
             },
             onCancelRename: { [weak self, weak instance, weak row] in

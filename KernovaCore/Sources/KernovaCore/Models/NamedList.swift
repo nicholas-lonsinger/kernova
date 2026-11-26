@@ -8,12 +8,12 @@ package protocol ListNamed: Equatable, Sendable {
     var id: UUID { get }
     /// The name the list keeps this element's own among its siblings.
     var listedName: String { get set }
-    /// What the element is named from when its own name is empty or spells
-    /// an identifier — well formed, or so once a count follows it.
+    /// What the element is named from when its own name makes none
+    /// (``NameRule/Shape/base(of:)``) — well formed, or so once a count
+    /// follows it — read from the element alone.
     var nameBase: String { get }
-    /// What a door reads as one of these elements' identifiers rather than as
-    /// a name.
-    static var identifiers: NameRule.Identifiers { get }
+    /// What these elements may be named.
+    static var shape: NameRule.Shape { get }
 }
 
 /// A list of a virtual machine's elements a door names — its snapshots, its
@@ -23,7 +23,7 @@ package protocol ListNamed: Equatable, Sendable {
 /// Held by construction. Built from elements or decoded from a file, the
 /// list gives each name that is malformed, or one name with an earlier
 /// element's, the first free one in list order
-/// (``NameRule/assignment(of:identifiers:fallback:)``): a pure function of
+/// (``NameRule/assignment(of:shape:fallback:)``): a pure function of
 /// the list, so every copy of Kernova reading one file agrees without a
 /// write, and the file's next commit stores the repair. After that, only
 /// ``append(_:)`` and ``insert(_:at:)`` — the first free name from the
@@ -32,15 +32,11 @@ package protocol ListNamed: Equatable, Sendable {
 package struct NamedList<Element: ListNamed>: Equatable, Sendable {
     package private(set) var elements: [Element]
 
-    package init() {
-        elements = []
-    }
-
     /// `elements` in their order, each under the name
-    /// ``NameRule/assignment(of:identifiers:fallback:)`` gives it.
+    /// ``NameRule/assignment(of:shape:fallback:)`` gives it.
     package init(repairing elements: some Sequence<Element>) {
         let stored = Array(elements)
-        let names = NameRule.assignment(of: stored.map(\.listedName), identifiers: Element.identifiers) {
+        let names = NameRule.assignment(of: stored.map(\.listedName), shape: Element.shape) {
             stored[$0].nameBase
         }
         self.elements = zip(stored, names).map { element, name in
@@ -57,18 +53,18 @@ package struct NamedList<Element: ListNamed>: Equatable, Sendable {
 
     /// `proposed` as the name of the element `id` identifies — or of a new
     /// one, for `nil` — beside every other
-    /// (``NameRule/validated(_:among:identifiers:)``).
+    /// (``NameRule/validated(_:among:shape:)``).
     package func validatedName(_ proposed: String, for id: UUID?) throws(NameRule.Refusal) -> String {
-        try NameRule.validated(proposed, among: names(excluding: id), identifiers: Element.identifiers)
+        try NameRule.validated(proposed, among: names(excluding: id), shape: Element.shape)
     }
 
     /// The name Kernova gives `element` joining the list: its own, where that
-    /// is well formed and free, else the first free one counted from it, or
-    /// from its ``ListNamed/nameBase``.
+    /// is well formed and free, else the first free one counted from the name
+    /// its own makes, or from its ``ListNamed/nameBase``.
     package func freeName(for element: Element) -> String {
         NameRule.name(
             for: element.listedName, fallback: element.nameBase, among: names(excluding: nil),
-            identifiers: Element.identifiers)
+            shape: Element.shape)
     }
 
     /// Appends `element` under the name Kernova gives it (``freeName(for:)``).

@@ -133,6 +133,10 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         viewModel.activeRename == .detail(instance.id)
     }
 
+    /// The text the next rename this pane opens holds in place of the name:
+    /// what a refused rename was committed with.
+    private var renameDraft: String?
+
     // MARK: General
 
     /// What the install-record row is called for `guestOS`.
@@ -197,7 +201,17 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         nameLabel.currentText = { [weak self] in self?.instance.name }
         nameLabel.onEditCommitted = { [weak self] text in
             guard let self else { return }
-            self.viewModel.commitRename(for: self.instance, newName: text, from: .detail)
+            let instance = self.instance
+            // A name the library refuses opens the edit again, holding that
+            // name, once the refusal is dismissed — as a sidebar rename does.
+            showingRefusal(
+                "Couldn\u{2019}t Rename the Virtual Machine", in: self.view.window, logger: Self.logger,
+                retry: { [weak self] in
+                    guard let self, self.instance === instance else { return }
+                    self.renameDraft = text
+                    self.viewModel.renameVMInDetail(instance)
+                }
+            ) { try self.viewModel.commitRename(for: instance, newName: text, from: .detail) }
         }
         nameLabel.onEditCancelled = { [weak self] in
             guard let self else { return }
@@ -404,7 +418,8 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         // surface lost mid-handoff — the marker has already moved to the sidebar
         // — still commits the text typed here.
         if isRenaming {
-            nameLabel.beginEditing()
+            nameLabel.beginEditing(holding: renameDraft)
+            renameDraft = nil
         } else {
             nameLabel.endEditing()
         }

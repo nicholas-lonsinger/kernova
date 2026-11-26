@@ -24,7 +24,7 @@ extension KernovaCommand.Share {
             commandName: "list",
             abstract: "List the folders a virtual machine shares with its guest.",
             discussion: "Each folder prints with its share's name, which a macOS guest mounts it "
-                + "by — the folder's own name when it was shared, or the next free one, such as "
+                + "by — the folder's own name when it was shared, less any character a guest can't mount it by, or the next free one, such as "
                 + "\u{201C}Projects 2\u{201D} — the path `share remove` takes back, and whether the "
                 + "guest may write to it. The folders themselves are not opened, so one that has "
                 + "moved is listed the way the virtual machine carries it.")

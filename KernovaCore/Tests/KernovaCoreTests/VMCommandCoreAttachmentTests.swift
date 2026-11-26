@@ -22,13 +22,14 @@ struct VMCommandCoreAttachmentTests {
     private func makeHarness(
         diskImages: MockDiskImageService = MockDiskImageService(),
         usbAccessoryPassthrough: USBAccessoryPassthrough = .unavailable(.needsEntitlement),
+        virtualizationHost: FakeVirtualizationHost = FakeVirtualizationHost(),
         bundleProducts: AppBundleProducts = .testing
     ) -> Harness {
         Harness(
             WiredCommandCore(
                 virtualization: MockVirtualizationService(), diskImages: diskImages,
                 usbAccessoryPassthrough: usbAccessoryPassthrough, preferences: preferences,
-                bundleProducts: bundleProducts))
+                virtualizationHost: virtualizationHost, bundleProducts: bundleProducts))
     }
 
     @discardableResult
@@ -366,7 +367,8 @@ struct VMCommandCoreAttachmentTests {
         let context = instance.beginSessionContextForTesting()
         if !directories.isEmpty {
             context.directoryShare =
-                try serving ?? MacOSDirectoryShare.make(for: NamedList(repairing: directories))
+                try serving
+                ?? MacOSDirectoryShare.make(for: NamedList(repairing: directories), host: FakeVirtualizationHost())
         }
         return instance
     }
@@ -414,6 +416,28 @@ struct VMCommandCoreAttachmentTests {
             let first = try #require(instance.sessionContext?.directoryShare?.entries.first)
             #expect(first == serving.entries[0], "stored path exists: \(storedPathExists)")
         }
+    }
+
+    /// Virtualization raises an exception, which nothing catches, for a name
+    /// it refuses (`VZMultipleDirectoryShare.h`), so the swap asks it first.
+    @Test(
+        "A share whose name this Mac's Virtualization refuses is refused before a live swap, naming it, and the guest keeps what it served"
+    )
+    func liveSwapRefusesANameVirtualizationRefuses() throws {
+        let refused = try folder("refused")
+        let name = (refused as NSString).lastPathComponent
+        let harness = makeHarness(virtualizationHost: FakeVirtualizationHost(refusedDirectoryShareNames: [name]))
+        let kept = SharedDirectory(path: try folder("kept"))
+        let instance = try makeRunningMacOSGuest(in: harness, sharing: [kept])
+        let served = instance.sessionContext?.directoryShare
+
+        let refusal = try #require(throws: CommandError.self) {
+            try harness.core.addSharedDirectories(.id(instance.id), paths: [PickedFile(path: refused, bookmark: nil)])
+        }
+
+        #expect(refusal.message(in: .app).contains(name))
+        #expect(instance.configuration.sharedDirectories?.map(\.id) == [kept.id])
+        #expect(instance.sessionContext?.directoryShare == served)
     }
 
     @Test("A running macOS guest's first share and last share are refused by the rule that holds them")

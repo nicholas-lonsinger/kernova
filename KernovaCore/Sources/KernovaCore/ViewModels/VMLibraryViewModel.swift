@@ -363,10 +363,11 @@ package final class VMLibraryViewModel {
     }
 
     /// Renames a storage disk; an empty label is a no-op, since the inline
-    /// field commits on end-editing whether or not the text changed.
-    package func renameStorageDisk(_ disk: UUID, newLabel: String, on instance: VMInstance) {
+    /// field commits on end-editing whether or not the text changed. Throws
+    /// what the rename was refused with (``renaming(on:_:)``).
+    package func renameStorageDisk(_ disk: UUID, newLabel: String, on instance: VMInstance) throws {
         guard !NameRule.trimmed(newLabel).isEmpty else { return }
-        runEdit(on: instance) {
+        try renaming(on: instance) {
             try self.verbs().renameStorageDisk(.id(instance.id), disk: disk, to: newLabel)
         }
     }
@@ -418,10 +419,11 @@ package final class VMLibraryViewModel {
     }
 
     /// Renames a removable medium; an empty label is a no-op, as a storage
-    /// disk's is.
-    package func renameRemovableMedia(_ item: UUID, newLabel: String, on instance: VMInstance) {
+    /// disk's is. Throws what the rename was refused with
+    /// (``renaming(on:_:)``).
+    package func renameRemovableMedia(_ item: UUID, newLabel: String, on instance: VMInstance) throws {
         guard !NameRule.trimmed(newLabel).isEmpty else { return }
-        runEdit(on: instance) {
+        try renaming(on: instance) {
             try self.verbs().renameRemovableMedia(.id(instance.id), item: item, to: newLabel)
         }
     }
@@ -1468,13 +1470,12 @@ package final class VMLibraryViewModel {
 
     /// Renames a snapshot; an empty or unchanged name is a no-op, since the
     /// inline field commits on end-editing whether or not the text changed.
-    package func renameSnapshot(_ snapshot: VMSnapshot, newName: String, on instance: VMInstance) {
+    /// Throws what the rename was refused with, a failed write of the
+    /// snapshot list included, which nothing else reports.
+    package func renameSnapshot(_ snapshot: VMSnapshot, newName: String, on instance: VMInstance) throws {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != snapshot.name else { return }
-        runSync(on: instance) {
-            try self.verbs().renameSnapshot(
-                .id(instance.id), snapshot: snapshot.id, to: newName)
-        }
+        try verbs().renameSnapshot(.id(instance.id), snapshot: snapshot.id, to: newName)
     }
 
     /// Replaces a snapshot's note; an unchanged value is a no-op.
@@ -1690,29 +1691,36 @@ package final class VMLibraryViewModel {
 
     /// Commits the rename text from one of the two rename surfaces; an empty or
     /// unchanged name renames nothing, since a field commits on end-editing
-    /// whether or not the text changed.
+    /// whether or not the text changed. Throws what the rename was refused
+    /// with, for the surface to show beside its field
+    /// (``renaming(_:on:_:)``).
     ///
     /// The marker is only cleared while it still belongs to `surface`'s rename of
     /// `instance`: a commit can fire from a field editor resigning *because* a rename
     /// just started on the other surface (its `makeFirstResponder` synchronously ends
     /// the pending session), and clearing unconditionally would wipe the newer
     /// rename's marker before its UI ever opened.
-    package func commitRename(for instance: VMInstance, newName: String, from surface: RenameSurface) {
+    package func commitRename(for instance: VMInstance, newName: String, from surface: RenameSurface) throws {
         defer { clearRename(ifOwnedBy: surface.target(for: instance)) }
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != instance.name else { return }
+        try renaming(on: instance) { try verbs().rename(.id(instance.id), to: trimmed) }
+    }
+
+    /// Runs `rename`, a rename on `instance`'s configuration typed in place,
+    /// throwing what it was refused with — but logging an operation failure:
+    /// a settings write the configuration funnel has already told the user
+    /// failed, or a rename naming an item no longer listed, its field
+    /// committed after its row went. The verb throws so a wire client hears
+    /// about it, and a second alert is not what the user needs.
+    private func renaming(on instance: VMInstance, _ rename: () throws -> Void) throws {
         do {
-            try verbs().rename(.id(instance.id), to: trimmed)
+            try rename()
         } catch let error as CommandError where error.isOperationFailure {
-            // The configuration funnel already told the user the write failed;
-            // the verb throws so a wire client hears about it, and a second
-            // alert saying the same thing is not what the user needs.
             Self.logger.log(
-                .error,
-                "Rename of '\(instance.name, privacy: .public)' did not persist: \(error.message(in: .log), privacy: .public)"
+                .notice,
+                "A rename on '\(instance.name, privacy: .public)' did not apply: \(error.message(in: .log), privacy: .public)"
             )
-        } catch {
-            present(error, about: .vm(instance))
         }
     }
 
@@ -1885,7 +1893,7 @@ package final class VMLibraryViewModel {
     ///
     /// Two things reach here as
     /// ``CommandError/operationFailed(verb:title:message:recovery:)``: an edit
-    /// naming an attachment the list no longer carries — a rename field
+    /// naming an attachment the list no longer carries — a note field
     /// committing after its row went, a second alert for a disk the first
     /// already removed — and a settings write the library has already told the
     /// user about. Both were silent before there was a verb to refuse them,

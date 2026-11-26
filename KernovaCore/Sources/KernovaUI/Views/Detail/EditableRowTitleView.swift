@@ -69,9 +69,10 @@ final class EditableRowTitleView: NSView {
         refreshNotesVisibility()
     }
 
-    /// Begins inline editing of the name.
-    func beginRename() {
-        nameLabel.beginEditing()
+    /// Begins inline editing of the name, the box holding `draft` in place of
+    /// it when one is given.
+    func beginRename(holding draft: String? = nil) {
+        nameLabel.beginEditing(holding: draft)
     }
 
     /// Begins inline editing of the note, or hands a multi-line one to the

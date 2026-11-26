@@ -543,23 +543,24 @@ extension VMCommandCore {
     }
 
     /// The add every front door ends in: appends `files`, each shared with
-    /// `readOnly` access and named the folder's name or, where another share
-    /// goes by that, the first free name counted from it, skipping folders
-    /// the VM already shares.
+    /// `readOnly` access and named for its folder
+    /// (``SharedDirectory/init(sharing:id:readOnly:bookmark:)``) or, where
+    /// another share goes by that, the first free name counted from it,
+    /// skipping folders the VM already shares.
     func addSharedDirectories(
         _ files: [PickedFile], readOnly: Bool, to instance: VMInstance
     ) throws {
         let capability = try requireSharedDirectories(.add, on: instance)
-        // Minted once, so every pass of the change adds the same shares.
-        let picks = files.map { (file: $0, id: UUID()) }
+        // Made once, so every pass of the change adds the same shares.
+        let picks = files.map {
+            SharedDirectory(sharing: $0.path, id: UUID(), readOnly: readOnly, bookmark: $0.bookmark)
+        }
         try writeSharedDirectories(of: instance, as: capability) { directories in
             // The one spelling the core compares folder paths in, so a pick of
             // `/x/` finds the `/x` this VM already shares.
             var known = Set(directories.map { Self.comparablePath($0.path) })
-            for pick in picks where known.insert(Self.comparablePath(pick.file.path)).inserted {
-                directories.append(
-                    SharedDirectory(id: pick.id, path: pick.file.path, readOnly: readOnly, bookmark: pick.file.bookmark)
-                )
+            for pick in picks where known.insert(Self.comparablePath(pick.path)).inserted {
+                directories.append(pick)
             }
         }
     }
@@ -677,7 +678,7 @@ extension VMCommandCore {
                         let committed = changed(config)
                         do {
                             share = try MacOSDirectoryShare.make(
-                                for: committed ?? [], serving: serving)
+                                for: committed ?? [], serving: serving, host: library.virtualizationHost)
                         } catch {
                             throw CommandError.invalidArgument(error.localizedDescription)
                         }

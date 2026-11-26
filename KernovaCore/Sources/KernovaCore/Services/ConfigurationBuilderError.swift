@@ -40,6 +40,9 @@ package enum ConfigurationBuilderError: LocalizedError {
     case sharedDirectoryNotADirectory(id: UUID, path: String, label: String)
     case sharedDirectoryNotReadable(id: UUID, path: String, label: String)
     case sharedDirectoryNotWritable(id: UUID, path: String, label: String)
+    /// Virtualization refused the name a macOS guest would mount the folder
+    /// by (``VirtualizationHostProviding/directoryShareNameRefusal(_:)``).
+    case sharedDirectoryNameRefused(id: UUID, path: String, label: String, underlying: any Error)
 
     package var errorDescription: String? {
         switch self {
@@ -88,6 +91,8 @@ package enum ConfigurationBuilderError: LocalizedError {
             "Shared folder '\(label)' is not readable: \(path)."
         case .sharedDirectoryNotWritable(_, let path, let label):
             "Shared folder '\(label)' is not writable: \(path)."
+        case .sharedDirectoryNameRefused(_, let path, let label, let underlying):
+            "Virtualization refused the name of shared folder '\(label)' at \(path). (\(underlying.localizedDescription))"
         }
     }
 
@@ -105,7 +110,7 @@ package enum ConfigurationBuilderError: LocalizedError {
         case .sharedDirectoryNotReadable: .notReadable
         case .storageDiskNotWritable, .removableMediaNotWritable, .sharedDirectoryNotWritable:
             .notWritable
-        case .storageDiskAttachFailed, .removableMediaAttachFailed: .attachRefused
+        case .storageDiskAttachFailed, .removableMediaAttachFailed, .sharedDirectoryNameRefused: .attachRefused
         case .invalidHardwareModel, .invalidMachineIdentifier, .efiVariableStoreMissing,
             .missingKernelPath,
             .kernelNotFound, .kernelPathIsDirectory, .initrdNotFound, .initrdPathIsDirectory,

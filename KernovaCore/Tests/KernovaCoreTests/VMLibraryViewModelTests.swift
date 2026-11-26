@@ -690,12 +690,12 @@ struct VMLibraryViewModelTests {
     // MARK: - Rename
 
     @Test("commitRename updates name and persists")
-    func commitRenameUpdatesName() {
+    func commitRenameUpdatesName() throws {
         let (viewModel, storage, _, _, _) = makeViewModel()
         let instance = viewModel.library.admitFixture(name: "Old Name", files: storage.files)
         viewModel.activeRename = .detail(instance.id)
 
-        viewModel.commitRename(for: instance, newName: "New Name", from: .detail)
+        try viewModel.commitRename(for: instance, newName: "New Name", from: .detail)
 
         #expect(instance.name == "New Name")
         #expect(viewModel.activeRename == nil)

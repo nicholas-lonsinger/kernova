@@ -16,9 +16,11 @@ struct NameRuleTests {
     }
 
     /// Whether a sibling may go by `name` whatever else does: trimmed, holding
-    /// more than whitespace, and spelling no identifier of `siblings`.
+    /// more than whitespace, spelling no identifier of `siblings`, and one its
+    /// class takes.
     private static func isWellFormed(_ name: String, _ siblings: SiblingClass = .identifiedByUUID) -> Bool {
         !name.isEmpty && name.trimmingCharacters(in: .whitespacesAndNewlines) == name && !siblings.spells(name)
+            && siblings.takes(name)
     }
 
     /// A class of siblings, by what a door reads as one's identifier rather
@@ -29,27 +31,50 @@ struct NameRuleTests {
         /// A shared directory: a full path, as a script or a shortcut names
         /// its folder — `~`, or text starting `~/` or `/`.
         case identifiedByPath
+        /// A class identified by path whose names are handed on to a file
+        /// system that refuses `:` and `/`, reserves `.`, and takes at most
+        /// eight bytes of UTF-8.
+        case handedOn
 
         func spells(_ text: String) -> Bool {
             switch self {
             case .identifiedByUUID: UUID(uuidString: text) != nil
-            case .identifiedByPath: text == "~" || text.hasPrefix("~/") || text.hasPrefix("/")
+            case .identifiedByPath, .handedOn: text == "~" || text.hasPrefix("~/") || text.hasPrefix("/")
+            }
+        }
+
+        /// Whether a trimmed name spelling no identifier is one the class
+        /// takes.
+        func takes(_ name: String) -> Bool {
+            switch self {
+            case .identifiedByUUID, .identifiedByPath: true
+            case .handedOn: !name.contains(":") && !name.contains("/") && name != "." && name.utf8.count <= 8
+            }
+        }
+
+        var shape: NameRule.Shape {
+            switch self {
+            case .identifiedByUUID, .identifiedByPath: NameRule.Shape(identifiers: identifiers)
+            case .handedOn:
+                NameRule.Shape(identifiers: identifiers, refusing: [":", "/"], reserving: ["."], maximumUTF8Length: 8)
             }
         }
 
         var identifiers: NameRule.Identifiers {
             switch self {
             case .identifiedByUUID: .uuid
-            case .identifiedByPath: NameRule.Identifiers { SiblingClass.identifiedByPath.spells($0) }
+            case .identifiedByPath, .handedOn: NameRule.Identifiers { SiblingClass.identifiedByPath.spells($0) }
             }
         }
 
         /// What one whose stored name is malformed is named from: for a share,
-        /// its folder's name, which can be `~`.
+        /// its folder's name, which can be `~`, and for a name handed on, one
+        /// longer than the class takes.
         var fallback: String {
             switch self {
             case .identifiedByUUID: "Untitled"
             case .identifiedByPath: "~"
+            case .handedOn: "Shared Folder"
             }
         }
 
@@ -59,6 +84,10 @@ struct NameRuleTests {
             switch self {
             case .identifiedByUUID: NameRuleTests.alphabet
             case .identifiedByPath: NameRuleTests.alphabet + ["~", "/", "~/Build", "/Build"]
+            case .handedOn:
+                NameRuleTests.alphabet + [
+                    "~", "/", ":", ".", "Q1:Q2", ": a", "Building", "building", "B\u{00FC}ildin", "\u{1F08}\u{0399}aaa",
+                ]
             }
         }
     }
@@ -92,7 +121,7 @@ struct NameRuleTests {
         arguments: SiblingClass.allCases)
     func everyListIsGivenDistinctWellFormedNames(siblings: SiblingClass) {
         for stored in Self.everyList(upTo: 3, from: siblings.alphabet) {
-            let assigned = NameRule.assignment(of: stored, identifiers: siblings.identifiers) { _ in
+            let assigned = NameRule.assignment(of: stored, shape: siblings.shape) { _ in
                 siblings.fallback
             }
 

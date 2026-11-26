@@ -52,6 +52,79 @@ public enum NameRule {
         }
     }
 
+    /// What one class of sibling may be named, beyond the trimmed text more
+    /// than whitespace every name is: nothing spelling one of its
+    /// ``identifiers``, and, for a class whose names Kernova hands on to a
+    /// file system, nothing holding a character it refuses, being a name it
+    /// reserves, or running longer than it takes.
+    public struct Shape: Sendable {
+        /// What a door reads as one of these siblings' identifiers.
+        public let identifiers: Identifiers
+        private let refusedScalars: Set<Unicode.Scalar>
+        private let reservedNames: Set<String>
+        /// The most UTF-8 bytes a name holds, `nil` for no limit — enough for
+        /// any first character and a count after it.
+        private let maximumUTF8Length: Int?
+
+        /// Names spelling none of `identifiers`, holding none of
+        /// `refusedScalars` — which hold no whitespace and no digit, as a
+        /// count does — none of `reservedNames`, and at most
+        /// `maximumUTF8Length` bytes of UTF-8.
+        public init(
+            identifiers: Identifiers, refusing refusedScalars: Set<Unicode.Scalar> = [],
+            reserving reservedNames: Set<String> = [], maximumUTF8Length: Int? = nil
+        ) {
+            self.identifiers = identifiers
+            self.refusedScalars = refusedScalars
+            self.reservedNames = reservedNames
+            self.maximumUTF8Length = maximumUTF8Length
+        }
+
+        /// Names spelling no UUID: a virtual machine's, a network's, a
+        /// group's, a snapshot's and a storage disk's.
+        public static let uuid = Shape(identifiers: .uuid)
+
+        /// Whether a trimmed name holding more than whitespace is one a
+        /// sibling of this class may go by.
+        fileprivate func admits(_ name: String) -> Bool {
+            !identifiers.contains(name) && !reservedNames.contains(name)
+                && !name.unicodeScalars.contains(where: refusedScalars.contains)
+                && maximumUTF8Length.map { name.utf8.count <= $0 } ?? true
+        }
+
+        /// The name `text` makes for a sibling of this class: `text` without
+        /// the characters the class refuses, trimmed, and cut to its longest —
+        /// or `nil` where nothing is left, or what is left is a reserved name
+        /// or spells an identifier.
+        public func base(of text: String) -> String? {
+            let kept = String(String.UnicodeScalarView(text.unicodeScalars.filter { !refusedScalars.contains($0) }))
+            let base = NameRule.trimmed(Self.prefix(of: NameRule.trimmed(kept), fitting: maximumUTF8Length))
+            guard !base.isEmpty, admits(base) else { return nil }
+            return base
+        }
+
+        /// `base`, a name ``base(of:)`` gives, counted `count`: "`base`
+        /// `count`", `base` cut short where the whole would run longer than
+        /// the class takes.
+        fileprivate func counted(_ base: String, _ count: Int) -> String {
+            let count = " \(count)"
+            return Self.prefix(of: base, fitting: maximumUTF8Length.map { $0 - count.utf8.count }) + count
+        }
+
+        /// The longest run of `text`'s first scalars holding at most `limit`
+        /// bytes of UTF-8 — cut between scalars, which keeps a first character
+        /// that is one cluster of many.
+        private static func prefix(of text: String, fitting limit: Int?) -> String {
+            guard let limit, text.utf8.count > limit else { return text }
+            var length = 0
+            let kept = text.unicodeScalars.prefix { scalar in
+                length += String(scalar).utf8.count
+                return length <= limit
+            }
+            return String(String.UnicodeScalarView(kept))
+        }
+    }
+
     /// Why a name can't be given.
     public enum Refusal: Error, Equatable, Sendable {
         /// Nothing is left once whitespace and line breaks are trimmed.
@@ -59,6 +132,9 @@ public enum NameRule {
         /// The name spells an identifier, which text naming a sibling is read
         /// as first.
         case identifier(String)
+        /// The name holds a character the class refuses, is a name it
+        /// reserves, or runs longer than it takes (``Shape``).
+        case disallowed(String)
         /// A sibling already goes by the name; the holder's name as it stands.
         case taken(by: String)
 
@@ -68,7 +144,9 @@ public enum NameRule {
             case .empty:
                 "A \(noun) needs a name."
             case .identifier(let name):
-                "\u{201C}\(name)\u{201D} can\u{2019}t name a \(noun): an identifier already names one."
+                "\u{201C}\(name)\u{201D} has the form of an identifier, which a \(noun)\u{2019}s name can\u{2019}t have."
+            case .disallowed(let name):
+                "\u{201C}\(name)\u{201D} can\u{2019}t name a \(noun)."
             case .taken(let holder):
                 "A \(noun) named \u{201C}\(holder)\u{201D} already exists. Give this one another name."
             }
@@ -142,14 +220,15 @@ public enum NameRule {
     // MARK: - Names a caller chooses
 
     /// `proposed` trimmed of whitespace and line breaks, as the name of a
-    /// sibling of `siblings`, whose class `identifiers` identifies; throws why
-    /// it can't be one.
+    /// sibling of `siblings`, whose class `shape` describes; throws why it
+    /// can't be one.
     public static func validated(
-        _ proposed: String, among siblings: some Sequence<String>, identifiers: Identifiers = .uuid
+        _ proposed: String, among siblings: some Sequence<String>, shape: Shape = .uuid
     ) throws(Refusal) -> String {
         let name = trimmed(proposed)
         guard !name.isEmpty else { throw .empty }
-        guard !identifiers.contains(name) else { throw .identifier(name) }
+        guard !shape.identifiers.contains(name) else { throw .identifier(name) }
+        guard shape.admits(name) else { throw .disallowed(name) }
         if let holder = Names(Array(siblings)).member(sameAs: Comparand(name)) { throw .taken(by: holder.name) }
         return name
     }
@@ -164,43 +243,43 @@ public enum NameRule {
         return firstAvailable(base) { taken.contains(Comparand($0)) }
     }
 
-    /// ``firstAvailable(_:among:)`` with what is taken asked of `isTaken`.
-    private static func firstAvailable(_ base: String, isTaken: (String) -> Bool) -> String {
+    /// ``firstAvailable(_:among:)`` with what is taken asked of `isTaken`,
+    /// each count cut to fit `shape` (``Shape/counted(_:_:)``).
+    private static func firstAvailable(_ base: String, shape: Shape = .uuid, isTaken: (String) -> Bool) -> String {
         guard isTaken(base) else { return base }
         var counter = 2
-        while isTaken("\(base) \(counter)") {
+        while isTaken(shape.counted(base, counter)) {
             counter += 1
         }
-        return "\(base) \(counter)"
+        return shape.counted(base, counter)
     }
 
     /// The name each of `stored` goes by, in the order given, as siblings
-    /// whose class `identifiers` identifies: a stored name that is well formed
-    /// and one name with none already given keeps it, and every other takes
-    /// the first well-formed name (``firstAvailable(_:among:)``), counted from
-    /// its trimmed self — or from `fallback` of its index where that is empty
-    /// or spells an identifier — that is one name with no stored name and none
-    /// already given.
+    /// whose class `shape` describes: a stored name that is well formed and
+    /// one name with none already given keeps it, and every other takes the
+    /// first well-formed name (``firstAvailable(_:among:)``), counted from the
+    /// name its own makes (``Shape/base(of:)``) — or, where that makes none,
+    /// from the one `fallback` of its index makes, else `fallback` itself —
+    /// that is one name with no stored name and none already given.
     ///
     /// Every name it answers is well formed, and no two are one name
     /// (``isOneName(_:_:)``). Counting against the stored names leaves each
     /// later sibling's own name for it, so a set of well-formed names no two
-    /// of which are one name comes back as it is. Each fallback is well
-    /// formed, or becomes so with a count after it.
+    /// of which are one name comes back as it is. Each fallback makes a name,
+    /// or becomes well formed with a count after it.
     public static func assignment(
-        of stored: [String], identifiers: Identifiers = .uuid, fallback: (_ index: Int) -> String
+        of stored: [String], shape: Shape = .uuid, fallback: (_ index: Int) -> String
     ) -> [String] {
         let storedNames = Names(stored)
         var given = Names()
         return storedNames.members.enumerated().map { index, comparand in
-            if isWellFormed(comparand.name, identifiers: identifiers), !given.contains(comparand) {
+            if isWellFormed(comparand.name, shape: shape), !given.contains(comparand) {
                 given.insert(comparand)
                 return comparand.name
             }
-            let own = trimmed(comparand.name)
-            let base = own.isEmpty || identifiers.contains(own) ? fallback(index) : own
-            let free = firstAvailable(base) { candidate in
-                guard !identifiers.contains(candidate) else { return true }
+            let base = shape.base(of: comparand.name) ?? shape.base(of: fallback(index)) ?? fallback(index)
+            let free = firstAvailable(base, shape: shape) { candidate in
+                guard !shape.identifiers.contains(candidate) else { return true }
                 let candidate = Comparand(candidate)
                 return storedNames.contains(candidate) || given.contains(candidate)
             }
@@ -210,13 +289,13 @@ public enum NameRule {
     }
 
     /// The name a new sibling asking for `proposed` goes by beside
-    /// `siblings`, which ``assignment(of:identifiers:fallback:)`` gave:
-    /// `proposed`, where it is well formed and free, else the first free name
-    /// from it, or from `fallback` where it is empty or spells an identifier.
+    /// `siblings`, which ``assignment(of:shape:fallback:)`` gave: `proposed`,
+    /// where it is well formed and free, else the first free name from the
+    /// name it makes, or from `fallback` where it makes none.
     public static func name(
-        for proposed: String, fallback: String, among siblings: [String], identifiers: Identifiers = .uuid
+        for proposed: String, fallback: String, among siblings: [String], shape: Shape = .uuid
     ) -> String {
-        assignment(of: siblings + [proposed], identifiers: identifiers) { _ in fallback }[siblings.count]
+        assignment(of: siblings + [proposed], shape: shape) { _ in fallback }[siblings.count]
     }
 
     // MARK: - Names Kernova lists
@@ -239,6 +318,7 @@ public enum NameRule {
     /// it answers are one name, and none spells an identifier.
     public static func listing(of names: [String], qualifiers: [[String]], identifiers: Identifiers) -> [String] {
         let items = names.indices
+        let shape = Shape(identifiers: identifiers)
         /// Whether some other item's name in `listed` is one name with `item`'s.
         func readsAlike(_ item: Int, in listed: [Comparand]) -> Bool {
             items.contains {
@@ -246,7 +326,7 @@ public enum NameRule {
             }
         }
         let own = names.map(Comparand.init)
-        let keeps = items.map { isWellFormed(names[$0], identifiers: identifiers) && !readsAlike($0, in: own) }
+        let keeps = items.map { isWellFormed(names[$0], shape: shape) && !readsAlike($0, in: own) }
         var level = items.map { keeps[$0] || qualifiers[$0].isEmpty ? 0 : 1 }
         func listed(_ item: Int) -> String {
             level[item] == 0 ? names[item] : "\(names[item]) (\(qualifiers[item][level[item] - 1]))"
@@ -256,7 +336,7 @@ public enum NameRule {
             let compared = current.map(Comparand.init)
             let clashing = items.filter { item in
                 !keeps[item]
-                    && (!isWellFormed(current[item], identifiers: identifiers) || readsAlike(item, in: compared))
+                    && (!isWellFormed(current[item], shape: shape) || readsAlike(item, in: compared))
             }
             let advancing = clashing.filter { level[$0] < qualifiers[$0].count }
             guard advancing.isEmpty else {
@@ -322,11 +402,11 @@ public enum NameRule {
 
     // MARK: - Shape
 
-    /// Whether `name` is one a sibling whose class `identifiers` identifies
-    /// may go by, whoever else does: trimmed, holding more than whitespace,
-    /// and spelling no identifier.
-    public static func isWellFormed(_ name: String, identifiers: Identifiers = .uuid) -> Bool {
-        !name.isEmpty && name == trimmed(name) && !identifiers.contains(name)
+    /// Whether `name` is one a sibling whose class `shape` describes may go
+    /// by, whoever else does: trimmed, holding more than whitespace, and one
+    /// the shape admits.
+    public static func isWellFormed(_ name: String, shape: Shape = .uuid) -> Bool {
+        !name.isEmpty && name == trimmed(name) && shape.admits(name)
     }
 
     /// `name` without the whitespace and line breaks around it, as every name

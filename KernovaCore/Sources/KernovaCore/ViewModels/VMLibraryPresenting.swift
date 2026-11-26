@@ -60,8 +60,10 @@ package struct StartFailedAttachment: Equatable, Sendable {
         /// A shared folder the VM cannot read.
         case notReadable
         case notWritable
-        /// The file is there and `VZDiskImageStorageDeviceAttachment` refused
-        /// it; its own description carries what little is known.
+        /// The item is there and Virtualization refused it — a disk image
+        /// `VZDiskImageStorageDeviceAttachment` would not open, or the name a
+        /// shared folder goes by; its own description carries what little is
+        /// known.
         case attachRefused
     }
 

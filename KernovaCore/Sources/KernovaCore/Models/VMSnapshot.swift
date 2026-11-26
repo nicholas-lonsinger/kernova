@@ -176,7 +176,7 @@ extension VMSnapshot: ListNamed {
 
     package var nameBase: String { Self.nameStem }
 
-    package static let identifiers = NameRule.Identifiers.uuid
+    package static let shape = NameRule.Shape.uuid
 }
 
 /// The network device a snapshot's configuration was captured with — the part

@@ -345,16 +345,10 @@ final class SettingsNamedListEditor: NSObject {
     }
 
     /// Runs `change`, showing what it was refused with under `title`, then
-    /// `retry` once that sheet is dismissed.
+    /// `retry` once that sheet is dismissed
+    /// (``showingRefusal(_:in:logger:retry:_:)``).
     private func run(_ title: String, retry: (() -> Void)? = nil, _ change: () throws -> Void) {
-        do {
-            try change()
-        } catch {
-            let message = (error as? CommandError)?.message(in: .app) ?? error.localizedDescription
-            logger.log(.notice, "\(title, privacy: .public): \(message, privacy: .public)")
-            guard let window = tableView.window else { return }
-            presentSheetAlert(.acknowledgement(title: title, message: message), in: window, completion: retry)
-        }
+        showingRefusal(title, in: tableView.window, logger: logger, retry: retry, change)
     }
 
     /// The control's add and remove glyphs, logging and asserting on a

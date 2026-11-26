@@ -357,9 +357,10 @@ final class SidebarVMRowCellView: NSTableCellView {
         return nameLine.bounds.contains(nameLine.convert(point, from: self))
     }
 
-    /// Opens the rename box on this row.
-    func beginRename() {
-        nameLabel.beginEditing()
+    /// Opens the rename box on this row, holding `draft` in place of the name
+    /// when one is given.
+    func beginRename(holding draft: String? = nil) {
+        nameLabel.beginEditing(holding: draft)
     }
 
     /// Ends a live rename through the commit path, so the in-flight text lands.

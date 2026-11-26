@@ -28,4 +28,13 @@ package struct VirtualizationHost: VirtualizationHostProviding {
     package func guestAccountRefusal(_ credentials: GuestProvisioningCredentials) -> GuestProvisioningRefusal? {
         MacOSGuestProvisioning.validate(credentials)
     }
+
+    package func directoryShareNameRefusal(_ name: String) -> (any Error)? {
+        do {
+            try VZMultipleDirectoryShare.validateName(name)
+            return nil
+        } catch {
+            return error
+        }
+    }
 }

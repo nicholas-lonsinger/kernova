@@ -55,7 +55,7 @@ package struct StorageDisk: Codable, Sendable, Equatable {
         self.id = id
         self.path = path
         self.readOnly = readOnly
-        self.label = label ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        self.label = label ?? Self.imageStem(ofPath: path)
         self.isInternal = isInternal
         self.kind = kind ?? Self.defaultKind(forPath: path)
         self.bookmark = bookmark
@@ -123,14 +123,19 @@ extension StorageDisk: ListNamed {
         set { label = newValue }
     }
 
-    /// Its image's file name without the extension, or "Disk" where that
-    /// names nothing, as an image named for its identifier does.
+    /// The name its image's file name without the extension makes, or "Disk"
+    /// where that makes none, as an image named for its identifier does.
     package var nameBase: String {
-        let stem = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
-        return NameRule.isWellFormed(stem, identifiers: Self.identifiers) ? stem : "Disk"
+        Self.shape.base(of: Self.imageStem(ofPath: path)) ?? "Disk"
     }
 
-    package static let identifiers = NameRule.Identifiers.uuid
+    package static let shape = NameRule.Shape.uuid
+
+    /// The file name of the image at `path` without its extension, read from
+    /// the path alone.
+    static func imageStem(ofPath path: String) -> String {
+        ((path as NSString).lastPathComponent as NSString).deletingPathExtension
+    }
 }
 
 /// A USB mass storage device on the XHCI controller's `usbDevices` list.
@@ -171,7 +176,7 @@ package struct RemovableMediaItem: Codable, Sendable, Equatable {
         self.id = id
         self.path = path
         self.readOnly = readOnly
-        self.label = label ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        self.label = label ?? StorageDisk.imageStem(ofPath: path)
         self.bookmark = bookmark
         self.notes = notes
         self.awaitedAgentScopes = awaitedAgentScopes

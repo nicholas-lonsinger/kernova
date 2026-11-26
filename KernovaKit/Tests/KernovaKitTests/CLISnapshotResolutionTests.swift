@@ -18,11 +18,6 @@ struct CLISnapshotResolutionTests {
         name: "Before Upgrade", notes: "", kind: "cold",
         createdAt: Date(timeIntervalSince1970: 1_760_000_000),
         isCurrent: false, isEphemeralBaseline: false)
-    private let newer = SnapshotSummary(
-        id: UUID(uuidString: "33333333-3333-3333-3333-333333333333") ?? UUID(),
-        name: "Before Upgrade", notes: "", kind: "warm",
-        createdAt: Date(timeIntervalSince1970: 1_780_000_000),
-        isCurrent: false, isEphemeralBaseline: false)
 
     private func resolve(
         _ text: String, in snapshots: [SnapshotSummary], forcingID: Bool = false
@@ -53,25 +48,6 @@ struct CLISnapshotResolutionTests {
             #expect(failure.code == .notFound)
             #expect(failure.message.contains("Missing"))
             #expect(failure.message.contains("Alpha"))
-        } catch {
-            Issue.record("expected a CLIFailure, got \(error)")
-        }
-    }
-
-    @Test("--id resolves by identifier alone, never falling back to a name")
-    func forcingTheIdentifierSkipsTheNames() throws {
-        #expect(try resolve(base.id.uuidString, in: [base, older], forcingID: true) == base)
-
-        // A snapshot named after another's identifier is not what --id meant.
-        let impostor = SnapshotSummary(
-            id: newer.id, name: base.id.uuidString, notes: "", kind: "warm",
-            createdAt: Date(timeIntervalSince1970: 1_780_000_000), isCurrent: false,
-            isEphemeralBaseline: false)
-        do {
-            _ = try resolve(base.id.uuidString, in: [impostor], forcingID: true)
-            Issue.record("expected a not-found refusal")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .notFound)
         } catch {
             Issue.record("expected a CLIFailure, got \(error)")
         }

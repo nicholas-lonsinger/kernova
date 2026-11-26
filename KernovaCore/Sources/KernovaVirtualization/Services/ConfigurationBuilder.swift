@@ -738,7 +738,7 @@ struct ConfigurationBuilder: Sendable {
                 resolvedURLs: try directories.map { try ConfigurationPaths.resolveSharedDirectory($0) })
             return nil
         }
-        let share = try MacOSDirectoryShare.make(for: directories)
+        let share = try MacOSDirectoryShare.make(for: directories, host: VirtualizationHost())
         let device = VZVirtioFileSystemDeviceConfiguration(
             tag: VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag)
         device.share = share.makeShare()

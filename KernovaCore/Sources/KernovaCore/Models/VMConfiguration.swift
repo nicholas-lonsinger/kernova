@@ -977,8 +977,8 @@ package struct SharedDirectory: Codable, Sendable, Equatable {
         case name = "mountName"
     }
 
-    /// A share named `name`, by default from the folder's own name
-    /// (``nameBase``).
+    /// A share named `name`, by default the name its path makes
+    /// (``nameBase(ofPath:)``).
     init(
         id: UUID = UUID(), path: String, readOnly: Bool = false, bookmark: Data? = nil, name: String? = nil
     ) {
@@ -986,7 +986,17 @@ package struct SharedDirectory: Codable, Sendable, Equatable {
         self.path = path
         self.readOnly = readOnly
         self.bookmark = bookmark
-        self.name = name ?? Self.nameBase(ofFolderAt: path)
+        self.name = name ?? Self.nameBase(ofPath: path)
+    }
+
+    /// A new share of the folder at `path`, named for the folder as the file
+    /// system names it — a volume's root by the volume's name — where that
+    /// makes a name (``shape``), else as ``init(id:path:readOnly:bookmark:name:)``
+    /// names it.
+    init(sharing path: String, id: UUID, readOnly: Bool, bookmark: Data?) {
+        let folderName = try? URL(filePath: path, directoryHint: .isDirectory).resourceValues(forKeys: [.nameKey]).name
+        self.init(
+            id: id, path: path, readOnly: readOnly, bookmark: bookmark, name: folderName.flatMap(Self.shape.base(of:)))
     }
 
     package init(from decoder: any Decoder) throws {
@@ -999,13 +1009,11 @@ package struct SharedDirectory: Codable, Sendable, Equatable {
             name: try c.decodeIfPresent(String.self, forKey: .name))
     }
 
-    /// The folder's own name; for the disk root, whose last path component is
-    /// `/`, which names a path, its volume's name as Finder shows it.
-    private static func nameBase(ofFolderAt path: String) -> String {
-        let folder = URL(fileURLWithPath: path)
-        guard folder.lastPathComponent == "/" else { return folder.lastPathComponent }
-        return (try? folder.resourceValues(forKeys: [.volumeLocalizedNameKey]))?.volumeLocalizedName
-            ?? "Startup Disk"
+    /// The name the last component of `path` makes (``shape``), read from the
+    /// path alone, or "Shared Folder" where it makes none, as a volume's root
+    /// does.
+    private static func nameBase(ofPath path: String) -> String {
+        shape.base(of: (path as NSString).lastPathComponent) ?? "Shared Folder"
     }
 }
 
@@ -1015,8 +1023,17 @@ extension SharedDirectory: ListNamed {
         set { name = newValue }
     }
 
-    package var nameBase: String { Self.nameBase(ofFolderAt: path) }
+    package var nameBase: String { Self.nameBase(ofPath: path) }
 
-    /// A full path, which a door reads as the share of that folder.
-    package static let identifiers = NameRule.Identifiers { UserHome.isFullPath($0) }
+    /// No full path, which a door reads as the share of that folder, and
+    /// nothing Virtualization refuses as the name a macOS guest mounts a
+    /// folder by. `VZMultipleDirectoryShare.validateName(_:)` refuses an
+    /// empty name, "." and "..", a name holding any of `* / : < > ? \ |`, and
+    /// one of more than 255 bytes of UTF-8 (`NAME_MAX`); it reads a NUL as the
+    /// name's end, so the name before one passes, and Kernova refuses NUL
+    /// too.
+    package static let shape = NameRule.Shape(
+        identifiers: NameRule.Identifiers { UserHome.isFullPath($0) },
+        refusing: ["\u{0}", "*", "/", ":", "<", ">", "?", "\\", "|"], reserving: [".", ".."],
+        maximumUTF8Length: 255)
 }

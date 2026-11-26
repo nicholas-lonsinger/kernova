@@ -307,7 +307,7 @@ package final class VMCreationViewModel {
     /// goes by.
     package var vmName: String
 
-    /// Why ``vmName`` can't name the new VM (``NameRule/validated(_:among:identifiers:)``),
+    /// Why ``vmName`` can't name the new VM (``NameRule/validated(_:among:shape:)``),
     /// `nil` when it can.
     package var nameRefusal: NameRule.Refusal? {
         do throws(NameRule.Refusal) {

@@ -3,8 +3,8 @@ import Foundation
 @testable import KernovaCore
 
 /// A `VirtualizationHostProviding` with fixed answers, so what a test reads as
-/// this Mac's limits, fresh identities and guest-account verdict depends on
-/// neither the Mac nor the Virtualization framework.
+/// this Mac's limits, fresh identities and verdicts on a guest account or a
+/// share's name depends on neither the Mac nor the Virtualization framework.
 package struct FakeVirtualizationHost: VirtualizationHostProviding {
     /// The bounds Virtualization reports on an Apple silicon Mac with 32 GiB of
     /// memory.
@@ -14,9 +14,13 @@ package struct FakeVirtualizationHost: VirtualizationHostProviding {
 
     /// What ``guestAccountRefusal(_:)`` answers for every set of credentials.
     package var refusal: GuestProvisioningRefusal?
+    /// The names ``directoryShareNameRefusal(_:)`` refuses; it accepts every
+    /// other.
+    package var refusedDirectoryShareNames: Set<String>
 
-    package init(refusal: GuestProvisioningRefusal? = nil) {
+    package init(refusal: GuestProvisioningRefusal? = nil, refusedDirectoryShareNames: Set<String> = []) {
         self.refusal = refusal
+        self.refusedDirectoryShareNames = refusedDirectoryShareNames
     }
 
     package var resourceLimits: VMResourceLimits { Self.resourceLimits }
@@ -33,5 +37,9 @@ package struct FakeVirtualizationHost: VirtualizationHostProviding {
 
     package func guestAccountRefusal(_ credentials: GuestProvisioningCredentials) -> GuestProvisioningRefusal? {
         refusal
+    }
+
+    package func directoryShareNameRefusal(_ name: String) -> (any Error)? {
+        refusedDirectoryShareNames.contains(name) ? CocoaError(.fileWriteInvalidFileName) : nil
     }
 }

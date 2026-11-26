@@ -696,6 +696,27 @@ struct VMAdmissionRefusal: Error, Equatable {
     let refusal: VMAdmission.Refusal
 }
 
+extension VMAdmission.Refusal {
+    /// Why the VM refused the request, in words for the log.
+    @MainActor var logDescription: String {
+        switch self {
+        case .busy(let kind): "it is \(VMCommandCore.busyDescription(kind))"
+        case .invalidState: "its state does not take the request"
+        case .takesStoppedVM: "only a stopped virtual machine takes the change"
+        case .removed: "it is no longer in the library"
+        case .identityConflict(let conflict): conflict.localizedDescription
+        case .accessoryHeld(let holder): "the USB accessory is in use by '\(holder.name)'"
+        case .usbPassthroughUnavailable(let gap): gap.refusal.message(in: .log)
+        case .terminating: "Kernova is quitting"
+        case .heldByAnotherCopy: "another copy of Kernova holds its bundle"
+        case .ephemeralBaselineUnreadable: "its Ephemeral Mode baseline's settings can't be read"
+        case .symbolicLinkInBundle: "its bundle holds a symbolic link"
+        case .stopRequestInFlight: "a request to shut its guest down is still being sent"
+        case .guestPaused: "its guest is paused"
+        }
+    }
+}
+
 /// A request that carries the guest's files forward met the VM returning to
 /// its Ephemeral baseline (``VMAdmission/Decision/wait(_:)``): it is decided
 /// afresh once `restoration` lands
