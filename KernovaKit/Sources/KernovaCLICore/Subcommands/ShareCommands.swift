@@ -10,8 +10,8 @@ extension KernovaCommand {
         static let configuration = CommandConfiguration(
             commandName: "share",
             abstract: "Work with the folders a virtual machine shares with its guest.",
-            discussion: "A share is named by its folder's path, which is also what the guest "
-                + "mounts it by. A relative path is read against the directory you type it in.",
+            discussion: "A share is addressed by its folder's path. A relative path is read against "
+                + "the directory you type it in.",
             subcommands: [List.self, Add.self, Remove.self])
     }
 }
@@ -23,9 +23,11 @@ extension KernovaCommand.Share {
         static let configuration = CommandConfiguration(
             commandName: "list",
             abstract: "List the folders a virtual machine shares with its guest.",
-            discussion: "Each folder prints by the path `share remove` takes back, with whether "
-                + "the guest may write to it. The folders themselves are not opened, so one that "
-                + "has moved is listed the way the virtual machine carries it.")
+            discussion: "Each folder prints with its share's name, which a macOS guest mounts it "
+                + "by — the folder's own name when it was shared, or the next free one, such as "
+                + "\u{201C}Projects 2\u{201D} — the path `share remove` takes back, and whether the "
+                + "guest may write to it. The folders themselves are not opened, so one that has "
+                + "moved is listed the way the virtual machine carries it.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)

@@ -1056,24 +1056,26 @@ final class VMScriptingGateway {
         listedSharedDirectories(of: vm)?.map { VMSharedDirectoryScriptObject($0, of: vm) } ?? []
     }
 
-    /// The share `text` names among the VM's (``NamedSelection``): a full path,
+    /// The share `text` names among ``sharedDirectories(of:)``: a full path,
     /// starting with `/` or `~/`, names the share of that folder, as the core
-    /// compares two paths; any other text the share whose folder's own name it
-    /// is. `nil`, with the refusal recorded on the command being answered, for
-    /// text that names none of them, or several.
+    /// compares two paths; any other text the first share it names
+    /// (``NameRule/sibling(identifiedBy:orNamedBy:in:name:)``), the one
+    /// Cocoa's own lookup finds there. `nil`, with the refusal recorded on the
+    /// command being answered, for text that names none of them.
     func sharedDirectory(named text: String, of vm: UUID) -> VMSharedDirectoryScriptObject? {
         guard let listed = listedSharedDirectories(of: vm) else { return nil }
         let folder = (try? UserHome.fullPath(text, of: "A folder")).map(VMCommandCore.comparablePath)
-        return selected(
-            NamedSelection(
-                text, in: listed, identifiedBy: { VMCommandCore.comparablePath($0.path) == folder },
-                name: VMSharedDirectoryScriptObject.folderName(of:)),
-            missing: { self.itemNotFound("shared directory named \u{201C}\(text)\u{201D}", on: vm) },
-            ambiguity: {
-                NamedSelection.ambiguity(
-                    text, among: $0, plural: "shared directories", namedAloneBy: "paths", label: \.path)
+        guard
+            let found = NameRule.sibling(
+                identifiedBy: { VMCommandCore.comparablePath($0.path) == folder }, orNamedBy: text, in: listed,
+                name: \.name)
+        else {
+            if let refusal = itemNotFound("shared directory named \u{201C}\(text)\u{201D}", on: vm) {
+                answering?.refuse(refusal)
             }
-        ).map { VMSharedDirectoryScriptObject($0, of: vm) }
+            return nil
+        }
+        return VMSharedDirectoryScriptObject(found, of: vm)
     }
 
     /// The core's listing of the VM `vm` identifies, or `nil` with the refusal

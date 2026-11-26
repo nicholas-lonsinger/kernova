@@ -271,7 +271,7 @@
 				<accessor style="range"/>
 				<accessor style="test"/>
 			</element>
-			<element type="shared directory" description="The folders it shares with its guest, in the order it shares them. Shared directory &#8220;&#8230;&#8221; names one by its folder&#8217;s full path, starting with / or ~/, or by its folder&#8217;s name, and refuses a name several of them carry, listing their paths.">
+			<element type="shared directory" description="The folders it shares with its guest, in the order it shares them. Shared directory &#8220;&#8230;&#8221; names one by its folder&#8217;s full path, starting with / or ~/, or by its name.">
 				<cocoa key="sharedDirectories"/>
 				<accessor style="index"/>
 				<accessor style="name"/>
@@ -427,7 +427,7 @@
 
 		<class name="shared directory" code="KvSh" plural="shared directories" description="A folder on this Mac that a virtual machine shares with its guest. Share one with make new shared directory at a virtual machine with properties {path:&#8230;}, its full path, starting with / or ~/, and read only:true to keep the guest from writing to it; a folder the virtual machine already shares is left as it is. Kernova asks for a folder it can&#8217;t already read in an open panel, which comes in front once the script has told Kernova to activate, and shares the folder chosen there; AppleScript stops waiting for an answer after two minutes unless a with timeout block gives it longer, and the panel stays up in Kernova. Deleting one stops sharing its folder, which stays where it is.">
 			<cocoa class="VMSharedDirectoryScriptObject"/>
-			<property name="name" code="pnam" type="text" access="r" description="The folder&#8217;s own name, as the Sharing settings list it.">
+			<property name="name" code="pnam" type="text" access="r" description="Its name, unique among its virtual machine&#8217;s shared directories ignoring case, which a macOS guest mounts the folder by: the folder&#8217;s own name when it was shared, or the next free one, such as Projects 2.">
 				<cocoa key="name"/>
 			</property>
 			<property name="path" code="KvPa" type="text" access="r" description="The folder, as this Mac names it.">

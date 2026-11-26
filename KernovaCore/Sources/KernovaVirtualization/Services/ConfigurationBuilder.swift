@@ -748,7 +748,7 @@ struct ConfigurationBuilder: Sendable {
 
     private func configureLinuxDirectorySharing(
         _ vzConfig: VZVirtualMachineConfiguration,
-        directories: [SharedDirectory],
+        directories: NamedList<SharedDirectory>,
         resolvedURLs: [URL]
     ) {
         var devices: [VZVirtioFileSystemDeviceConfiguration] = []

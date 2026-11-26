@@ -31,7 +31,7 @@ struct VMConfigurationCloneTests {
     @Test("Clone preserves shared directory paths and readOnly flags")
     func clonePreservesSharedDirectoryPaths() {
         let dirs = [
-            SharedDirectory(path: "/Users/test/Documents", readOnly: false, mountName: "1234abcd-Documents"),
+            SharedDirectory(path: "/Users/test/Documents", readOnly: false, name: "1234abcd-Documents"),
             SharedDirectory(path: "/Users/test/ReadOnly", readOnly: true),
         ]
         let original = makeConfig(sharedDirectories: dirs)
@@ -42,7 +42,7 @@ struct VMConfigurationCloneTests {
         #expect(clone.sharedDirectories?[1].path == "/Users/test/ReadOnly")
         #expect(clone.sharedDirectories?[1].readOnly == true)
         #expect(clone.sharedDirectories?.map(\.id) == original.sharedDirectories?.map(\.id))
-        #expect(clone.sharedDirectories?[0].mountName == "1234abcd-Documents")
+        #expect(clone.sharedDirectories?[0].name == "1234abcd-Documents")
     }
 
     // MARK: - Storage Disks

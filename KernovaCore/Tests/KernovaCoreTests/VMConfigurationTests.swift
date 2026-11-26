@@ -63,12 +63,12 @@ struct VMConfigurationTests {
         let json = #"{"id":"\#(id.uuidString)","path":"/Users/test/src","readOnly":false}"#
         let decoded = try JSONDecoder().decode(SharedDirectory.self, from: Data(json.utf8))
 
-        #expect(decoded.mountName == "src")
-        #expect(decoded.mountName == SharedDirectory(path: "/Users/test/src").mountName)
-        let renamed = SharedDirectory(path: "/Users/test/src", mountName: "abcd-src")
+        #expect(decoded.name == "src")
+        #expect(decoded.name == SharedDirectory(path: "/Users/test/src").name)
+        let renamed = SharedDirectory(path: "/Users/test/src", name: "abcd-src")
         let roundTripped = try JSONDecoder().decode(
             SharedDirectory.self, from: JSONEncoder().encode(renamed))
-        #expect(roundTripped.mountName == "abcd-src")
+        #expect(roundTripped.name == "abcd-src")
     }
 
     @Test("A removableMedia entry missing notes decodes it as empty, without failing the config decode")

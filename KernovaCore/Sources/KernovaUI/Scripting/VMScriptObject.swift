@@ -204,7 +204,7 @@ package final class VMScriptObject: NSObject {
     }
 
     /// The named-element accessor Cocoa resolves `shared directory "…"`
-    /// through, by a path or a folder's name — see
+    /// through, by a path or a share's name — see
     /// ``VMScriptingGateway/sharedDirectory(named:of:)``.
     @objc(valueInSharedDirectoriesWithName:)
     func valueInSharedDirectories(withName name: String) -> VMSharedDirectoryScriptObject? {

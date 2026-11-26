@@ -117,6 +117,50 @@ struct VMSharingScriptingTests {
         #expect(FileManager.default.fileExists(atPath: folder))
     }
 
+    @Test(
+        "A configuration storing one name on two shares reads as names of their own, each addressing the share it was read from, and a range ending at a name starts at that one"
+    )
+    func everyNameAScriptReadsAddressesItsOwnShare() async throws {
+        let wired = WiredCommandCore()
+        let alpha = wired.register(name: "Alpha") {
+            $0.sharedDirectories = [
+                SharedDirectory(path: "/Volumes/One/Projects"), SharedDirectory(path: "/Volumes/Two/Projects"),
+                SharedDirectory(path: "/Volumes/Three/Other"),
+            ]
+        }
+        // As a build that compared mount names exactly could have stored them.
+        alpha.seedConfigurationJSON { config in
+            guard var shares = config["sharedDirectories"] as? [[String: Any]] else { return }
+            shares[1]["mountName"] = "projects"
+            config["sharedDirectories"] = shares
+        }
+        let host = ScriptHost()
+        let gateway = await makeGateway(wired, host: host)
+        let of = #" of virtual machine "Alpha""#
+
+        let names = try host.run("name of every shared directory\(of)", on: gateway).items.compactMap(\.stringValue)
+        let paths = try host.run("path of every shared directory\(of)", on: gateway).items.compactMap(\.stringValue)
+        let addressed = names.map {
+            (try? host.run("path of shared directory \"\($0)\"\(of)", on: gateway))?.stringValue
+        }
+        let ranged = try host.run(#"path of shared directories "Projects" thru "Other""# + of, on: gateway).items
+            .compactMap(\.stringValue)
+
+        #expect(names.count == 3, "\(names)")
+        for (index, name) in names.enumerated() {
+            for later in names[(index + 1)...] {
+                // Cocoa Scripting's own comparison, which finds a script's
+                // element by name.
+                let related =
+                    (name as NSString).caseInsensitiveCompare(later) == .orderedSame
+                    || (later as NSString).caseInsensitiveCompare(name) == .orderedSame
+                #expect(!related, "\(names)")
+            }
+        }
+        #expect(addressed == paths.map(Optional.some), "\(names) addressed \(addressed), read from \(paths)")
+        #expect(ranged.first != nil && ranged.first == names.firstIndex(of: "Projects").map { paths[$0] })
+    }
+
     // MARK: - USB accessories
 
     @Test(
@@ -192,8 +236,6 @@ struct VMSharingScriptingTests {
 
     /// The listed things a script names by a name several of them can carry.
     enum Listed: CaseIterable, Sendable {
-        /// Two shares of folders called Projects.
-        case sharedDirectory
         /// Two remembered accessories called Drive.
         case rememberedUSBAccessory
         /// Two attached accessories called SanDisk Ultra.
@@ -205,18 +247,12 @@ struct VMSharingScriptingTests {
         arguments: Listed.allCases)
     func aSharedNameRefuses(listed: Listed) async throws {
         let (wired, service) = try makeUSBHarness()
-        let first = "/Volumes/One/Projects"
-        let second = "/Volumes/Two/Projects"
         let pairings = ["0403:6001:0100:AAAA", "0403:6001:0100:BBBB"].map {
             USBAccessoryPairing(key: $0, form: .serialNumber, displayName: "Drive", receptacleLabel: nil)
         }
         let devices = [UUID(), UUID()]
         let alpha: VMInstance
         switch listed {
-        case .sharedDirectory:
-            alpha = wired.register(name: "Alpha") {
-                $0.sharedDirectories = [SharedDirectory(path: first), SharedDirectory(path: second)]
-            }
         case .rememberedUSBAccessory:
             alpha = wired.register(name: "Alpha")
             for pairing in pairings {
@@ -240,20 +276,16 @@ struct VMSharingScriptingTests {
 
         let (shared, alone, identifiers): (String, String, [String]) =
             switch listed {
-            case .sharedDirectory: ("projects", "\(second)/", [first, second])
             case .rememberedUSBAccessory: ("drive", pairings[1].key, pairings.map(\.key))
             case .usbAccessory: ("sanDisk ultra", "8", ["7", "8"])
             }
         let event = { (name: String) -> NSAppleEventDescriptor in
             switch listed {
-            case .sharedDirectory: ScriptEvent.delete(ScriptEvent.element("KvSh", named: name, of: vm))
             case .rememberedUSBAccessory: ScriptEvent.delete(ScriptEvent.element("KvRA", named: name, of: vm))
             case .usbAccessory: ScriptEvent.verb("Dtch", ScriptEvent.element("KvUA", named: name, of: vm))
             }
         }
-        let state = {
-            (Self.sharedPaths(of: alpha), alpha.usbPairings.pairings.map(\.key), service.detachedDeviceIDs)
-        }
+        let state = { (alpha.usbPairings.pairings.map(\.key), service.detachedDeviceIDs) }
         let before = state()
 
         let refused = try await host.send(event(shared), to: gateway)
@@ -268,7 +300,6 @@ struct VMSharingScriptingTests {
 
         #expect(named.errorNumber == 0, "\(named.errorString ?? "")")
         switch listed {
-        case .sharedDirectory: #expect(Self.sharedPaths(of: alpha) == [first])
         case .rememberedUSBAccessory: #expect(alpha.usbPairings.pairings.map(\.key) == [pairings[0].key])
         case .usbAccessory: #expect(service.detachedDeviceIDs == [devices[1]])
         }

@@ -35,23 +35,18 @@ package final class VMSharedDirectoryScriptObject: NSObject {
 
     // MARK: - Properties
 
-    /// The folder's own name, which the Sharing settings list the share by.
-    @objc var name: String { Self.folderName(of: share) }
+    @objc var name: String { share.name }
 
     @objc var path: String { share.path }
 
     @objc var readOnly: Bool { share.readOnly }
-
-    /// What `shared directory "…"` names `share` by, beside its path.
-    static func folderName(of share: SharedDirectorySummary) -> String {
-        URL(fileURLWithPath: share.path).lastPathComponent
-    }
 
     /// The Cocoa key of the property the dictionary reads `field` by — the key
     /// `Kernova.sdef` gives that term, which `KernovaScriptingDefinitionTests`
     /// checks.
     static func key(carrying field: SharedDirectorySummary.Field) -> String {
         switch field {
+        case .name: #keyPath(VMSharedDirectoryScriptObject.name)
         case .path: #keyPath(VMSharedDirectoryScriptObject.path)
         case .readOnly: #keyPath(VMSharedDirectoryScriptObject.readOnly)
         }

@@ -362,11 +362,11 @@ struct VMCommandCoreAttachmentTests {
     ) throws -> VMInstance {
         let instance = makeInstance(
             in: harness, name: name, phase: .running(sessionID: UUID()), guestOS: .macOS
-        ) { $0.sharedDirectories = directories.isEmpty ? nil : directories }
+        ) { $0.sharedDirectories = directories.isEmpty ? nil : NamedList(repairing: directories) }
         let context = instance.beginSessionContextForTesting()
         if !directories.isEmpty {
             context.directoryShare =
-                try serving ?? MacOSDirectoryShare.make(for: directories)
+                try serving ?? MacOSDirectoryShare.make(for: NamedList(repairing: directories))
         }
         return instance
     }
@@ -401,7 +401,7 @@ struct VMCommandCoreAttachmentTests {
                 try FileManager.default.createDirectory(
                     atPath: stored, withIntermediateDirectories: true)
             }
-            let moved = SharedDirectory(path: stored, mountName: "moved")
+            let moved = SharedDirectory(path: stored, name: "moved")
             let serving = MacOSDirectoryShare(entries: [
                 .init(id: moved.id, name: "moved", url: URL(fileURLWithPath: served), readOnly: false)
             ])

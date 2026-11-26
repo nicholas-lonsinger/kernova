@@ -498,6 +498,6 @@ extension VMCommandCore {
 extension SharedDirectorySummary {
     /// `share` without the bookmark behind it.
     init(_ share: SharedDirectory) {
-        self.init(path: share.path, readOnly: share.readOnly)
+        self.init(name: share.name, path: share.path, readOnly: share.readOnly)
     }
 }

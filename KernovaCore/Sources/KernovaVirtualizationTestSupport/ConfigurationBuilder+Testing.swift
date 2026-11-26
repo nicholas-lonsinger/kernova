@@ -46,7 +46,7 @@ extension VMConfiguration {
         var config = VMConfiguration(
             name: "Test Linux", guestOS: .linux, bootMode: .efi, cpuCount: VMGuestOS.linux.hostCPUCount,
             memorySizeInGB: VMGuestOS.linux.hostMemorySize)
-        config.sharedDirectories = sharedDirectories
+        config.sharedDirectories = sharedDirectories.map(NamedList.init(repairing:))
         return config
     }
 }

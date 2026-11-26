@@ -17,7 +17,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
 
     private let panelStack = NSStackView()
 
-    private var currentSharedDirectories: [SharedDirectory] {
+    private var currentSharedDirectories: NamedList<SharedDirectory> {
         instance.configuration.sharedDirectories ?? []
     }
 
@@ -436,7 +436,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             return VMSettingsRenderedRow(
                 id: directory.id,
                 iconSystemName: "folder",
-                title: directory.displayName,
+                title: directory.name,
                 notes: "",
                 subtitle: directory.path,
                 isMissing: isMissing,

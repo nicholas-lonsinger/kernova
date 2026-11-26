@@ -329,6 +329,9 @@ public struct SnapshotSummary: Codable, Sendable, Hashable {
 /// could act on it. The path is what the share is addressed by, here and in the
 /// edit that drops it.
 public struct SharedDirectorySummary: Codable, Sendable, Hashable {
+    /// What the share goes by, its own among its VM's shares, and the name a
+    /// macOS guest mounts the folder by.
+    public let name: String
     /// The folder's path, as this Mac names it.
     public let path: String
     /// Whether the guest may read the folder but not write to it.
@@ -337,13 +340,14 @@ public struct SharedDirectorySummary: Codable, Sendable, Hashable {
     /// Every field, by the key the JSON names it with, as ``VMInfo/Field``
     /// is for a ``VMInfo``.
     public enum Field: String, CodingKey, CaseIterable, Sendable {
-        case path, readOnly
+        case name, path, readOnly
     }
 
     private typealias CodingKeys = Field
 
     /// Describes one share.
-    public init(path: String, readOnly: Bool) {
+    public init(name: String, path: String, readOnly: Bool) {
+        self.name = name
         self.path = path
         self.readOnly = readOnly
     }

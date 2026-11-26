@@ -282,8 +282,9 @@ struct CLIRenderingTests {
     // MARK: - Shares
 
     private let shares = [
-        SharedDirectorySummary(path: "/Users/somebody/Sites", readOnly: false),
-        SharedDirectorySummary(path: "/Users/somebody/Reference Material", readOnly: true),
+        SharedDirectorySummary(name: "Sites", path: "/Users/somebody/Sites", readOnly: false),
+        SharedDirectorySummary(
+            name: "Reference Material", path: "/Users/somebody/Reference Material", readOnly: true),
     ]
 
     @Test("--quiet on a share listing prints exactly what share remove takes back")
@@ -302,7 +303,7 @@ struct CLIRenderingTests {
                 == shares)
         let objects = try #require(
             try JSONSerialization.jsonObject(with: Data(rendered.utf8)) as? [[String: Any]])
-        for field in ["path", "readOnly"] {
+        for field in ["name", "path", "readOnly"] {
             #expect(objects.first?[field] != nil, "missing \(field)")
         }
     }

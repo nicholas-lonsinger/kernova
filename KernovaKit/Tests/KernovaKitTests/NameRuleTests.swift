@@ -16,10 +16,51 @@ struct NameRuleTests {
     }
 
     /// Whether a sibling may go by `name` whatever else does: trimmed, holding
-    /// more than whitespace, and spelling no identifier.
-    private static func isWellFormed(_ name: String) -> Bool {
-        !name.isEmpty && name.trimmingCharacters(in: .whitespacesAndNewlines) == name
-            && UUID(uuidString: name) == nil
+    /// more than whitespace, and spelling no identifier of `siblings`.
+    private static func isWellFormed(_ name: String, _ siblings: SiblingClass = .identifiedByUUID) -> Bool {
+        !name.isEmpty && name.trimmingCharacters(in: .whitespacesAndNewlines) == name && !siblings.spells(name)
+    }
+
+    /// A class of siblings, by what a door reads as one's identifier rather
+    /// than as a name.
+    enum SiblingClass: CaseIterable, Sendable {
+        /// A virtual machine, a snapshot, a storage disk: a UUID.
+        case identifiedByUUID
+        /// A shared directory: a full path, as a script or a shortcut names
+        /// its folder — `~`, or text starting `~/` or `/`.
+        case identifiedByPath
+
+        func spells(_ text: String) -> Bool {
+            switch self {
+            case .identifiedByUUID: UUID(uuidString: text) != nil
+            case .identifiedByPath: text == "~" || text.hasPrefix("~/") || text.hasPrefix("/")
+            }
+        }
+
+        var identifiers: NameRule.Identifiers {
+            switch self {
+            case .identifiedByUUID: .uuid
+            case .identifiedByPath: NameRule.Identifiers { SiblingClass.identifiedByPath.spells($0) }
+            }
+        }
+
+        /// What one whose stored name is malformed is named from: for a share,
+        /// its folder's name, which can be `~`.
+        var fallback: String {
+            switch self {
+            case .identifiedByUUID: "Untitled"
+            case .identifiedByPath: "~"
+            }
+        }
+
+        /// What its names are drawn from: ``alphabet``, and for a share the
+        /// path shapes a stored name can take.
+        var alphabet: [String] {
+            switch self {
+            case .identifiedByUUID: NameRuleTests.alphabet
+            case .identifiedByPath: NameRuleTests.alphabet + ["~", "/", "~/Build", "/Build"]
+            }
+        }
     }
 
     /// What names are drawn from: case variants, a name a later duplicate's
@@ -35,8 +76,8 @@ struct NameRuleTests {
         ]
     }()
 
-    /// Every list of up to `length` names from ``alphabet``, repeats included.
-    private static func everyList(upTo length: Int) -> [[String]] {
+    /// Every list of up to `length` names from `alphabet`, repeats included.
+    private static func everyList(upTo length: Int, from alphabet: [String] = alphabet) -> [[String]] {
         var lists: [[String]] = [[]]
         var longest: [[String]] = [[]]
         for _ in 0..<length {
@@ -47,20 +88,24 @@ struct NameRuleTests {
     }
 
     @Test(
-        "Every list of siblings is given names that are well formed and that Cocoa's matcher relates no two of, and a well-formed name no earlier sibling's is related to is kept"
-    )
-    func everyListIsGivenDistinctWellFormedNames() {
-        for stored in Self.everyList(upTo: 3) {
-            let assigned = NameRule.assignment(of: stored) { _ in "Untitled" }
+        "Every list of siblings is given names that are well formed and that Cocoa's matcher relates no two of, and a well-formed name no earlier sibling's is related to is kept",
+        arguments: SiblingClass.allCases)
+    func everyListIsGivenDistinctWellFormedNames(siblings: SiblingClass) {
+        for stored in Self.everyList(upTo: 3, from: siblings.alphabet) {
+            let assigned = NameRule.assignment(of: stored, identifiers: siblings.identifiers) { _ in
+                siblings.fallback
+            }
 
             #expect(assigned.count == stored.count, "\(stored)")
             for (index, name) in assigned.enumerated() {
-                #expect(Self.isWellFormed(name), "\(stored) gave \(assigned)")
+                #expect(Self.isWellFormed(name, siblings), "\(stored) gave \(assigned)")
                 for later in assigned[(index + 1)...] {
                     #expect(!Self.cocoaRelates(name, later), "\(stored) gave \(assigned)")
                 }
                 let own = stored[index]
-                if Self.isWellFormed(own), !stored[..<index].contains(where: { Self.cocoaRelates($0, own) }) {
+                if Self.isWellFormed(own, siblings),
+                    !stored[..<index].contains(where: { Self.cocoaRelates($0, own) })
+                {
                     #expect(name == own, "\(stored) gave \(assigned)")
                 }
             }

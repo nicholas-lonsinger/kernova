@@ -34,12 +34,18 @@ package enum UserHome {
     /// - Throws: ``CommandError/invalidArgument(_:)`` for any other path that
     ///   does not start at `/`, worded for `item`, what the path names.
     package static func fullPath(_ path: String, of item: String) throws -> String {
-        if path == "~" { return Self.path }
-        if path.hasPrefix("~/") { return Self.path + path.dropFirst() }
-        guard path.hasPrefix("/") else {
+        guard isFullPath(path) else {
             throw CommandError.invalidArgument(
                 "\(item) is named by its full path, which starts with \u{201C}/\u{201D} or \u{201C}~/\u{201D}.")
         }
+        if path == "~" { return Self.path }
+        if path.hasPrefix("~/") { return Self.path + path.dropFirst() }
         return path
+    }
+
+    /// Whether ``fullPath(_:of:)`` reads `text` as a path: `~`, or text
+    /// starting with `~/` or `/`.
+    package static func isFullPath(_ text: String) -> Bool {
+        text == "~" || text.hasPrefix("~/") || text.hasPrefix("/")
     }
 }

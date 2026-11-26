@@ -543,7 +543,9 @@ extension VMCommandCore {
     }
 
     /// The add every front door ends in: appends `files`, each shared with
-    /// `readOnly` access, skipping folders the VM already shares.
+    /// `readOnly` access and named the folder's name or, where another share
+    /// goes by that, the first free name counted from it, skipping folders
+    /// the VM already shares.
     func addSharedDirectories(
         _ files: [PickedFile], readOnly: Bool, to instance: VMInstance
     ) throws {
@@ -556,9 +558,8 @@ extension VMCommandCore {
             var known = Set(directories.map { Self.comparablePath($0.path) })
             for pick in picks where known.insert(Self.comparablePath(pick.file.path)).inserted {
                 directories.append(
-                    SharedDirectory(
-                        adding: pick.file.path, id: pick.id, readOnly: readOnly,
-                        bookmark: pick.file.bookmark, to: directories))
+                    SharedDirectory(id: pick.id, path: pick.file.path, readOnly: readOnly, bookmark: pick.file.bookmark)
+                )
             }
         }
     }
@@ -586,8 +587,7 @@ extension VMCommandCore {
             throw staleAttachment(id, on: instance, verb: .editSharedDirectory)
         }
         try writeSharedDirectories(of: instance, as: capability) { directories in
-            guard let index = directories.firstIndex(where: { $0.id == id }) else { return }
-            directories[index].readOnly = readOnly
+            directories.update(id) { $0.readOnly = readOnly }
         }
     }
 
@@ -634,9 +634,9 @@ extension VMCommandCore {
     /// refused as the argument it is.
     private func writeSharedDirectories(
         of instance: VMInstance, as capability: VMCapability,
-        _ change: @escaping (inout [SharedDirectory]) -> Void
+        _ change: @escaping (inout NamedList<SharedDirectory>) -> Void
     ) throws {
-        let changed: (VMConfiguration) -> [SharedDirectory]? = {
+        let changed: (VMConfiguration) -> NamedList<SharedDirectory>? = {
             Self.sharedDirectories(of: $0, changedBy: change)
         }
         let held = instance.configuration.sharedDirectories
@@ -1290,8 +1290,8 @@ extension VMCommandCore {
     /// `config`'s shared-directory list as `change` leaves it, an emptied list
     /// stored as none.
     private static func sharedDirectories(
-        of config: VMConfiguration, changedBy change: (inout [SharedDirectory]) -> Void
-    ) -> [SharedDirectory]? {
+        of config: VMConfiguration, changedBy change: (inout NamedList<SharedDirectory>) -> Void
+    ) -> NamedList<SharedDirectory>? {
         var directories = config.sharedDirectories ?? []
         change(&directories)
         return directories.isEmpty ? nil : directories

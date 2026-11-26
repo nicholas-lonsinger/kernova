@@ -311,7 +311,8 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
 
     // MARK: - Shared Directories
 
-    package var sharedDirectories: [SharedDirectory]?
+    /// Each share's name is its own (``NamedList``).
+    package var sharedDirectories: NamedList<SharedDirectory>?
 
     // MARK: - Install Intent
 
@@ -475,7 +476,7 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.initrdBookmark = initrdBookmark
         self.storageDisks = storageDisks.map(NamedList.init(repairing:))
         self.removableMedia = removableMedia
-        self.sharedDirectories = sharedDirectories
+        self.sharedDirectories = sharedDirectories.map(NamedList.init(repairing:))
         self.installContext = installContext
         self.pendingGuestAccount = pendingGuestAccount
         self.linuxInstallContext = linuxInstallContext
@@ -561,7 +562,7 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.initrdBookmark = try c.decodeIfPresent(Data.self, forKey: .initrdBookmark)
         self.storageDisks = try c.decodeIfPresent(NamedList<StorageDisk>.self, forKey: .storageDisks)
         self.removableMedia = try c.decodeIfPresent([RemovableMediaItem].self, forKey: .removableMedia)
-        self.sharedDirectories = try c.decodeIfPresent([SharedDirectory].self, forKey: .sharedDirectories)
+        self.sharedDirectories = try c.decodeIfPresent(NamedList<SharedDirectory>.self, forKey: .sharedDirectories)
         self.installContext = try c.decodeIfPresent(MacOSInstallContext.self, forKey: .installContext)
         self.pendingGuestAccount = try c.decodeIfPresent(
             GuestAccountIntent.self, forKey: .pendingGuestAccount)
@@ -847,7 +848,7 @@ extension VMConfiguration {
         for directory in sharedDirectories ?? [] {
             references.append(
                 ExternalFileReference(
-                    id: directory.id, kind: .sharedDirectory, label: directory.displayName,
+                    id: directory.id, kind: .sharedDirectory, label: directory.name,
                     path: directory.path, bookmark: directory.bookmark, readOnly: directory.readOnly))
         }
         if let localIPSWPath = installContext?.localIPSWPath {
@@ -886,10 +887,10 @@ extension VMConfiguration {
             removableMedia?[index].path = path
             removableMedia?[index].bookmark = bookmark
         case .sharedDirectory:
-            guard let index = sharedDirectories?.firstIndex(where: { $0.id == reference.id })
-            else { return }
-            sharedDirectories?[index].path = path
-            sharedDirectories?[index].bookmark = bookmark
+            sharedDirectories?.update(reference.id) { directory in
+                directory.path = path
+                directory.bookmark = bookmark
+            }
         case .localIPSW:
             installContext?.localIPSWPath = path
             installContext?.localIPSWBookmark = bookmark
@@ -965,37 +966,27 @@ package struct SharedDirectory: Codable, Sendable, Equatable {
     /// see ``StorageDisk/bookmark`` for the nil semantics.
     var bookmark: Data?
 
-    /// The name a macOS guest mounts this folder by, fixed when the share is
-    /// added so no later change to the list, or to `path`, renames it.
-    let mountName: String
+    /// What the share goes by at every door, and the name a macOS guest
+    /// mounts the folder by: the share's own among its VM's
+    /// (``NamedList``), given when it is added so no later change to `path`
+    /// renames it.
+    package private(set) var name: String
 
-    /// A share mounted by `mountName`, by default the folder's own name.
+    private enum CodingKeys: String, CodingKey {
+        case id, path, readOnly, bookmark
+        case name = "mountName"
+    }
+
+    /// A share named `name`, by default from the folder's own name
+    /// (``nameBase``).
     init(
-        id: UUID = UUID(), path: String, readOnly: Bool = false, bookmark: Data? = nil,
-        mountName: String? = nil
+        id: UUID = UUID(), path: String, readOnly: Bool = false, bookmark: Data? = nil, name: String? = nil
     ) {
         self.id = id
         self.path = path
         self.readOnly = readOnly
         self.bookmark = bookmark
-        self.mountName = mountName ?? URL(fileURLWithPath: path).lastPathComponent
-    }
-
-    /// A new share `id` of the folder at `path`, mounted by a name none of
-    /// `directories` holds: the folder's own, or the same prefixed with the
-    /// share's id.
-    init(
-        adding path: String, id: UUID, readOnly: Bool, bookmark: Data?,
-        to directories: [SharedDirectory]
-    ) {
-        let taken = Set(directories.map(\.mountName))
-        let name = URL(fileURLWithPath: path).lastPathComponent
-        let candidates = [
-            name, "\(id.uuidString.prefix(8))-\(name)", "\(id.uuidString)-\(name)",
-        ]
-        self.init(
-            id: id, path: path, readOnly: readOnly, bookmark: bookmark,
-            mountName: candidates.first { !taken.contains($0) } ?? candidates[2])
+        self.name = name ?? Self.nameBase(ofFolderAt: path)
     }
 
     package init(from decoder: any Decoder) throws {
@@ -1005,11 +996,27 @@ package struct SharedDirectory: Codable, Sendable, Equatable {
             id: try c.decode(UUID.self, forKey: .id), path: path,
             readOnly: try c.decode(Bool.self, forKey: .readOnly),
             bookmark: try c.decodeIfPresent(Data.self, forKey: .bookmark),
-            mountName: try c.decodeIfPresent(String.self, forKey: .mountName))
+            name: try c.decodeIfPresent(String.self, forKey: .name))
     }
 
-    /// The last path component, which names the share in the UI.
-    package var displayName: String {
-        URL(fileURLWithPath: path).lastPathComponent
+    /// The folder's own name; for the disk root, whose last path component is
+    /// `/`, which names a path, its volume's name as Finder shows it.
+    private static func nameBase(ofFolderAt path: String) -> String {
+        let folder = URL(fileURLWithPath: path)
+        guard folder.lastPathComponent == "/" else { return folder.lastPathComponent }
+        return (try? folder.resourceValues(forKeys: [.volumeLocalizedNameKey]))?.volumeLocalizedName
+            ?? "Startup Disk"
     }
+}
+
+extension SharedDirectory: ListNamed {
+    package var listedName: String {
+        get { name }
+        set { name = newValue }
+    }
+
+    package var nameBase: String { Self.nameBase(ofFolderAt: path) }
+
+    /// A full path, which a door reads as the share of that folder.
+    package static let identifiers = NameRule.Identifiers { UserHome.isFullPath($0) }
 }
