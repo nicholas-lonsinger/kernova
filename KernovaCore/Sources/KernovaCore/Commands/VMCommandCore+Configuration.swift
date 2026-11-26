@@ -453,9 +453,10 @@ extension VMCommandCore {
         return shared
     }
 
-    /// The first of the VM's shares that answers to the folder at `path`
-    /// (``SharedDirectory/answers(to:)``), `nil` when none does, refused when
-    /// the guest reaches any that answers with the access `readOnly` is not.
+    /// The share of the VM the folder at `path` names
+    /// (``sharedDirectory(named:on:)``), `nil` when it names none, refused when
+    /// the guest reaches any share that answers to it
+    /// (``SharedDirectory/answers(to:)``) with the access `readOnly` is not.
     private func share(
         at path: String, on instance: VMInstance, sharedReadOnly readOnly: Bool
     ) throws -> SharedDirectorySummary? {
@@ -467,22 +468,21 @@ extension VMCommandCore {
                 "\u{201C}\(instance.name)\u{201D} already shares \u{201C}\(other.path)\u{201D} \(access), and adding it again does not change that."
             )
         }
-        return answering.first.map(SharedDirectorySummary.init)
+        return sharedDirectory(named: folder, on: instance).map(SharedDirectorySummary.init)
     }
 
     /// The share of the VM `selector` names that `path`, a full path, names
-    /// (``sharedDirectory(at:on:)``), `nil` when it names none.
+    /// (``sharedDirectory(named:on:)``), `nil` when it names none.
     package func sharedDirectory(_ selector: VMSelector, at path: String) throws -> SharedDirectorySummary? {
-        sharedDirectory(at: path, on: try resolve(selector)).map(SharedDirectorySummary.init)
+        sharedDirectory(named: NamedFolder(path), on: try resolve(selector)).map(SharedDirectorySummary.init)
     }
 
-    /// The one share of the VM `path` names: the first listed at `path`
+    /// The one share of the VM `folder` names: the first listed at it
     /// (``SharedDirectory/isListed(at:)``), so a listed path names its own
     /// share whatever other share holds the same folder, else the first that
     /// answers to it (``SharedDirectory/answers(to:)``). `nil` when none does.
-    private func sharedDirectory(at path: String, on instance: VMInstance) -> SharedDirectory? {
+    private func sharedDirectory(named folder: NamedFolder, on instance: VMInstance) -> SharedDirectory? {
         let directories = instance.configuration.sharedDirectories ?? []
-        let folder = NamedFolder(path)
         return directories.first { $0.isListed(at: folder) } ?? directories.first { $0.answers(to: folder) }
     }
 
@@ -506,7 +506,7 @@ extension VMCommandCore {
     package func removeSharedDirectory(_ selector: VMSelector, path: String) throws {
         let instance = try resolve(selector)
         _ = try requireSharedDirectories(.remove, on: instance)
-        guard let directory = sharedDirectory(at: path, on: instance) else {
+        guard let directory = sharedDirectory(named: NamedFolder(path), on: instance) else {
             throw CommandError.invalidArgument(
                 "\u{201C}\(instance.name)\u{201D} does not share \u{201C}\(path)\u{201D}.")
         }
