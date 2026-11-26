@@ -25,7 +25,7 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
         // A path the sandbox does not admit still answers whether anything is
         // at it (docs/research/2026-11-18-pasteboard-file-grants.md,
         // observation 8), and no grant makes a missing file readable.
-        let named = VMCommandCore.comparablePath(url.path(percentEncoded: false))
+        let named = FileIdentity.spelling(url)
         guard FileManager.default.fileExists(atPath: named) else {
             throw CommandError.invalidArgument("Nothing is at \u{201C}\(named)\u{201D}.")
         }
@@ -81,7 +81,7 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
             )
         }
         guard Self.isReadable(url) else {
-            let given = VMCommandCore.comparablePath(picked.path(percentEncoded: false))
+            let given = FileIdentity.spelling(picked)
             Self.logger.log(
                 .notice,
                 "Given '\(picked.lastPathComponent, privacy: .public)', which leaves '\(url.lastPathComponent, privacy: .public)' unreadable"

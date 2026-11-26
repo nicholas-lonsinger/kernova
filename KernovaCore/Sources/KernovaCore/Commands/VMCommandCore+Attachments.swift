@@ -546,21 +546,29 @@ extension VMCommandCore {
     /// `readOnly` access and named for its folder
     /// (``SharedDirectory/init(sharing:id:readOnly:bookmark:)``) or, where
     /// another share goes by that, the first free name counted from it,
-    /// skipping folders the VM already shares.
+    /// skipping a folder a share already answers to
+    /// (``SharedDirectory/answers(to:)``) — one of the VM's, or an earlier
+    /// pick.
     func addSharedDirectories(
         _ files: [PickedFile], readOnly: Bool, to instance: VMInstance
     ) throws {
         let capability = try requireSharedDirectories(.add, on: instance)
-        // Made once, so every pass of the change adds the same shares.
-        let picks = files.map {
-            SharedDirectory(sharing: $0.path, id: UUID(), readOnly: readOnly, bookmark: $0.bookmark)
+        // Asked of the list the VM carries once, for every pass: a pass asks
+        // again only of the shares the file holds that this list did not,
+        // which another writer put there.
+        let held = instance.configuration.sharedDirectories ?? []
+        var adding: [(share: SharedDirectory, folder: NamedFolder)] = []
+        for file in files {
+            let folder = NamedFolder(file.path)
+            guard !(Array(held) + adding.map(\.share)).contains(where: { $0.answers(to: folder) }) else { continue }
+            adding.append(
+                (SharedDirectory(sharing: file.path, id: UUID(), readOnly: readOnly, bookmark: file.bookmark), folder))
         }
+        let heldIDs = Set(held.map(\.id))
         try writeSharedDirectories(of: instance, as: capability) { directories in
-            // The one spelling the core compares folder paths in, so a pick of
-            // `/x/` finds the `/x` this VM already shares.
-            var known = Set(directories.map { Self.comparablePath($0.path) })
-            for pick in picks where known.insert(Self.comparablePath(pick.path)).inserted {
-                directories.append(pick)
+            let unseen = directories.filter { !heldIDs.contains($0.id) }
+            for (share, folder) in adding where !unseen.contains(where: { $0.answers(to: folder) }) {
+                directories.append(share)
             }
         }
     }
@@ -620,9 +628,10 @@ extension VMCommandCore {
     /// that leaves the list as it is writes nothing.
     ///
     /// `change` runs on the list in memory and again on the list the file
-    /// holds, so it is a function of the list alone: the two passes add the
-    /// same shares, and what the first opens scopes for is what the second
-    /// commits.
+    /// holds, which is the one committed. The scopes a live swap opens are
+    /// those of the first pass's shares the device does not serve yet, so the
+    /// second pass adds no share the first did not; a scope the swapped device
+    /// does not hold is released.
     ///
     /// A move admitted as a live swap (``VMCapability/editLiveSharedDirectories``) carries
     /// the running device with it, in three steps that each run only once the

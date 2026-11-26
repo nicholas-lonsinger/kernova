@@ -44,9 +44,9 @@ package struct ConfigCheckReport: Equatable {
 
     /// `url`'s path under ``libraryDirectory``, or in full when it is not under it.
     func relativePath(of url: URL) -> String {
-        let path = VMBundleIdentity.spelling(url)
+        let path = FileIdentity.spelling(url)
         guard let libraryDirectory else { return path }
-        let base = VMBundleIdentity.spelling(libraryDirectory) + "/"
+        let base = FileIdentity.spelling(libraryDirectory) + "/"
         return path.hasPrefix(base) ? String(path.dropFirst(base.count)) : path
     }
 

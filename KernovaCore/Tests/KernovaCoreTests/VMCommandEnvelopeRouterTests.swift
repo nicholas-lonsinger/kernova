@@ -340,11 +340,10 @@ struct VMCommandEnvelopeRouterTests {
         #expect(harness.authority.requests.map(\.source) == [.sharedDirectory])
         // A URL for an existing folder spells it with a trailing separator, so
         // the paths compare as folders.
-        let asked = harness.authority.requestedURLs.map {
-            VMCommandCore.comparablePath($0.path(percentEncoded: false))
-        }
-        #expect(asked == [folder])
-        #expect(instance.configuration.sharedDirectories?.map { VMCommandCore.comparablePath($0.path) } == [folder])
+        #expect(harness.authority.requestedURLs.map(FileIdentity.spelling) == [folder])
+        #expect(
+            instance.configuration.sharedDirectories?.map { FileIdentity.spelling(URL(fileURLWithPath: $0.path)) }
+                == [folder])
         #expect(instance.configuration.sharedDirectories?.map(\.readOnly) == [true])
     }
 }

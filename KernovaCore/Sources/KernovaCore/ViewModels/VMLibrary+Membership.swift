@@ -392,7 +392,7 @@ extension VMLibrary {
                     continue
                 }
                 if let known = entries.first(where: { $0.id == id })?.vm,
-                    VMBundleIdentity.spelling(known.bundleURL) == VMBundleIdentity.spelling(bundleURL)
+                    FileIdentity.spelling(known.bundleURL) == FileIdentity.spelling(bundleURL)
                 {
                     confirmedIDs.insert(id)
                     continue

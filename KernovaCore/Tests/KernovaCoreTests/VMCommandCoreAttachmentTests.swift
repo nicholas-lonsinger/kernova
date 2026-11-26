@@ -471,21 +471,54 @@ struct VMCommandCoreAttachmentTests {
         #expect(single.configuration.sharedDirectories == [only])
     }
 
-    /// The VM shares a folder as `held` and is asked to add it as `asked` —
-    /// named outright, or `throughLink`: named as a symbolic link to it, which
-    /// the grant is asked for.
+    /// A folder, and the two paths that list it: `direct`, and `throughLink`,
+    /// which crosses a symbolic link to the folder above it.
+    private func folderListedTwoWays() throws -> (direct: String, throughLink: String) {
+        let parent = try folder("parent")
+        let linkedParent = externalPath("linked")
+        try FileManager.default.createSymbolicLink(atPath: linkedParent, withDestinationPath: parent)
+        try FileManager.default.createDirectory(atPath: parent + "/Shared", withIntermediateDirectories: false)
+        return (parent + "/Shared", linkedParent + "/Shared")
+    }
+
+    /// How an add names a folder the VM shares.
+    enum Spelling: CaseIterable, Sendable {
+        /// As the VM's first share of it lists it.
+        case listed
+        /// As a symbolic link to the folder.
+        case link
+        /// Directly, where the first share's listed path crosses a symbolic
+        /// link to the folder above it.
+        case pastTheListedLink
+    }
+
+    /// The VM shares a folder once for each access `held` lists — its first
+    /// share listed as `spelling` says, a second in the folder's other
+    /// spelling — and is asked to add it as `asked`.
     @Test(
-        "Adding a folder the VM already shares answers that share with the access asked for, and is refused with the other",
-        arguments: [false, true], [(false, false), (false, true), (true, false), (true, true)])
+        "Adding a folder the VM already shares, however the path spells it, answers a share of it with the access asked for, and is refused while any share of it has the other",
+        arguments: Spelling.allCases,
+        [[false], [true], [false, false], [false, true], [true, false], [true, true]].flatMap { held in
+            [false, true].map { (held: held, asked: $0) }
+        })
     func addingASharedFolderIsRefusedWithTheOtherAccess(
-        throughLink: Bool, access: (held: Bool, asked: Bool)
+        spelling: Spelling, access: (held: [Bool], asked: Bool)
     ) async throws {
         let harness = makeHarness()
-        let shared = SharedDirectory(path: try folder("shared"), readOnly: access.held)
-        let instance = makeInstance(in: harness) { $0.sharedDirectories = [shared] }
-        let named = throughLink ? externalPath("named") : shared.path
-        if throughLink {
-            try FileManager.default.createSymbolicLink(atPath: named, withDestinationPath: shared.path)
+        let spellings = try folderListedTwoWays()
+        let listings =
+            spelling == .pastTheListedLink
+            ? [spellings.throughLink, spellings.direct] : [spellings.direct, spellings.throughLink]
+        let shares = zip(listings, access.held).map { SharedDirectory(path: $0, readOnly: $1) }
+        let instance = makeInstance(in: harness) { $0.sharedDirectories = NamedList(repairing: shares) }
+        let held = instance.configuration.sharedDirectories
+        let named: String
+        switch spelling {
+        case .listed: named = listings[0]
+        case .link:
+            named = externalPath("named")
+            try FileManager.default.createSymbolicLink(atPath: named, withDestinationPath: spellings.direct)
+        case .pastTheListedLink: named = spellings.direct
         }
 
         let answered: SharedDirectorySummary?
@@ -496,9 +529,27 @@ struct VMCommandCoreAttachmentTests {
             answered = nil
         }
 
-        #expect(answered?.readOnly == (access.held == access.asked ? access.asked : nil))
-        #expect(instance.configuration.sharedDirectories == [shared])
-        #expect(harness.authority.requests.count == (throughLink ? 1 : 0))
+        #expect(answered?.readOnly == (access.held.allSatisfy { $0 == access.asked } ? access.asked : nil))
+        #expect(instance.configuration.sharedDirectories == held)
+        #expect(harness.authority.requests.isEmpty)
+    }
+
+    /// The VM shares one folder twice, `directFirst` or the other way round,
+    /// and the share at index `removed` is removed by its listed path.
+    @Test(
+        "Removing a share by its listed path removes that share, though another, listed in the folder's other spelling, shares the same folder",
+        arguments: [false, true], [0, 1])
+    func removingByAListedPathRemovesThatShare(directFirst: Bool, removed: Int) throws {
+        let harness = makeHarness()
+        let spellings = try folderListedTwoWays()
+        let listings =
+            directFirst ? [spellings.direct, spellings.throughLink] : [spellings.throughLink, spellings.direct]
+        let shares = listings.map { SharedDirectory(path: $0) }
+        let instance = makeInstance(in: harness) { $0.sharedDirectories = NamedList(repairing: shares) }
+
+        try harness.core.removeSharedDirectory(.id(instance.id), path: shares[removed].path)
+
+        #expect(instance.configuration.sharedDirectories?.map(\.id) == [shares[1 - removed].id])
     }
 
     // MARK: - State gates
