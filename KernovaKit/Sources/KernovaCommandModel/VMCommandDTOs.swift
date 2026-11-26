@@ -275,6 +275,17 @@ public enum VMAgentRole: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// What a snapshot captured, which decides what reverting to it produces.
+public enum VMSnapshotKind: String, Codable, Sendable {
+    /// The guest's memory, plus a copy of the VM's disks and its
+    /// configuration. Reverting lands the VM suspended on that memory image,
+    /// or running when it was live.
+    case warm
+    /// The VM's disks and its configuration, taken while the VM was stopped.
+    /// Reverting lands the VM stopped.
+    case cold
+}
+
 /// One of a VM's named restore points.
 public struct SnapshotSummary: Codable, Sendable, Hashable {
     /// The snapshot's stable identifier.
@@ -283,9 +294,8 @@ public struct SnapshotSummary: Codable, Sendable, Hashable {
     public let name: String
     /// The user's free-form note, empty when there is none.
     public let notes: String
-    /// `warm` when the capture holds the guest's memory, `cold` when it does
-    /// not.
-    public let kind: String
+    /// What the capture holds.
+    public let kind: VMSnapshotKind
     /// When the capture was taken.
     public let createdAt: Date
     /// Whether the VM's state descends from this snapshot.
@@ -307,7 +317,7 @@ public struct SnapshotSummary: Codable, Sendable, Hashable {
         id: UUID,
         name: String,
         notes: String,
-        kind: String,
+        kind: VMSnapshotKind,
         createdAt: Date,
         isCurrent: Bool,
         isEphemeralBaseline: Bool
@@ -353,6 +363,15 @@ public struct SharedDirectorySummary: Codable, Sendable, Hashable {
     }
 }
 
+/// The bus the guest sees a storage disk on.
+///
+/// Both are valid boot media on EFI, and the guest names them in different
+/// namespaces (`/dev/vd*` and `/dev/sd*` on Linux).
+public enum StorageDiskKind: String, Codable, Sendable {
+    case virtio
+    case usbMassStorage
+}
+
 /// One disk on a VM's storage-device list, as its configuration attaches it
 /// and as its image measured when the read was answered.
 public struct StorageDiskSummary: Codable, Sendable, Hashable {
@@ -360,8 +379,8 @@ public struct StorageDiskSummary: Codable, Sendable, Hashable {
     public let id: UUID
     /// What the user calls the disk.
     public let label: String
-    /// The bus the guest sees the disk on: `virtio` or `usbMassStorage`.
-    public let kind: String
+    /// The bus the guest sees the disk on.
+    public let kind: StorageDiskKind
     /// Whether the guest may read the disk but not write to it.
     public let readOnly: Bool
     /// The image file, as this Mac names it.
@@ -383,7 +402,7 @@ public struct StorageDiskSummary: Codable, Sendable, Hashable {
 
     /// Describes one disk.
     public init(
-        id: UUID, label: String, kind: String, readOnly: Bool, path: String, notes: String,
+        id: UUID, label: String, kind: StorageDiskKind, readOnly: Bool, path: String, notes: String,
         capacityBytes: UInt64?, usedBytes: UInt64?
     ) {
         self.id = id

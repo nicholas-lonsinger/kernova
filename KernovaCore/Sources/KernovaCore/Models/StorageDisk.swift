@@ -2,15 +2,6 @@ import Foundation
 import KernovaCommandModel
 import KernovaKit
 
-/// Bus class for a `StorageDisk` entry.
-///
-/// Both virtio-block and USB mass storage are valid boot media on EFI, but the
-/// guest sees them in different namespaces (`/dev/vd*` vs `/dev/sd*` on Linux).
-package enum StorageDiskKind: String, Codable, Sendable, Equatable {
-    case virtio
-    case usbMassStorage
-}
-
 /// A disk attached on `vzConfig.storageDevices`.
 ///
 /// Covers the bundle's primary disk (`Disk.asif`) and any user-added internal

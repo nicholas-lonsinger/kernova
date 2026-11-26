@@ -1,4 +1,5 @@
 import AppKit
+import KernovaCommandModel
 import KernovaCore
 
 /// SF Symbol name for a storage disk row's leading icon.

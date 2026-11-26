@@ -2,17 +2,6 @@ import Foundation
 import KernovaCommandModel
 import KernovaKit
 
-/// What a snapshot captured, which decides what reverting to it produces.
-package enum VMSnapshotKind: String, Codable, Sendable {
-    /// The guest's memory as a VZ saved state, plus a copy of the bundle's
-    /// disks and the VM's configuration. Reverting lands the VM suspended on
-    /// that memory image, or running when it was live.
-    case warm
-    /// The bundle's disks and the VM's configuration, taken while the VM was
-    /// stopped. Reverting lands the VM stopped.
-    case cold
-}
-
 /// How a capture — a snapshot, or a clone's copy — started right now would be
 /// taken, which decides the work it does and, for a snapshot, the
 /// ``VMSnapshotKind`` it produces.

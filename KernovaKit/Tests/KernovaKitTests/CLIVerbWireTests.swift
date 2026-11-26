@@ -56,7 +56,7 @@ struct CLIVerbWireTests {
     func infoAsksForTheVMThenItsDisks() async throws {
         let disks = [
             StorageDiskSummary(
-                id: alpha.id, label: "Main Disk", kind: "virtio", readOnly: false,
+                id: alpha.id, label: "Main Disk", kind: .virtio, readOnly: false,
                 path: "/Users/somebody/VMs/Alpha.kernova/Disk.asif", notes: "",
                 capacityBytes: 100_000_000_000, usedBytes: 10_100_000_000)
         ]

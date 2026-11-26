@@ -21,7 +21,7 @@ struct CLINoticeTests {
         id: UUID(), name: "Alpha Pool", status: .runtime(.stopped), ipAddress: .unavailable,
         heldByAnotherCopy: false)
     private let baseline = SnapshotSummary(
-        id: UUID(), name: "Clean install", notes: "", kind: "cold", createdAt: Date(),
+        id: UUID(), name: "Clean install", notes: "", kind: .cold, createdAt: Date(),
         isCurrent: true, isEphemeralBaseline: true)
 
     /// The lines written, in order; locked because the streams are `@Sendable`.

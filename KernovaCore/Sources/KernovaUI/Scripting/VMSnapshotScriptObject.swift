@@ -55,18 +55,7 @@ package final class VMSnapshotScriptObject: NSObject {
 
     /// The `snapshot kind` enumerator for what the capture holds, as the Apple
     /// event code the dictionary gives it.
-    ///
-    /// `missing value` for a kind from no vocabulary this app writes, which is
-    /// a programming error rather than a snapshot a script can provoke.
-    @objc var kind: NSNumber? {
-        guard let kind = VMScriptSnapshotKind(wireName: snapshot.kind) else {
-            Self.logger.log(
-                .fault, "Snapshot kind '\(self.snapshot.kind, privacy: .public)' has no scripting term")
-            assertionFailure("Snapshot kind '\(snapshot.kind)' has no scripting term")
-            return nil
-        }
-        return NSNumber(value: kind.code)
-    }
+    @objc var kind: NSNumber { NSNumber(value: VMScriptSnapshotKind(snapshot.kind).code) }
 
     @objc var creationDate: Date { snapshot.createdAt }
 
@@ -141,13 +130,6 @@ enum VMScriptSnapshotKind: CaseIterable {
         case .warm: self = .warm
         case .cold: self = .cold
         }
-    }
-
-    /// The term for the kind a ``SnapshotSummary`` names, `nil` for a name from
-    /// no vocabulary this app writes.
-    init?(wireName: String) {
-        guard let kind = VMSnapshotKind(rawValue: wireName) else { return nil }
-        self.init(kind)
     }
 
     /// The Apple event code the dictionary gives this case's term.

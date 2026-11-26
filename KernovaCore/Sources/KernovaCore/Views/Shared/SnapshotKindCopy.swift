@@ -1,3 +1,5 @@
+import KernovaCommandModel
+
 /// The short forms that name a snapshot's kind — the snapshot row's subtitle,
 /// a Shortcuts snapshot's subtitle, and Get Info's "Captured" row read them.
 package enum SnapshotKindCopy {
