@@ -145,10 +145,8 @@ struct ExternalFileReferenceTests {
 
     // MARK: - Bookmark creation
 
-    @Test(
-        "A file the user can read but not write is bookmarked, whatever kind it is picked as",
-        arguments: ExternalFileReference.Kind.allCases)
-    func bookmarksUnwritableFile(as kind: ExternalFileReference.Kind) throws {
+    @Test("A file the user can read but not write is bookmarked")
+    func bookmarksUnwritableFile() throws {
         let scratch = TestScratchDirectory(prefix: "ExternalFileReferenceTests")
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
         let file = scratch.url.appendingPathComponent("installer.iso")
@@ -156,6 +154,6 @@ struct ExternalFileReferenceTests {
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o444], ofItemAtPath: file.path(percentEncoded: false))
 
-        #expect(SecurityScopedBookmark.make(for: file, as: kind) != nil)
+        #expect(SecurityScopedBookmark.make(for: file) != nil)
     }
 }

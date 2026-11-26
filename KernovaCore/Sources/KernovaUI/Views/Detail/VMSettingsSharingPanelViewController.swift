@@ -558,8 +558,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         panel.message = "Select directories to share with the VM"
         panel.prompt = "Share"
         guard panel.runModal() == .OK else { return }
-        viewModel.addSharedDirectories(
-            panel.urls.map { PickedFile(picking: $0, as: .sharedDirectory) }, to: instance)
+        viewModel.addSharedDirectories(panel.urls.map(PickedFile.init(picking:)), to: instance)
     }
 
     @objc private func sharedReadOnlyToggled(_ sender: NSSwitch) {

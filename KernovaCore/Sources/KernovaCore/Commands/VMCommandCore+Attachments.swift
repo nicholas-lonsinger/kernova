@@ -12,9 +12,9 @@ package struct PickedFile: Sendable, Hashable {
     let bookmark: Data?
 
     /// One open-panel URL as the core takes it — path plus the app-scoped
-    /// bookmark minted from this pick's grant for a reference of `kind`.
-    package init(picking url: URL, as kind: ExternalFileReference.Kind) {
-        (path, bookmark) = SecurityScopedBookmark.capture(url, as: kind)
+    /// bookmark minted from this pick's grant.
+    package init(picking url: URL) {
+        (path, bookmark) = SecurityScopedBookmark.capture(url)
     }
 
     #if DEBUG
@@ -356,7 +356,7 @@ extension VMCommandCore {
                     path: destinationURL.path(percentEncoded: false),
                     readOnly: false,
                     label: destinationURL.deletingPathExtension().lastPathComponent,
-                    bookmark: SecurityScopedBookmark.make(for: destinationURL, as: .removableMedia))
+                    bookmark: SecurityScopedBookmark.make(for: destinationURL))
             } catch {
                 // Only when the write itself failed — the earlier phases throw
                 // before the destination is touched, and the path is

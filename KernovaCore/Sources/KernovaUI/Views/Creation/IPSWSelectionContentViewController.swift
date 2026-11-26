@@ -563,7 +563,7 @@ final class IPSWSelectionContentViewController: NSViewController {
         guard let window = view.window else { return }
         panel.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
-            let (path, bookmark) = SecurityScopedBookmark.capture(url, as: .localIPSW)
+            let (path, bookmark) = SecurityScopedBookmark.capture(url)
             self.creationVM.selectLocalFile(path: path, bookmark: bookmark)
             self.refresh()
             self.startLocalFileInspectionWatch()
