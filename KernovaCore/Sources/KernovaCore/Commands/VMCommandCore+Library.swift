@@ -523,8 +523,8 @@ extension VMCommandCore {
     /// the same destination.
     @discardableResult
     package func importVM(atPath path: String, waitForOutcome: Bool) async throws -> VMSummary {
-        let source = try await requireSourceAuthority(.importVM)
-            .readableURL(for: URL(fileURLWithPath: path), as: .vmBundle)
+        let source = URL(fileURLWithPath: path)
+        try await requireSourceAuthority(.importVM).requireReadAccess(to: source, as: .vmBundle)
         return try await importVM(from: source, waitForOutcome: waitForOutcome)
     }
 

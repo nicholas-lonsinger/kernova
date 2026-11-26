@@ -415,9 +415,8 @@ extension VMCommandCore {
     /// the authority is consulted, so a selector no VM answers to and a VM that
     /// takes no added share are both refused without a panel ever going up. The
     /// grant is asked for last because only the app can obtain one for a path a
-    /// sandboxed client named, and the bookmark is minted from whatever URL it
-    /// answers with — a share is reopened at every boot. That URL is the folder
-    /// shared and answered, whichever folder the user picked.
+    /// sandboxed client named, and the bookmark is minted from that path once
+    /// it is readable — a share is reopened at every boot.
     ///
     /// `path` is taken in ``comparablePath(_:)``'s spelling, so a `.` or `..`
     /// hop never reaches the stored path or the name a macOS guest mounts the
@@ -435,8 +434,9 @@ extension VMCommandCore {
         let named = Self.comparablePath(path)
         if let shared = sharedDirectory(at: named, on: instance) { return SharedDirectorySummary(shared) }
 
-        let folder = try await requireSourceAuthority(.editSharedDirectory)
-            .readableURL(for: URL(fileURLWithPath: named), as: .sharedDirectory)
+        let folder = URL(fileURLWithPath: named)
+        try await requireSourceAuthority(.editSharedDirectory)
+            .requireReadAccess(to: folder, as: .sharedDirectory)
         try Self.requireDirectory(folder)
         let picked = PickedFile(picking: folder)
         try addSharedDirectories([picked], readOnly: readOnly, to: instance)

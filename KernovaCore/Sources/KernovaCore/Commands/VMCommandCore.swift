@@ -120,8 +120,8 @@ package final class VMCommandCore {
     /// caller — the removable attachment a start failure names, above all.
     var onFailure: ((_ failure: CommandError, _ instance: VMInstance?) -> Void)?
 
-    /// Turns a path an out-of-process client named into a URL this sandboxed
-    /// process may read.
+    /// Gets this sandboxed process read access to a path an out-of-process
+    /// client named.
     ///
     /// A hook rather than a call, for the reason ``surfaceDisplay`` states: the
     /// grant comes from an open panel, and the core presents none. Only the two

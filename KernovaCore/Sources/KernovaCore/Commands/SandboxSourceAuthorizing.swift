@@ -11,14 +11,14 @@ package enum SandboxedSource: Sendable {
     case sharedDirectory
 }
 
-/// Turns a path a caller named into a URL this sandboxed process may read.
+/// Gets this sandboxed process read access to a path a caller named.
 ///
 /// A wire client names its file as a string: the `kernova` tool is sandboxed
 /// with no file access of its own, so it holds no grant it could hand over and
 /// the app is what has to obtain one.
 @MainActor
 package protocol SandboxSourceAuthorizing: AnyObject {
-    /// Answers a URL the app may read `url` through, asking the user when the
-    /// sandbox does not already admit it.
-    func readableURL(for url: URL, as source: SandboxedSource) async throws -> URL
+    /// Returns once the app may read `url`, asking the user when the sandbox
+    /// does not already admit it, and throws when it still may not.
+    func requireReadAccess(to url: URL, as source: SandboxedSource) async throws
 }

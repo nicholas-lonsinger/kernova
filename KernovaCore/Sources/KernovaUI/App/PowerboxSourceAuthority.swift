@@ -5,15 +5,16 @@ import KernovaCore
 import KernovaLogging
 import UniformTypeIdentifiers
 
-/// Reads a wire client's named file through the sandbox, asking the user for it
-/// when the container does not already admit it.
+/// Gets the sandbox to admit a wire client's named file, asking the user for it
+/// when the container does not already.
 ///
 /// A grant the user gives an open panel is the only way a sandboxed app reaches
-/// a file nobody handed it, so the panel is the authority: whatever the user
-/// picks is what the verb acts on, and a dismissed panel is a refusal.
+/// a file nobody handed it. The panel decides only whether the named file
+/// becomes readable: an answer that covers it — the file itself or a folder
+/// around it — admits it, and any other answer is a refusal.
 ///
 /// No bookmark is captured here — a caller that needs the grant to outlive the
-/// call mints one from the answered URL at the pick site.
+/// call mints one from the named URL once this returns.
 @MainActor
 final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
     nonisolated private static let logger = KernovaLogger(
@@ -30,10 +31,8 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
         self.present = present
     }
 
-    func readableURL(for url: URL, as source: SandboxedSource) async throws -> URL {
-        guard !FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false)) else {
-            return url
-        }
+    func requireReadAccess(to url: URL, as source: SandboxedSource) async throws {
+        guard !Self.isReadable(url) else { return }
         Self.logger.log(
             .notice,
             "Asking for permission to read '\(url.lastPathComponent, privacy: .public)'")
@@ -44,21 +43,24 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
 
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
+        panel.prompt = "Allow"
         switch source {
         case .vmBundle:
             panel.allowedContentTypes = [.kernovaVM]
             panel.canChooseFiles = true
             panel.canChooseDirectories = false
             panel.treatsFilePackagesAsDirectories = false
-            panel.prompt = "Import"
+            // The folder, not the item: a package URL here is ignored and the
+            // panel opens wherever it last was (observed 2026-09-06, macOS 27).
+            panel.directoryURL = url.deletingLastPathComponent()
         case .sharedDirectory:
             panel.canChooseFiles = false
             panel.canChooseDirectories = true
-            panel.prompt = "Share"
+            // A folder panel answered with nothing selected answers the folder
+            // it shows (observed 2026-11-26, macOS 27.2.1), so showing the
+            // named one makes it what the default button grants.
+            panel.directoryURL = url
         }
-        // The folder, not the item: a package URL here is ignored and the
-        // panel opens wherever it last was (observed 2026-09-06, macOS 27).
-        panel.directoryURL = url.deletingLastPathComponent()
         panel.message =
             "Kernova needs your permission to read \u{201C}\(url.lastPathComponent)\u{201D}."
 
@@ -79,7 +81,17 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
                     "Kernova was not given permission to read \u{201C}\(url.lastPathComponent)\u{201D}."
             )
         }
-        return picked
+        guard Self.isReadable(url) else {
+            throw CommandError.operationFailed(
+                verb: source.verb,
+                message:
+                    "Kernova was given \u{201C}\(picked.path(percentEncoded: false))\u{201D}, and still can\u{2019}t read \u{201C}\(url.path(percentEncoded: false))\u{201D}."
+            )
+        }
+    }
+
+    private static func isReadable(_ url: URL) -> Bool {
+        FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false))
     }
 }
 
