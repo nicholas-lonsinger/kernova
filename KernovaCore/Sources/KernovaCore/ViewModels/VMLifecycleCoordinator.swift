@@ -978,7 +978,7 @@ final class VMLifecycleCoordinator {
             path: destination.path(percentEncoded: false),
             readOnly: true,
             label: (filename as NSString).deletingPathExtension,
-            bookmark: SecurityScopedBookmark.make(for: destination)
+            bookmark: SecurityScopedBookmark.make(for: destination, as: .storageDisk)
         )
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
         try permit.updateConfiguration { config in

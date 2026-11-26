@@ -5,11 +5,11 @@ import KernovaLogging
 /// Creation and resolution of app-scoped security bookmarks — the sandbox's
 /// mechanism for persisting a user's open/save-panel grant across launches.
 ///
-/// Runtime behavior here, and in ``ScopedAccess`` and `RuntimeFileAccess`, is
-/// untested by construction: bookmark creation and resolution need a real
+/// What a bookmark grants a sandboxed process is untested by construction, here
+/// and in ``ScopedAccess`` and `RuntimeFileAccess`: it takes a real
 /// open/save-panel grant, which only a user driving the panel can mint.
 ///
-/// Every panel pick site converts its URL through ``capture(_:)`` and stores the
+/// Every panel pick site converts its URL through ``capture(_:as:)`` and stores the
 /// resulting `(path, bookmark)` pair on the model; every access site resolves it
 /// back into live access via ``ScopedAccess``. A `nil` bookmark falls through to
 /// the raw path, which the sandbox denies for out-of-container files — surfacing
@@ -26,21 +26,30 @@ package enum SecurityScopedBookmark {
     }
 
     /// Captures a panel-picked URL as the `(path, bookmark)` pair the models
-    /// persist.
-    package static func capture(_ url: URL) -> (path: String, bookmark: Data?) {
-        (url.path(percentEncoded: false), make(for: url))
+    /// persist for a reference of `kind`.
+    package static func capture(
+        _ url: URL, as kind: ExternalFileReference.Kind
+    ) -> (path: String, bookmark: Data?) {
+        (url.path(percentEncoded: false), make(for: url, as: kind))
     }
 
-    /// Creates app-scoped bookmark data for `url`, or `nil` (logged) when
-    /// the system refuses — callers store the raw path alone and rely on
-    /// the nil-bookmark fall-through.
-    static func make(for url: URL) -> Data? {
+    /// Creates app-scoped bookmark data for `url`, or `nil` (logged) when the
+    /// system refuses — callers store the raw path alone and rely on the
+    /// nil-bookmark fall-through.
+    ///
+    /// The bookmark grants read access, and write access too where `kind` can
+    /// be opened writable and the system grants it of this file: a read-write
+    /// scope is refused for a file the user can read but not write
+    /// (docs/research/2026-11-18-pasteboard-file-grants.md, finding 15).
+    static func make(for url: URL, as kind: ExternalFileReference.Kind) -> Data? {
+        func bookmark(_ scope: URL.BookmarkCreationOptions) throws -> Data {
+            try url.bookmarkData(options: scope, includingResourceValuesForKeys: nil, relativeTo: nil)
+        }
+        if kind.canBeOpenedWritable, let readWrite = try? bookmark(.withSecurityScope) {
+            return readWrite
+        }
         do {
-            return try url.bookmarkData(
-                options: .withSecurityScope,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
+            return try bookmark([.withSecurityScope, .securityScopeAllowOnlyReadAccess])
         } catch {
             logger.log(
                 .error,

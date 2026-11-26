@@ -445,7 +445,7 @@ extension VMCommandCore {
         // A link's bookmark cannot be made while the folder holding the link
         // is one the sandbox does not admit (observed 2026-11-26, macOS
         // 27.2.1), so the share is of the folder the path resolves to.
-        let file = PickedFile(picking: folder.resolvingSymlinksInPath())
+        let file = PickedFile(picking: folder.resolvingSymlinksInPath(), as: .sharedDirectory)
         try addSharedDirectories([file], readOnly: readOnly, to: instance)
         guard let shared = try share(at: file.path, on: instance, sharedReadOnly: readOnly) else {
             throw itemNotFound(instance, item: "shared directory \u{201C}\(file.path)\u{201D}")

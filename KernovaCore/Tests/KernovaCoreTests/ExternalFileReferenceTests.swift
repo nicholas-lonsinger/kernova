@@ -142,4 +142,20 @@ struct ExternalFileReferenceTests {
             VMCommandCore.sharingVMNames(
                 matching: subject, among: [(name: "Sibling", identities: sibling)]) == ["Sibling"])
     }
+
+    // MARK: - Bookmark creation
+
+    @Test(
+        "A file the user can read but not write is bookmarked, whatever kind it is picked as",
+        arguments: ExternalFileReference.Kind.allCases)
+    func bookmarksUnwritableFile(as kind: ExternalFileReference.Kind) throws {
+        let scratch = TestScratchDirectory(prefix: "ExternalFileReferenceTests")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let file = scratch.url.appendingPathComponent("installer.iso")
+        try Data("image".utf8).write(to: file)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o444], ofItemAtPath: file.path(percentEncoded: false))
+
+        #expect(SecurityScopedBookmark.make(for: file, as: kind) != nil)
+    }
 }

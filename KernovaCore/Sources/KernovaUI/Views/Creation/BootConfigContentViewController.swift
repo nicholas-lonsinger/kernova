@@ -331,34 +331,34 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     }
 
     private func browseISO() {
-        browseAndCapture(title: "Select ISO Image", types: [.iso]) { vm, path, bookmark in
+        browseAndCapture(title: "Select ISO Image", types: [.iso], as: .storageDisk) { vm, path, bookmark in
             vm.selectLocalISO(path: path, bookmark: bookmark)
         }
     }
 
     @objc private func browseKernel() {
-        browseAndCapture(title: "Select Kernel", types: [.data]) { vm, path, bookmark in
+        browseAndCapture(title: "Select Kernel", types: [.data], as: .kernel) { vm, path, bookmark in
             vm.kernelPath = path
             vm.kernelBookmark = bookmark
         }
     }
 
     @objc private func browseInitrd() {
-        browseAndCapture(title: "Select Initrd", types: [.data]) { vm, path, bookmark in
+        browseAndCapture(title: "Select Initrd", types: [.data], as: .initrd) { vm, path, bookmark in
             vm.initrdPath = path
             vm.initrdBookmark = bookmark
         }
     }
 
-    /// `browse` + `SecurityScopedBookmark.capture` + refresh, shared by the three
+    /// `browse` + `SecurityScopedBookmark.capture(_:as:)` + refresh, shared by the three
     /// pickers; `assign` writes the captured pair onto its model fields.
     private func browseAndCapture(
-        title: String, types: [UTType],
+        title: String, types: [UTType], as kind: ExternalFileReference.Kind,
         assign: @escaping (VMCreationViewModel, String, Data?) -> Void
     ) {
         browse(title: title, types: types) { [weak self] url in
             guard let self else { return }
-            let (path, bookmark) = SecurityScopedBookmark.capture(url)
+            let (path, bookmark) = SecurityScopedBookmark.capture(url, as: kind)
             assign(self.creationVM, path, bookmark)
             self.rebuildConditional()
         }

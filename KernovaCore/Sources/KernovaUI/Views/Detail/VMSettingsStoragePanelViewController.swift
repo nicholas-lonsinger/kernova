@@ -445,7 +445,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let urls = NSOpenPanel.browseDiskImages(
             message: "Select disk images to attach to the VM", allowsMultipleSelection: true)
         guard !urls.isEmpty else { return }
-        viewModel.attachStorageDisks(urls.map(PickedFile.init(picking:)), to: instance)
+        viewModel.attachStorageDisks(urls.map { PickedFile(picking: $0, as: .storageDisk) }, to: instance)
     }
 
     @objc private func createStorageTapped() {
@@ -763,7 +763,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let urls = NSOpenPanel.browseDiskImages(
             message: "Select disk images to attach to the VM", allowsMultipleSelection: true)
         guard !urls.isEmpty else { return }
-        viewModel.attachRemovableMedia(urls.map(PickedFile.init(picking:)), to: instance)
+        viewModel.attachRemovableMedia(urls.map { PickedFile(picking: $0, as: .removableMedia) }, to: instance)
     }
 
     @objc private func createRemovableTapped() {

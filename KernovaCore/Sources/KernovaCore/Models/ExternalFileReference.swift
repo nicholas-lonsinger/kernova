@@ -51,6 +51,15 @@ extension ExternalFileReference.Kind {
         }
     }
 
+    /// Whether a VM can open this kind for writing: the kinds whose entry
+    /// carries a Read Only setting the user can turn off after the pick.
+    var canBeOpenedWritable: Bool {
+        switch self {
+        case .storageDisk, .removableMedia, .sharedDirectory: true
+        case .kernel, .initrd, .localIPSW: false
+        }
+    }
+
     /// Whether ``AttachmentFileMonitor`` watches this kind, so the settings row
     /// standing for it badges a file that has gone missing.
     package var isExistenceMonitored: Bool {
@@ -98,7 +107,9 @@ extension ScopedAccess {
         guard scope.isStale || moved else { return (scope, nil) }
         // Re-creating while the scope is active is Apple's documented
         // stale-bookmark pattern.
-        guard let fresh = SecurityScopedBookmark.make(for: scope.url) else { return (scope, nil) }
+        guard let fresh = SecurityScopedBookmark.make(for: scope.url, as: reference.kind) else {
+            return (scope, nil)
+        }
         return (scope, (resolvedPath, fresh))
     }
 }
