@@ -29,7 +29,7 @@ struct CLIArrivalWaitTests {
         let client = try VMCommandClient(socketPath: listener.path)
         defer { client.close() }
         // The app took the request and has not come back to it — the copy is
-        // still running, or the permission panel on a mistyped path is up.
+        // still running, or the permission panel is up.
         listener.serve([], holdingOpen: true)
 
         do {

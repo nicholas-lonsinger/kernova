@@ -415,17 +415,18 @@ extension VMCommandCore {
     /// folder the VM already shares with the other access is refused, since an
     /// add changes no share it finds.
     ///
-    /// Resolve, gate, then grant: the VM and its state decide the answer before
-    /// the authority is consulted, so a selector no VM answers to and a VM that
-    /// takes no added share are both refused without a panel ever going up. The
+    /// Resolve, gate, then grant: the VM, its state and what `path` names decide
+    /// the answer before the authority is consulted, so a selector no VM
+    /// answers to, a VM that takes no added share and a path that is no folder
+    /// are all refused without a panel ever going up. The
     /// grant is asked for last because only the app can obtain one for a path a
-    /// sandboxed client named, and the bookmark is minted from whatever URL it
-    /// answers with — a share is reopened at every boot. That URL is the folder
-    /// shared and answered, whichever folder the user picked.
+    /// sandboxed client named, and the bookmark is minted from that path once
+    /// it is readable — a share is reopened at every boot.
     ///
-    /// `path` is taken in ``comparablePath(_:)``'s spelling, so a `.` or `..`
-    /// hop never reaches the stored path or the name a macOS guest mounts the
-    /// folder by, whichever door named it.
+    /// `path` is taken in ``comparablePath(_:)``'s spelling with its links
+    /// resolved, so a `.` or `..` hop or a link's name never reaches the stored
+    /// path or the name a macOS guest mounts the folder by, whichever door
+    /// named it.
     ///
     /// The gate is asked again once the panel answers: it stands for as long as
     /// the user leaves it up, and the VM the caller named can have started in
@@ -439,13 +440,17 @@ extension VMCommandCore {
         let named = Self.comparablePath(path)
         if let shared = try share(at: named, on: instance, sharedReadOnly: readOnly) { return shared }
 
-        let folder = try await requireSourceAuthority(.editSharedDirectory)
-            .readableURL(for: URL(fileURLWithPath: named), as: .sharedDirectory)
+        let folder = URL(fileURLWithPath: named)
         try Self.requireDirectory(folder)
-        let picked = PickedFile(picking: folder)
-        try addSharedDirectories([picked], readOnly: readOnly, to: instance)
-        guard let shared = try share(at: picked.path, on: instance, sharedReadOnly: readOnly) else {
-            throw itemNotFound(instance, item: "shared directory \u{201C}\(picked.path)\u{201D}")
+        try await requireSourceAuthority(.editSharedDirectory)
+            .requireReadAccess(to: folder, as: .sharedDirectory)
+        // A link's bookmark cannot be made while the folder holding the link
+        // is one the sandbox does not admit (observed 2026-11-26, macOS
+        // 27.2.1), so the share is of the folder the path resolves to.
+        let file = PickedFile(picking: folder.resolvingSymlinksInPath())
+        try addSharedDirectories([file], readOnly: readOnly, to: instance)
+        guard let shared = try share(at: file.path, on: instance, sharedReadOnly: readOnly) else {
+            throw itemNotFound(instance, item: "shared directory \u{201C}\(file.path)\u{201D}")
         }
         return shared
     }

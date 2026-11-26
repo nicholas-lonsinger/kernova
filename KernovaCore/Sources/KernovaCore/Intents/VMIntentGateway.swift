@@ -386,8 +386,7 @@ package final class VMIntentGateway {
     }
 
     /// ``VMCommandCore/addSharedDirectory(_:path:readOnly:)`` of the folder at
-    /// `path` (``UserHome/fullPath(_:of:)``), answering the share the folder
-    /// chosen fills.
+    /// `path` (``UserHome/fullPath(_:of:)``), answering the share it fills.
     ///
     /// `bringForward` asks Shortcuts to bring Kernova forward. It is this
     /// verb's ``ActivationRequester``, so it runs only when the core is about

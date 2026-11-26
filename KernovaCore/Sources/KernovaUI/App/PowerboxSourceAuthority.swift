@@ -5,34 +5,29 @@ import KernovaCore
 import KernovaLogging
 import UniformTypeIdentifiers
 
-/// Reads a wire client's named file through the sandbox, asking the user for it
-/// when the container does not already admit it.
+/// Gets the sandbox to admit a wire client's named file, asking the user for it
+/// when the container does not already.
 ///
 /// A grant the user gives an open panel is the only way a sandboxed app reaches
-/// a file nobody handed it, so the panel is the authority: whatever the user
-/// picks is what the verb acts on, and a dismissed panel is a refusal.
+/// a file nobody handed it. The panel decides only whether the named file
+/// becomes readable: an answer that covers it — the file itself or a folder
+/// around it — admits it, and any other answer is a refusal.
 ///
 /// No bookmark is captured here — a caller that needs the grant to outlive the
-/// call mints one from the answered URL at the pick site.
+/// app's run mints one from the named URL.
 @MainActor
 final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
     nonisolated private static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "PowerboxSourceAuthority")
 
-    /// Puts the panel up and answers how the user dismissed it.
-    private let present: @MainActor (NSOpenPanel) async -> NSApplication.ModalResponse
-
-    init(
-        present: @escaping @MainActor (NSOpenPanel) async -> NSApplication.ModalResponse = {
-            await $0.begin()
-        }
-    ) {
-        self.present = present
-    }
-
-    func readableURL(for url: URL, as source: SandboxedSource) async throws -> URL {
-        guard !FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false)) else {
-            return url
+    func requireReadAccess(to url: URL, as source: SandboxedSource) async throws {
+        guard !Self.isReadable(url) else { return }
+        // A path the sandbox does not admit still answers whether anything is
+        // at it (docs/research/2026-11-18-pasteboard-file-grants.md,
+        // observation 8), and no grant makes a missing file readable.
+        let named = VMCommandCore.comparablePath(url.path(percentEncoded: false))
+        guard FileManager.default.fileExists(atPath: named) else {
+            throw CommandError.invalidArgument("Nothing is at \u{201C}\(named)\u{201D}.")
         }
         Self.logger.log(
             .notice,
@@ -44,26 +39,29 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
 
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
+        panel.prompt = "Allow"
         switch source {
         case .vmBundle:
             panel.allowedContentTypes = [.kernovaVM]
             panel.canChooseFiles = true
             panel.canChooseDirectories = false
             panel.treatsFilePackagesAsDirectories = false
-            panel.prompt = "Import"
+            // The folder, not the item: a package URL here is ignored and the
+            // panel opens wherever it last was (observed 2026-09-06, macOS 27).
+            panel.directoryURL = url.deletingLastPathComponent()
         case .sharedDirectory:
             panel.canChooseFiles = false
             panel.canChooseDirectories = true
-            panel.prompt = "Share"
+            // A folder panel answered with nothing selected answers the folder
+            // it shows (observed 2026-11-26, macOS 27.2.1), so showing the
+            // named one makes it what the default button grants.
+            panel.directoryURL = url
         }
-        // The folder, not the item: a package URL here is ignored and the
-        // panel opens wherever it last was (observed 2026-09-06, macOS 27).
-        panel.directoryURL = url.deletingLastPathComponent()
         panel.message =
             "Kernova needs your permission to read \u{201C}\(url.lastPathComponent)\u{201D}."
 
         let response = await withTaskCancellationHandler {
-            await present(panel)
+            await panel.begin()
         } onCancel: {
             // The caller is gone, and a panel nobody is waiting on is a
             // question left on the Mac's screen that no answer reaches. Ending
@@ -73,13 +71,31 @@ final class PowerboxSourceAuthority: SandboxSourceAuthorizing {
         }
 
         guard response == .OK, let picked = panel.url else {
+            Self.logger.log(
+                .notice,
+                "Permission to read '\(url.lastPathComponent, privacy: .public)' was not given")
             throw CommandError.operationFailed(
                 verb: source.verb,
                 message:
                     "Kernova was not given permission to read \u{201C}\(url.lastPathComponent)\u{201D}."
             )
         }
-        return picked
+        guard Self.isReadable(url) else {
+            let given = VMCommandCore.comparablePath(picked.path(percentEncoded: false))
+            Self.logger.log(
+                .notice,
+                "Given '\(picked.lastPathComponent, privacy: .public)', which leaves '\(url.lastPathComponent, privacy: .public)' unreadable"
+            )
+            throw CommandError.operationFailed(
+                verb: source.verb,
+                message:
+                    "Kernova was given \u{201C}\(given)\u{201D}, and still can\u{2019}t read \u{201C}\(named)\u{201D}."
+            )
+        }
+    }
+
+    private static func isReadable(_ url: URL) -> Bool {
+        FileManager.default.isReadableFile(atPath: url.path(percentEncoded: false))
     }
 }
 

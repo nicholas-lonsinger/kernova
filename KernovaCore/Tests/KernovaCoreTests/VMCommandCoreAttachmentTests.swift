@@ -472,19 +472,21 @@ struct VMCommandCoreAttachmentTests {
     }
 
     /// The VM shares a folder as `held` and is asked to add it as `asked` —
-    /// named outright, or `throughPanel`: named as another folder, with the
-    /// user picking the shared one in the open panel.
+    /// named outright, or `throughLink`: named as a symbolic link to it, which
+    /// the grant is asked for.
     @Test(
         "Adding a folder the VM already shares answers that share with the access asked for, and is refused with the other",
         arguments: [false, true], [(false, false), (false, true), (true, false), (true, true)])
     func addingASharedFolderIsRefusedWithTheOtherAccess(
-        throughPanel: Bool, access: (held: Bool, asked: Bool)
+        throughLink: Bool, access: (held: Bool, asked: Bool)
     ) async throws {
         let harness = makeHarness()
         let shared = SharedDirectory(path: try folder("shared"), readOnly: access.held)
         let instance = makeInstance(in: harness) { $0.sharedDirectories = [shared] }
-        let named = throughPanel ? try folder("named") : shared.path
-        harness.authority.picked = URL(filePath: shared.path, directoryHint: .isDirectory)
+        let named = throughLink ? externalPath("named") : shared.path
+        if throughLink {
+            try FileManager.default.createSymbolicLink(atPath: named, withDestinationPath: shared.path)
+        }
 
         let answered: SharedDirectorySummary?
         do {
@@ -496,7 +498,7 @@ struct VMCommandCoreAttachmentTests {
 
         #expect(answered?.readOnly == (access.held == access.asked ? access.asked : nil))
         #expect(instance.configuration.sharedDirectories == [shared])
-        #expect(harness.authority.requests.count == (throughPanel ? 1 : 0))
+        #expect(harness.authority.requests.count == (throughLink ? 1 : 0))
     }
 
     // MARK: - State gates
