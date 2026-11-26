@@ -1042,17 +1042,17 @@ final class VMScriptingGateway {
     }
 
     /// The share `text` names among ``sharedDirectories(of:)``: a full path,
-    /// starting with `/` or `~/`, names the share of that folder, as the core
-    /// compares two paths; any other text the first share it names
-    /// (``NameRule/sibling(identifiedBy:orNamedBy:in:name:)``), the one
-    /// Cocoa's own lookup finds there. `nil`, with the refusal recorded on the
-    /// command being answered, for text that names none of them.
+    /// starting with `/` or `~/`, names the share that folder fills
+    /// (``VMCommandCore/sharedDirectory(_:at:)``); any other text the first
+    /// share it names (``NameRule/sibling(named:in:name:)``), the one Cocoa's
+    /// own lookup finds there. `nil`, with the refusal recorded on the command
+    /// being answered, for text that names none of them.
     func sharedDirectory(named text: String, of vm: UUID) -> VMSharedDirectoryScriptObject? {
-        guard let listed = listedSharedDirectories(of: vm) else { return nil }
-        let folder = (try? UserHome.fullPath(text, of: "A folder")).map(VMCommandCore.comparablePath)
-        let found = NameRule.sibling(
-            identifiedBy: { VMCommandCore.comparablePath($0.path) == folder }, orNamedBy: text, in: listed,
-            name: \.name)
+        let folder = try? UserHome.fullPath(text, of: "A folder")
+        guard let listed = listedSharedDirectories(of: vm),
+            let filled = answeringRefusal({ try folder.flatMap { try commands.sharedDirectory(.id(vm), at: $0) } })
+        else { return nil }
+        let found = filled ?? NameRule.sibling(named: text, in: listed, name: \.name)
         return refusingMiss(found) { itemNotFound("shared directory named \u{201C}\(text)\u{201D}", on: vm) }
             .map { VMSharedDirectoryScriptObject($0, of: vm) }
     }

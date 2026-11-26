@@ -546,21 +546,26 @@ extension VMCommandCore {
     /// `readOnly` access and named for its folder
     /// (``SharedDirectory/init(sharing:id:readOnly:bookmark:)``) or, where
     /// another share goes by that, the first free name counted from it,
-    /// skipping folders the VM already shares.
+    /// skipping a folder a share already answers to
+    /// (``share(answeringTo:among:)``) — one of the VM's, or an earlier pick.
     func addSharedDirectories(
         _ files: [PickedFile], readOnly: Bool, to instance: VMInstance
     ) throws {
         let capability = try requireSharedDirectories(.add, on: instance)
-        // Made once, so every pass of the change adds the same shares.
-        let picks = files.map {
-            SharedDirectory(sharing: $0.path, id: UUID(), readOnly: readOnly, bookmark: $0.bookmark)
+        // Decided once, against the list the VM carries, so every pass of the
+        // change adds the same shares.
+        let held = instance.configuration.sharedDirectories ?? []
+        var adding: [SharedDirectory] = []
+        for file in files where Self.share(answeringTo: file.path, among: Array(held) + adding) == nil {
+            adding.append(SharedDirectory(sharing: file.path, id: UUID(), readOnly: readOnly, bookmark: file.bookmark))
         }
+        let heldIDs = Set(held.map(\.id))
         try writeSharedDirectories(of: instance, as: capability) { directories in
-            // The one spelling the core compares folder paths in, so a pick of
-            // `/x/` finds the `/x` this VM already shares.
-            var known = Set(directories.map { Self.comparablePath($0.path) })
-            for pick in picks where known.insert(Self.comparablePath(pick.path)).inserted {
-                directories.append(pick)
+            // Shares the file holds that the VM's list did not: another
+            // writer's.
+            let unseen = directories.filter { !heldIDs.contains($0.id) }
+            for share in adding where Self.share(answeringTo: share.path, among: unseen) == nil {
+                directories.append(share)
             }
         }
     }

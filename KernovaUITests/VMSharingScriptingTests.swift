@@ -49,10 +49,10 @@ struct VMSharingScriptingTests {
         ScriptEvent.element("KvVM", named: name)
     }
 
-    /// The paths of `instance`'s shares, in the one spelling the core
-    /// compares them in.
+    /// The paths of `instance`'s shares, each as ``FileIdentity/spelling(_:)``
+    /// spells it.
     private static func sharedPaths(of instance: VMInstance) -> [String] {
-        (instance.configuration.sharedDirectories ?? []).map { VMCommandCore.comparablePath($0.path) }
+        (instance.configuration.sharedDirectories ?? []).map { FileIdentity.spelling(URL(fileURLWithPath: $0.path)) }
     }
 
     // MARK: - Shared directories
@@ -90,8 +90,7 @@ struct VMSharingScriptingTests {
         let kept = "/Volumes/Archive/Kept"
         let alpha = wired.register(name: "Alpha")
         let beta = wired.register(name: "Beta") { $0.sharedDirectories = [SharedDirectory(path: kept)] }
-        let folder = VMCommandCore.comparablePath(
-            scratch.url.appendingPathComponent("Projects").path(percentEncoded: false))
+        let folder = FileIdentity.spelling(scratch.url.appendingPathComponent("Projects"))
         try FileManager.default.createDirectory(atPath: folder, withIntermediateDirectories: true)
         let host = ScriptHost()
         let gateway = await makeGateway(wired, host: host)

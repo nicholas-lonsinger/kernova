@@ -423,10 +423,9 @@ extension VMCommandCore {
     /// sandboxed client named, and the bookmark is minted from that path once
     /// it is readable — a share is reopened at every boot.
     ///
-    /// `path` is taken in ``comparablePath(_:)``'s spelling with its links
-    /// resolved, so a `.` or `..` hop or a link's name never reaches the stored
-    /// path or the name a macOS guest mounts the folder by, whichever door
-    /// named it.
+    /// `path` is taken standardized, with its links resolved, so a `.` or `..`
+    /// hop or a link's name never reaches the stored path or the name a macOS
+    /// guest mounts the folder by, whichever door named it.
     ///
     /// The gate is asked again once the panel answers: it stands for as long as
     /// the user leaves it up, and the VM the caller named can have started in
@@ -437,10 +436,9 @@ extension VMCommandCore {
     ) async throws -> SharedDirectorySummary {
         let instance = try resolve(selector)
         _ = try requireSharedDirectories(.add, on: instance)
-        let named = Self.comparablePath(path)
-        if let shared = try share(at: named, on: instance, sharedReadOnly: readOnly) { return shared }
+        if let shared = try share(at: path, on: instance, sharedReadOnly: readOnly) { return shared }
 
-        let folder = URL(fileURLWithPath: named)
+        let folder = URL(fileURLWithPath: path).standardizedFileURL
         try Self.requireDirectory(folder)
         try await requireSourceAuthority(.editSharedDirectory)
             .requireReadAccess(to: folder, as: .sharedDirectory)
@@ -471,12 +469,46 @@ extension VMCommandCore {
         return SharedDirectorySummary(shared)
     }
 
-    /// The share the folder at `path` fills on the VM, `nil` when it shares
-    /// none.
+    /// The share of the VM `selector` names that the folder at the full path
+    /// `path` fills (``share(answeringTo:among:)``), `nil` when it shares none.
+    package func sharedDirectory(_ selector: VMSelector, at path: String) throws -> SharedDirectorySummary? {
+        sharedDirectory(at: path, on: try resolve(selector)).map(SharedDirectorySummary.init)
+    }
+
+    /// The share the folder at `path` fills on the VM
+    /// (``share(answeringTo:among:)``), `nil` when it shares none.
     private func sharedDirectory(at path: String, on instance: VMInstance) -> SharedDirectory? {
-        let wanted = Self.comparablePath(path)
-        return (instance.configuration.sharedDirectories ?? []).first {
-            Self.comparablePath($0.path) == wanted
+        Self.share(answeringTo: path, among: instance.configuration.sharedDirectories ?? [])
+    }
+
+    /// The share among `directories` that answers to the folder at `path`, or
+    /// `nil` when none does: the first whose listed path is `path` as
+    /// ``FileIdentity/spelling(_:)`` spells both, else the first whose folder
+    /// the file system reports the folder at `path`, links followed, to be.
+    ///
+    /// A share's folder is the one its bookmark opens, else the one at its
+    /// listed path. So a share whose folder is gone or unreadable still
+    /// answers to the path its listing shows, and that path names that share
+    /// even where another share holds the same folder.
+    static func share(
+        answeringTo path: String, among directories: some Collection<SharedDirectory>
+    ) -> SharedDirectory? {
+        let named = URL(fileURLWithPath: path)
+        let spelled = FileIdentity.spelling(named)
+        if let listed = directories.first(where: { FileIdentity.spelling(URL(fileURLWithPath: $0.path)) == spelled }) {
+            return listed
+        }
+        return directories.first { share in
+            SecurityScopedBookmark.withResolvedURL(
+                bookmark: share.bookmark, fallback: URL(fileURLWithPath: share.path),
+                options: SecurityScopedBookmark.advisoryResolution
+            ) { folder in
+                guard let shared = FileIdentity(at: folder.resolvingSymlinksInPath()) else { return false }
+                // Read inside the share's scope, which admits the share's
+                // folder by whatever path names it, so `path` needs no grant
+                // of its own.
+                return FileIdentity(at: named.resolvingSymlinksInPath()) == shared
+            }
         }
     }
 
@@ -505,18 +537,6 @@ extension VMCommandCore {
                 "\u{201C}\(instance.name)\u{201D} does not share \u{201C}\(path)\u{201D}.")
         }
         try removeSharedDirectory(selector, directory: directory.id)
-    }
-
-    /// A path in the one spelling two of them are compared in — a trailing
-    /// separator and a `..` hop name the same folder as the resolved form.
-    ///
-    /// Every "does this VM already share it" question in the core is asked in
-    /// this spelling, whichever verb asks.
-    package static func comparablePath(_ path: String) -> String {
-        let standardized = URL(fileURLWithPath: path).standardizedFileURL
-            .path(percentEncoded: false)
-        guard standardized.count > 1, standardized.hasSuffix("/") else { return standardized }
-        return String(standardized.dropLast())
     }
 }
 

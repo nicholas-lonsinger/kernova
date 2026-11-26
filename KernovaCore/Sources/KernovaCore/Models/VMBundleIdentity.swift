@@ -2,23 +2,19 @@ import Foundation
 
 /// Which bundle directory a URL names.
 ///
-/// A bundle on disk is identified by its file identity, which the volume
-/// decides: two spellings it folds together — a case-only rename on the
-/// default case-insensitive APFS volume — are one bundle. A destination that
-/// does not exist yet has no file identity, so it is matched by
-/// ``nameKey(_:)`` instead, folded the way that volume folds names.
+/// A bundle on disk is identified by its ``FileIdentity``, so two spellings
+/// the volume folds together — a case-only rename on the default
+/// case-insensitive APFS volume — are one bundle. A destination that does not
+/// exist yet has no file identity, so it is matched by ``nameKey(_:)``
+/// instead, folded the way that volume folds names.
 package struct VMBundleIdentity: Hashable {
-    typealias Identifier = any NSCopying & NSSecureCoding & NSObjectProtocol
-
-    /// The directory's `URLResourceKey.fileResourceIdentifierKey` value — an
-    /// opaque object, compared only with `isEqual(_:)`.
-    let fileResourceIdentifier: Identifier
+    let file: FileIdentity
 
     #if DEBUG
     /// An identity no directory backs, for a storage fake that folds bundles
     /// together as a volume does.
-    init(fileResourceIdentifier: Identifier) {
-        self.fileResourceIdentifier = fileResourceIdentifier
+    init(fileResourceIdentifier: FileIdentity.Identifier) {
+        file = FileIdentity(fileResourceIdentifier: fileResourceIdentifier)
     }
     #endif
 
@@ -27,38 +23,16 @@ package struct VMBundleIdentity: Hashable {
     init?(bundleAt url: URL) {
         guard
             FileManager.default.fileExists(
-                atPath: VMBundleLayout(bundleURL: url).configURL.path(percentEncoded: false))
+                atPath: VMBundleLayout(bundleURL: url).configURL.path(percentEncoded: false)),
+            let file = FileIdentity(at: url)
         else { return nil }
-        // A fresh URL, because resource values are cached per URL instance and
-        // a cached identifier would outlive a rename.
-        let identifier = try? URL(filePath: url.path(percentEncoded: false), directoryHint: .isDirectory)
-            .resourceValues(forKeys: [.fileResourceIdentifierKey]).fileResourceIdentifier
-        guard let identifier else { return nil }
-        self.fileResourceIdentifier = identifier
-    }
-
-    package static func == (lhs: VMBundleIdentity, rhs: VMBundleIdentity) -> Bool {
-        lhs.fileResourceIdentifier.isEqual(rhs.fileResourceIdentifier)
-    }
-
-    package func hash(into hasher: inout Hasher) {
-        hasher.combine(fileResourceIdentifier.hash)
+        self.file = file
     }
 
     /// A URL's path as the default case- and normalization-insensitive APFS
-    /// volume matches it: standardized, without a trailing separator, and
-    /// folded.
+    /// volume matches it: its ``FileIdentity/spelling(_:)``, folded.
     static func nameKey(_ url: URL) -> String {
-        spelling(url).precomposedStringWithCanonicalMapping
+        FileIdentity.spelling(url).precomposedStringWithCanonicalMapping
             .folding(options: .caseInsensitive, locale: nil)
-    }
-
-    /// A URL's path exactly as spelled — standardized and without a trailing
-    /// separator, so a listing's directory URL and a derived one compare equal.
-    /// Two spellings of one bundle differ here; identity is what equates them.
-    static func spelling(_ url: URL) -> String {
-        var path = url.standardizedFileURL.path(percentEncoded: false)
-        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
-        return path
     }
 }

@@ -471,21 +471,41 @@ struct VMCommandCoreAttachmentTests {
         #expect(single.configuration.sharedDirectories == [only])
     }
 
-    /// The VM shares a folder as `held` and is asked to add it as `asked` —
-    /// named outright, or `throughLink`: named as a symbolic link to it, which
-    /// the grant is asked for.
+    /// How an add spells a folder the VM shares.
+    enum Spelling: CaseIterable, Sendable {
+        /// As the share lists it.
+        case listed
+        /// As a symbolic link to the folder.
+        case link
+        /// Without the link to a folder above it that the share's listed path
+        /// crosses, as `/private/tmp/x` spells the `/tmp/x` a share lists.
+        case pastTheListedLink
+    }
+
+    /// The VM shares a folder as `held` and is asked to add it as `asked`,
+    /// spelled as `spelling` says.
     @Test(
-        "Adding a folder the VM already shares answers that share with the access asked for, and is refused with the other",
-        arguments: [false, true], [(false, false), (false, true), (true, false), (true, true)])
+        "Adding a folder the VM already shares, however the path spells it, answers that share with the access asked for, and is refused with the other",
+        arguments: Spelling.allCases, [(false, false), (false, true), (true, false), (true, true)])
     func addingASharedFolderIsRefusedWithTheOtherAccess(
-        throughLink: Bool, access: (held: Bool, asked: Bool)
+        spelling: Spelling, access: (held: Bool, asked: Bool)
     ) async throws {
         let harness = makeHarness()
-        let shared = SharedDirectory(path: try folder("shared"), readOnly: access.held)
+        let parent = try folder("parent")
+        let linkedParent = externalPath("linked")
+        try FileManager.default.createSymbolicLink(atPath: linkedParent, withDestinationPath: parent)
+        let target = parent + "/Shared"
+        try FileManager.default.createDirectory(atPath: target, withIntermediateDirectories: false)
+        let shared = SharedDirectory(
+            path: spelling == .pastTheListedLink ? linkedParent + "/Shared" : target, readOnly: access.held)
         let instance = makeInstance(in: harness) { $0.sharedDirectories = [shared] }
-        let named = throughLink ? externalPath("named") : shared.path
-        if throughLink {
-            try FileManager.default.createSymbolicLink(atPath: named, withDestinationPath: shared.path)
+        let named: String
+        switch spelling {
+        case .listed: named = shared.path
+        case .link:
+            named = externalPath("named")
+            try FileManager.default.createSymbolicLink(atPath: named, withDestinationPath: target)
+        case .pastTheListedLink: named = target
         }
 
         let answered: SharedDirectorySummary?
@@ -498,7 +518,7 @@ struct VMCommandCoreAttachmentTests {
 
         #expect(answered?.readOnly == (access.held == access.asked ? access.asked : nil))
         #expect(instance.configuration.sharedDirectories == [shared])
-        #expect(harness.authority.requests.count == (throughLink ? 1 : 0))
+        #expect(harness.authority.requests.isEmpty)
     }
 
     // MARK: - State gates

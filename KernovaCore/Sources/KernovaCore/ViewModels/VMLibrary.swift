@@ -682,7 +682,7 @@ package final class VMLibrary: VMAdmissionPeers {
         case .unreadable(let holder):
             return reportDuplicate(at: url, holderName: holder.name, existing: nil)
         case .vm(let instance):
-            if VMBundleIdentity.spelling(instance.bundleURL) == VMBundleIdentity.spelling(url) {
+            if FileIdentity.spelling(instance.bundleURL) == FileIdentity.spelling(url) {
                 return .alreadyAdopted(instance)
             }
             if let holder = storageService.bundleIdentity(at: instance.bundleURL),
