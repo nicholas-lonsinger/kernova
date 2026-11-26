@@ -37,8 +37,6 @@ package enum CommandError: Error, Sendable, Equatable {
     /// ``unsupportedByBuild(capability:)`` is one: naming a VM would describe
     /// something the caller never asked about.
     case itemNotFoundOnHost(item: String)
-    /// More than one VM answers to the selector; the candidates say which.
-    case ambiguous(selector: VMSelector, candidates: [VMSummary])
     /// The VM's current state does not admit this verb; `allowed` names the
     /// verbs it does admit, `settings` the assignments a refused
     /// `setConfiguration` would have made, and `processEnd` how to end the
@@ -182,8 +180,6 @@ extension CommandError {
             .itemNotFound(vm: vm, item: item)
         case .itemNotFoundOnHost(let item):
             .itemNotFoundOnHost(item: item)
-        case .ambiguous(let selector, let candidates):
-            .ambiguous(selector: selector, candidates: candidates)
         case .invalidState(let vm, let current, let allowed, let settings, let processEnd):
             .invalidState(vm: vm, current: current, allowed: allowed, settings: settings, processEnd: processEnd)
         case .changeTakesStoppedVM(let vm, let current, let change):

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 
 /// Bus class for a `StorageDisk` entry.
 ///
@@ -89,13 +90,11 @@ package struct StorageDisk: Codable, Sendable, Equatable {
         return (ext == "iso" || ext == "dmg") ? .usbMassStorage : .virtio
     }
 
-    /// A label derived from `base` that doesn't collide with `existingLabels`.
-    ///
-    /// Returns `base` when it's free, otherwise the first available
-    /// `"<base> 2"`, `"<base> 3"`, … Only machine-generated defaults are
-    /// uniqued; explicit user renames are left exactly as typed.
+    /// A label derived from `base` that is none of `existingLabels`
+    /// (``NameRule/firstAvailable(_:among:)``). Only machine-generated
+    /// defaults are uniqued; explicit user renames are left exactly as typed.
     static func uniqueLabel(base: String, existingLabels: [String]) -> String {
-        UniqueName.firstAvailable(prefix: base, existing: existingLabels)
+        NameRule.firstAvailable(base, among: existingLabels)
     }
 
     /// Synthesizes the default main-disk entry for a VM whose `storageDisks`

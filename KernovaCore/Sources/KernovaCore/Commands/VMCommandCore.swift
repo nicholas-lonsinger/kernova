@@ -219,19 +219,18 @@ package final class VMCommandCore {
 
     // MARK: - Resolution
 
-    /// The one library row `selector` names, a VM's or an arrival's — among
-    /// the rows `scope` identifies, when it is given, such as a network's
-    /// members.
-    ///
-    /// Display names are not unique, so more than one match is a refusal
-    /// carrying every candidate rather than a guess at which was meant.
-    func resolveEntry(_ selector: VMSelector, among scope: Set<UUID>? = nil) throws -> AddressableEntry {
-        let matches = candidates(for: selector).filter { scope?.contains($0.id) ?? true }
-        guard let only = matches.first else { throw CommandError.notFound(selector) }
-        guard matches.count == 1 else {
-            throw CommandError.ambiguous(selector: selector, candidates: matches.map(summary))
-        }
-        return only
+    /// The library row `selector` names, a VM's or an arrival's.
+    func resolveEntry(_ selector: VMSelector) throws -> AddressableEntry {
+        let entries = library.entries.compactMap(\.addressable)
+        let found: AddressableEntry? =
+            switch selector {
+            case .id(let id): entries.first { $0.id == id }
+            case .name(let text): NameRule.sibling(named: text, in: entries, name: \.name)
+            case .idOrName(let text):
+                NameRule.sibling(identifiedOrNamedBy: text, in: entries, id: \.id, name: \.name)
+            }
+        guard let found else { throw CommandError.notFound(selector) }
+        return found
     }
 
     /// The one VM `selector` names; an arrival it names is refused as busy
@@ -241,28 +240,6 @@ package final class VMCommandCore {
         case .vm(let instance): instance
         case .arriving(let arrival): throw busy(arrival)
         }
-    }
-
-    private func candidates(for selector: VMSelector) -> [AddressableEntry] {
-        let entries = library.entries.compactMap(\.addressable)
-        switch selector {
-        case .id(let id):
-            return entries.filter { $0.id == id }
-        case .name(let name):
-            return entries.filter { Self.name($0.name, isNamedBy: name) }
-        case .idOrName(let text):
-            if let id = UUID(uuidString: text) {
-                let byID = entries.filter { $0.id == id }
-                if !byID.isEmpty { return byID }
-            }
-            return entries.filter { Self.name($0.name, isNamedBy: text) }
-        }
-    }
-
-    /// Whether a VM displayed as `name` is one `text` names, as a
-    /// ``VMSelector/name(_:)`` matches it: the whole name, ignoring case.
-    nonisolated static func name(_ name: String, isNamedBy text: String) -> Bool {
-        name.caseInsensitiveCompare(text) == .orderedSame
     }
 
     /// The refusal every VM verb addressed to an arrival raises.
@@ -659,10 +636,9 @@ package final class VMCommandCore {
     // command socket is how a script sees that copy's work, and it runs
     // without this copy ever becoming active.
 
-    /// The read of the row `selector` names, among `scope` when it is given
-    /// (``resolveEntry(_:among:)``).
-    package func info(_ selector: VMSelector, among scope: Set<UUID>? = nil) throws -> VMInfo {
-        let entry = try resolveEntry(selector, among: scope)
+    /// The read of the row `selector` names (``resolveEntry(_:)``).
+    package func info(_ selector: VMSelector) throws -> VMInfo {
+        let entry = try resolveEntry(selector)
         entry.vm?.activity.refreshFromBundle()
         return info(entry)
     }

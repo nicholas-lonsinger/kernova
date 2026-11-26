@@ -175,7 +175,7 @@
 			<property name="id" code="ID  " type="text" access="r" description="Its stable identifier.">
 				<cocoa key="uniqueID"/>
 			</property>
-			<property name="name" code="pnam" type="text" description="Its display name, which another virtual machine can share. Setting it renames it.">
+			<property name="name" code="pnam" type="text" description="Its name, unique in the library ignoring case. Setting it renames it, refusing a name another virtual machine goes by.">
 				<cocoa key="name"/>
 			</property>
 			<property name="state" code="KvSt" type="VM state" access="r" description="What it is doing right now.">
@@ -407,7 +407,7 @@
 			<property name="name" code="pnam" type="text" access="r" description="Its name, unique among smart groups ignoring case.">
 				<cocoa key="name"/>
 			</property>
-			<element type="virtual machine" access="r" description="The virtual machines its filter admits, in library order. Several can share a name: virtual machine &#8220;&#8230;&#8221; of a smart group refuses one more than one of them carries, listing their ids.">
+			<element type="virtual machine" access="r" description="The virtual machines its filter admits, in library order.">
 				<cocoa key="virtualMachines"/>
 			</element>
 		</class>
@@ -420,7 +420,7 @@
 			<property name="name" code="pnam" type="text" access="r" description="Its name, unique among folders ignoring case.">
 				<cocoa key="name"/>
 			</property>
-			<element type="virtual machine" access="r" description="The virtual machines in it, in its own order. Several can share a name: virtual machine &#8220;&#8230;&#8221; of a folder refuses one more than one of them carries, listing their ids.">
+			<element type="virtual machine" access="r" description="The virtual machines in it, in its own order.">
 				<cocoa key="virtualMachines"/>
 			</element>
 		</class>

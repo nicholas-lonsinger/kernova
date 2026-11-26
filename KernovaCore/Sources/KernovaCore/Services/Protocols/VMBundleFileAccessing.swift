@@ -31,6 +31,15 @@ package protocol VMBundleFileAccessing: Sendable {
     /// - Throws: why the directory could not be opened.
     func isBundleLockedElsewhere(at bundleURL: URL) throws -> Bool
 
+    /// When the bundle directory at `bundleURL` was put in the directory
+    /// holding it (`URLResourceKey.addedToDirectoryDateKey`), `nil` where its
+    /// volume keeps no such date or the directory can't be read.
+    ///
+    /// Every copy of Kernova reads the one date the file system keeps.
+    /// Publishing a staged bundle sets it, and a write inside the bundle
+    /// leaves it, so the newer of two bundles is the one added later.
+    func dateAdded(ofBundleAt bundleURL: URL) -> Date?
+
     /// Runs `body` under a coordinated read of the bundle at `bundleURL`.
     func reading<T>(_ bundleURL: URL, _ body: (any VMBundleFileReading) throws -> T) throws -> T
 

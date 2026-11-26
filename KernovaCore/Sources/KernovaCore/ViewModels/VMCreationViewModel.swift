@@ -135,20 +135,29 @@ package final class VMCreationViewModel {
     /// every download destination it names sits in.
     package let downloadsDirectory: URL
 
+    /// The names the library's VMs and arrivals go by now
+    /// (``VMLibrary/names(excluding:)``), which the new VM's name may be none
+    /// of.
+    private let takenNames: @MainActor () -> [String]
+
     /// The Virtualization-backed collaborators — `host`, `localImageInspector`
     /// and `ipswService` — take no default: the engine makes them, and
     /// ``VMLibraryViewModel/makeCreationViewModel()`` hands them over. Nor does
-    /// `downloadsDirectory`, which is the user's own folder.
+    /// `downloadsDirectory`, which is the user's own folder, or `takenNames`,
+    /// the library's.
     init(
         probeService: any RestoreImageProbing = RestoreImageProbeService(),
         host: any VirtualizationHostProviding,
         localImageInspector: any LocalRestoreImageInspecting,
         ipswService: any IPSWProviding,
         linuxImageResolveService: any LinuxImageResolving = LinuxImageResolveService(),
-        downloadsDirectory: URL
+        downloadsDirectory: URL,
+        takenNames: @escaping @MainActor () -> [String]
     ) {
         self.host = host
         self.downloadsDirectory = downloadsDirectory
+        self.takenNames = takenNames
+        vmName = NameRule.firstAvailable(VMLibrary.defaultVMName, among: takenNames())
         self.probeService = probeService
         self.localImageInspector = localImageInspector
         self.ipswService = ipswService
@@ -294,7 +303,20 @@ package final class VMCreationViewModel {
 
     // MARK: - Step 3: Resources
 
-    package var vmName: String = "My Virtual Machine"
+    /// The new VM's name as typed, which starts as the first default no VM
+    /// goes by.
+    package var vmName: String
+
+    /// Why ``vmName`` can't name the new VM (``NameRule/validated(_:among:)``),
+    /// `nil` when it can.
+    package var nameRefusal: NameRule.Refusal? {
+        do throws(NameRule.Refusal) {
+            _ = try NameRule.validated(vmName, among: takenNames())
+            return nil
+        } catch {
+            return error
+        }
+    }
 
     // Start at the defaults of `selectedOS`'s initial value, which `init` sets.
     package var cpuCount: Int
@@ -473,7 +495,11 @@ package final class VMCreationViewModel {
                 return "Select a kernel image to continue."
             }
         case .resources:
-            return "Enter a name for your virtual machine."
+            switch nameRefusal {
+            case nil: return nil
+            case .empty: return "Enter a name for your virtual machine."
+            case let refusal?: return refusal.sentence(about: "virtual machine")
+            }
         }
     }
 
@@ -484,7 +510,7 @@ package final class VMCreationViewModel {
         case .bootConfig:
             bootConfigValid
         case .resources:
-            !vmName.trimmingCharacters(in: .whitespaces).isEmpty
+            nameRefusal == nil
         case .guestAccount:
             guestAccountValidationMessage == nil
         case .review:
@@ -503,7 +529,7 @@ package final class VMCreationViewModel {
     /// through. Creating then would persist an empty account and arm an empty
     /// password, producing a prompt nothing could ever satisfy.
     private var stepBlockingCreate: VMCreationStep? {
-        if vmName.trimmingCharacters(in: .whitespaces).isEmpty { return .resources }
+        if nameRefusal != nil { return .resources }
         if guestAccountValidationMessage != nil { return .guestAccount }
         return nil
     }
@@ -887,7 +913,7 @@ package final class VMCreationViewModel {
     func buildConfiguration() -> VMConfiguration {
         let bootMode = effectiveBootMode
         var configuration = VMConfiguration(
-            name: vmName.trimmingCharacters(in: .whitespaces),
+            name: NameRule.trimmed(vmName),
             guestOS: selectedOS,
             bootMode: bootMode,
             cpuCount: cpuCount,

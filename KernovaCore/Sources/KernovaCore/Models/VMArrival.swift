@@ -62,7 +62,7 @@ package enum LibraryEntry {
 
 /// A create, clone or import in flight: the bundle it is writing under the
 /// hidden staging directory, until publication renames it to
-/// ``destinationURL`` and ``VMLibrary/adopt(_:publishing:)`` turns it into a
+/// ``destinationURL`` and ``VMLibrary/adopt(_:publishing:into:)`` turns it into a
 /// ``VMInstance``.
 @MainActor
 @Observable
@@ -147,9 +147,28 @@ package final class VMArrival {
     /// The identifier of the VM this arrival becomes.
     package let id: UUID
     package let kind: Kind
-    /// What the write was asked for — the name, listing and description the
-    /// row shows until the VM is read from its published bundle.
-    let configuration: VMConfiguration
+    /// What the write was asked for — the listing and description the row
+    /// shows until the VM is read from its published bundle — under the name
+    /// the library gives the arrival (``name``).
+    var configuration: VMConfiguration {
+        var configuration = requested
+        if let assignedName { configuration.name = assignedName }
+        return configuration
+    }
+
+    /// What the write was asked for, which its bundle is written with.
+    let requested: VMConfiguration
+
+    /// The name the library gives this arrival (``VMLibrary/reassignNames()``),
+    /// `nil` until a library lists it.
+    private(set) var assignedName: String?
+
+    /// Gives the arrival `name`, what the library's assignment decided.
+    func assignName(_ name: String) {
+        guard assignedName != name else { return }
+        assignedName = name
+    }
+
     /// Where publication renames the finished bundle.
     let destinationURL: URL
 
@@ -181,7 +200,9 @@ package final class VMArrival {
 
     private(set) var stage: Stage = .writing
 
-    package var name: String { configuration.name }
+    /// What the arrival goes by: the name the library gives it, or the one its
+    /// write was asked for while no library lists it.
+    package var name: String { assignedName ?? requested.name }
 
     /// Whether a cancel was taken, before the rename or during it.
     var isCancelling: Bool { stage == .cancelling || stage == .withdrawing }
@@ -208,7 +229,7 @@ package final class VMArrival {
     ) {
         self.id = id
         self.kind = kind
-        self.configuration = configuration
+        requested = configuration
         self.destinationURL = destinationURL
         self.staged = staged
         self.source = source

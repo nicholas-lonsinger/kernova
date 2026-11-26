@@ -128,79 +128,111 @@ struct VMLibraryScriptingTests {
         #expect(wired.storage.permanentlyDeleteVMBundleCallCount == (immediately ? deletes.count : 0))
     }
 
-    /// The containers a script names a VM by name under, for a `delete`.
-    enum NameForm: CaseIterable, Sendable {
-        /// `delete virtual machine "Build"`.
-        case application
-        /// `delete virtual machine "Build" of network "Lab"`.
+    /// The containers a script names a VM under that do not hold it, for a
+    /// `delete`.
+    enum ContainerForm: CaseIterable, Sendable {
+        /// `delete virtual machine "Solo" of network "Lab"`.
         case network
-        /// `delete snapshot "Clean" of virtual machine "Build" of network "Lab"`.
-        case snapshotOfNetwork
-        /// `delete virtual machine "Solo" of network "Lab"`, where the one VM
-        /// called Solo is on no network.
-        case notOnTheNetwork
-        /// `delete virtual machine "Build" of folder "Lab"`.
+        /// `delete virtual machine "Solo" of folder "Lab"`.
         case folder
-        /// `delete virtual machine "Solo" of folder "Lab"`, where the one VM
-        /// called Solo is in no folder.
-        case notInTheFolder
 
         /// The event's reference.
         @MainActor
         func reference() -> NSAppleEventDescriptor {
-            let lab = ScriptEvent.element("KvNw", named: "Lab")
-            let folder = ScriptEvent.element("KvGF", named: "Lab")
-            return switch self {
-            case .application: VMLibraryScriptingTests.vm(named: "Build")
-            case .network: ScriptEvent.element("KvVM", named: "Build", of: lab)
-            case .snapshotOfNetwork:
-                ScriptEvent.element("KvSn", named: "Clean", of: ScriptEvent.element("KvVM", named: "Build", of: lab))
-            case .notOnTheNetwork: ScriptEvent.element("KvVM", named: "Solo", of: lab)
-            case .folder: ScriptEvent.element("KvVM", named: "Build", of: folder)
-            case .notInTheFolder: ScriptEvent.element("KvVM", named: "Solo", of: folder)
+            switch self {
+            case .network: ScriptEvent.element("KvVM", named: "Solo", of: ScriptEvent.element("KvNw", named: "Lab"))
+            case .folder: ScriptEvent.element("KvVM", named: "Solo", of: ScriptEvent.element("KvGF", named: "Lab"))
             }
         }
-
-        /// Whether the one VM called Solo is the name the form refuses.
-        var namesSolo: Bool { self == .notOnTheNetwork || self == .notInTheFolder }
     }
 
     @Test(
-        "A delete naming a VM by a name two VMs share, or by one its container doesn't hold, is refused and deletes nothing",
-        arguments: NameForm.allCases)
-    func aNameResolvesOnlyAmongItsContainer(form: NameForm) async throws {
+        "A delete naming a VM by a name its container's members don't go by is refused and deletes nothing",
+        arguments: ContainerForm.allCases)
+    func aNameResolvesOnlyAmongItsContainer(form: ContainerForm) async throws {
         let wired = WiredCommandCore()
         let lab = try wired.core.createNetwork(name: "Lab", kind: .nat)
-        func member(_ configuration: inout VMConfiguration) {
+        let build = wired.register(name: "Build") { configuration in
             configuration.networkEnabled = true
             configuration.networkMode = .nat
             configuration.networkMembership = .network(lab.id)
             configuration.applyNetworkMode(configuration.networkMode)
         }
-        let clean = VMSnapshot(name: "Clean", kind: .cold, macAddress: nil)
-        let builds = [
-            wired.register(name: "Build", snapshots: [clean], mutate: member),
-            wired.register(name: "build", snapshots: [clean], mutate: member),
-        ]
         let solo = wired.register(name: "Solo")
-        try wired.library.organization.createFolder(named: "Lab", members: builds.map(\.id))
+        try wired.library.organization.createFolder(named: "Lab", members: [build.id])
         let host = ScriptHost()
         let gateway = await makeGateway(wired, host: host)
 
-        // A snapshot's delete refuses immediate deletion whatever it names.
         let reply = try await host.send(
-            ScriptEvent.delete(
-                form.reference(), confirmation: true, immediateDeletion: form != .snapshotOfNetwork),
-            to: gateway)
+            ScriptEvent.delete(form.reference(), confirmation: true, immediateDeletion: true), to: gateway)
 
         #expect(reply.errorNumber == Int(errAENoSuchObject))
-        let named = form.namesSolo ? [solo] : builds
-        for vm in named {
-            #expect(reply.errorString?.contains(form.namesSolo ? vm.name : vm.id.uuidString) == true)
-        }
-        #expect(Set(wired.library.instances.map(\.id)) == Set((builds + [solo]).map(\.id)))
+        #expect(reply.errorString?.contains(solo.name) == true)
+        #expect(Set(wired.library.instances.map(\.id)) == [build.id, solo.id])
         #expect(wired.storage.deleteVMBundleCallCount + wired.storage.permanentlyDeleteVMBundleCallCount == 0)
-        #expect(wired.machineFiles.discardedIDs.isEmpty)
+    }
+
+    @Test(
+        "With two bundles another copy holds storing one name, a script reads no name twice, each name it reads addresses the virtual machine it read it from, and a range ending at a name starts at that one"
+    )
+    func everyNameAScriptReadsAddressesItsOwnVM() async throws {
+        let wired = WiredCommandCore()
+        let builds = [wired.register(name: "Build"), wired.register(name: "Build")]
+        wired.register(name: "Other")
+        // Held as another copy of Kernova holds them, so neither bundle can be
+        // given the name it goes by.
+        for build in builds { wired.storage.files.holdElsewhere(build.bundleURL) }
+        let host = ScriptHost()
+        let gateway = await makeGateway(wired, host: host)
+
+        let names = try host.run("name of every virtual machine", on: gateway).items.compactMap(\.stringValue)
+        let ids = try host.run("id of every virtual machine", on: gateway).items.compactMap(\.stringValue)
+        let addressed = names.map { (try? host.run("id of virtual machine \"\($0)\"", on: gateway))?.stringValue }
+        let ranged = try host.run(#"id of virtual machines "Build" thru "Other""#, on: gateway).items
+            .compactMap(\.stringValue)
+
+        try #require(builds.allSatisfy { wired.storage.bundles[$0.bundleURL]?.name == "Build" })
+        #expect(names.count == 3 && Set(names).count == names.count, "\(names)")
+        #expect(addressed == ids.map(Optional.some), "\(names) addressed \(addressed), read from \(ids)")
+        #expect(ranged.first != nil && ranged.first == names.firstIndex(of: "Build").map { ids[$0] })
+    }
+
+    /// A container a script names VMs in, as the words that follow a VM's
+    /// reference.
+    enum NamingContainer: CaseIterable, Sendable {
+        case application
+        /// A folder holding the VMs in another order than the library's.
+        case folder
+
+        var suffix: String {
+            switch self {
+            case .application: ""
+            case .folder: #" of folder "F""#
+            }
+        }
+    }
+
+    @Test(
+        "Text that two VMs' names both match names, alone, the VM a range starting at it starts at, in the application and in a folder whose order is not the library's",
+        arguments: NamingContainer.allCases)
+    func aNameAloneAndARangeStartScanOneOrder(container: NamingContainer) async throws {
+        let wired = WiredCommandCore()
+        // Cocoa's comparison finds "\u{1FF6}" the same as each of the first
+        // two names, which are not one name.
+        let first = wired.register(name: "\u{03A9}\u{0399}")
+        let second = wired.register(name: "\u{03A9}\u{0342}")
+        let other = wired.register(name: "Other")
+        try wired.library.organization.createFolder(named: "F", members: [second.id, first.id, other.id])
+        let host = ScriptHost()
+        let gateway = await makeGateway(wired, host: host)
+
+        let named = try host.run("id of virtual machine \"\u{1FF6}\"\(container.suffix)", on: gateway).stringValue
+        let ranged = try host.run(
+            "id of virtual machines \"\u{1FF6}\" thru \"Other\"\(container.suffix)", on: gateway
+        ).items.compactMap(\.stringValue)
+
+        #expect(named != nil)
+        #expect(ranged.first == named, "\(ranged) began elsewhere than \(named ?? "nothing")")
     }
 
     // MARK: - Duplicate

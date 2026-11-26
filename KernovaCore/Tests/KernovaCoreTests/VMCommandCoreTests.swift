@@ -8,8 +8,8 @@ import Testing
 @testable import KernovaCoreTestSupport
 
 /// The command core, driven with no view model and no presenter anywhere in
-/// sight: selector resolution, the state gates, the consent refusals with the
-/// payload each carries, and the failures each verb reports.
+/// sight: the state gates, the consent refusals with the payload each
+/// carries, and the failures each verb reports.
 @Suite("VMCommandCore Tests", .serialized, .caseScoped)
 @MainActor
 struct VMCommandCoreTests {
@@ -52,24 +52,6 @@ struct VMCommandCoreTests {
         harness.wired.register(
             name: name, phase: phase, guestOS: guestOS, snapshots: snapshots,
             hostState: hostState, mutate: mutate)
-    }
-
-    // MARK: - Selector resolution
-
-    @Test("Names differing only by case are one ambiguous match, never a case-exact pick")
-    func caseVariantsAreAmbiguous() throws {
-        let harness = makeHarness()
-        let upper = makeInstance(in: harness, name: "Sonoma")
-        let lower = makeInstance(in: harness, name: "sonoma")
-
-        for text in ["Sonoma", "sonoma", "SONOMA"] {
-            let error = try #require(throws: CommandError.self) { _ = try harness.core.info(.name(text)) }
-            guard case .ambiguous(_, let candidates) = error else {
-                Issue.record("expected an ambiguity refusal for \(text), got \(error)")
-                continue
-            }
-            #expect(candidates.map(\.id) == [upper.id, lower.id])
-        }
     }
 
     // MARK: - Joining a bring-up

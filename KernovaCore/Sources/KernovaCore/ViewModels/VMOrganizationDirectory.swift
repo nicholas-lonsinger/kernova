@@ -1,5 +1,6 @@
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 import KernovaLogging
 
 /// How the library is organized beyond its VMs — its smart groups, folders
@@ -84,32 +85,21 @@ package final class VMOrganizationDirectory {
             try container.encode(tags, forKey: .tags)
         }
 
-        /// The smart group `text` names — by identifier, or by name ignoring
-        /// case — `nil` when the file lists none.
+        /// The smart group `text` names
+        /// (``NameRule/sibling(identifiedOrNamedBy:in:id:name:)``), `nil` when
+        /// the file lists none.
         func smartGroup(named text: String) -> VMSmartGroup? {
-            Self.element(named: text, in: smartGroups, name: \.name)
+            NameRule.sibling(identifiedOrNamedBy: text, in: smartGroups, id: \.id, name: \.name)
         }
 
-        /// The folder `text` names — by identifier, or by name ignoring case —
-        /// `nil` when the file lists none.
+        /// The folder `text` names, as ``smartGroup(named:)`` reads it.
         func folder(named text: String) -> VMFolder? {
-            Self.element(named: text, in: folders, name: \.name)
+            NameRule.sibling(identifiedOrNamedBy: text, in: folders, id: \.id, name: \.name)
         }
 
-        /// The tag `text` names — by identifier, or by name ignoring case —
-        /// `nil` when the file defines none.
+        /// The tag `text` names, as ``smartGroup(named:)`` reads it.
         func tag(named text: String) -> VMTag? {
-            Self.element(named: text, in: tags, name: \.name)
-        }
-
-        private static func element<Element: Identifiable<UUID>>(
-            named text: String, in elements: [Element], name: (Element) -> String
-        ) -> Element? {
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let id = UUID(uuidString: trimmed), let element = elements.first(where: { $0.id == id }) {
-                return element
-            }
-            return elements.first { name($0).caseInsensitiveCompare(trimmed) == .orderedSame }
+            NameRule.sibling(identifiedOrNamedBy: text, in: tags, id: \.id, name: \.name)
         }
 
         /// Lists `group` after every other section.
@@ -226,9 +216,8 @@ package final class VMOrganizationDirectory {
 
     /// Why a change to the organization was refused.
     enum ChangeError: LocalizedError, Equatable {
-        case nameRequired(Element)
-        case nameTaken(String, Element)
-        case nameIsIdentifier(String, Element)
+        /// The name ``NameRule`` refuses for an element of this kind.
+        case invalidName(NameRule.Refusal, Element)
         /// The element the change names is not in the file — deleted since
         /// the caller read it.
         case missing(Element)
@@ -239,12 +228,8 @@ package final class VMOrganizationDirectory {
             switch self {
             case .missing(let kind):
                 "The \(kind.noun) no longer exists."
-            case .nameRequired(let kind):
-                "A \(kind.noun) needs a name."
-            case .nameTaken(let name, let kind):
-                "A \(kind.noun) named \u{201C}\(name)\u{201D} already exists. Give this one another name."
-            case .nameIsIdentifier(let name, let kind):
-                "\u{201C}\(name)\u{201D} can\u{2019}t name a \(kind.noun): an identifier already names one."
+            case .invalidName(let refusal, let kind):
+                refusal.sentence(about: kind.noun)
             case .unreadable:
                 VMOrganizationDirectory.unreadableMessage
             case .unsaved(let reason):
@@ -323,8 +308,9 @@ package final class VMOrganizationDirectory {
     }
 
     /// `base`, or the first of "`base` 2", "`base` 3", … no `element` is
-    /// named — what a new one's name field starts from. `base` itself while
-    /// the file cannot be read, where creating one is refused anyway.
+    /// named (``NameRule/firstAvailable(_:among:)``) — what a new one's name
+    /// field starts from. `base` itself while the file cannot be read, where
+    /// creating one is refused anyway.
     package func unusedName(from base: String, for element: Element) -> String {
         guard let listed = state.listed else { return base }
         let names =
@@ -333,8 +319,7 @@ package final class VMOrganizationDirectory {
             case .folder: listed.folders.map(\.name)
             case .tag: listed.tags.map(\.name)
             }
-        // Compared as `validatedName` compares, so it accepts the name offered.
-        return UniqueName.firstAvailable(prefix: base, existing: names, caseInsensitive: true)
+        return NameRule.firstAvailable(base, among: names)
     }
 
     // MARK: - Smart groups
@@ -480,21 +465,16 @@ package final class VMOrganizationDirectory {
 
     // MARK: - Commit
 
-    /// `name` trimmed, refusing an empty one, one spelling an identifier, and
-    /// one an element of `named` other than `id` holds, ignoring case — what
-    /// lets a name select one.
+    /// `name` as ``NameRule/validated(_:among:)`` takes it beside every
+    /// element of `named` but `id`.
     private static func validatedName(
         _ name: String, of kind: Element, for id: UUID?, among named: [(id: UUID, name: String)]
-    ) throws -> String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw ChangeError.nameRequired(kind) }
-        guard UUID(uuidString: trimmed) == nil else { throw ChangeError.nameIsIdentifier(trimmed, kind) }
-        if let other = named.first(where: {
-            $0.id != id && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
-        }) {
-            throw ChangeError.nameTaken(other.name, kind)
+    ) throws(ChangeError) -> String {
+        do throws(NameRule.Refusal) {
+            return try NameRule.validated(name, among: named.lazy.filter { $0.id != id }.map(\.name))
+        } catch {
+            throw .invalidName(error, kind)
         }
-        return trimmed
     }
 
     /// Moves `entry` to just before `successor`, or to the end when

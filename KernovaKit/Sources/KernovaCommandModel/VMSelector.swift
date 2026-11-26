@@ -2,16 +2,15 @@ import Foundation
 
 /// How a caller names one virtual machine.
 ///
-/// Display names are not unique, so a name that matches more than one VM
-/// resolves to an ambiguity refusal carrying every candidate rather than to a
-/// guess.
+/// A VM's name is its own in the library (``NameRule``), so a name names one
+/// VM or none.
 public enum VMSelector: Codable, Sendable, Hashable {
     /// The VM's stable identifier.
     case id(UUID)
-    /// The VM's display name, matched whole and without regard to case.
+    /// The VM's name, matched whole as ``NameRule/text(_:names:)`` matches it.
     case name(String)
     /// Text typed by a user: read as an identifier when it parses as one and
-    /// names a VM, otherwise as a display name.
+    /// names a VM, otherwise as a name.
     case idOrName(String)
 
     /// How this selector reads back in a message to the user.

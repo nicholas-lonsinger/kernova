@@ -42,7 +42,17 @@ package final class VMBundle {
     var fileAccessForTesting: any VMBundleFileAccessing { files.accessForTesting }
     #endif
 
-    private(set) var configuration: VMConfiguration
+    private(set) var configuration: VMConfiguration {
+        didSet {
+            guard configuration.name != oldValue.name || configuration.createdAt != oldValue.createdAt else { return }
+            configurationPolicy.namingInputsMoved()
+        }
+    }
+    /// When the bundle was put in the directory holding it, as its last read
+    /// found it (``VMBundleFileAccessing/dateAdded(ofBundleAt:)``).
+    private(set) var dateAdded: Date? {
+        didSet { configurationPolicy.namingInputsMoved() }
+    }
     private(set) var hostState: VMHostState
     private(set) var snapshotManifest: VMSnapshotManifest
     private(set) var usbPairings: USBAccessoryPairingSet
@@ -60,6 +70,7 @@ package final class VMBundle {
         fileWorker = machineFiles
         self.configurationPolicy = configurationPolicy
         configuration = read.configuration
+        dateAdded = read.dateAdded
         hostState = read.hostState
         snapshotManifest = read.snapshotManifest
         usbPairings = read.usbPairings
@@ -175,6 +186,7 @@ package final class VMBundle {
             )
         }
         publish(read.configuration, to: \.configuration)
+        publish(read.dateAdded, to: \.dateAdded)
         publish(read.hostState, to: \.hostState)
         publish(read.snapshotManifest, to: \.snapshotManifest)
         publish(read.usbPairings, to: \.usbPairings)

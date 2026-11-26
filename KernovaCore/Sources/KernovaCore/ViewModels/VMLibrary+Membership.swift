@@ -1,10 +1,11 @@
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 import KernovaLogging
 
 /// How bundles on disk become library membership: the library read, the
 /// directory-watched reconcile, and the arrival pipeline that publishes a
-/// create, clone or import. Every path ends in ``VMLibrary/adopt(_:)``.
+/// create, clone or import. Every path ends in ``VMLibrary/adopt(_:publishing:into:)``.
 extension VMLibrary {
     /// Fills the library from disk, then starts reconciling it with the VMs
     /// directory as ``VMDirectoryWatcher`` triggers.
@@ -35,6 +36,9 @@ extension VMLibrary {
     ///
     /// With `reportingUnreadable` false, a file the read finds unreadable is
     /// recorded for the next report to name, and nothing comes on screen now.
+    ///
+    /// A VM whose hold has ended stores the name it goes by from here on
+    /// (``persistAssignedNames()``).
     func refreshFromOtherCopies(only ids: Set<UUID>? = nil, reportingUnreadable: Bool = true) {
         networks.reload()
         organization.reload()
@@ -42,6 +46,7 @@ extension VMLibrary {
         for instance in instances where ids?.contains(instance.id) ?? true {
             refreshFromOtherCopies(of: instance)
         }
+        persistAssignedNames()
         if reportingUnreadable { reportNewlyUnreadable() }
     }
 
@@ -260,10 +265,28 @@ extension VMLibrary {
     /// automatically — and settles each session it finds ended unsettled
     /// (``VMActivity/settleUnsettledSessionAtLaunch()``).
     private func apply(_ scan: LibraryScan) -> Set<UUID> {
+        if let savedOrder = preferences.vmOrder {
+            customOrder = savedOrder
+            logger.log(.debug, "Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
+        } else {
+            logger.log(.debug, "No custom VM order found — using default createdAt sort")
+        }
+        let (adopted, left) = changeEntries { entries in
+            var adopted: [(scanned: ScannedBundle, instance: VMInstance)] = []
+            for scanned in scan.bundles {
+                guard case .adopted(let instance) = adopt(scanned, into: &entries) else { continue }
+                adopted.append((scanned, instance))
+            }
+            let left = admitUnreadable(scan.unreadable, into: &entries).left
+            sort(&entries)
+            return (adopted, left)
+        }
+        handOffSelection(from: left)
+        customOrder = entries.map(\.id)
+
         var marked: Set<UUID> = []
         var unsettled: [VMInstance] = []
-        for scanned in scan.bundles {
-            guard case .adopted(let instance) = adopt(scanned) else { continue }
+        for (scanned, instance) in adopted {
             instance.activity.recordOtherCopyHold(heldElsewhere: scan.heldElsewhere.contains(scanned.url))
             if scanned.read.hostState.startsAutomaticallyOnLaunch { marked.insert(instance.id) }
             if scanned.read.hostState.hasUnsettledSession { unsettled.append(instance) }
@@ -271,22 +294,13 @@ extension VMLibrary {
         // A session a copy of Kernova died under was never settled, and taking
         // the lock is what shows no copy runs it now.
         for instance in unsettled { instance.activity.settleUnsettledSessionAtLaunch() }
-        admitUnreadable(scan.unreadable)
+        persistAssignedNames()
         for bundle in scan.unreadable {
             recordUnreadable([bundle.file], under: bundle.url)
         }
         recordUnreadableLibraryFiles()
         macAddresses.logDuplicateMACAddressHolders()
         reportNewlyUnreadable()
-
-        if let savedOrder = preferences.vmOrder {
-            customOrder = savedOrder
-            logger.log(.debug, "Loaded custom VM order: \(self.customOrder.count, privacy: .public) UUID(s)")
-        } else {
-            logger.log(.debug, "No custom VM order found — using default createdAt sort")
-        }
-        sortEntries()
-        customOrder = entries.map(\.id)
 
         restoreSelection()
         logger.log(.notice, "Loaded \(self.instances.count, privacy: .public) VMs")
@@ -322,7 +336,8 @@ extension VMLibrary {
     ///
     /// A bundle still being written sits under the hidden staging directory,
     /// which the listing never admits, so nothing an arrival is writing can be
-    /// adopted early.
+    /// adopted early. Every change the pass finds is made to ``entries`` at
+    /// once.
     func reconcileWithDisk() {
         logger.log(.debug, "reconcileWithDisk: starting")
         do {
@@ -357,6 +372,8 @@ extension VMLibrary {
                 recordUnreadable([file], under: bundleURL)
                 unreadable.append(reader.unreadable(at: bundleURL, file))
             }
+            // What the pass changes, which replaces the entries once it is done.
+            var changed = entries
             var didChange = false
             for bundleURL in diskBundles {
                 // A bundle this copy holds is a VM already, and no other copy
@@ -381,7 +398,7 @@ extension VMLibrary {
                     continue
                 }
                 do {
-                    switch adopt(try reader.bundle(at: bundleURL)) {
+                    switch adopt(try reader.bundle(at: bundleURL), into: &changed) {
                     case .adopted(let instance):
                         logger.log(
                             .info,
@@ -400,12 +417,14 @@ extension VMLibrary {
                     noteUnreadable(bundleURL, error)
                 }
             }
-            if admitUnreadable(unreadable) { didChange = true }
+            let admitted = admitUnreadable(unreadable, into: &changed)
+            if admitted.changed { didChange = true }
             let currentDiskNames = Set(diskBundles.map { $0.deletingPathExtension().lastPathComponent })
 
             // Keyed on the listing rather than on what was read, so a bundle
             // whose configuration is momentarily unreadable keeps its VM.
             let listed = Set(diskBundles.compactMap(storageService.bundleIdentity(at:)))
+            var evicted: [VMInstance] = []
             for instance in instances {
                 if let identity = storageService.bundleIdentity(at: instance.bundleURL),
                     listed.contains(identity)
@@ -415,7 +434,8 @@ extension VMLibrary {
                 // Only a VM at rest is evicted: one an operation holds keeps
                 // its row until the operation ends, and the next pass finds it.
                 guard (try? instance.activity.remove()) != nil else { continue }
-                evict(instance)
+                changed.removeAll { $0.vm === instance }
+                evicted.append(instance)
                 logger.log(
                     .info,
                     "VM '\(instance.name, privacy: .public)' no longer on disk — removed from library")
@@ -423,7 +443,12 @@ extension VMLibrary {
             }
 
             if didChange {
-                sortEntries()
+                changeEntries { entries in
+                    entries = changed
+                    sort(&entries)
+                }
+                handOffSelection(from: admitted.left)
+                forget(evicted)
                 persistOrder()
                 macAddresses.logDuplicateMACAddressHolders()
             }
@@ -562,10 +587,11 @@ extension VMLibrary {
             admitUnreadable(bundle, publishedBy: arrival)
             throw ArrivalError.unreadable(bundle.file)
         case .scanned(let scanned):
-            switch adopt(scanned, publishing: arrival) {
+            switch changeEntries({ adopt(scanned, publishing: arrival, into: &$0) }) {
             case .adopted(let instance), .alreadyAdopted(let instance), .rebound(let instance):
                 macAddresses.logDuplicateMACAddressHolders()
                 for followUp in whenAdopted?(instance) ?? [] { instance.activity.follow(followUp) }
+                persistAssignedNames()
                 return instance
             case .publishing, .duplicate:
                 throw ArrivalError.identifierInUse(name: arrival.name)
@@ -592,7 +618,7 @@ extension VMLibrary {
                 "Could not move the cancelled \(arrival.kind.displayNoun.lowercased(), privacy: .public) of '\(arrival.name, privacy: .public)' to the Trash: \(error.localizedDescription, privacy: .public)"
             )
             switch published {
-            case .scanned(let bundle): _ = adopt(bundle, publishing: arrival)
+            case .scanned(let bundle): _ = changeEntries { adopt(bundle, publishing: arrival, into: &$0) }
             case .unreadable(let bundle): admitUnreadable(bundle, publishedBy: arrival)
             }
             throw ArrivalError.withdrawalFailed(
@@ -669,10 +695,8 @@ extension VMLibrary {
             }
             return url.deletingPathExtension().lastPathComponent
         }
-        let name = UniqueName.firstAvailable(
-            prefix: sourceURL.deletingPathExtension().lastPathComponent,
-            existing: onDiskStems + inFlightStems,
-            caseInsensitive: true)
+        let name = NameRule.firstAvailable(
+            sourceURL.deletingPathExtension().lastPathComponent, among: onDiskStems + inFlightStems)
         return vmsDir.appendingPathComponent(
             "\(name).\(VMBundleFormat.fileExtension)", isDirectory: true)
     }

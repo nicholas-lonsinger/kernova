@@ -6,9 +6,9 @@ import KernovaLogging
 
 /// The set of VMs the app knows about, the arrivals becoming ones, and the
 /// bookkeeping that keeps them in step with the bundles on disk: membership
-/// and manual ordering, the one ``adopt(_:)`` every bundle enters the library
-/// through, the policy every write of a VM's settings and pairings passes on
-/// its way to that VM's ``VMBundle``. The library read, the directory-watched
+/// and manual ordering, the one ``adopt(_:publishing:into:)`` every bundle
+/// enters the library through, the policy every write of a VM's settings and
+/// pairings passes on its way to that VM's ``VMBundle``. The library read, the directory-watched
 /// reconcile and the arrival pipeline live in `VMLibrary+Membership.swift`.
 ///
 /// It also sequences the collaborators it owns — ``macAddresses``,
@@ -124,9 +124,26 @@ package final class VMLibrary: VMAdmissionPeers {
     /// Every row of the library in manual order, each identifier at most
     /// once: the VMs, and the arrivals becoming ones.
     ///
-    /// Written only in this file, where ``adopt(_:)`` is the one path a `.vm`
-    /// entry enters by.
-    package private(set) var entries: [LibraryEntry] = []
+    /// Written only in this file, where ``adopt(_:publishing:into:)`` is the
+    /// one path a `.vm` entry enters by. Every change gives the names out
+    /// again (``reassignNames()``), so no entry is listed under a name another
+    /// goes by; a change of many entries — a load, a reconcile — is made to a
+    /// copy and set once (``changeEntries(_:)``).
+    package private(set) var entries: [LibraryEntry] = [] {
+        didSet { reassignNames() }
+    }
+
+    /// Makes `change` to the entries as one change: `change` works on a copy,
+    /// which then replaces ``entries`` whole.
+    ///
+    /// `change` reads the entries only through its argument: ``entries``,
+    /// ``instances`` and ``arrivals`` read what was there before it.
+    func changeEntries<Result>(_ change: (inout [LibraryEntry]) throws -> Result) rethrows -> Result {
+        var changed = entries
+        let result = try change(&changed)
+        entries = changed
+        return result
+    }
 
     /// The VMs, in manual order.
     package var instances: [VMInstance] { entries.compactMap(\.vm) }
@@ -593,6 +610,7 @@ package final class VMLibrary: VMAdmissionPeers {
         macAddresses.roster = self
         liveIdentities.roster = self
         guestAddresses.roster = self
+        configurationPolicy.onNamingInputsMoved = { [weak self] in self?.reassignNames() }
         Task { [weak self, agents = bundleProducts.guestAgents] in
             let hashes = await agents.payloadHashes()
             self?.bundledPayloadHashes = hashes
@@ -612,7 +630,7 @@ package final class VMLibrary: VMAdmissionPeers {
         var url: URL { read.files.url }
     }
 
-    /// What ``adopt(_:publishing:)`` did with a bundle.
+    /// What ``adopt(_:publishing:into:)`` did with a bundle.
     enum Adoption {
         /// The bundle became a VM — a new row, or the arrival that wrote it.
         case adopted(VMInstance)
@@ -639,7 +657,12 @@ package final class VMLibrary: VMAdmissionPeers {
     /// a VM whose own bundle has gone, or is this one spelled another way, is
     /// pointed at it; and a second bundle holding a known identifier is
     /// reported once, not adopted.
-    func adopt(_ scanned: ScannedBundle, publishing arrival: VMArrival? = nil) -> Adoption {
+    ///
+    /// Changes `entries`, a copy ``changeEntries(_:)`` hands a batch: a VM it
+    /// points at another bundle is a change of its entry too.
+    func adopt(
+        _ scanned: ScannedBundle, publishing arrival: VMArrival? = nil, into entries: inout [LibraryEntry]
+    ) -> Adoption {
         let url = scanned.url
         guard let index = entries.firstIndex(where: { $0.id == scanned.read.configuration.id })
         else {
@@ -677,15 +700,16 @@ package final class VMLibrary: VMAdmissionPeers {
         }
     }
 
-    /// Makes `bundles` the library's unreadable rows, answering whether any
-    /// row changed.
+    /// Makes `bundles` the unreadable rows of `entries`, answering whether any
+    /// row changed and the rows that left.
     ///
     /// Each bundle joins, or replaces its own row when what the read found
     /// changed; a row whose bundle is not among `bundles` leaves — read and
-    /// adopted as its VM since, or gone from disk — handing its selection to
-    /// the VM its bundle became.
-    @discardableResult
-    func admitUnreadable(_ bundles: [UnreadableBundle]) -> Bool {
+    /// adopted as its VM since, or gone from disk. Once the change is made,
+    /// ``handOffSelection(from:)`` gives a row that left the selection it held.
+    func admitUnreadable(
+        _ bundles: [UnreadableBundle], into entries: inout [LibraryEntry]
+    ) -> (changed: Bool, left: [UnreadableVM]) {
         var changed = false
         for bundle in bundles {
             let id = UnreadableVM.id(for: bundle.url)
@@ -701,19 +725,24 @@ package final class VMLibrary: VMAdmissionPeers {
             changed = true
         }
         let kept = Set(bundles.map { UnreadableVM.id(for: $0.url) })
-        for row in entries.compactMap(\.unreadable) where !kept.contains(row.id) {
-            entries.removeAll { $0.id == row.id }
-            changed = true
-            guard selectedID == row.id else { continue }
+        let left = entries.compactMap(\.unreadable).filter { !kept.contains($0.id) }
+        let leaving = Set(left.map(\.id))
+        entries.removeAll { leaving.contains($0.id) }
+        return (changed || !left.isEmpty, left)
+    }
+
+    /// Hands the selection a row of `left` held to the VM its bundle became,
+    /// or to the first entry — once the rows have left ``entries``.
+    func handOffSelection(from left: [UnreadableVM]) {
+        for row in left where selectedID == row.id {
             selectedID =
                 instances.first { isSameBundle($0.bundleURL, row.bundleURL) }?.id ?? entries.first?.id
         }
-        return changed
     }
 
     /// Replaces `arrival`'s row with the unreadable row of `bundle`, the
     /// bundle it published, which a read refuses — in place, keeping the row's
-    /// place and selection as ``adopt(_:publishing:)`` keeps them for a VM —
+    /// place and selection as ``adopt(_:publishing:into:)`` keeps them for a VM —
     /// and asks for the check about it as for any newly unreadable bundle.
     ///
     /// The arrival's own pipeline is the one caller, as it is the one that
@@ -782,8 +811,10 @@ package final class VMLibrary: VMAdmissionPeers {
     /// Adds `arrival`'s row. Selecting it is the caller's
     /// (``selectArrival(_:in:)``), once whatever lists it is in place.
     func register(_ arrival: VMArrival) {
-        entries.append(.arriving(arrival))
-        sortEntries()
+        changeEntries { entries in
+            entries.append(.arriving(arrival))
+            sort(&entries)
+        }
         persistOrder()
     }
 
@@ -805,11 +836,17 @@ package final class VMLibrary: VMAdmissionPeers {
     /// the first row the sidebar shows.
     func evict(_ instance: VMInstance) {
         entries.removeAll { $0.vm === instance }
+        forget([instance])
+    }
+
+    /// Moves the selection off `evicted`, VMs that have left ``entries``, onto
+    /// the first row the sidebar shows, and drops what is held for them.
+    func forget(_ evicted: [VMInstance]) {
         reconcileSelection()
         // Nothing left can ask for the account, so nothing may still hold the
         // answer — whichever way the VM left, and whether or not its bundle
         // survived the departure.
-        guestAccountPasswords.remove(for: instance.id)
+        for instance in evicted { guestAccountPasswords.remove(for: instance.id) }
     }
 
     // MARK: - Reorder
@@ -821,9 +858,10 @@ package final class VMLibrary: VMAdmissionPeers {
         logger.log(.notice, "Reordered VMs in sidebar")
     }
 
-    /// Sorts rows by custom order, falling back to `createdAt` for unordered
-    /// ones, and to the end for an unordered row with no creation date.
-    func sortEntries() {
+    /// Sorts `entries` by custom order, falling back to `createdAt` for
+    /// unordered ones, and to the end for an unordered row with no creation
+    /// date.
+    func sort(_ entries: inout [LibraryEntry]) {
         let orderMap = Dictionary(zip(customOrder, customOrder.indices), uniquingKeysWith: { first, _ in first })
         entries.sort { lhs, rhs in
             switch (orderMap[lhs.id], orderMap[rhs.id]) {

@@ -12,8 +12,7 @@ import KernovaLogging
 /// run against a library that has not landed yet refuses with "no virtual
 /// machine named…" — so every read and every verb awaits ``ready()`` first.
 /// **Addressing:** a ``VMEntity`` already carries the resolved identifier, so
-/// this addresses VMs by ``VMSelector/id(_:)`` alone and the ambiguity refusal
-/// can never fire from this surface.
+/// this addresses VMs by ``VMSelector/id(_:)`` alone.
 ///
 /// It presents nothing: a refusal leaves as the ``CommandError`` the core threw,
 /// which each intent renders in the framework's idiom.

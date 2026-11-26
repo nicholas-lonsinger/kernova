@@ -1,6 +1,7 @@
 import AppIntents
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 
 /// One of the library's named networks, as Shortcuts names it.
 ///
@@ -85,8 +86,8 @@ struct NetworkEntityQuery: EntityStringQuery, FindQuery {
 
     nonisolated(unsafe) static let properties = QueryProperties {
         Property(\NetworkEntity.$name) {
-            EqualToComparator { value in FindPredicate { VMCommandCore.name($0.name, isNamedBy: value) } }
-            NotEqualToComparator { value in FindPredicate { !VMCommandCore.name($0.name, isNamedBy: value) } }
+            EqualToComparator { value in FindPredicate { NameRule.text(value, names: $0.name) } }
+            NotEqualToComparator { value in FindPredicate { !NameRule.text(value, names: $0.name) } }
             ContainsComparator { value in FindPredicate { SidebarNameSearch(text: value).admits($0.name) } }
         }
         Property(\NetworkEntity.$kind) {

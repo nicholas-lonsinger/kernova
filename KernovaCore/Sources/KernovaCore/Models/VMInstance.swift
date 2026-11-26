@@ -45,8 +45,23 @@ package final class VMInstance {
     /// Replaced only by ``rebind(to:)``, when the bundle has moved.
     private(set) var bundle: VMBundle
 
-    /// The configuration committed to the bundle.
-    package var configuration: VMConfiguration { bundle.configuration }
+    /// The configuration committed to the bundle, under the name the library
+    /// gives the VM (``name``).
+    package var configuration: VMConfiguration {
+        var configuration = bundle.configuration
+        if let assignedName { configuration.name = assignedName }
+        return configuration
+    }
+
+    /// The name the library gives this VM (``VMLibrary/reassignNames()``),
+    /// `nil` until a library lists it.
+    private(set) var assignedName: String?
+
+    /// Gives the VM `name`, what the library's assignment decided.
+    func assignName(_ name: String) {
+        guard assignedName != name else { return }
+        assignedName = name
+    }
 
     /// Kernova's own state for this VM, as committed to `host-state.json`.
     package var hostState: VMHostState { bundle.hostState }
@@ -370,7 +385,9 @@ package final class VMInstance {
     private static let logger = KernovaLogger(subsystem: "app.kernova", category: "VMInstance")
 
     package nonisolated var id: UUID { instanceID }
-    package var name: String { configuration.name }
+    /// What the VM goes by: the name the library gives it, its own in the
+    /// library, or the one its bundle stores while no library lists it.
+    package var name: String { assignedName ?? bundle.configuration.name }
 
     /// The app is terminating: every drag out of the guest retires, its
     /// promises withdrawn, and every pull's landing is removed before this

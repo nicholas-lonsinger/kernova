@@ -126,8 +126,8 @@ class VMScriptCommand: NSScriptCommand {
     /// answer (``VMScriptingGateway/execute(_:)``).
     ///
     /// Cocoa's `execute()` evaluates the receivers first and answers a failure
-    /// itself, before any implementation runs: a name that resolves to nothing,
-    /// or to two VMs, is "can't get" and never reaches the core. Overriding it
+    /// itself, before any implementation runs: a name that resolves to nothing
+    /// is "can't get" and never reaches the core. Overriding it
     /// is what lets a name reach the core as a name, and what lets the
     /// resolution wait for the library.
     ///

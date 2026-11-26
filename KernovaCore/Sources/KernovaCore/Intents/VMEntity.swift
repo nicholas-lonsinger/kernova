@@ -2,6 +2,7 @@ import AppIntents
 import CoreSpotlight
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 
 /// One virtual machine, as Shortcuts and Spotlight name it.
 ///
@@ -14,11 +15,11 @@ package struct VMEntity: IndexedEntity {
     package static let defaultQuery = VMEntityQuery()
 
     /// The VM's stable identifier — what every verb this surface runs addresses
-    /// it by, so a name shared by two VMs can never resolve ambiguously here.
+    /// it by.
     package let id: UUID
 
-    /// The VM's display name, which is not unique, and what the Spotlight
-    /// record is matched on.
+    /// The VM's name, its own in the library, and what the Spotlight record is
+    /// matched on.
     @Property(title: "Name", indexingKey: \.displayName)
     var name: String
 
@@ -297,8 +298,8 @@ package struct VMEntityQuery: EntityStringQuery, FindQuery {
     // `Sendable`: each is built once from constant closures and never mutated.
     package nonisolated(unsafe) static let properties = QueryProperties {
         Property(\VMEntity.$name) {
-            EqualToComparator { value in .admits { VMCommandCore.name($0.name, isNamedBy: value) } }
-            NotEqualToComparator { value in .admits { !VMCommandCore.name($0.name, isNamedBy: value) } }
+            EqualToComparator { value in .admits { NameRule.text(value, names: $0.name) } }
+            NotEqualToComparator { value in .admits { !NameRule.text(value, names: $0.name) } }
             ContainsComparator { value in .admits { SidebarNameSearch(text: value).admits($0.name) } }
         }
         Property(\VMEntity.$status) {

@@ -1,8 +1,9 @@
 import Foundation
+import KernovaKit
 
-/// What typed text names among a list of items — the one rule every surface
-/// that lets a caller type an item by its name resolves it by: a snapshot, a
-/// shared directory, a USB accessory, a remembered USB accessory.
+/// What typed text names among a list of items whose names are not held
+/// unique — a snapshot, a shared directory, a USB accessory, a remembered USB
+/// accessory.
 public enum NamedSelection<Candidate> {
     case found(Candidate)
     case notFound
@@ -11,9 +12,9 @@ public enum NamedSelection<Candidate> {
 
     /// Text that is an item's identifier — the first `identifies` answers true
     /// for — names that item, whatever any item is called; any other text
-    /// names the one item whose name it is, ignoring case. An identifier always
-    /// reaches its own item, so an item whose name is another's identifier is
-    /// reached only by its own identifier.
+    /// names the one item whose name it is (``NameRule/text(_:names:)``). An
+    /// identifier always reaches its own item, so an item whose name is
+    /// another's identifier is reached only by its own identifier.
     public init(
         _ text: String, in candidates: [Candidate], identifiedBy identifies: (Candidate) -> Bool,
         name: (Candidate) -> String
@@ -22,7 +23,7 @@ public enum NamedSelection<Candidate> {
             self = .found(match)
             return
         }
-        let matching = candidates.filter { name($0).caseInsensitiveCompare(text) == .orderedSame }
+        let matching = candidates.filter { NameRule.text(text, names: name($0)) }
         switch matching.count {
         case 0: self = .notFound
         case 1: self = .found(matching[0])

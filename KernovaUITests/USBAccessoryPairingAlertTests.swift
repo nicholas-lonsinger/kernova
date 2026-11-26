@@ -27,13 +27,6 @@ struct USBAccessoryPairingAlertTests {
             answer: { answer.answered.append($0) })
     }
 
-    private func chooser(in configuration: SheetAlert) -> NSPopUpButton? {
-        (configuration.accessoryView as? NSStackView)?
-            .arrangedSubviews
-            .compactMap { $0 as? NSPopUpButton }
-            .first
-    }
-
     @Test("Both shapes offer the same two buttons, and exactly one Return")
     func buttonsAreTheSameInBothShapes() {
         let answer = Answer()
@@ -48,24 +41,5 @@ struct USBAccessoryPairingAlertTests {
             #expect(configuration.buttons.filter { $0.role == .default }.count == 1, "\(count)")
             #expect(configuration.buttons.last?.role == .cancel, "\(count)")
         }
-    }
-
-    @Test("Two guests sharing a name are still told apart")
-    func candidatesSharingANameStayDistinct() throws {
-        let answer = Answer()
-        let first = VMInstanceFixture.make(name: "Work")
-        let second = VMInstanceFixture.make(name: "Work")
-        let configuration = USBAccessoryPairingAlert.configuration(
-            for: makeRequest(candidates: [first, second], answer: answer))
-        let popUp = try #require(chooser(in: configuration))
-
-        // `addItem(withTitle:)` treats a title as an identity, and nothing
-        // makes VM names unique — a row short here would hand the accessory to
-        // a guest the user did not pick and write the pairing against it.
-        #expect(popUp.numberOfItems == 2)
-        popUp.selectItem(at: 1)
-        try #require(configuration.buttons.first).action()
-
-        #expect(answer.answered.map { $0?.id } == [second.id])
     }
 }

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 import KernovaLogging
 
 /// The library's named networks, and the one writer of the file that holds
@@ -112,12 +113,11 @@ package final class VMNetworkDirectory {
         return VMNetworkName(id, kind: kind, in: state)
     }
 
-    /// The network `text` names — by identifier, or by name ignoring case —
-    /// `nil` when the library lists none.
+    /// The network `text` names
+    /// (``NameRule/sibling(identifiedOrNamedBy:in:id:name:)``), `nil` when the
+    /// library lists none.
     func network(named text: String) -> VMNamedNetwork? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let id = UUID(uuidString: trimmed), let network = network(withID: id) { return network }
-        return state.listed?.first { $0.name.caseInsensitiveCompare(trimmed) == .orderedSame }
+        NameRule.sibling(identifiedOrNamedBy: text, in: state.listed ?? [], id: \.id, name: \.name)
     }
 
     /// The network `text` names, refusing as `verb` a name the library lists
@@ -165,34 +165,34 @@ package final class VMNetworkDirectory {
         try commit(verb: verb) { networks in networks.filter { $0.id != id } }
     }
 
-    /// `name` trimmed, refusing one that cannot name a network beside
-    /// `networks` — `id`'s own name excepted.
+    /// `name` as ``NameRule/validated(_:among:)`` takes it beside every
+    /// network but `id`, refusing too a name that spells `common` or
+    /// `isolated`.
     ///
     /// A membership value reads `common`, `isolated` or an identifier before
     /// a name, so a name spelling one of those could never be chosen.
     private static func validatedName(
         _ name: String, for id: UUID?, among networks: [VMNamedNetwork]
     ) throws -> String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw CommandError.invalidArgument("A network needs a name.")
-        }
-        let reserved = [VMNetworkMembership.commonValue, VMNetworkMembership.isolatedValue]
-        guard !reserved.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }),
-            UUID(uuidString: trimmed) == nil
-        else {
-            throw CommandError.invalidArgument(
-                "\u{201C}\(trimmed)\u{201D} can\u{2019}t name a network: "
+        func spellsAMembership(_ name: String) -> CommandError {
+            .invalidArgument(
+                "\u{201C}\(name)\u{201D} can\u{2019}t name a network: "
                     + "\(VMNetworkMembership.commonValue), \(VMNetworkMembership.isolatedValue) "
                     + "and identifiers already name a network membership.")
         }
-        if let other = networks.first(where: {
-            $0.id != id && $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
-        }) {
-            throw CommandError.invalidArgument(
-                "A network named \u{201C}\(other.name)\u{201D} already exists. Give this one another name.")
+        let validated: String
+        do throws(NameRule.Refusal) {
+            validated = try NameRule.validated(name, among: networks.lazy.filter { $0.id != id }.map(\.name))
+        } catch .identifier(let spelled) {
+            throw spellsAMembership(spelled)
+        } catch {
+            throw CommandError.invalidArgument(error.sentence(about: "network"))
         }
-        return trimmed
+        let reserved = [VMNetworkMembership.commonValue, VMNetworkMembership.isolatedValue]
+        guard !reserved.contains(where: { NameRule.isOneName($0, validated) }) else {
+            throw spellsAMembership(validated)
+        }
+        return validated
     }
 
     /// Applies `change` to the networks the file holds now and writes the

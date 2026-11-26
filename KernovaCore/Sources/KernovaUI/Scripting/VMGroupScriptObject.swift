@@ -53,14 +53,12 @@ package class VMGroupScriptObject: NSObject {
     @objc var virtualMachines: [VMScriptObject] { members }
 
     /// The named-element accessor Cocoa resolves `virtual machine "…" of
-    /// folder …` through, among the group's members — see
-    /// ``VMScriptingGateway/virtualMachine(named:in:)``.
-    ///
-    /// Cocoa's own answer is the first member whose name matches, and several
-    /// VMs can share a name.
+    /// folder …` through, among ``virtualMachines`` — see
+    /// ``VMScriptingGateway/virtualMachine(named:among:placement:)``.
     @objc(valueInVirtualMachinesWithName:)
     func valueInVirtualMachines(withName name: String) -> VMScriptObject? {
-        gateway?.virtualMachine(named: name, in: VMNameScope(group))
+        gateway?.virtualMachine(
+            named: name, among: members, placement: "in the \(group.kind.noun) \u{201C}\(group.name)\u{201D}")
     }
 
     /// The Cocoa key of the property or element the dictionary reads `field`

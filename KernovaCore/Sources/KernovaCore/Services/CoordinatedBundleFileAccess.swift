@@ -21,6 +21,12 @@ struct CoordinatedBundleFileAccess: VMBundleFileAccessing {
         try ExclusiveFileLock.isHeld(at: bundleURL)
     }
 
+    func dateAdded(ofBundleAt bundleURL: URL) -> Date? {
+        // A fresh URL, so no value an earlier read cached on it answers.
+        let url = URL(fileURLWithPath: bundleURL.path(percentEncoded: false), isDirectory: true)
+        return (try? url.resourceValues(forKeys: [.addedToDirectoryDateKey]))?.addedToDirectoryDate
+    }
+
     func reading<T>(_ bundleURL: URL, _ body: (any VMBundleFileReading) throws -> T) throws -> T {
         var coordinationError: NSError?
         var result: Result<T, any Error>?

@@ -39,6 +39,10 @@ struct VMOtherCopyHoldTests {
             return try store.isBundleLockedElsewhere(at: bundleURL)
         }
 
+        func dateAdded(ofBundleAt bundleURL: URL) -> Date? {
+            store.dateAdded(ofBundleAt: bundleURL)
+        }
+
         func reading<T>(_ bundleURL: URL, _ body: (any VMBundleFileReading) throws -> T) throws -> T {
             try store.reading(bundleURL, body)
         }

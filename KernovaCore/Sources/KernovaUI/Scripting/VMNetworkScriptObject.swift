@@ -46,13 +46,11 @@ package final class VMNetworkScriptObject: NSObject {
     @objc var virtualMachines: [VMScriptObject] { members }
 
     /// The named-element accessor Cocoa resolves `virtual machine "…" of
-    /// network …` through — see ``VMScriptingGateway/virtualMachine(named:in:)``.
-    ///
-    /// Cocoa's own answer is the first member whose name matches, and several
-    /// VMs can share a name.
+    /// network …` through, among ``virtualMachines`` — see
+    /// ``VMScriptingGateway/virtualMachine(named:among:placement:)``.
     @objc(valueInVirtualMachinesWithName:)
     func valueInVirtualMachines(withName name: String) -> VMScriptObject? {
-        gateway?.virtualMachine(named: name, in: VMNameScope(network))
+        gateway?.virtualMachine(named: name, among: members, placement: "on \u{201C}\(network.name)\u{201D}")
     }
 
     /// The Cocoa key of the property or element the dictionary reads `field`

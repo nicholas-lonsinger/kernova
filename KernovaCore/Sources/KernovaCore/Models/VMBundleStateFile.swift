@@ -349,14 +349,22 @@ struct VMBundleFiles: Sendable {
     /// pairings read as none, and every pairings write reads the file first,
     /// so each one fails for as long as it stays that way.
     func read() throws(UnreadableConfigFile) -> VMBundleRead {
-        try reading { files throws(UnreadableConfigFile) in
+        let dateAdded = dateAdded()
+        return try reading { files throws(UnreadableConfigFile) in
             let pass = ReadPass(bundleURL: url, files: files)
             let core = try pass.core.get()
             return VMBundleRead(
                 files: self, configuration: core.configuration, hostState: core.hostState,
                 snapshotManifest: core.snapshotManifest,
-                usbPairings: pass.usbPairings ?? USBAccessoryPairingSet(), unreadableFiles: pass.unreadable)
+                usbPairings: pass.usbPairings ?? USBAccessoryPairingSet(), unreadableFiles: pass.unreadable,
+                dateAdded: dateAdded)
         }
+    }
+
+    /// When the bundle was put in the directory holding it
+    /// (``VMBundleFileAccessing/dateAdded(ofBundleAt:)``).
+    func dateAdded() -> Date? {
+        access.dateAdded(ofBundleAt: url)
     }
 
     /// What a bundle joining the library — an import's source, or the tree an
@@ -708,11 +716,14 @@ struct VMBundleRead: Sendable {
     /// them — the pairings, which then read as none, and snapshots'
     /// configurations.
     let unreadableFiles: [UnreadableConfigFile]
+    /// When the bundle was put in the directory holding it
+    /// (``VMBundleFileAccessing/dateAdded(ofBundleAt:)``).
+    let dateAdded: Date?
 
     fileprivate init(
         files: VMBundleFiles, configuration: VMConfiguration, hostState: VMHostState,
         snapshotManifest: VMSnapshotManifest, usbPairings: USBAccessoryPairingSet,
-        unreadableFiles: [UnreadableConfigFile]
+        unreadableFiles: [UnreadableConfigFile], dateAdded: Date?
     ) {
         self.files = files
         self.configuration = configuration
@@ -720,5 +731,6 @@ struct VMBundleRead: Sendable {
         self.snapshotManifest = snapshotManifest
         self.usbPairings = usbPairings
         self.unreadableFiles = unreadableFiles
+        self.dateAdded = dateAdded
     }
 }

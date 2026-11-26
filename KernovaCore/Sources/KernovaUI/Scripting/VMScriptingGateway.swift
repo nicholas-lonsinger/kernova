@@ -1,6 +1,7 @@
 import Cocoa
 import KernovaCommandModel
 import KernovaCore
+import KernovaKit
 import KernovaLogging
 
 /// The Apple event front door: everything Script Editor, Automator, and
@@ -20,8 +21,8 @@ import KernovaLogging
 /// gateway answers itself, runs its verb on what such a dispatch addressed,
 /// once it returns; its own dispatch only suspends it.
 /// **Addressing:** a script names a VM the way a person does, so this addresses
-/// VMs by ``VMSelector/name(_:)`` as readily as by identifier and the ambiguity
-/// refusal can fire here — on a verb and on a read alike.
+/// VMs by ``VMSelector/name(_:)`` as readily as by identifier — on a verb and
+/// on a read alike.
 ///
 /// It presents nothing: a refusal leaves as the ``CommandError`` the core
 /// threw, which the command that asked turns into the script error the event
@@ -81,32 +82,36 @@ final class VMScriptingGateway {
         return commands.list(.all).compactMap { object(for: $0.id) }
     }
 
-    /// The one VM called `name`, resolved by the core — among `scope`'s
-    /// members when it is given — or nothing, with the command asking
-    /// deferred, until the library has landed.
+    /// The first of the VMs ``virtualMachines()`` lists that `name` names
+    /// (``NameRule/sibling(named:in:name:)``) — the one Cocoa's own lookup
+    /// finds there — or nothing, with the command asking deferred, until the
+    /// library has landed.
     ///
-    /// Cocoa's own name lookup answers with the first match, which for two VMs
-    /// sharing a display name is whichever the container happens to list
-    /// first. The core refuses that name instead, with the candidates, and a
-    /// name no VM answers to in its own words too — both recorded on the
-    /// command being answered, so the script reads the refusal every other door
-    /// shows rather than a bare "can't get".
-    func virtualMachine(named name: String, in scope: VMNameScope? = nil) -> VMScriptObject? {
+    /// It looks among ``VMCommandCore/listing(_:)``, the list
+    /// ``VMCommandCore/list(_:)`` answers once caught up with other copies of
+    /// Kernova, so naming a VM reads only that VM's bundle.
+    ///
+    /// A name no VM goes by is refused in the core's words, recorded on the
+    /// command being answered, so the script reads the refusal every other
+    /// door shows rather than a bare "can't get".
+    func virtualMachine(named name: String) -> VMScriptObject? {
         guard !deferUntilLanded() else { return nil }
-        do {
-            return VMScriptObject(try commands.info(.name(name), among: scope?.members), gateway: self)
-        } catch CommandError.notFound where scope != nil {
-            answering?.refuse(
-                CommandError.itemNotFoundOnHost(
-                    item: "virtual machine named \u{201C}\(name)\u{201D} \(scope?.placement ?? "")"))
-            return nil
-        } catch let refusal as CommandError {
-            answering?.refuse(refusal)
-            return nil
-        } catch {
-            answering?.refuse(Int(errAEEventFailed), error.localizedDescription)
+        guard let found = NameRule.sibling(named: name, in: commands.listing(.all), name: \.name) else {
+            answering?.refuse(CommandError.notFound(.name(name)))
             return nil
         }
+        return object(for: found.id)
+    }
+
+    /// The first of `members` — a network's or a group's `virtual machine`
+    /// elements, in its order — that `name` names, or nothing, with a
+    /// refusal naming where the VM was looked for, `placement`, recorded on
+    /// the command being answered.
+    func virtualMachine(named name: String, among members: [VMScriptObject], placement: String) -> VMScriptObject? {
+        if let found = NameRule.sibling(named: name, in: members, name: \.name) { return found }
+        answering?.refuse(
+            CommandError.itemNotFoundOnHost(item: "virtual machine named \u{201C}\(name)\u{201D} \(placement)"))
+        return nil
     }
 
     /// One VM's whole read, as the dictionary's `virtual machine`.
@@ -1368,16 +1373,29 @@ final class VMScriptingGateway {
     /// until the library has landed, and with the command refused while the
     /// library's groups cannot be read.
     func groups(of kind: VMGroupKind) -> [VMGroupScriptObject] {
-        guard !deferUntilLanded() else { return [] }
-        return run(.groups, on: nil) { try commands.groups() }?.filter { $0.kind == kind }.map(object(for:)) ?? []
+        listedGroups(of: kind)?.map(object(for:)) ?? []
     }
 
-    /// The group of `kind` that `name` names, by the core's rule — or `nil`,
-    /// deferred until the library has landed, or with the core's refusal
-    /// recorded on the command being answered.
+    /// The first of ``groups(of:)`` that `name` names — by its identifier,
+    /// else by name (``NameRule/sibling(identifiedOrNamedBy:in:id:name:)``)
+    /// — or `nil`, deferred until the library has landed, or with the core's
+    /// refusal recorded on the command being answered.
     func group(_ kind: VMGroupKind, named name: String) -> VMGroupScriptObject? {
+        guard let listed = listedGroups(of: kind) else { return nil }
+        guard let found = NameRule.sibling(identifiedOrNamedBy: name, in: listed, id: \.id, name: \.name) else {
+            answering?.refuse(VMCommandCore.noGroup(VMGroupReference(kind, named: name)))
+            return nil
+        }
+        return object(for: found)
+    }
+
+    /// The library's groups of `kind`, in the order the sidebar lists them,
+    /// as ``groups(of:)`` lists them and ``group(_:named:)`` looks among them
+    /// — `nil`, deferred until the library has landed, or with the core's
+    /// refusal recorded on the command being answered.
+    private func listedGroups(of kind: VMGroupKind) -> [GroupSummary]? {
         guard !deferUntilLanded() else { return nil }
-        return run(.groups, on: nil) { try commands.group(VMGroupReference(kind, named: name)) }.map(object(for:))
+        return run(.groups, on: nil) { try commands.groups() }?.filter { $0.kind == kind }
     }
 
     /// Refuses Cocoa's removal of a group of `kind` by index, which a
@@ -1452,26 +1470,6 @@ final class VMScriptingGateway {
             }
             return answers
         }
-    }
-}
-
-/// A container other than the application that a script names a VM under:
-/// the VMs it holds, and where a refusal places a name none of them carries.
-struct VMNameScope {
-    let members: Set<UUID>
-    /// Where the container is, as a sentence ends: "on “Lab”".
-    let placement: String
-
-    /// The VMs that join `network`.
-    init(_ network: NetworkSummary) {
-        members = Set(network.members.map(\.id))
-        placement = "on \u{201C}\(network.name)\u{201D}"
-    }
-
-    /// The VMs in `group`.
-    init(_ group: GroupSummary) {
-        members = Set(group.members.map(\.id))
-        placement = "in the \(group.kind.noun) \u{201C}\(group.name)\u{201D}"
     }
 }
 

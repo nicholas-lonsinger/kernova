@@ -138,15 +138,19 @@ struct VMCommandEnvelopeRouterTests {
         let harness = makeHarness()
         let snapshot = VMSnapshot(name: "Baseline", kind: .cold, macAddress: nil)
         let instance = harness.wired.register(name: "Wired", snapshots: [snapshot])
-        let refusal = CommandErrorDTO.invalidArgument(message: "A name is at least one character that is not a space.")
+        func isInvalidArgument(_ response: VMCommandResponse) -> Bool {
+            guard case .invalidArgument? = response.failure else { return false }
+            return true
+        }
 
         let vm = try await harness.transport.send(.rename(.id(instance.id), newName: name))
         let renamedSnapshot = try await harness.transport.send(
             .renameSnapshot(.id(instance.id), snapshot: snapshot.id, newName: name))
 
-        #expect(vm.failure == refusal)
-        #expect(renamedSnapshot.failure == refusal)
+        #expect(isInvalidArgument(vm), "\(String(describing: vm.failure))")
+        #expect(isInvalidArgument(renamedSnapshot), "\(String(describing: renamedSnapshot.failure))")
         #expect(instance.name == "Wired")
+        #expect(harness.storage.bundles[instance.bundleURL]?.name == "Wired")
         #expect(instance.snapshotManifest.snapshots.map(\.name) == ["Baseline"])
     }
 
