@@ -19,11 +19,12 @@ protocol FindQuery: EntityPropertyQuery where ComparatorMappingType: FindCompari
 /// What a ``FindQuery``'s comparators map to: a nominal type, never a
 /// function type.
 ///
-/// Swift 6.4.2 (Xcode 27B52) accepts converting an array of `@Sendable`
-/// functions to an array of the same functions without `@Sendable`, and the
-/// runtime traps on the element cast: "Could not cast value of type
-/// '@Sendable (Swift.Int) -> Swift.Bool' to '(Swift.Int) -> Swift.Bool'". An
-/// array of a nominal type has no such conversion to make.
+/// Swift 6.4.1 to 6.4.3 accept converting an array of `@Sendable` functions
+/// to an array of the same functions without `@Sendable`, and the runtime
+/// traps on the element cast: "Could not cast value of type
+/// '@Sendable (Swift.Int) -> Swift.Bool' to '(Swift.Int) -> Swift.Bool'"
+/// (https://github.com/swiftlang/swift/issues/82618). An array of a nominal
+/// type has no such conversion to make.
 protocol FindComparison: Sendable {}
 
 /// One condition a Find puts on the entities it answers, judged of each
