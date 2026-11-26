@@ -458,11 +458,10 @@ extension VMCommandCore {
     ) throws -> SharedDirectorySummary? {
         guard let shared = sharedDirectory(at: path, on: instance) else { return nil }
         guard shared.readOnly == readOnly else {
-            let held = "\u{201C}\(instance.name)\u{201D} already shares \u{201C}\(shared.path)\u{201D}"
+            let access = shared.readOnly ? "as read only" : "not as read only"
             throw CommandError.invalidArgument(
-                shared.readOnly
-                    ? "\(held) as read only, so it was not added for its guest to write to."
-                    : "\(held) and its guest can write to it, so it was not added as read only.")
+                "\u{201C}\(instance.name)\u{201D} already shares \u{201C}\(shared.path)\u{201D} \(access), and adding it again does not change that."
+            )
         }
         return SharedDirectorySummary(shared)
     }
