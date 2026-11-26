@@ -91,7 +91,8 @@ enum VMState: String, AppEnum {
     }
 }
 
-/// A VM's ``VMAgentStatus``, titled as ``VMAgentStatus/title`` reads it.
+/// A VM's ``VMAgentStatus``, named as a value of Guest Agent Status:
+/// ``VMAgentStatus/title`` without the subject the property's name gives.
 enum VMGuestAgentStatus: String, AppEnum {
     case waiting
     case current
@@ -107,16 +108,16 @@ enum VMGuestAgentStatus: String, AppEnum {
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Guest Agent Status")
 
     static let caseDisplayRepresentations: [VMGuestAgentStatus: DisplayRepresentation] = [
-        .waiting: "No guest agent connected",
-        .current: "Guest agent up to date",
-        .connected: "Guest agent connected",
-        .outdated: "Guest agent update available",
-        .reinstallNeeded: "Guest agent can’t update in place",
-        .updating: "Guest agent updating",
-        .unresponsive: "Guest agent not responding",
-        .expectedMissing: "Guest agent didn’t reconnect",
-        .connecting: "Connecting to guest agent",
-        .disconnected: "Guest agent disconnected",
+        .waiting: "No Agent Connected",
+        .current: "Up to Date",
+        .connected: "Connected",
+        .outdated: "Update Available",
+        .reinstallNeeded: "Can’t Update in Place",
+        .updating: "Updating",
+        .unresponsive: "Not Responding",
+        .expectedMissing: "Didn’t Reconnect",
+        .connecting: "Connecting",
+        .disconnected: "Disconnected",
     ]
 
     /// The case naming `status`.
@@ -137,8 +138,8 @@ enum VMGuestAgentStatus: String, AppEnum {
     }
 }
 
-/// One guest agent's ``VMAgentLineStatus``, titled as
-/// ``VMAgentLineStatus/title`` reads it.
+/// One guest agent's ``VMAgentLineStatus``, named as a value of Agent Status:
+/// ``VMAgentLineStatus/title`` without the subject the property's name gives.
 enum VMGuestAgentLineStatus: String, AppEnum {
     case current
     case connected
@@ -153,15 +154,15 @@ enum VMGuestAgentLineStatus: String, AppEnum {
     static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Agent Status")
 
     static let caseDisplayRepresentations: [VMGuestAgentLineStatus: DisplayRepresentation] = [
-        .current: "Guest agent up to date",
-        .connected: "Guest agent connected",
-        .outdated: "Guest agent update available",
-        .reinstallNeeded: "Guest agent can’t update in place",
-        .updating: "Guest agent updating",
-        .unresponsive: "Guest agent not responding",
-        .expectedMissing: "Guest agent didn’t reconnect",
-        .connecting: "Connecting to guest agent",
-        .disconnected: "Guest agent disconnected",
+        .current: "Up to Date",
+        .connected: "Connected",
+        .outdated: "Update Available",
+        .reinstallNeeded: "Can’t Update in Place",
+        .updating: "Updating",
+        .unresponsive: "Not Responding",
+        .expectedMissing: "Didn’t Reconnect",
+        .connecting: "Connecting",
+        .disconnected: "Disconnected",
     ]
 
     /// The status this case names.
