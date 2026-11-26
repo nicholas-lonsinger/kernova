@@ -419,9 +419,10 @@ extension VMCommandCore {
     /// sandboxed client named, and the bookmark is minted from that path once
     /// it is readable — a share is reopened at every boot.
     ///
-    /// `path` is taken in ``comparablePath(_:)``'s spelling, so a `.` or `..`
-    /// hop never reaches the stored path or the name a macOS guest mounts the
-    /// folder by, whichever door named it.
+    /// `path` is taken in ``comparablePath(_:)``'s spelling with its links
+    /// resolved, so a `.` or `..` hop or a link's name never reaches the stored
+    /// path or the name a macOS guest mounts the folder by, whichever door
+    /// named it.
     ///
     /// The gate is asked again once the panel answers: it stands for as long as
     /// the user leaves it up, and the VM the caller named can have started in
@@ -439,7 +440,10 @@ extension VMCommandCore {
         try Self.requireDirectory(folder)
         try await requireSourceAuthority(.editSharedDirectory)
             .requireReadAccess(to: folder, as: .sharedDirectory)
-        let file = PickedFile(picking: folder)
+        // A link's bookmark cannot be made while the folder holding the link
+        // is one the sandbox does not admit (observed 2026-11-26, macOS
+        // 27.2.1), so the share is of the folder the path resolves to.
+        let file = PickedFile(picking: folder.resolvingSymlinksInPath())
         try addSharedDirectories([file], readOnly: readOnly, to: instance)
         guard let shared = sharedDirectory(at: file.path, on: instance) else {
             throw itemNotFound(instance, item: "shared directory \u{201C}\(file.path)\u{201D}")
