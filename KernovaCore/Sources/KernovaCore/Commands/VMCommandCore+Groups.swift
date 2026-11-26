@@ -86,7 +86,14 @@ extension VMCommandCore {
     /// is every VM in library order.
     package func list(_ selection: VMLibrarySelection) -> [VMSummary] {
         library.refreshFromOtherCopies()
-        return entries(in: selection).map(summary)
+        return listing(selection)
+    }
+
+    /// ``list(_:)``'s answer as this copy holds the library now, reading no
+    /// bundle: the same VMs in the same order, without first catching up with
+    /// another copy of Kernova.
+    package func listing(_ selection: VMLibrarySelection) -> [VMSummary] {
+        entries(in: selection).map(summary)
     }
 
     /// The library's smart groups, then its folders, each in the order the

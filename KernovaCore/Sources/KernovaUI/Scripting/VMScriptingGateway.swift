@@ -78,20 +78,25 @@ final class VMScriptingGateway {
     /// Every VM in the library, in library order — or
     /// nothing, with the command asking deferred, until the library has landed.
     func virtualMachines() -> [VMScriptObject] {
-        listedVirtualMachines()?.compactMap { object(for: $0.id) } ?? []
+        guard !deferUntilLanded() else { return [] }
+        return commands.list(.all).compactMap { object(for: $0.id) }
     }
 
-    /// The first of ``virtualMachines()`` that `name` names
+    /// The first of the VMs ``virtualMachines()`` lists that `name` names
     /// (``NameRule/sibling(named:in:name:)``) — the one Cocoa's own lookup
     /// finds there — or nothing, with the command asking deferred, until the
     /// library has landed.
+    ///
+    /// It looks among ``VMCommandCore/listing(_:)``, the list
+    /// ``VMCommandCore/list(_:)`` answers once caught up with other copies of
+    /// Kernova, so naming a VM reads only that VM's bundle.
     ///
     /// A name no VM goes by is refused in the core's words, recorded on the
     /// command being answered, so the script reads the refusal every other
     /// door shows rather than a bare "can't get".
     func virtualMachine(named name: String) -> VMScriptObject? {
-        guard let listed = listedVirtualMachines() else { return nil }
-        guard let found = NameRule.sibling(named: name, in: listed, name: \.name) else {
+        guard !deferUntilLanded() else { return nil }
+        guard let found = NameRule.sibling(named: name, in: commands.listing(.all), name: \.name) else {
             answering?.refuse(CommandError.notFound(.name(name)))
             return nil
         }
@@ -107,14 +112,6 @@ final class VMScriptingGateway {
         answering?.refuse(
             CommandError.itemNotFoundOnHost(item: "virtual machine named \u{201C}\(name)\u{201D} \(placement)"))
         return nil
-    }
-
-    /// Every VM in the library, in library order, as ``virtualMachines()``
-    /// lists them and ``virtualMachine(named:)`` looks among them — `nil`,
-    /// with the command asking deferred, until the library has landed.
-    private func listedVirtualMachines() -> [VMSummary]? {
-        guard !deferUntilLanded() else { return nil }
-        return commands.list(.all)
     }
 
     /// One VM's whole read, as the dictionary's `virtual machine`.
