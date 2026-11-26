@@ -220,14 +220,17 @@ package struct AppAlertConfigurations {
     ///
     /// ``StartFailedAttachment/Reason/pathIsDirectory``,
     /// ``StartFailedAttachment/Reason/notADirectory``,
-    /// ``StartFailedAttachment/Reason/notReadable`` and
-    /// ``StartFailedAttachment/Reason/attachRefused`` are offered no remedy at
+    /// ``StartFailedAttachment/Reason/notReadable``,
+    /// ``StartFailedAttachment/Reason/attachRefused`` and
+    /// ``StartFailedAttachment/Reason/nameRefused`` are offered no remedy at
     /// all: Read Only does not make a folder a disk image or a file a folder,
     /// a share is read whether or not it is Read Only, and nothing here knows
     /// what the framework objected to.
     ///
     /// Every entry this alert is built for is external
-    /// (``StartFailedAttachment``), so re-attaching it later is always true.
+    /// (``StartFailedAttachment``), so re-attaching it later is true — but a
+    /// folder shared again is named from the folder's name again, so for a
+    /// refused name what the alert says is where the name comes from.
     static func startFailedAttachmentMessage(
         _ failure: StartFailedAttachment, holdsSavedState: Bool
     ) -> String {
@@ -247,9 +250,17 @@ package struct AppAlertConfigurations {
             remedy =
                 "If the \(item) or the disk it’s on is locked or read-only, make it writable and "
                 + "try again. "
-        case .pathIsDirectory, .notADirectory, .notReadable, .attachRefused:
+        case .pathIsDirectory, .notADirectory, .notReadable, .attachRefused, .nameRefused:
             remedy = ""
         }
+        let again =
+            switch failure.reason {
+            case .nameRefused:
+                ". A shared folder takes its name from the folder’s name, so a folder renamed on "
+                    + "this Mac can be shared again in Settings under its new name."
+            case .notFound, .pathIsDirectory, .notADirectory, .notReadable, .notWritable, .attachRefused:
+                ", and you can \(wording.addAgain) later in Settings."
+            }
         // "also" only where something was offered before it.
         let offer = remedy.isEmpty ? "You can remove" : "You can also remove"
         let next =
@@ -257,8 +268,7 @@ package struct AppAlertConfigurations {
             ? "resume" : "start"
         var message =
             "\(failure.message)\n\n\(remedy)\(offer) “\(failure.label)” from this virtual "
-            + "machine and \(next) without it — the \(item) itself is not deleted, and you can "
-            + "\(wording.addAgain) later in Settings."
+            + "machine and \(next) without it — the \(item) itself is not deleted\(again)"
         if holdsSavedState, !startFailedRecoveryResumes(failure, holdsSavedState: holdsSavedState) {
             message +=
                 " Removing it also discards this virtual machine's saved state."

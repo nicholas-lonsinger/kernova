@@ -482,9 +482,10 @@ extension VMCommandCore {
     /// the generic error is the right surface.
     ///
     /// Every way one entry can be unusable, not only the refused attach: an
-    /// item that is gone, a path naming the wrong kind of item and one the VM
-    /// may no longer read or write all leave the same VM, with the same one
-    /// entry to remove.
+    /// item that is gone, a path naming the wrong kind of item, one the VM may
+    /// no longer read or write, and a share whose name Virtualization refuses
+    /// all leave the same VM, with the same one entry to remove
+    /// (``ConfigurationBuilderError/failedAttachment``).
     ///
     /// Two exclusions where removal is the wrong advice. A bundle-internal
     /// disk, because nothing re-creates its entry
@@ -499,40 +500,23 @@ extension VMCommandCore {
         from error: Error, verb: VMVerb, on instance: VMInstance
     ) -> StartFailedAttachment? {
         guard let builderError = error as? ConfigurationBuilderError,
-            let reason = builderError.attachmentReason
+            let failed = builderError.failedAttachment
         else { return nil }
-        switch builderError {
-        case .storageDiskNotFound(let id, _, let label),
-            .storageDiskPathIsDirectory(let id, _, let label),
-            .storageDiskNotWritable(let id, _, let label),
-            .storageDiskAttachFailed(let id, _, let label, _):
-            guard let disk = storageDisk(id: id, on: instance),
+        // Confirm the entry is really in the list: an offer whose action could
+        // only no-op leaves a button that appears to do nothing.
+        switch failed.kind {
+        case .storageDisk:
+            guard let disk = storageDisk(id: failed.id, on: instance),
                 !disk.isInternal, !instance.isSoleStorageDisk(disk)
             else { return nil }
-            return StartFailedAttachment(
-                verb: verb, kind: .storageDisk, reason: reason, id: id, label: label,
-                message: builderError.localizedDescription)
-        case .removableMediaNotFound(let id, _, let label),
-            .removableMediaPathIsDirectory(let id, _, let label),
-            .removableMediaNotWritable(let id, _, let label),
-            .removableMediaAttachFailed(let id, _, let label, _):
-            // Confirm the entry is really in the list: an offer whose action could
-            // only no-op leaves a button that appears to do nothing.
-            guard removableMediaItem(id: id, on: instance) != nil else { return nil }
-            return StartFailedAttachment(
-                verb: verb, kind: .removableMedia, reason: reason, id: id, label: label,
-                message: builderError.localizedDescription)
-        case .sharedDirectoryNotFound(let id, _, let label),
-            .sharedDirectoryNotADirectory(let id, _, let label),
-            .sharedDirectoryNotReadable(let id, _, let label),
-            .sharedDirectoryNotWritable(let id, _, let label):
-            guard sharedDirectory(id: id, on: instance) != nil else { return nil }
-            return StartFailedAttachment(
-                verb: verb, kind: .sharedDirectory, reason: reason, id: id, label: label,
-                message: builderError.localizedDescription)
-        default:
-            return nil
+        case .removableMedia:
+            guard removableMediaItem(id: failed.id, on: instance) != nil else { return nil }
+        case .sharedDirectory:
+            guard sharedDirectory(id: failed.id, on: instance) != nil else { return nil }
         }
+        return StartFailedAttachment(
+            verb: verb, kind: failed.kind, reason: failed.reason, id: failed.id, label: failed.label,
+            message: builderError.localizedDescription)
     }
 
     /// Maps a bring-up or install failure to a title and message naming its

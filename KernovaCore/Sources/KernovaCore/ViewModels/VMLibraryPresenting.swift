@@ -60,11 +60,12 @@ package struct StartFailedAttachment: Equatable, Sendable {
         /// A shared folder the VM cannot read.
         case notReadable
         case notWritable
-        /// The item is there and Virtualization refused it — a disk image
-        /// `VZDiskImageStorageDeviceAttachment` would not open, or the name a
-        /// shared folder goes by; its own description carries what little is
-        /// known.
+        /// The file is there and `VZDiskImageStorageDeviceAttachment` refused
+        /// it; its own description carries what little is known.
         case attachRefused
+        /// Virtualization refused the name a macOS guest would mount the
+        /// shared folder by, which comes from the folder's name.
+        case nameRefused
     }
 
     /// The bring-up the user asked for — ``VMVerb/start`` or ``VMVerb/resume``
