@@ -26,8 +26,9 @@ package protocol ListNamed: Equatable, Sendable {
 /// (``NameRule/assignment(of:identifiers:fallback:)``): a pure function of
 /// the list, so every copy of Kernova reading one file agrees without a
 /// write, and the file's next commit stores the repair. After that, only
-/// ``append(_:)``, ``insert(_:at:)``, ``append(_:named:)`` and
-/// ``rename(_:to:)`` give a name.
+/// ``append(_:)`` and ``insert(_:at:)`` — the first free name from the
+/// element's own — and ``rename(_:to:)`` — a name a caller chose, refused
+/// where it can't be one — give a name.
 package struct NamedList<Element: ListNamed>: Equatable, Sendable {
     package private(set) var elements: [Element]
 
@@ -81,14 +82,6 @@ package struct NamedList<Element: ListNamed>: Equatable, Sendable {
         var element = element
         element.listedName = freeName(for: element)
         elements.insert(element, at: index)
-    }
-
-    /// Appends `element` under `proposed`, a name its caller chose, refusing
-    /// one ``validatedName(_:for:)`` refuses.
-    package mutating func append(_ element: Element, named proposed: String) throws(NameRule.Refusal) {
-        var element = element
-        element.listedName = try validatedName(proposed, for: nil)
-        elements.append(element)
     }
 
     /// Renames the element `id` identifies to `proposed`, refusing a name
