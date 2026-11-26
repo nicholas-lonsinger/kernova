@@ -137,7 +137,7 @@ enum TableRenderer {
         case .label: nil
         case .capacityBytes: (.capacity, size(disk.capacityBytes))
         case .usedBytes: disk.usedBytes.map { (.used, "\(size($0)) used") }
-        case .kind: disk.kind == "usbMassStorage" ? (.bus, "USB") : nil
+        case .kind: disk.kind == .usbMassStorage ? (.bus, "USB") : nil
         case .readOnly: disk.readOnly ? (.access, "read-only") : nil
         // No `kernova` command takes a disk by its identifier.
         case .id: nil
@@ -181,7 +181,7 @@ enum TableRenderer {
         switch field {
         case .name: (.name, snapshot.name)
         case .isCurrent: (.current, snapshot.isCurrent ? "*" : "")
-        case .kind: (.kind, snapshot.kind)
+        case .kind: (.kind, snapshot.kind.rawValue)
         case .createdAt: (.taken, moment(snapshot.createdAt))
         case .id: (.id, snapshot.id.uuidString)
         // Free text, possibly several lines, which a row can't hold.

@@ -410,9 +410,6 @@ struct KernovaScriptingDefinitionTests {
             let term = try #require(terms[kind], "No term for \(kind)")
             #expect(declared[term] == kind.code, "No \(term) enumerator")
         }
-        #expect(VMScriptStorageDiskKind(wireName: "virtio") == .virtio)
-        #expect(VMScriptStorageDiskKind(wireName: "usbMassStorage") == .usbMassStorage)
-        #expect(VMScriptStorageDiskKind(wireName: "scsi") == nil)
         let suite = try loadSuite()
         #expect(
             try values("class[@name='storage disk']/property[@name='kind']", "type", in: suite)
@@ -432,8 +429,6 @@ struct KernovaScriptingDefinitionTests {
             let term = try #require(terms[kind], "No term for \(kind)")
             #expect(declared[term] == kind.code, "No \(term) enumerator")
         }
-        #expect(VMScriptSnapshotKind(wireName: "warm") == .warm)
-        #expect(VMScriptSnapshotKind(wireName: "cold") == .cold)
         let suite = try loadSuite()
         #expect(
             try values("class[@name='snapshot']/property[@name='kind']", "type", in: suite) == ["snapshot kind"])

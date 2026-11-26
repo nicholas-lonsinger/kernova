@@ -737,7 +737,7 @@ package final class VMCommandCore {
             id: snapshot.id,
             name: snapshot.name,
             notes: snapshot.notes,
-            kind: snapshot.kind.rawValue,
+            kind: snapshot.kind,
             createdAt: snapshot.createdAt,
             isCurrent: instance.snapshotManifest.currentID == snapshot.id,
             isEphemeralBaseline: instance.isEphemeralBaseline(snapshot)

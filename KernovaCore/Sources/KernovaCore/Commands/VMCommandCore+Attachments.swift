@@ -1313,7 +1313,7 @@ extension StorageDiskSummary {
     /// its sizes from `sizes`.
     fileprivate init(_ disk: StorageDisk, in layout: VMBundleLayout, measured sizes: VMBundleLayout.DiskSizes?) {
         self.init(
-            id: disk.id, label: disk.label, kind: disk.kind.rawValue, readOnly: disk.readOnly,
+            id: disk.id, label: disk.label, kind: disk.kind, readOnly: disk.readOnly,
             path: layout.diskURL(forRelativePath: disk.path, isInternal: disk.isInternal)
                 .path(percentEncoded: false),
             notes: disk.notes, capacityBytes: sizes?.capacityBytes, usedBytes: sizes?.onDiskBytes)

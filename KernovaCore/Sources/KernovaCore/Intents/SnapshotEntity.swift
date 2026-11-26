@@ -44,10 +44,8 @@ struct SnapshotEntity: AppEntity {
     @Property(title: "Notes")
     var notes: String
 
-    /// What the capture holds, as its stable wire name — `warm` for one that
-    /// carries the guest's memory, `cold` for one that does not.
     @Property(title: "Kind")
-    var kind: String
+    var kind: SnapshotKindChoice
 
     @Property(title: "Captured")
     var createdAt: Date
@@ -84,7 +82,7 @@ struct SnapshotEntity: AppEntity {
             case .id: break  // In the entity's identifier, set above.
             case .name: name = summary.name
             case .notes: notes = summary.notes
-            case .kind: kind = summary.kind
+            case .kind: kind = SnapshotKindChoice(summary.kind)
             case .createdAt: createdAt = summary.createdAt
             case .isCurrent: isCurrent = summary.isCurrent
             case .isEphemeralBaseline: isEphemeralBaseline = summary.isEphemeralBaseline
@@ -94,15 +92,48 @@ struct SnapshotEntity: AppEntity {
 
     var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(
-            title: "\(name)", subtitle: "\(Self.captureDescription(kind, createdAt))")
+            title: "\(name)", subtitle: "\(Self.captureDescription(kind.kind, createdAt))")
     }
 
     /// What a capture reads back as in the snapshot list's own words — the date
     /// it was taken and the state the snapshot captured.
-    static func captureDescription(_ kind: String, _ createdAt: Date) -> String {
-        let taken = SnapshotDateFormat.string(from: createdAt)
-        guard let kind = VMSnapshotKind(rawValue: kind) else { return taken }
-        return "\(taken) \u{00B7} \(SnapshotKindCopy.stateLabel(kind))"
+    static func captureDescription(_ kind: VMSnapshotKind, _ createdAt: Date) -> String {
+        "\(SnapshotDateFormat.string(from: createdAt)) \u{00B7} \(SnapshotKindCopy.stateLabel(kind))"
+    }
+}
+
+/// What a ``SnapshotEntity`` captured, titled as
+/// ``SnapshotKindCopy/stateLabel(_:)`` reads it.
+///
+/// Mirrors ``VMSnapshotKind`` rather than conforming it, for the reason
+/// ``VMStopMethod`` gives. ``init(_:)`` is exhaustive over the kinds, so a new
+/// one fails to build here rather than reaching Shortcuts unnamed.
+enum SnapshotKindChoice: String, AppEnum {
+    case warm
+    case cold
+
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Snapshot Kind")
+
+    static let caseDisplayRepresentations: [SnapshotKindChoice: DisplayRepresentation] = [
+        .warm: "Running state",
+        .cold: "Powered off",
+    ]
+
+    /// The kind this case names.
+    var kind: VMSnapshotKind {
+        switch self {
+        case .warm: .warm
+        case .cold: .cold
+        }
+    }
+
+    /// The case naming `kind`.
+    init(_ kind: VMSnapshotKind) {
+        self =
+            switch kind {
+            case .warm: .warm
+            case .cold: .cold
+            }
     }
 }
 

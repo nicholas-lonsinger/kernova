@@ -32,19 +32,7 @@ package final class VMStorageDiskScriptObject: NSObject {
 
     /// The `storage disk kind` enumerator for the bus the guest sees the disk
     /// on, as the Apple event code the dictionary gives it.
-    ///
-    /// `missing value` for a kind from no vocabulary this app writes, which is
-    /// a programming error rather than a disk a script can provoke.
-    @objc var kind: NSNumber? {
-        guard let kind = VMScriptStorageDiskKind(wireName: disk.kind) else {
-            Self.logger.log(
-                .fault,
-                "Storage disk kind '\(self.disk.kind, privacy: .public)' has no scripting term")
-            assertionFailure("Storage disk kind '\(disk.kind)' has no scripting term")
-            return nil
-        }
-        return NSNumber(value: kind.code)
-    }
+    @objc var kind: NSNumber { NSNumber(value: VMScriptStorageDiskKind(disk.kind).code) }
 
     @objc var readOnly: Bool { disk.readOnly }
 
@@ -117,13 +105,6 @@ enum VMScriptStorageDiskKind: CaseIterable {
         case .virtio: self = .virtio
         case .usbMassStorage: self = .usbMassStorage
         }
-    }
-
-    /// The term for the kind a ``StorageDiskSummary`` names, `nil` for a name
-    /// from no vocabulary this app writes.
-    init?(wireName: String) {
-        guard let kind = StorageDiskKind(rawValue: wireName) else { return nil }
-        self.init(kind)
     }
 
     /// The Apple event code the dictionary gives this case's term.

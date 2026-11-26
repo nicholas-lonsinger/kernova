@@ -11,11 +11,11 @@ import Testing
 struct CLISnapshotResolutionTests {
     private let base = SnapshotSummary(
         id: UUID(uuidString: "11111111-1111-1111-1111-111111111111") ?? UUID(),
-        name: "Base", notes: "", kind: "warm", createdAt: Date(timeIntervalSince1970: 1_770_000_000),
+        name: "Base", notes: "", kind: .warm, createdAt: Date(timeIntervalSince1970: 1_770_000_000),
         isCurrent: true, isEphemeralBaseline: true)
     private let older = SnapshotSummary(
         id: UUID(uuidString: "22222222-2222-2222-2222-222222222222") ?? UUID(),
-        name: "Before Upgrade", notes: "", kind: "cold",
+        name: "Before Upgrade", notes: "", kind: .cold,
         createdAt: Date(timeIntervalSince1970: 1_760_000_000),
         isCurrent: false, isEphemeralBaseline: false)
 

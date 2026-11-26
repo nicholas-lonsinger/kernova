@@ -141,7 +141,7 @@ enum CompletionSource {
         return listed.map {
             byIdentifier
                 ? candidate($0.id.uuidString, describedBy: $0.name, for: context.shell)
-                : candidate($0.name, describedBy: $0.kind, for: context.shell)
+                : candidate($0.name, describedBy: $0.kind.rawValue, for: context.shell)
         }
     }
 

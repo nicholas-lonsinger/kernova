@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 
 /// The user-facing copy for Ephemeral Mode, shared by the Startup setting, the
 /// sidebar badge, and the window title marker — they answer the same question,

@@ -34,16 +34,16 @@ struct CLIRenderingTests {
     }
 
     private let mainDisk = StorageDiskSummary(
-        id: UUID(uuid: (1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6)), label: "Main Disk", kind: "virtio",
+        id: UUID(uuid: (1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6)), label: "Main Disk", kind: .virtio,
         readOnly: false, path: "/Users/somebody/VMs/Alpha.kernova/Disk.asif", notes: "",
         capacityBytes: 100_000_000_000, usedBytes: 10_100_000_000)
     private let installer = StorageDiskSummary(
         id: UUID(uuid: (6, 5, 4, 3, 2, 1, 0, 9, 8, 7, 6, 5, 4, 3, 2, 1)),
-        label: "ubuntu-26.04.1-desktop-arm64", kind: "usbMassStorage", readOnly: true,
+        label: "ubuntu-26.04.1-desktop-arm64", kind: .usbMassStorage, readOnly: true,
         path: "/Users/somebody/Downloads/ubuntu-26.04.1-desktop-arm64.iso", notes: "",
         capacityBytes: 4_150_000_000, usedBytes: 4_150_000_000)
     private let unreadable = StorageDiskSummary(
-        id: UUID(uuid: (9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9)), label: "Scratch", kind: "virtio",
+        id: UUID(uuid: (9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9)), label: "Scratch", kind: .virtio,
         readOnly: false, path: "/Volumes/Gone/Scratch.img", notes: "", capacityBytes: nil, usedBytes: nil)
 
     private func report(_ info: VMInfo, disks: [StorageDiskSummary]? = nil) -> VMInfoReport {
@@ -115,7 +115,7 @@ struct CLIRenderingTests {
     private let taken = Date(timeIntervalSince1970: 1_770_000_000)
 
     private func snapshot(
-        name: String, id: UUID = UUID(), isCurrent: Bool = false, kind: String = "warm"
+        name: String, id: UUID = UUID(), isCurrent: Bool = false, kind: VMSnapshotKind = .warm
     ) -> SnapshotSummary {
         SnapshotSummary(
             id: id, name: name, notes: "", kind: kind, createdAt: taken, isCurrent: isCurrent,

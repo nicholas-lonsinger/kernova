@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport

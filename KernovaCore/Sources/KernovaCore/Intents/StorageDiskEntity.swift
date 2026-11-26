@@ -14,9 +14,9 @@ struct StorageDiskEntity: TransientAppEntity {
     @Property(title: "Name")
     var label: String
 
-    /// The bus the guest sees the disk on, as its stable wire name.
+    /// The bus the guest sees the disk on.
     @Property(title: "Kind")
-    var kind: String
+    var kind: StorageDiskKindChoice
 
     @Property(title: "Read Only")
     var readOnly: Bool
@@ -47,7 +47,7 @@ struct StorageDiskEntity: TransientAppEntity {
             // What a storage-disk edit names a disk by, and no action here takes one.
             case .id: break
             case .label: label = summary.label
-            case .kind: kind = summary.kind
+            case .kind: kind = StorageDiskKindChoice(summary.kind)
             case .readOnly: readOnly = summary.readOnly
             case .path: path = summary.path
             case .notes: notes = summary.notes
@@ -61,5 +61,32 @@ struct StorageDiskEntity: TransientAppEntity {
         DisplayRepresentation(
             title: "\(label)",
             subtitle: capacityBytes.map { "\(DataFormatters.formatBytes(UInt64($0)))" })
+    }
+}
+
+/// The bus the guest sees a ``StorageDiskEntity`` on, titled as the Storage
+/// settings read it.
+///
+/// Mirrors ``StorageDiskKind`` rather than conforming it, for the reason
+/// ``VMStopMethod`` gives. ``init(_:)`` is exhaustive over the kinds, so a new
+/// one fails to build here rather than reaching Shortcuts unnamed.
+enum StorageDiskKindChoice: String, AppEnum {
+    case virtio
+    case usbMassStorage
+
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Disk Kind")
+
+    static let caseDisplayRepresentations: [StorageDiskKindChoice: DisplayRepresentation] = [
+        .virtio: "Virtio block",
+        .usbMassStorage: "USB mass storage",
+    ]
+
+    /// The case naming `kind`.
+    init(_ kind: StorageDiskKind) {
+        self =
+            switch kind {
+            case .virtio: .virtio
+            case .usbMassStorage: .usbMassStorage
+            }
     }
 }
