@@ -249,15 +249,9 @@ extension SidebarViewController {
     }
 
     /// Runs `change`, showing what it was refused with under `title`, then
-    /// `retry` once that alert is dismissed.
+    /// `retry` once that alert is dismissed
+    /// (``showingRefusal(_:in:logger:retry:_:)``).
     func attempt(_ title: String, retry: (() -> Void)? = nil, _ change: () throws -> Void) {
-        do {
-            try change()
-        } catch {
-            let message = error.localizedDescription
-            Self.logger.log(.notice, "\(title, privacy: .public): \(message, privacy: .public)")
-            guard let window = view.window else { return }
-            presentSheetAlert(.acknowledgement(title: title, message: message), in: window, completion: retry)
-        }
+        showingRefusal(title, in: view.window, logger: Self.logger, retry: retry, change)
     }
 }

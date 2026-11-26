@@ -1,5 +1,6 @@
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 import KernovaLogging
 
 /// A file the user picked, carrying the app-scoped bookmark minted at the pick.
@@ -81,7 +82,8 @@ extension VMCommandCore {
     }
 
     /// Appends `files` to the VM's storage-disk list, skipping paths it already
-    /// carries.
+    /// carries, each labeled its image's file name or, where another disk goes
+    /// by that, the first free label counted from it.
     ///
     /// Takes files rather than opening a panel: a pick carries a
     /// security-scoped bookmark only an in-process open panel can mint, which
@@ -123,13 +125,11 @@ extension VMCommandCore {
             var createdLabel = "\(sizeInGB) GB Disk"
             try await writeConfiguration(in: context, verb: .editStorageDisk) { config in
                 var disks = config.effectiveStorageDisks(layout: layout)
-                let label = StorageDisk.uniqueLabel(
-                    base: "\(sizeInGB) GB Disk", existingLabels: disks.map(\.label))
-                createdLabel = label
                 disks.append(
                     StorageDisk(
-                        id: diskID, path: relativePath, readOnly: false, label: label,
+                        id: diskID, path: relativePath, readOnly: false, label: "\(sizeInGB) GB Disk",
                         isInternal: true, kind: .virtio))
+                createdLabel = disks.last?.label ?? createdLabel
                 config.setStorageDisks(disks)
             }
             logger.log(
@@ -233,18 +233,45 @@ extension VMCommandCore {
         )
     }
 
-    /// Replaces a storage disk's user-facing label; an empty label is ignored.
+    /// Replaces a storage disk's user-facing label with `newLabel` trimmed,
+    /// refusing an empty label and one another of the VM's disks goes by; an
+    /// unchanged label is a no-op.
     ///
     /// The label is cosmetic — the virtio block identifier derives from the
     /// disk's UUID and the backing file keeps its UUID name — so any disk takes
-    /// one, the main disk included. Duplicate labels are allowed on an explicit
-    /// rename; only machine-generated defaults are uniqued.
+    /// one, the main disk included.
     func renameStorageDisk(_ selector: VMSelector, disk id: UUID, to newLabel: String) throws {
         let instance = try resolve(selector)
         try require(.editStorageDisks, on: instance)
-        let trimmed = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        try mutateStorageDisk(id, on: instance) { $0.label = trimmed }
+        guard let current = storageDisk(id: id, on: instance) else {
+            throw staleAttachment(id, on: instance, verb: .editStorageDisk)
+        }
+        let label = try Self.refusingDiskLabels { () throws(NameRule.Refusal) in
+            try instance.effectiveStorageDisks.validatedName(newLabel, for: id)
+        }
+        guard label != current.label else { return }
+        let layout = VMBundleLayout(bundleURL: instance.bundleURL)
+        try edit(.editStorageDisks, on: instance, verb: .editStorageDisk) { permit in
+            // Judged again on what the file holds, inside the write.
+            let write = try Self.refusingDiskLabels { () throws(NameRule.Refusal) in
+                try library.updateConfiguration(permit) { config throws(NameRule.Refusal) in
+                    var disks = config.effectiveStorageDisks(layout: layout)
+                    try disks.rename(id, to: label)
+                    config.setStorageDisks(disks)
+                }
+            }
+            try requireSaved(write, of: instance, verb: .editStorageDisk)
+        }
+    }
+
+    /// What `body` answers, a label it refuses thrown in the refusal's own
+    /// words.
+    private static func refusingDiskLabels<T>(_ body: () throws(NameRule.Refusal) -> T) throws -> T {
+        do throws(NameRule.Refusal) {
+            return try body()
+        } catch {
+            throw CommandError.invalidArgument(error.sentence(about: "storage disk"))
+        }
     }
 
     /// Replaces a storage disk's note; an unchanged value is a no-op.
@@ -275,16 +302,9 @@ extension VMCommandCore {
         let rank = Dictionary(order.enumerated().map { ($1, $0) }, uniquingKeysWith: { first, _ in first })
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
         try writeConfiguration(of: instance, as: .editStorageDisks, verb: .editStorageDisk) { config in
-            let disks = config.effectiveStorageDisks(layout: layout)
-            config.setStorageDisks(
-                disks.enumerated()
-                    .sorted { left, right in
-                        let leftRank = rank[left.element.id] ?? Int.max
-                        let rightRank = rank[right.element.id] ?? Int.max
-                        return leftRank == rightRank
-                            ? left.offset < right.offset : leftRank < rightRank
-                    }
-                    .map(\.element))
+            var disks = config.effectiveStorageDisks(layout: layout)
+            disks.reorder { (rank[$0.id] ?? Int.max) < (rank[$1.id] ?? Int.max) }
+            config.setStorageDisks(disks)
         }
     }
 
@@ -472,8 +492,8 @@ extension VMCommandCore {
         try detachRemovableMedia(id, from: instance)
     }
 
-    /// Replaces a removable medium's user-facing label; an empty label is
-    /// ignored.
+    /// Replaces a removable medium's user-facing label with `newLabel`
+    /// trimmed, refusing an empty one.
     ///
     /// Safe while the VM runs: the live reconciliation detaches and reattaches
     /// only when `path` or `readOnly` differs, so a label-only edit leaves the
@@ -481,8 +501,10 @@ extension VMCommandCore {
     func renameRemovableMedia(_ selector: VMSelector, item id: UUID, to newLabel: String) throws {
         let instance = try resolve(selector)
         try require(.editRemovableMedia, on: instance)
-        let trimmed = newLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        let trimmed = NameRule.trimmed(newLabel)
+        guard !trimmed.isEmpty else {
+            throw CommandError.invalidArgument(NameRule.Refusal.empty.sentence(about: "removable disk"))
+        }
         try mutateRemovableMedia(id, on: instance) { $0.label = trimmed }
     }
 
@@ -521,22 +543,24 @@ extension VMCommandCore {
     }
 
     /// The add every front door ends in: appends `files`, each shared with
-    /// `readOnly` access, skipping folders the VM already shares.
+    /// `readOnly` access and named for its folder
+    /// (``SharedDirectory/init(sharing:id:readOnly:bookmark:)``) or, where
+    /// another share goes by that, the first free name counted from it,
+    /// skipping folders the VM already shares.
     func addSharedDirectories(
         _ files: [PickedFile], readOnly: Bool, to instance: VMInstance
     ) throws {
         let capability = try requireSharedDirectories(.add, on: instance)
-        // Minted once, so every pass of the change adds the same shares.
-        let picks = files.map { (file: $0, id: UUID()) }
+        // Made once, so every pass of the change adds the same shares.
+        let picks = files.map {
+            SharedDirectory(sharing: $0.path, id: UUID(), readOnly: readOnly, bookmark: $0.bookmark)
+        }
         try writeSharedDirectories(of: instance, as: capability) { directories in
             // The one spelling the core compares folder paths in, so a pick of
             // `/x/` finds the `/x` this VM already shares.
             var known = Set(directories.map { Self.comparablePath($0.path) })
-            for pick in picks where known.insert(Self.comparablePath(pick.file.path)).inserted {
-                directories.append(
-                    SharedDirectory(
-                        adding: pick.file.path, id: pick.id, readOnly: readOnly,
-                        bookmark: pick.file.bookmark, to: directories))
+            for pick in picks where known.insert(Self.comparablePath(pick.path)).inserted {
+                directories.append(pick)
             }
         }
     }
@@ -564,8 +588,7 @@ extension VMCommandCore {
             throw staleAttachment(id, on: instance, verb: .editSharedDirectory)
         }
         try writeSharedDirectories(of: instance, as: capability) { directories in
-            guard let index = directories.firstIndex(where: { $0.id == id }) else { return }
-            directories[index].readOnly = readOnly
+            directories.update(id) { $0.readOnly = readOnly }
         }
     }
 
@@ -612,9 +635,9 @@ extension VMCommandCore {
     /// refused as the argument it is.
     private func writeSharedDirectories(
         of instance: VMInstance, as capability: VMCapability,
-        _ change: @escaping (inout [SharedDirectory]) -> Void
+        _ change: @escaping (inout NamedList<SharedDirectory>) -> Void
     ) throws {
-        let changed: (VMConfiguration) -> [SharedDirectory]? = {
+        let changed: (VMConfiguration) -> NamedList<SharedDirectory>? = {
             Self.sharedDirectories(of: $0, changedBy: change)
         }
         let held = instance.configuration.sharedDirectories
@@ -655,7 +678,7 @@ extension VMCommandCore {
                         let committed = changed(config)
                         do {
                             share = try MacOSDirectoryShare.make(
-                                for: committed ?? [], serving: serving)
+                                for: committed ?? [], serving: serving, host: library.virtualizationHost)
                         } catch {
                             throw CommandError.invalidArgument(error.localizedDescription)
                         }
@@ -1191,7 +1214,8 @@ extension VMCommandCore {
     }
 
     /// Applies `edit` to one storage disk, refusing when the VM no longer
-    /// carries it and returning without a write when it changes nothing.
+    /// carries it and returning without a write when it changes nothing;
+    /// its label is ``renameStorageDisk(_:disk:to:)``'s.
     ///
     /// The early-out is what keeps an unchanged edit a no-op: materializing the
     /// synthesized main disk into `storageDisks` is itself a configuration
@@ -1208,8 +1232,7 @@ extension VMCommandCore {
         let layout = VMBundleLayout(bundleURL: instance.bundleURL)
         try writeConfiguration(of: instance, as: .editStorageDisks, verb: .editStorageDisk) { config in
             var disks = config.effectiveStorageDisks(layout: layout)
-            guard let index = disks.firstIndex(where: { $0.id == id }) else { return }
-            disks[index] = edited
+            disks.update(id) { $0 = edited }
             config.setStorageDisks(disks)
         }
     }
@@ -1268,8 +1291,8 @@ extension VMCommandCore {
     /// `config`'s shared-directory list as `change` leaves it, an emptied list
     /// stored as none.
     private static func sharedDirectories(
-        of config: VMConfiguration, changedBy change: (inout [SharedDirectory]) -> Void
-    ) -> [SharedDirectory]? {
+        of config: VMConfiguration, changedBy change: (inout NamedList<SharedDirectory>) -> Void
+    ) -> NamedList<SharedDirectory>? {
         var directories = config.sharedDirectories ?? []
         change(&directories)
         return directories.isEmpty ? nil : directories

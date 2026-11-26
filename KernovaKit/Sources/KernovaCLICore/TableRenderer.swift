@@ -200,7 +200,8 @@ enum TableRenderer {
         guard !rows.isEmpty else { return "" }
         return table(rows, of: SharedDirectorySummary.Field.self) { field, share in
             switch field {
-            case .path: (ShareColumn.path, share.path)
+            case .name: (ShareColumn.name, share.name)
+            case .path: (.path, share.path)
             case .readOnly: (.readOnly, share.readOnly ? "Yes" : "No")
             }
         }
@@ -208,6 +209,7 @@ enum TableRenderer {
 
     /// The columns of a share listing, headed, in the order they print.
     private enum ShareColumn: String, CaseIterable {
+        case name = "NAME"
         case path = "PATH"
         case readOnly = "READ-ONLY"
     }

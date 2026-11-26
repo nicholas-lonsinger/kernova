@@ -52,7 +52,7 @@ struct VMBundleMachineFilesTests {
         if let externalDiskPath {
             disks.append(StorageDisk(path: externalDiskPath))
         }
-        config.storageDisks = disks
+        config.storageDisks = NamedList(repairing: disks)
         return Fixture(bundleURL: bundleURL, layout: layout, configuration: config)
     }
 

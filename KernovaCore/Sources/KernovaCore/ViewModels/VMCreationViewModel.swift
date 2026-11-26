@@ -307,7 +307,7 @@ package final class VMCreationViewModel {
     /// goes by.
     package var vmName: String
 
-    /// Why ``vmName`` can't name the new VM (``NameRule/validated(_:among:)``),
+    /// Why ``vmName`` can't name the new VM (``NameRule/validated(_:among:shape:)``),
     /// `nil` when it can.
     package var nameRefusal: NameRule.Refusal? {
         do throws(NameRule.Refusal) {
@@ -945,22 +945,14 @@ package final class VMCreationViewModel {
                         forFilename: LinuxImageFilename.destination(for: image.url)))
             case .localISO(let path, let bookmark):
                 // The installer goes in as `storageDevices[0]` so EFI boots it
-                // ahead of the main disk.
-                configuration.storageDisks = [
-                    StorageDisk(
-                        path: path,
-                        readOnly: true,
-                        label: URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent,
-                        bookmark: bookmark
-                    ),
-                    StorageDisk(
-                        path: "Disk.asif",
-                        readOnly: false,
-                        label: "Main Disk",
-                        isInternal: true,
-                        kind: .virtio
-                    ),
+                // ahead of the main disk — inserted, so an image named like the
+                // main disk takes the next free label and the main disk keeps
+                // its own.
+                var disks: NamedList = [
+                    StorageDisk(path: "Disk.asif", readOnly: false, label: "Main Disk", isInternal: true, kind: .virtio)
                 ]
+                disks.insert(StorageDisk(path: path, readOnly: true, bookmark: bookmark), at: 0)
+                configuration.storageDisks = disks
             case nil:
                 break
             }

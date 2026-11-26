@@ -66,18 +66,6 @@ extension VMCommandCore {
         }
     }
 
-    /// `name` with its surrounding whitespace and line breaks gone, the name a
-    /// snapshot rename writes — refusing one that carries nothing else, which
-    /// a script or a Shortcut can supply from a variable that resolves to
-    /// nothing.
-    nonisolated static func trimmedName(_ name: String) throws -> String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw CommandError.invalidArgument("A name is at least one character that is not a space.")
-        }
-        return trimmed
-    }
-
     // MARK: - Arrival Outcomes
 
     /// The outcome of `arrival` for the caller that waits on it: the VM its

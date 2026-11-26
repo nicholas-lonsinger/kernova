@@ -1,5 +1,6 @@
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 
 /// How the tool turns a typed snapshot argument into the snapshot it names.
 ///
@@ -8,25 +9,22 @@ import KernovaCommandModel
 /// against.
 enum SnapshotResolution {
     /// The snapshot `text` names among `snapshots`, where `vm` is what the user
-    /// called the virtual machine.
-    ///
-    /// Matched by ``NamedSelection``. `forcingID` stops at the identifier
-    /// reading, and refuses text that is not one rather than silently
-    /// searching by name.
+    /// called the virtual machine: the one whose identifier it spells, else
+    /// the one whose name it is
+    /// (``NameRule/sibling(identifiedOrNamedBy:in:id:name:)``). `forcingID`
+    /// stops at the identifier reading, and refuses text that is not one
+    /// rather than silently searching by name.
     ///
     /// - Throws: ``CLIFailure`` — ``CLIExitCode/usage`` for `forcingID` text
-    ///   that is not an identifier, ``CLIExitCode/notFound`` when nothing
-    ///   matches, and ``CLIExitCode/ambiguous``, listing the candidates, when
-    ///   more than one name does.
+    ///   that is not an identifier, and ``CLIExitCode/notFound`` when nothing
+    ///   matches.
     static func snapshot(
         named text: String, of vm: String, in snapshots: [SnapshotSummary], forcingID: Bool
     ) throws -> SnapshotSummary {
         guard forcingID else {
-            switch NamedSelection(text, in: snapshots, id: \.id, name: \.name) {
-            case .found(let match): return match
-            case .notFound: throw notFound(text, of: vm)
-            case .ambiguous(let candidates): throw ambiguous(text, of: vm, candidates: candidates)
-            }
+            guard let match = NameRule.sibling(identifiedOrNamedBy: text, in: snapshots, id: \.id, name: \.name)
+            else { throw notFound(text, of: vm) }
+            return match
         }
         guard let identifier = UUID(uuidString: text) else {
             throw CLIFailure(.usage, "\u{201C}\(text)\u{201D} is not a snapshot identifier.")
@@ -41,17 +39,5 @@ enum SnapshotResolution {
         CLIFailure(
             .notFound,
             "No snapshot named \u{201C}\(text)\u{201D} on \u{201C}\(vm)\u{201D}.")
-    }
-
-    /// The candidates one per line: a name a script feeds back is on the line
-    /// with the identifier that replaces it, however many there are.
-    private static func ambiguous(
-        _ text: String, of vm: String, candidates: [SnapshotSummary]
-    ) -> CLIFailure {
-        CLIFailure(
-            .ambiguous,
-            "\u{201C}\(text)\u{201D} names \(candidates.count) snapshots of "
-                + "\u{201C}\(vm)\u{201D}. Use one of their identifiers instead:\n"
-                + candidates.map { "\($0.name) (\($0.id.uuidString))" }.joined(separator: "\n"))
     }
 }

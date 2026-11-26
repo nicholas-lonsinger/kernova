@@ -1,6 +1,7 @@
 import AppKit
 import KernovaCommandModel
 import KernovaCore
+import KernovaKit
 import KernovaLogging
 
 /// A ``GuestAccountPasswordRequest`` whose answer fires at most once, whichever
@@ -678,6 +679,16 @@ final class AppAlertPresenter {
         let sheet = SnapshotSheet(instance: instance)
         let content = TakeSnapshotSheetContentViewController(
             vmName: instance.name, suggestedName: instance.snapshotManifest.defaultNewName,
+            nameRefusal: { [weak instance] name in
+                // An empty name is Kernova's to give, as the take does.
+                guard let instance, !NameRule.trimmed(name).isEmpty else { return nil }
+                do throws(NameRule.Refusal) {
+                    _ = try instance.snapshotManifest.nameForNewSnapshot(name)
+                    return nil
+                } catch {
+                    return error.sentence(about: "snapshot")
+                }
+            },
             mode: mode, purpose: purpose)
         content.onCancel = { [weak sheet] in sheet?.presenter.close() }
         content.onConfirm = { [weak self, weak sheet] name, notes in

@@ -55,7 +55,7 @@ package struct StorageDisk: Codable, Sendable, Equatable {
         self.id = id
         self.path = path
         self.readOnly = readOnly
-        self.label = label ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        self.label = label ?? Self.imageStem(ofPath: path)
         self.isInternal = isInternal
         self.kind = kind ?? Self.defaultKind(forPath: path)
         self.bookmark = bookmark
@@ -90,13 +90,6 @@ package struct StorageDisk: Codable, Sendable, Equatable {
         return (ext == "iso" || ext == "dmg") ? .usbMassStorage : .virtio
     }
 
-    /// A label derived from `base` that is none of `existingLabels`
-    /// (``NameRule/firstAvailable(_:among:)``). Only machine-generated
-    /// defaults are uniqued; explicit user renames are left exactly as typed.
-    static func uniqueLabel(base: String, existingLabels: [String]) -> String {
-        NameRule.firstAvailable(base, among: existingLabels)
-    }
-
     /// Synthesizes the default main-disk entry for a VM whose `storageDisks`
     /// list is empty or absent.
     ///
@@ -121,6 +114,27 @@ package struct StorageDisk: Codable, Sendable, Equatable {
     /// storage entries.
     package var blockDeviceIdentifier: String {
         String(id.uuidString.prefix(20))
+    }
+}
+
+extension StorageDisk: ListNamed {
+    package var listedName: String {
+        get { label }
+        set { label = newValue }
+    }
+
+    /// The name its image's file name without the extension makes, or "Disk"
+    /// where that makes none, as an image named for its identifier does.
+    package var nameBase: String {
+        Self.shape.base(of: Self.imageStem(ofPath: path)) ?? "Disk"
+    }
+
+    package static let shape = NameRule.Shape.uuid
+
+    /// The file name of the image at `path` without its extension, read from
+    /// the path alone.
+    static func imageStem(ofPath path: String) -> String {
+        ((path as NSString).lastPathComponent as NSString).deletingPathExtension
     }
 }
 
@@ -162,7 +176,7 @@ package struct RemovableMediaItem: Codable, Sendable, Equatable {
         self.id = id
         self.path = path
         self.readOnly = readOnly
-        self.label = label ?? URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+        self.label = label ?? StorageDisk.imageStem(ofPath: path)
         self.bookmark = bookmark
         self.notes = notes
         self.awaitedAgentScopes = awaitedAgentScopes

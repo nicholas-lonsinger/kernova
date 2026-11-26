@@ -1,6 +1,7 @@
 import AppKit
 import KernovaAppKitShared
 import KernovaCore
+import KernovaLogging
 
 /// The Snapshots category: the snapshot list, its inline edits, and the on-disk
 /// size read behind them.
@@ -9,6 +10,9 @@ import KernovaCore
 /// hands its info affordance and size readout to the panel header.
 @MainActor
 final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettingsPanel {
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "VMSettingsSnapshotsPanel")
+
     let context: VMSettingsPanelContext
     let category = VMSettingsCategory.snapshots
     private(set) var chrome = VMSettingsPanelChrome()
@@ -140,11 +144,20 @@ final class VMSettingsSnapshotsPanelViewController: NSViewController, VMSettings
 extension VMSettingsSnapshotsPanelViewController {
     /// Commits an inline rename, deferred to the next runloop turn so the field
     /// editor's end-editing callback fully unwinds before the rebuild tears down
-    /// and recreates the editing row.
+    /// and recreates the editing row. A name the snapshot is refused opens the
+    /// edit again, holding that name, once the refusal is dismissed — as a
+    /// virtual machine's rename does.
     private func commitRename(of snapshot: VMSnapshot, to newName: String) {
         Task { [weak self] in
             guard let self else { return }
-            self.viewModel.renameSnapshot(snapshot, newName: newName, on: self.instance)
+            let instance = self.instance
+            showingRefusal(
+                "Couldn\u{2019}t Rename the Snapshot", in: self.view.window, logger: Self.logger,
+                retry: { [weak self] in
+                    guard let self, self.instance === instance else { return }
+                    self.snapshotSection?.beginRename(snapshot.id, holding: newName)
+                }
+            ) { try self.viewModel.renameSnapshot(snapshot, newName: newName, on: instance) }
             // A no-op rename (empty / unchanged) fires no observation, so force a
             // refresh to pick up anything suppressed during the edit.
             self.refresh()

@@ -950,34 +950,23 @@ final class VMScriptingGateway {
         listedSnapshots(of: vm)?.map { VMSnapshotScriptObject($0, of: vm, gateway: self) } ?? []
     }
 
-    /// The snapshot `text` names among the VM's (``NamedSelection``) — or
-    /// `nil`, with the refusal recorded on the command being answered, for
-    /// text that names none of them, or several.
+    /// The snapshot `text` names among ``snapshots(of:)`` — the one its
+    /// identifier spells, else the first it names
+    /// (``NameRule/sibling(identifiedOrNamedBy:in:id:name:)``), the one
+    /// Cocoa's own lookup finds there — or `nil`, with the refusal recorded on
+    /// the command being answered, for text that names none of them.
     func snapshot(named text: String, of vm: UUID) -> VMSnapshotScriptObject? {
         guard let listed = listedSnapshots(of: vm) else { return nil }
-        return selected(
-            NamedSelection(text, in: listed, id: \.id, name: \.name),
-            missing: { self.itemNotFound("snapshot named \u{201C}\(text)\u{201D}", on: vm) },
-            ambiguity: { NamedSelection.ambiguity(text, among: $0, id: \.id, name: \.name) }
-        ).map { VMSnapshotScriptObject($0, of: vm, gateway: self) }
+        return refusingMiss(NameRule.sibling(identifiedOrNamedBy: text, in: listed, id: \.id, name: \.name)) {
+            itemNotFound("snapshot named \u{201C}\(text)\u{201D}", on: vm)
+        }.map { VMSnapshotScriptObject($0, of: vm, gateway: self) }
     }
 
-    /// The item `selection` found — or `nil`, with the refusal recorded on the
-    /// command being answered: `missing`'s for text that names none of them,
-    /// and `ambiguity`'s words for text that names several.
-    private func selected<Item>(
-        _ selection: NamedSelection<Item>, missing: () -> CommandError?, ambiguity: ([Item]) -> String
-    ) -> Item? {
-        switch selection {
-        case .found(let item):
-            return item
-        case .notFound:
-            if let refusal = missing() { answering?.refuse(refusal) }
-            return nil
-        case .ambiguous(let candidates):
-            answering?.refuse(Int(errAENoSuchObject), ambiguity(candidates))
-            return nil
-        }
+    /// `item`, or `nil` with `missing`'s refusal of the text that named
+    /// nothing recorded on the command being answered.
+    private func refusingMiss<Item>(_ item: Item?, _ missing: () -> CommandError?) -> Item? {
+        if item == nil, let refusal = missing() { answering?.refuse(refusal) }
+        return item
     }
 
     /// The refusal of `item`, something the VM `vm` identifies lists none of;
@@ -1052,24 +1041,20 @@ final class VMScriptingGateway {
         listedSharedDirectories(of: vm)?.map { VMSharedDirectoryScriptObject($0, of: vm) } ?? []
     }
 
-    /// The share `text` names among the VM's (``NamedSelection``): a full path,
+    /// The share `text` names among ``sharedDirectories(of:)``: a full path,
     /// starting with `/` or `~/`, names the share of that folder, as the core
-    /// compares two paths; any other text the share whose folder's own name it
-    /// is. `nil`, with the refusal recorded on the command being answered, for
-    /// text that names none of them, or several.
+    /// compares two paths; any other text the first share it names
+    /// (``NameRule/sibling(identifiedBy:orNamedBy:in:name:)``), the one
+    /// Cocoa's own lookup finds there. `nil`, with the refusal recorded on the
+    /// command being answered, for text that names none of them.
     func sharedDirectory(named text: String, of vm: UUID) -> VMSharedDirectoryScriptObject? {
         guard let listed = listedSharedDirectories(of: vm) else { return nil }
         let folder = (try? UserHome.fullPath(text, of: "A folder")).map(VMCommandCore.comparablePath)
-        return selected(
-            NamedSelection(
-                text, in: listed, identifiedBy: { VMCommandCore.comparablePath($0.path) == folder },
-                name: VMSharedDirectoryScriptObject.folderName(of:)),
-            missing: { self.itemNotFound("shared directory named \u{201C}\(text)\u{201D}", on: vm) },
-            ambiguity: {
-                NamedSelection.ambiguity(
-                    text, among: $0, plural: "shared directories", namedAloneBy: "paths", label: \.path)
-            }
-        ).map { VMSharedDirectoryScriptObject($0, of: vm) }
+        let found = NameRule.sibling(
+            identifiedBy: { VMCommandCore.comparablePath($0.path) == folder }, orNamedBy: text, in: listed,
+            name: \.name)
+        return refusingMiss(found) { itemNotFound("shared directory named \u{201C}\(text)\u{201D}", on: vm) }
+            .map { VMSharedDirectoryScriptObject($0, of: vm) }
     }
 
     /// The core's listing of the VM `vm` identifies, or `nil` with the refusal
@@ -1112,26 +1097,20 @@ final class VMScriptingGateway {
         listedUSBAccessories(attachedTo: vm) ?? []
     }
 
-    /// The accessory `text` names (``NamedSelection``) among the guest's of
-    /// the VM `vm` identifies, or among the ones no guest holds for `nil`: the
-    /// text of its `id`, or else its name. `nil`, with the refusal recorded on
-    /// the command being answered, for text that names none of them, or
-    /// several.
+    /// The accessory `text` names among the guest's of the VM `vm`
+    /// identifies, or among the ones no guest holds for `nil`: the one whose
+    /// `id` it is, or else the first it names
+    /// (``NameRule/sibling(identifiedBy:orNamedBy:in:name:)``), the one
+    /// Cocoa's own lookup finds there. `nil`, with the refusal recorded on the
+    /// command being answered, for text that names none of them.
     func usbAccessory(named text: String, attachedTo vm: UUID?) -> VMUSBAccessoryScriptObject? {
         guard let listed = listedUSBAccessories(attachedTo: vm) else { return nil }
-        return selected(
-            NamedSelection(
-                text, in: listed, identifiedBy: { $0.uniqueID == text }, name: \.name),
-            missing: {
-                let item = "USB accessory named \u{201C}\(text)\u{201D}"
-                guard let vm else { return CommandError.itemNotFoundOnHost(item: "\(item) available to attach") }
-                return self.itemNotFound(item, on: vm)
-            },
-            ambiguity: {
-                NamedSelection.ambiguity(
-                    text, among: $0, plural: "USB accessories", namedAloneBy: "identifiers",
-                    label: { "\($0.name) (\($0.uniqueID))" })
-            })
+        let found = NameRule.sibling(identifiedBy: { $0.uniqueID == text }, orNamedBy: text, in: listed, name: \.name)
+        return refusingMiss(found) {
+            let item = "USB accessory named \u{201C}\(text)\u{201D}"
+            guard let vm else { return CommandError.itemNotFoundOnHost(item: "\(item) available to attach") }
+            return self.itemNotFound(item, on: vm)
+        }
     }
 
     /// The core's listing of the accessories the guest of the VM `vm`
@@ -1197,21 +1176,16 @@ final class VMScriptingGateway {
         listedRememberedUSBAccessories(of: vm)?.map { VMRememberedUSBAccessoryScriptObject($0, of: vm) } ?? []
     }
 
-    /// The remembered accessory `text` names among the VM's
-    /// (``NamedSelection``): its key, or else its name. `nil`, with the
-    /// refusal recorded on the command being answered, for text that names
-    /// none of them, or several.
+    /// The remembered accessory `text` names among the VM's: the one whose
+    /// key it is, or else the first it names
+    /// (``NameRule/sibling(identifiedBy:orNamedBy:in:name:)``), the one
+    /// Cocoa's own lookup finds there. `nil`, with the refusal recorded on the
+    /// command being answered, for text that names none of them.
     func rememberedUSBAccessory(named text: String, of vm: UUID) -> VMRememberedUSBAccessoryScriptObject? {
         guard let listed = listedRememberedUSBAccessories(of: vm) else { return nil }
-        return selected(
-            NamedSelection(text, in: listed, identifiedBy: { $0.key == text }, name: \.name),
-            missing: { self.itemNotFound("remembered USB accessory named \u{201C}\(text)\u{201D}", on: vm) },
-            ambiguity: {
-                NamedSelection.ambiguity(
-                    text, among: $0, plural: "remembered USB accessories", namedAloneBy: "keys",
-                    label: { "\($0.name) (\($0.key))" })
-            }
-        ).map { VMRememberedUSBAccessoryScriptObject($0, of: vm) }
+        let found = NameRule.sibling(identifiedBy: { $0.key == text }, orNamedBy: text, in: listed, name: \.name)
+        return refusingMiss(found) { itemNotFound("remembered USB accessory named \u{201C}\(text)\u{201D}", on: vm) }
+            .map { VMRememberedUSBAccessoryScriptObject($0, of: vm) }
     }
 
     /// The core's listing of the VM `vm` identifies, or `nil` with the refusal

@@ -329,6 +329,9 @@ public struct SnapshotSummary: Codable, Sendable, Hashable {
 /// could act on it. The path is what the share is addressed by, here and in the
 /// edit that drops it.
 public struct SharedDirectorySummary: Codable, Sendable, Hashable {
+    /// What the share goes by, its own among its VM's shares, and the name a
+    /// macOS guest mounts the folder by.
+    public let name: String
     /// The folder's path, as this Mac names it.
     public let path: String
     /// Whether the guest may read the folder but not write to it.
@@ -337,13 +340,14 @@ public struct SharedDirectorySummary: Codable, Sendable, Hashable {
     /// Every field, by the key the JSON names it with, as ``VMInfo/Field``
     /// is for a ``VMInfo``.
     public enum Field: String, CodingKey, CaseIterable, Sendable {
-        case path, readOnly
+        case name, path, readOnly
     }
 
     private typealias CodingKeys = Field
 
     /// Describes one share.
-    public init(path: String, readOnly: Bool) {
+    public init(name: String, path: String, readOnly: Bool) {
+        self.name = name
         self.path = path
         self.readOnly = readOnly
     }
@@ -402,7 +406,9 @@ public struct USBAccessorySummary: Codable, Sendable, Hashable {
     /// The accessory's IORegistry ID, and what an attach names it by. Valid
     /// only while this Kernova process keeps holding the accessory.
     public let registryID: UInt64
-    /// What a surface calls this accessory.
+    /// What a surface calls this accessory, its own among the accessories
+    /// Kernova lists: qualified by its port, serial number or registry ID where
+    /// another would read alike.
     public let name: String
     /// `idVendor` from the device descriptor.
     public let vendorID: UInt16
@@ -449,8 +455,10 @@ public struct USBPairingSummary: Codable, Sendable, Hashable {
     /// The durable key the accessory answers to, and what `usb forget` takes
     /// back. Stable across a replug and a restart.
     public let key: String
-    /// What a surface calls this accessory, qualified by the port when the rule
-    /// names one port in particular.
+    /// What a surface calls this accessory, its own among the virtual
+    /// machine's: qualified by the port when the rule names one port in
+    /// particular, and by its serial number or key where another would read
+    /// alike.
     public let name: String
     /// When an attach someone asked for last remembered the accessory for that
     /// virtual machine; passing it through again automatically leaves this as

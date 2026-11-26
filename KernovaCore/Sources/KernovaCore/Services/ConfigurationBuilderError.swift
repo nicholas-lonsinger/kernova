@@ -40,6 +40,9 @@ package enum ConfigurationBuilderError: LocalizedError {
     case sharedDirectoryNotADirectory(id: UUID, path: String, label: String)
     case sharedDirectoryNotReadable(id: UUID, path: String, label: String)
     case sharedDirectoryNotWritable(id: UUID, path: String, label: String)
+    /// Virtualization refused the name a macOS guest would mount the folder
+    /// by (``VirtualizationHostProviding/directoryShareNameRefusal(_:)``).
+    case sharedDirectoryNameRefused(id: UUID, path: String, label: String, underlying: any Error)
 
     package var errorDescription: String? {
         switch self {
@@ -88,24 +91,35 @@ package enum ConfigurationBuilderError: LocalizedError {
             "Shared folder '\(label)' is not readable: \(path)."
         case .sharedDirectoryNotWritable(_, let path, let label):
             "Shared folder '\(label)' is not writable: \(path)."
+        case .sharedDirectoryNameRefused(_, let path, let label, let underlying):
+            "Virtualization refused the name of shared folder '\(label)' at \(path). (\(underlying.localizedDescription))"
         }
     }
 
-    /// What was wrong with the one attachment this names, or `nil` for a
-    /// failure that names none.
+    /// The one attachment this failure names — which kind of entry, its `id`
+    /// and label, and what was wrong with it — or `nil` for a failure that
+    /// names none.
     ///
     /// The whole of the case analysis the bring-up's recovery needs, so a new
     /// per-attachment case is answered here rather than falling silently
     /// through to the bare alert.
-    var attachmentReason: StartFailedAttachment.Reason? {
+    var failedAttachment:
+        (kind: StartFailedAttachment.Kind, id: UUID, label: String, reason: StartFailedAttachment.Reason)?
+    {
         switch self {
-        case .storageDiskNotFound, .removableMediaNotFound, .sharedDirectoryNotFound: .notFound
-        case .storageDiskPathIsDirectory, .removableMediaPathIsDirectory: .pathIsDirectory
-        case .sharedDirectoryNotADirectory: .notADirectory
-        case .sharedDirectoryNotReadable: .notReadable
-        case .storageDiskNotWritable, .removableMediaNotWritable, .sharedDirectoryNotWritable:
-            .notWritable
-        case .storageDiskAttachFailed, .removableMediaAttachFailed: .attachRefused
+        case .storageDiskNotFound(let id, _, let label): (.storageDisk, id, label, .notFound)
+        case .storageDiskPathIsDirectory(let id, _, let label): (.storageDisk, id, label, .pathIsDirectory)
+        case .storageDiskNotWritable(let id, _, let label): (.storageDisk, id, label, .notWritable)
+        case .storageDiskAttachFailed(let id, _, let label, _): (.storageDisk, id, label, .attachRefused)
+        case .removableMediaNotFound(let id, _, let label): (.removableMedia, id, label, .notFound)
+        case .removableMediaPathIsDirectory(let id, _, let label): (.removableMedia, id, label, .pathIsDirectory)
+        case .removableMediaNotWritable(let id, _, let label): (.removableMedia, id, label, .notWritable)
+        case .removableMediaAttachFailed(let id, _, let label, _): (.removableMedia, id, label, .attachRefused)
+        case .sharedDirectoryNotFound(let id, _, let label): (.sharedDirectory, id, label, .notFound)
+        case .sharedDirectoryNotADirectory(let id, _, let label): (.sharedDirectory, id, label, .notADirectory)
+        case .sharedDirectoryNotReadable(let id, _, let label): (.sharedDirectory, id, label, .notReadable)
+        case .sharedDirectoryNotWritable(let id, _, let label): (.sharedDirectory, id, label, .notWritable)
+        case .sharedDirectoryNameRefused(let id, _, let label, _): (.sharedDirectory, id, label, .nameRefused)
         case .invalidHardwareModel, .invalidMachineIdentifier, .efiVariableStoreMissing,
             .missingKernelPath,
             .kernelNotFound, .kernelPathIsDirectory, .initrdNotFound, .initrdPathIsDirectory,

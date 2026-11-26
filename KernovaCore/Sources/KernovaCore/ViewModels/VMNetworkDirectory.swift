@@ -165,7 +165,7 @@ package final class VMNetworkDirectory {
         try commit(verb: verb) { networks in networks.filter { $0.id != id } }
     }
 
-    /// `name` as ``NameRule/validated(_:among:)`` takes it beside every
+    /// `name` as ``NameRule/validated(_:among:shape:)`` takes it beside every
     /// network but `id`, refusing too a name that spells `common` or
     /// `isolated`.
     ///
@@ -176,9 +176,9 @@ package final class VMNetworkDirectory {
     ) throws -> String {
         func spellsAMembership(_ name: String) -> CommandError {
             .invalidArgument(
-                "\u{201C}\(name)\u{201D} can\u{2019}t name a network: "
+                "\u{201C}\(name)\u{201D} can\u{2019}t name a network: a network membership reads "
                     + "\(VMNetworkMembership.commonValue), \(VMNetworkMembership.isolatedValue) "
-                    + "and identifiers already name a network membership.")
+                    + "and text with the form of an identifier before a name.")
         }
         let validated: String
         do throws(NameRule.Refusal) {

@@ -1,5 +1,6 @@
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 import KernovaLogging
 
 /// The USB accessory verbs: what a guest is holding, what macOS has assigned to
@@ -104,19 +105,32 @@ extension VMCommandCore {
         try requireUSBAccessoryService()
         let instances = try selector.map { [try resolve($0)] } ?? library.instances
         return instances.flatMap { instance in
-            instance.usbPairings.pairings.map { pairing in
-                USBPairingSummary(
-                    vm: instance.name, key: pairing.key, name: Self.pairingName(pairing),
-                    pairedAt: pairing.pairedAt)
+            let pairings = instance.usbPairings.pairings
+            return zip(pairings, Self.listingNames(of: pairings)).map { pairing, name in
+                USBPairingSummary(vm: instance.name, key: pairing.key, name: name, pairedAt: pairing.pairedAt)
             }
         }
     }
 
-    /// What a listing calls a remembered accessory, qualified by the port when
-    /// the rule names one.
-    private static func pairingName(_ pairing: USBAccessoryPairing) -> String {
-        guard let label = pairing.namedReceptacleLabel else { return pairing.displayName }
-        return "\(pairing.displayName) (\(label))"
+    /// What a listing calls each of one VM's remembered accessories, each its
+    /// own among them (``NameRule/listing(of:qualifiers:identifiers:)``): its
+    /// name, qualified by the port when the rule names one; and where another
+    /// reads alike, or it reads as one of their keys, qualified by its serial
+    /// number, else its key, whichever first tells it apart.
+    private static func listingNames(of pairings: [USBAccessoryPairing]) -> [String] {
+        let keys = pairings.map(\.key)
+        return NameRule.listing(
+            of: pairings.map { pairing in
+                pairing.namedReceptacleLabel.map { "\(pairing.displayName) (\($0))" } ?? pairing.displayName
+            },
+            qualifiers: pairings.map { pairing in
+                // A serial-number key is the model, three fields, then the
+                // serial, which may itself hold colons.
+                let fields = pairing.key.split(separator: ":", maxSplits: 3, omittingEmptySubsequences: false)
+                let serial = pairing.form == .serialNumber && fields.count == 4 ? String(fields[3]) : nil
+                return [serial].compactMap { $0 } + [pairing.key]
+            },
+            identifiers: NameRule.Identifiers { text in keys.contains { NameRule.isOneName($0, text) } })
     }
 
     // MARK: - Edits

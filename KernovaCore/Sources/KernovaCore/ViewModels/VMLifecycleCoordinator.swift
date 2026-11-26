@@ -984,7 +984,9 @@ final class VMLifecycleCoordinator {
         try permit.updateConfiguration { config in
             // Position [0] is what EFI boots first, which is the whole reason
             // the installer is on the list at all.
-            config.setStorageDisks([installer] + config.effectiveStorageDisks(layout: layout))
+            var disks = config.effectiveStorageDisks(layout: layout)
+            disks.insert(installer, at: 0)
+            config.setStorageDisks(disks)
             config.linuxInstallContext = nil
             config.installedImage = installedImage
         }.get()

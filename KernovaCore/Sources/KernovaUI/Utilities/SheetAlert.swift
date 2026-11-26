@@ -1,5 +1,6 @@
 import AppKit
 import KernovaCore
+import KernovaLogging
 
 /// An ``AlertConfiguration`` with the view drawn between its message and its
 /// buttons.
@@ -155,4 +156,24 @@ func dispatchAction(for response: NSApplication.ModalResponse, buttons: [AlertBu
     let index = response.rawValue - NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
     guard index >= 0, index < buttons.count else { return }
     buttons[index].action()
+}
+
+/// Runs `change`, one a pane makes from its own controls — such as a rename
+/// typed in place — showing what it was refused with as a sheet on `window`
+/// under `title`, such as "Couldn’t Rename the Folder", then `retry` once that
+/// sheet is dismissed: for a rename, opening the edit again holding the text
+/// it was committed with.
+@MainActor
+func showingRefusal(
+    _ title: String, in window: NSWindow?, logger: KernovaLogger, retry: (() -> Void)? = nil,
+    _ change: () throws -> Void
+) {
+    do {
+        try change()
+    } catch {
+        let message = error.localizedDescription
+        logger.log(.notice, "\(title, privacy: .public): \(message, privacy: .public)")
+        guard let window else { return }
+        presentSheetAlert(.acknowledgement(title: title, message: message), in: window, completion: retry)
+    }
 }

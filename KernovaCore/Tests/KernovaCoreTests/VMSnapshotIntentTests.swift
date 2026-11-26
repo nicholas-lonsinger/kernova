@@ -48,7 +48,7 @@ struct VMSnapshotIntentTests {
     }
 
     private func listing(of vm: VMInstance) -> [Listed] {
-        listing(of: vm.snapshotManifest.snapshots)
+        listing(of: Array(vm.snapshotManifest.snapshots))
     }
 
     // MARK: - Verb Dispatch

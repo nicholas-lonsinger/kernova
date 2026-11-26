@@ -222,9 +222,10 @@ final class SnapshotSectionView: NSView {
         }
     }
 
-    /// Begins inline editing of one snapshot's name.
-    func beginRename(_ id: UUID) {
-        list.row(id)?.titleView.beginRename()
+    /// Begins inline editing of one snapshot's name, the box holding `draft`
+    /// in place of it when one is given.
+    func beginRename(_ id: UUID, holding draft: String? = nil) {
+        list.row(id)?.titleView.beginRename(holding: draft)
     }
 
     /// Begins inline editing of one snapshot's note.

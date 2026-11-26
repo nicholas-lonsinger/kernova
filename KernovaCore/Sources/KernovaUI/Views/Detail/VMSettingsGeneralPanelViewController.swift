@@ -133,6 +133,10 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         viewModel.activeRename == .detail(instance.id)
     }
 
+    /// The text the next rename this pane opens holds in place of the name:
+    /// what a refused rename was committed with.
+    private var renameDraft: String?
+
     // MARK: General
 
     /// What the install-record row is called for `guestOS`.
@@ -197,7 +201,17 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         nameLabel.currentText = { [weak self] in self?.instance.name }
         nameLabel.onEditCommitted = { [weak self] text in
             guard let self else { return }
-            self.viewModel.commitRename(for: self.instance, newName: text, from: .detail)
+            let instance = self.instance
+            // A name the library refuses opens the edit again, holding that
+            // name, once the refusal is dismissed — as a sidebar rename does.
+            showingRefusal(
+                "Couldn\u{2019}t Rename the Virtual Machine", in: self.view.window, logger: Self.logger,
+                retry: { [weak self] in
+                    guard let self, self.instance === instance else { return }
+                    self.renameDraft = text
+                    self.viewModel.renameVMInDetail(instance)
+                }
+            ) { try self.viewModel.commitRename(for: instance, newName: text, from: .detail) }
         }
         nameLabel.onEditCancelled = { [weak self] in
             guard let self else { return }
@@ -404,7 +418,8 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         // surface lost mid-handoff — the marker has already moved to the sidebar
         // — still commits the text typed here.
         if isRenaming {
-            nameLabel.beginEditing()
+            nameLabel.beginEditing(holding: renameDraft)
+            renameDraft = nil
         } else {
             nameLabel.endEditing()
         }
@@ -499,18 +514,11 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         let listed = manifest.ordered.map { BaselineMenuItem(id: $0.id, title: $0.name) }
         if listed != renderedEphemeralBaselines {
             renderedEphemeralBaselines = listed
-            // Items are built and added directly: `addItem(withTitle:)` removes
-            // an existing entry carrying the same title, and nothing keeps two
-            // snapshots from sharing a name — the entry it drops is a baseline
-            // that could then neither be shown as selected nor picked.
-            let menu = NSMenu()
-            for item in listed {
-                let menuItem = NSMenuItem()
-                menuItem.title = item.title
+            ephemeralBaselinePopUp.removeAllItems()
+            ephemeralBaselinePopUp.addItems(withTitles: listed.map(\.title))
+            for (menuItem, item) in zip(ephemeralBaselinePopUp.itemArray, listed) {
                 menuItem.representedObject = item.id
-                menu.addItem(menuItem)
             }
-            ephemeralBaselinePopUp.menu = menu
         }
         ephemeralBaselineCaption?.refresh()
         guard

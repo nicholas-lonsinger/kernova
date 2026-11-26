@@ -112,7 +112,7 @@ struct VMBundleTests {
         case .hostState:
             return (try? bundle.commitHostState { $0.displayPreference = .popOut }) != nil
         case .snapshotManifest:
-            return (try? bundle.commitSnapshotManifest { $0.insert(snapshot("Mine")) }) != nil
+            return (try? bundle.commitSnapshotManifest { try $0.insert(snapshot("Mine"), named: "Mine") }) != nil
         case .usbPairings:
             return (try? bundle.commitUSBPairings { $0.upsert(pairing("mine")) }) != nil
         }
@@ -133,7 +133,8 @@ struct VMBundleTests {
         switch file {
         case .configuration: try other.update(.configuration) { $0.memorySizeInGB = .gibibytes(12) }
         case .hostState: try other.update(.hostState) { $0.startsAutomaticallyOnLaunch = true }
-        case .snapshotManifest: try other.update(.snapshotManifest) { $0.insert(snapshot("Theirs")) }
+        case .snapshotManifest:
+            try other.update(.snapshotManifest) { try $0.insert(snapshot("Theirs"), named: "Theirs") }
         case .usbPairings: try other.update(.usbPairings) { $0.upsert(pairing("theirs")) }
         }
     }

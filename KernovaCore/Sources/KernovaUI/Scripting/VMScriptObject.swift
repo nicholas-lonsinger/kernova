@@ -178,9 +178,6 @@ package final class VMScriptObject: NSObject {
 
     /// The named-element accessor Cocoa resolves `snapshot "…"` through —
     /// see ``VMScriptingGateway/snapshot(named:of:)``.
-    ///
-    /// Cocoa's own answer is the first snapshot whose name matches, and
-    /// several snapshots of one VM can share a name.
     @objc(valueInSnapshotsWithName:)
     func valueInSnapshots(withName name: String) -> VMSnapshotScriptObject? {
         gateway?.snapshot(named: name, of: info.id)
@@ -207,7 +204,7 @@ package final class VMScriptObject: NSObject {
     }
 
     /// The named-element accessor Cocoa resolves `shared directory "…"`
-    /// through, by a path or a folder's name — see
+    /// through, by a path or a share's name — see
     /// ``VMScriptingGateway/sharedDirectory(named:of:)``.
     @objc(valueInSharedDirectoriesWithName:)
     func valueInSharedDirectories(withName name: String) -> VMSharedDirectoryScriptObject? {

@@ -108,9 +108,10 @@ final class AttachmentRowView: NSView {
         iconButton.configure(systemName: iconSystemName, missingPath: missingPath)
     }
 
-    /// Begins inline editing of the title.
-    func beginRename() {
-        titleView.beginRename()
+    /// Begins inline editing of the title, the box holding `draft` in place
+    /// of it when one is given.
+    func beginRename(holding draft: String? = nil) {
+        titleView.beginRename(holding: draft)
     }
 
     /// Begins inline editing of the note, or hands a multi-line one to the

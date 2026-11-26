@@ -35,11 +35,12 @@ extension VMLibrary {
 
     /// The name each claim goes by: walked in ``VMNameOrder``, the same in
     /// every copy of Kernova whatever order the entries were read in, each
-    /// takes the name ``NameRule/assignment(of:fallback:)`` gives it — so the
-    /// newer of two entries storing one name is the one that gives it up.
+    /// takes the name ``NameRule/assignment(of:shape:fallback:)`` gives
+    /// it — so the newer of two entries storing one name is the one that gives
+    /// it up.
     nonisolated static func assignedNames(_ claims: [VMNameClaim]) -> [UUID: String] {
         let ordered = claims.sorted { $0.order < $1.order }
-        let names = NameRule.assignment(of: ordered.map(\.storedName), fallback: defaultVMName)
+        let names = NameRule.assignment(of: ordered.map(\.storedName)) { _ in defaultVMName }
         return Dictionary(zip(ordered.map(\.order.id), names), uniquingKeysWith: { first, _ in first })
     }
 
@@ -64,9 +65,10 @@ extension VMLibrary {
                     }
                 }
             } catch {
+                let reason = (error as? VMAdmissionRefusal)?.refusal.logDescription ?? error.localizedDescription
                 logger.log(
                     .notice,
-                    "Left '\(stored, privacy: .public)' stored for the VM named '\(assigned, privacy: .public)': \(error.localizedDescription, privacy: .public)"
+                    "Left '\(stored, privacy: .public)' stored for the VM named '\(assigned, privacy: .public)': \(reason, privacy: .public)"
                 )
                 continue
             }
@@ -82,7 +84,7 @@ extension VMLibrary {
 
     /// `proposed` as the name of the VM `id` identifies — or of a new one,
     /// for `nil` — beside every other VM and arrival
-    /// (``NameRule/validated(_:among:)``).
+    /// (``NameRule/validated(_:among:shape:)``).
     ///
     /// - Throws: ``CommandError/invalidArgument(_:)`` with the refusal's own
     ///   words.
@@ -96,7 +98,7 @@ extension VMLibrary {
 
     /// The name a new entry asking for `proposed` goes by: `proposed` where
     /// it is free, else the first free name from it
-    /// (``NameRule/name(for:fallback:among:)``).
+    /// (``NameRule/name(for:fallback:among:shape:)``).
     func freeName(from proposed: String) -> String {
         NameRule.name(for: proposed, fallback: Self.defaultVMName, among: names(excluding: nil))
     }

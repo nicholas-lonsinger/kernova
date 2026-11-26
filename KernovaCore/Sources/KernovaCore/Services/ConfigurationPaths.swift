@@ -14,7 +14,7 @@ package enum ConfigurationPaths {
         _ directory: SharedDirectory, at path: String? = nil
     ) throws -> URL {
         let path = path ?? directory.path
-        let (id, label) = (directory.id, directory.displayName)
+        let (id, label) = (directory.id, directory.name)
         return try resolveDirectory(
             at: path, context: "Shared directory",
             requireReadable: true, requireWritable: !directory.readOnly,

@@ -279,23 +279,24 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     // MARK: - Storage Disks
 
     /// Ordered list of disks attached on `vzConfig.storageDevices`; position [0]
-    /// boots first on EFI guests.
+    /// boots first on EFI guests. Each label is the disk's own (``NamedList``).
     ///
     /// `nil` or empty both mean "use defaults" — see
     /// ``effectiveStorageDisks(layout:)``, the one place that synthesizes the
     /// main-disk entry a VM with no configured disks boots from.
-    var storageDisks: [StorageDisk]?
+    var storageDisks: NamedList<StorageDisk>?
 
     /// The disks this VM actually attaches: the configured list when non-empty,
-    /// otherwise the synthesized main disk at the bundle's `Disk.asif`.
-    package func effectiveStorageDisks(layout: VMBundleLayout) -> [StorageDisk] {
+    /// otherwise the synthesized main disk at the bundle's `Disk.asif` — the
+    /// list a disk joins, which its label is its own in.
+    package func effectiveStorageDisks(layout: VMBundleLayout) -> NamedList<StorageDisk> {
         if let configured = storageDisks, !configured.isEmpty { return configured }
         return [StorageDisk.mainDisk(layout: layout)]
     }
 
     /// Assigns `disks`, storing `nil` for an empty list so `config.json` never
     /// carries an empty array.
-    mutating func setStorageDisks(_ disks: [StorageDisk]) {
+    mutating func setStorageDisks(_ disks: NamedList<StorageDisk>) {
         storageDisks = disks.isEmpty ? nil : disks
     }
 
@@ -310,7 +311,8 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
 
     // MARK: - Shared Directories
 
-    package var sharedDirectories: [SharedDirectory]?
+    /// Each share's name is its own (``NamedList``).
+    package var sharedDirectories: NamedList<SharedDirectory>?
 
     // MARK: - Install Intent
 
@@ -472,9 +474,9 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.kernelCommandLine = kernelCommandLine
         self.kernelBookmark = kernelBookmark
         self.initrdBookmark = initrdBookmark
-        self.storageDisks = storageDisks
+        self.storageDisks = storageDisks.map(NamedList.init(repairing:))
         self.removableMedia = removableMedia
-        self.sharedDirectories = sharedDirectories
+        self.sharedDirectories = sharedDirectories.map(NamedList.init(repairing:))
         self.installContext = installContext
         self.pendingGuestAccount = pendingGuestAccount
         self.linuxInstallContext = linuxInstallContext
@@ -558,9 +560,9 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
             String?.self, forKey: .kernelCommandLine, default: Defaults.kernelCommandLine, in: decoder)
         self.kernelBookmark = try c.decodeIfPresent(Data.self, forKey: .kernelBookmark)
         self.initrdBookmark = try c.decodeIfPresent(Data.self, forKey: .initrdBookmark)
-        self.storageDisks = try c.decodeIfPresent([StorageDisk].self, forKey: .storageDisks)
+        self.storageDisks = try c.decodeIfPresent(NamedList<StorageDisk>.self, forKey: .storageDisks)
         self.removableMedia = try c.decodeIfPresent([RemovableMediaItem].self, forKey: .removableMedia)
-        self.sharedDirectories = try c.decodeIfPresent([SharedDirectory].self, forKey: .sharedDirectories)
+        self.sharedDirectories = try c.decodeIfPresent(NamedList<SharedDirectory>.self, forKey: .sharedDirectories)
         self.installContext = try c.decodeIfPresent(MacOSInstallContext.self, forKey: .installContext)
         self.pendingGuestAccount = try c.decodeIfPresent(
             GuestAccountIntent.self, forKey: .pendingGuestAccount)
@@ -846,7 +848,7 @@ extension VMConfiguration {
         for directory in sharedDirectories ?? [] {
             references.append(
                 ExternalFileReference(
-                    id: directory.id, kind: .sharedDirectory, label: directory.displayName,
+                    id: directory.id, kind: .sharedDirectory, label: directory.name,
                     path: directory.path, bookmark: directory.bookmark, readOnly: directory.readOnly))
         }
         if let localIPSWPath = installContext?.localIPSWPath {
@@ -875,20 +877,20 @@ extension VMConfiguration {
             initrdPath = path
             initrdBookmark = bookmark
         case .storageDisk:
-            guard let index = storageDisks?.firstIndex(where: { $0.id == reference.id })
-            else { return }
-            storageDisks?[index].path = path
-            storageDisks?[index].bookmark = bookmark
+            storageDisks?.update(reference.id) { disk in
+                disk.path = path
+                disk.bookmark = bookmark
+            }
         case .removableMedia:
             guard let index = removableMedia?.firstIndex(where: { $0.id == reference.id })
             else { return }
             removableMedia?[index].path = path
             removableMedia?[index].bookmark = bookmark
         case .sharedDirectory:
-            guard let index = sharedDirectories?.firstIndex(where: { $0.id == reference.id })
-            else { return }
-            sharedDirectories?[index].path = path
-            sharedDirectories?[index].bookmark = bookmark
+            sharedDirectories?.update(reference.id) { directory in
+                directory.path = path
+                directory.bookmark = bookmark
+            }
         case .localIPSW:
             installContext?.localIPSWPath = path
             installContext?.localIPSWBookmark = bookmark
@@ -964,37 +966,37 @@ package struct SharedDirectory: Codable, Sendable, Equatable {
     /// see ``StorageDisk/bookmark`` for the nil semantics.
     var bookmark: Data?
 
-    /// The name a macOS guest mounts this folder by, fixed when the share is
-    /// added so no later change to the list, or to `path`, renames it.
-    let mountName: String
+    /// What the share goes by at every door, and the name a macOS guest
+    /// mounts the folder by: the share's own among its VM's
+    /// (``NamedList``), given when it is added so no later change to `path`
+    /// renames it.
+    package private(set) var name: String
 
-    /// A share mounted by `mountName`, by default the folder's own name.
+    private enum CodingKeys: String, CodingKey {
+        case id, path, readOnly, bookmark
+        case name = "mountName"
+    }
+
+    /// A share named `name`, by default the name its path makes
+    /// (``nameBase(ofPath:)``).
     init(
-        id: UUID = UUID(), path: String, readOnly: Bool = false, bookmark: Data? = nil,
-        mountName: String? = nil
+        id: UUID = UUID(), path: String, readOnly: Bool = false, bookmark: Data? = nil, name: String? = nil
     ) {
         self.id = id
         self.path = path
         self.readOnly = readOnly
         self.bookmark = bookmark
-        self.mountName = mountName ?? URL(fileURLWithPath: path).lastPathComponent
+        self.name = name ?? Self.nameBase(ofPath: path)
     }
 
-    /// A new share `id` of the folder at `path`, mounted by a name none of
-    /// `directories` holds: the folder's own, or the same prefixed with the
-    /// share's id.
-    init(
-        adding path: String, id: UUID, readOnly: Bool, bookmark: Data?,
-        to directories: [SharedDirectory]
-    ) {
-        let taken = Set(directories.map(\.mountName))
-        let name = URL(fileURLWithPath: path).lastPathComponent
-        let candidates = [
-            name, "\(id.uuidString.prefix(8))-\(name)", "\(id.uuidString)-\(name)",
-        ]
+    /// A new share of the folder at `path`, named for the folder as the file
+    /// system names it — a volume's root by the volume's name — where that
+    /// makes a name (``shape``), else as ``init(id:path:readOnly:bookmark:name:)``
+    /// names it.
+    init(sharing path: String, id: UUID, readOnly: Bool, bookmark: Data?) {
+        let folderName = try? URL(filePath: path, directoryHint: .isDirectory).resourceValues(forKeys: [.nameKey]).name
         self.init(
-            id: id, path: path, readOnly: readOnly, bookmark: bookmark,
-            mountName: candidates.first { !taken.contains($0) } ?? candidates[2])
+            id: id, path: path, readOnly: readOnly, bookmark: bookmark, name: folderName.flatMap(Self.shape.base(of:)))
     }
 
     package init(from decoder: any Decoder) throws {
@@ -1004,11 +1006,34 @@ package struct SharedDirectory: Codable, Sendable, Equatable {
             id: try c.decode(UUID.self, forKey: .id), path: path,
             readOnly: try c.decode(Bool.self, forKey: .readOnly),
             bookmark: try c.decodeIfPresent(Data.self, forKey: .bookmark),
-            mountName: try c.decodeIfPresent(String.self, forKey: .mountName))
+            name: try c.decodeIfPresent(String.self, forKey: .name))
     }
 
-    /// The last path component, which names the share in the UI.
-    package var displayName: String {
-        URL(fileURLWithPath: path).lastPathComponent
+    /// The name the last component of `path` makes (``shape``), read from the
+    /// path alone, or "Shared Folder" where it makes none, as a volume's root
+    /// does.
+    private static func nameBase(ofPath path: String) -> String {
+        shape.base(of: (path as NSString).lastPathComponent) ?? "Shared Folder"
     }
+}
+
+extension SharedDirectory: ListNamed {
+    package var listedName: String {
+        get { name }
+        set { name = newValue }
+    }
+
+    package var nameBase: String { Self.nameBase(ofPath: path) }
+
+    /// No full path, which a door reads as the share of that folder, and
+    /// nothing Virtualization refuses as the name a macOS guest mounts a
+    /// folder by. `VZMultipleDirectoryShare.validateName(_:)` refuses an
+    /// empty name, "." and "..", a name holding any of `* / : < > ? \ |`, and
+    /// one of more than 255 bytes of UTF-8 (`NAME_MAX`); it reads a NUL as the
+    /// name's end, so the name before one passes, and Kernova refuses NUL
+    /// too.
+    package static let shape = NameRule.Shape(
+        identifiers: NameRule.Identifiers { UserHome.isFullPath($0) },
+        refusing: ["\u{0}", "*", "/", ":", "<", ">", "?", "\\", "|"], reserving: [".", ".."],
+        maximumUTF8Length: 255)
 }

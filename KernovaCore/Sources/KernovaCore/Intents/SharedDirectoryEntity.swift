@@ -33,6 +33,9 @@ struct SharedDirectoryEntity: AppEntity {
 
     let id: SharedDirectoryEntityID
 
+    @Property(title: "Name")
+    var name: String
+
     @Property(title: "Path")
     var path: String
 
@@ -45,16 +48,16 @@ struct SharedDirectoryEntity: AppEntity {
         self.id = SharedDirectoryEntityID(vm: vm, path: summary.path)
         for field in SharedDirectorySummary.Field.allCases {
             switch field {
+            case .name: name = summary.name
             case .path: path = summary.path
             case .readOnly: readOnly = summary.readOnly
             }
         }
     }
 
-    /// The folder's name over its path, as the Sharing settings list it.
+    /// The share's name over its path, as the Sharing settings list it.
     var displayRepresentation: DisplayRepresentation {
-        DisplayRepresentation(
-            title: "\(URL(fileURLWithPath: path).lastPathComponent)", subtitle: "\(path)")
+        DisplayRepresentation(title: "\(name)", subtitle: "\(path)")
     }
 }
 

@@ -2,6 +2,7 @@ import AppKit
 import KernovaAppKitShared
 import KernovaCommandModel
 import KernovaCore
+import KernovaLogging
 import UniformTypeIdentifiers
 
 /// The Storage category: the VM's disks and its hot-pluggable removable media.
@@ -11,6 +12,9 @@ import UniformTypeIdentifiers
 /// `AttachmentRef(kind:id:)`, never a second implementation per list.
 @MainActor
 final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPanel {
+    private static let logger = KernovaLogger(
+        subsystem: "app.kernova", category: "VMSettingsStoragePanel")
+
     let context: VMSettingsPanelContext
     let category = VMSettingsCategory.storage
     /// The Storage Disks section's locked rows — what only a VM whose hardware
@@ -145,7 +149,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
 
     // MARK: - Read accessors (materialize defaults)
 
-    private var currentStorageDisks: [StorageDisk] {
+    private var currentStorageDisks: NamedList<StorageDisk> {
         instance.effectiveStorageDisks
     }
 
@@ -375,16 +379,30 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     /// the same outside-click that selects another VM, and `reconfigure` rebinds
     /// `self.instance` synchronously, so reading `self.instance` once the Task
     /// runs would commit into whichever VM is showing by then.
+    ///
+    /// A label the disk is refused opens the edit again, holding that label,
+    /// once the refusal is dismissed — as a virtual machine's rename does.
     private func commitAttachmentRename(_ ref: AttachmentRef, newLabel: String) {
         clearActiveEdit(ref.kind)
         let instance = instance
         Task { [weak self] in
             guard let self else { return }
-            switch ref.kind {
-            case .storage:
-                self.viewModel.renameStorageDisk(ref.id, newLabel: newLabel, on: instance)
-            case .removable:
-                self.viewModel.renameRemovableMedia(ref.id, newLabel: newLabel, on: instance)
+            let item =
+                switch ref.kind {
+                case .storage: "Disk"
+                case .removable: "Removable Disk"
+                }
+            showingRefusal(
+                "Couldn\u{2019}t Rename the \(item)", in: self.view.window, logger: Self.logger,
+                retry: { [weak self] in
+                    guard let self, self.instance === instance else { return }
+                    self.attachmentRow(ref)?.beginRename(holding: newLabel)
+                }
+            ) {
+                switch ref.kind {
+                case .storage: try self.viewModel.renameStorageDisk(ref.id, newLabel: newLabel, on: instance)
+                case .removable: try self.viewModel.renameRemovableMedia(ref.id, newLabel: newLabel, on: instance)
+                }
             }
             // A no-op rename (empty / unchanged) fires no observation, so force a
             // refresh to land any rebuild the edit deferred.
@@ -437,7 +455,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
     @objc private func editBootOrderTapped() {
         guard let window = view.window else { return }
         let sheet = StorageDiskReorderSheetContentViewController(
-            disks: currentStorageDisks, sizes: attachmentSizes, missing: missingStorageDiskIDs)
+            disks: Array(currentStorageDisks), sizes: attachmentSizes, missing: missingStorageDiskIDs)
         sheet.onReorder = { [weak self] disks in
             guard let self else { return }
             viewModel.reorderStorageDisks(disks.map(\.id), on: instance)
