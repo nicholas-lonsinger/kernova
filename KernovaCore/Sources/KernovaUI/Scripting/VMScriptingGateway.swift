@@ -950,16 +950,20 @@ final class VMScriptingGateway {
         listedSnapshots(of: vm)?.map { VMSnapshotScriptObject($0, of: vm, gateway: self) } ?? []
     }
 
-    /// The snapshot `text` names among the VM's (``NamedSelection``) — or
-    /// `nil`, with the refusal recorded on the command being answered, for
-    /// text that names none of them, or several.
+    /// The snapshot `text` names among ``snapshots(of:)`` — the one its
+    /// identifier spells, else the first it names
+    /// (``NameRule/sibling(identifiedOrNamedBy:in:id:name:)``), the one
+    /// Cocoa's own lookup finds there — or `nil`, with the refusal recorded on
+    /// the command being answered, for text that names none of them.
     func snapshot(named text: String, of vm: UUID) -> VMSnapshotScriptObject? {
         guard let listed = listedSnapshots(of: vm) else { return nil }
-        return selected(
-            NamedSelection(text, in: listed, id: \.id, name: \.name),
-            missing: { self.itemNotFound("snapshot named \u{201C}\(text)\u{201D}", on: vm) },
-            ambiguity: { NamedSelection.ambiguity(text, among: $0, id: \.id, name: \.name) }
-        ).map { VMSnapshotScriptObject($0, of: vm, gateway: self) }
+        guard let found = NameRule.sibling(identifiedOrNamedBy: text, in: listed, id: \.id, name: \.name) else {
+            if let refusal = itemNotFound("snapshot named \u{201C}\(text)\u{201D}", on: vm) {
+                answering?.refuse(refusal)
+            }
+            return nil
+        }
+        return VMSnapshotScriptObject(found, of: vm, gateway: self)
     }
 
     /// The item `selection` found — or `nil`, with the refusal recorded on the

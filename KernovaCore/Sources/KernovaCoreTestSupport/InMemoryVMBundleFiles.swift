@@ -287,9 +287,7 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing {
     }
 
     func setManifest(_ manifest: VMSnapshotManifest, at url: URL) {
-        setData(
-            Self.encode(manifest.record), atRelativePath: VMBundleLayout.snapshotManifestRelativePath,
-            in: url)
+        setManifestRecord(manifest.record, at: url)
         // Each snapshot's own `config.json` carries the network device and
         // disk images the manifest's reader takes from it.
         for snapshot in manifest.snapshots where snapshot.network != nil || snapshot.diskImages != nil {
@@ -297,6 +295,11 @@ final class InMemoryVMBundleFiles: VMBundleFileAccessing {
                 Self.encode(CapturedParts(network: snapshot.network, diskImages: snapshot.diskImages)),
                 atRelativePath: VMBundleLayout.snapshotConfigRelativePath(id: snapshot.id), in: url)
         }
+    }
+
+    /// Writes `record` as the manifest file of the bundle at `url`.
+    func setManifestRecord(_ record: VMSnapshotManifestRecord, at url: URL) {
+        setData(Self.encode(record), atRelativePath: VMBundleLayout.snapshotManifestRelativePath, in: url)
     }
 
     /// What a snapshot's `config.json` holds of its network device and disk

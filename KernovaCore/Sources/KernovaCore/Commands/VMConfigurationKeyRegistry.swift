@@ -690,18 +690,14 @@ package enum VMConfigurationKeyRegistry {
             // What a read answers while the mode is off, so it writes back as
             // no change.
             guard !trimmed.isEmpty else { return { _ in } }
-            switch NamedSelection(
-                trimmed, in: context.snapshots.ordered, id: \.id, name: \.name)
-            {
-            case .found(let snapshot):
-                return { $0.applyEphemeralMode(enabled: true, baseline: snapshot.id) }
-            case .notFound:
+            guard
+                let snapshot = NameRule.sibling(
+                    identifiedOrNamedBy: trimmed, in: context.snapshots.ordered, id: \.id, name: \.name)
+            else {
                 throw CommandError.invalidArgument(
                     "This virtual machine has no snapshot \u{201C}\(trimmed)\u{201D}.")
-            case .ambiguous(let candidates):
-                throw CommandError.invalidArgument(
-                    NamedSelection.ambiguity(trimmed, among: candidates, id: \.id, name: \.name))
             }
+            return { $0.applyEphemeralMode(enabled: true, baseline: snapshot.id) }
         })
 
     // MARK: - Guest Agent

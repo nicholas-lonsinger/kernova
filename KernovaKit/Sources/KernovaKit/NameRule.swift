@@ -2,8 +2,9 @@ import Foundation
 
 /// The one rule for a name Kernova owns among its siblings — a virtual
 /// machine's in its library, a network's, a smart group's, a folder's, a
-/// tag's: what a name may be, when two names are one name, which sibling typed
-/// text names, and the first free name.
+/// tag's, and a snapshot's, a storage disk's or a shared directory's in its
+/// virtual machine: what a name may be, when two names are one name, which
+/// sibling typed text names, and the first free name.
 ///
 /// Typed text names a sibling as Cocoa Scripting finds an element by name:
 /// the first whose name `caseInsensitiveCompare(_:)` finds the same as the
@@ -27,6 +28,27 @@ public enum NameRule {
 
         init(_ name: String) {
             folded = name.folding(options: .caseInsensitive, locale: nil)
+        }
+    }
+
+    /// The text a door reads as one sibling's identifier rather than as a
+    /// name, for one class of sibling — so no sibling of that class is named
+    /// with it.
+    public struct Identifiers: Sendable {
+        private let spell: @Sendable (String) -> Bool
+
+        /// The identifiers `spell` answers true for.
+        public init(_ spell: @escaping @Sendable (String) -> Bool) {
+            self.spell = spell
+        }
+
+        /// A UUID, in either case: how a virtual machine, a network, a group,
+        /// a snapshot and a storage disk are identified.
+        public static let uuid = Identifiers { UUID(uuidString: $0) != nil }
+
+        /// Whether `text` spells one of these identifiers.
+        public func contains(_ text: String) -> Bool {
+            spell(text)
         }
     }
 
@@ -120,13 +142,14 @@ public enum NameRule {
     // MARK: - Names a caller chooses
 
     /// `proposed` trimmed of whitespace and line breaks, as the name of a
-    /// sibling of `siblings`; throws why it can't be one.
+    /// sibling of `siblings`, whose class `identifiers` identifies; throws why
+    /// it can't be one.
     public static func validated(
-        _ proposed: String, among siblings: some Sequence<String>
+        _ proposed: String, among siblings: some Sequence<String>, identifiers: Identifiers = .uuid
     ) throws(Refusal) -> String {
         let name = trimmed(proposed)
         guard !name.isEmpty else { throw .empty }
-        guard UUID(uuidString: name) == nil else { throw .identifier(name) }
+        guard !identifiers.contains(name) else { throw .identifier(name) }
         if let holder = Names(Array(siblings)).member(sameAs: Comparand(name)) { throw .taken(by: holder.name) }
         return name
     }
@@ -151,28 +174,33 @@ public enum NameRule {
         return "\(base) \(counter)"
     }
 
-    /// The name each of `stored` goes by, in the order given: a stored name
-    /// that is well formed and one name with none already given keeps it,
-    /// and every other takes the first well-formed name
-    /// (``firstAvailable(_:among:)``) from its trimmed self, or from
-    /// `fallback` when that leaves nothing, that is one name with no stored
-    /// name and none already given.
+    /// The name each of `stored` goes by, in the order given, as siblings
+    /// whose class `identifiers` identifies: a stored name that is well formed
+    /// and one name with none already given keeps it, and every other takes
+    /// the first well-formed name (``firstAvailable(_:among:)``), counted from
+    /// its trimmed self — or from `fallback` of its index where that is empty
+    /// or spells an identifier — that is one name with no stored name and none
+    /// already given.
     ///
     /// Every name it answers is well formed, and no two are one name
     /// (``isOneName(_:_:)``). Counting against the stored names leaves each
     /// later sibling's own name for it, so a set of well-formed names no two
-    /// of which are one name comes back as it is. `fallback` is well formed.
-    public static func assignment(of stored: [String], fallback: String) -> [String] {
+    /// of which are one name comes back as it is. Each fallback is well
+    /// formed, or becomes so with a count after it.
+    public static func assignment(
+        of stored: [String], identifiers: Identifiers = .uuid, fallback: (_ index: Int) -> String
+    ) -> [String] {
         let storedNames = Names(stored)
         var given = Names()
-        return storedNames.members.map { comparand in
-            if isWellFormed(comparand.name), !given.contains(comparand) {
+        return storedNames.members.enumerated().map { index, comparand in
+            if isWellFormed(comparand.name, identifiers: identifiers), !given.contains(comparand) {
                 given.insert(comparand)
                 return comparand.name
             }
-            let base = trimmed(comparand.name).isEmpty ? fallback : trimmed(comparand.name)
+            let own = trimmed(comparand.name)
+            let base = own.isEmpty || identifiers.contains(own) ? fallback(index) : own
             let free = firstAvailable(base) { candidate in
-                guard UUID(uuidString: candidate) == nil else { return true }
+                guard !identifiers.contains(candidate) else { return true }
                 let candidate = Comparand(candidate)
                 return storedNames.contains(candidate) || given.contains(candidate)
             }
@@ -182,12 +210,13 @@ public enum NameRule {
     }
 
     /// The name a new sibling asking for `proposed` goes by beside
-    /// `siblings`, which ``assignment(of:fallback:)`` gave: `proposed`, where
-    /// it is well formed and free, else the first free name from it.
+    /// `siblings`, which ``assignment(of:identifiers:fallback:)`` gave:
+    /// `proposed`, where it is well formed and free, else the first free name
+    /// from it, or from `fallback` where it is empty or spells an identifier.
     public static func name(
-        for proposed: String, fallback: String, among siblings: [String]
+        for proposed: String, fallback: String, among siblings: [String], identifiers: Identifiers = .uuid
     ) -> String {
-        assignment(of: siblings + [proposed], fallback: fallback)[siblings.count]
+        assignment(of: siblings + [proposed], identifiers: identifiers) { _ in fallback }[siblings.count]
     }
 
     // MARK: - Typed text
@@ -213,18 +242,31 @@ public enum NameRule {
         identifiedOrNamedBy text: String, in siblings: [Sibling], id: (Sibling) -> UUID,
         name: (Sibling) -> String
     ) -> Sibling? {
-        if let identifier = UUID(uuidString: text), let match = siblings.first(where: { id($0) == identifier }) {
-            return match
-        }
-        return sibling(named: text, in: siblings, name: name)
+        let identifier = UUID(uuidString: text)
+        return sibling(
+            identifiedBy: { identifier != nil && id($0) == identifier }, orNamedBy: text, in: siblings, name: name)
+    }
+
+    /// The sibling `text`, as typed, names among `siblings`: the first
+    /// `identifies` answers true for — the one whose identifier `text`
+    /// spells — or else the first it names by name.
+    ///
+    /// No sibling's name spells an identifier, so text that is one sibling's
+    /// identifier is no sibling's name.
+    public static func sibling<Sibling>(
+        identifiedBy identifies: (Sibling) -> Bool, orNamedBy text: String, in siblings: [Sibling],
+        name: (Sibling) -> String
+    ) -> Sibling? {
+        siblings.first(where: identifies) ?? sibling(named: text, in: siblings, name: name)
     }
 
     // MARK: - Shape
 
-    /// Whether `name` is one a sibling may go by, whoever else does: trimmed,
-    /// holding more than whitespace, and spelling no identifier.
-    public static func isWellFormed(_ name: String) -> Bool {
-        !name.isEmpty && name == trimmed(name) && UUID(uuidString: name) == nil
+    /// Whether `name` is one a sibling whose class `identifiers` identifies
+    /// may go by, whoever else does: trimmed, holding more than whitespace,
+    /// and spelling no identifier.
+    public static func isWellFormed(_ name: String, identifiers: Identifiers = .uuid) -> Bool {
+        !name.isEmpty && name == trimmed(name) && !identifiers.contains(name)
     }
 
     /// `name` without the whitespace and line breaks around it, as every name

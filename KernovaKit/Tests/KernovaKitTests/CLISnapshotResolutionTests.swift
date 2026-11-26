@@ -44,25 +44,6 @@ struct CLISnapshotResolutionTests {
         #expect(throws: CLIFailure.self) { try resolve("Bas", in: [base, older]) }
     }
 
-    @Test("A name several snapshots carry refuses, listing each with the identifier that replaces it")
-    func anAmbiguousNameListsItsCandidates() {
-        do {
-            _ = try resolve("Before Upgrade", in: [base, older, newer])
-            Issue.record("expected an ambiguity refusal")
-        } catch let failure as CLIFailure {
-            #expect(failure.code == .ambiguous)
-            #expect(failure.message.contains("Alpha"))
-            // One candidate per line, each carrying the identifier a caller
-            // retypes — a list a terminal can be read down.
-            let lines = failure.message.components(separatedBy: "\n")
-            #expect(lines.contains("Before Upgrade (\(older.id.uuidString))"))
-            #expect(lines.contains("Before Upgrade (\(newer.id.uuidString))"))
-            #expect(!failure.message.contains(base.id.uuidString))
-        } catch {
-            Issue.record("expected a CLIFailure, got \(error)")
-        }
-    }
-
     @Test("A name nothing carries refuses as not found, naming both the snapshot and the VM")
     func anUnknownNameIsNotFound() {
         do {

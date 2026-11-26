@@ -186,30 +186,42 @@ struct VMSnapshotScriptingTests {
         #expect(copy.snapshotManifest.snapshots.map(\.id) == [baseline.id])
     }
 
-    @Test("A name two snapshots answer to refuses, naming both, and neither is reverted to or deleted")
-    func aSharedNameRefuses() async throws {
-        let virtualization = MockVirtualizationService()
-        let wired = WiredCommandCore(virtualization: virtualization)
-        let first = VMSnapshot(name: "Clean", kind: .cold, macAddress: nil)
-        let second = VMSnapshot(name: "clean", kind: .cold, macAddress: nil)
-        let alpha = register(in: wired, name: "Alpha", snapshots: [first, second])
+    @Test(
+        "A snapshot list storing one name twice reads as names of their own, each addressing the snapshot it was read from, and a range ending at a name starts at that one"
+    )
+    func everyNameAScriptReadsAddressesItsOwnSnapshot() async throws {
+        let wired = WiredCommandCore()
+        let alpha = register(in: wired, name: "Alpha", snapshots: [])
+        // In the order taken, which the file records; newest first, the order
+        // a script lists them in, is clean, Clean, Other.
+        alpha.seedSnapshotRecords([
+            VMSnapshot(name: "Clean", createdAt: Date(timeIntervalSince1970: 2), kind: .cold, macAddress: nil),
+            VMSnapshot(name: "clean", createdAt: Date(timeIntervalSince1970: 3), kind: .cold, macAddress: nil),
+            VMSnapshot(name: "Other", createdAt: Date(timeIntervalSince1970: 1), kind: .cold, macAddress: nil),
+        ])
         let host = ScriptHost()
         let gateway = await makeGateway(wired, host: host)
-        let named = Self.snapshot(named: "Clean", of: "Alpha")
+        let of = #" of virtual machine "Alpha""#
 
-        let replies = [
-            try await host.send(Self.revert(to: named, confirmation: true), to: gateway),
-            try await host.send(ScriptEvent.delete(named, confirmation: true), to: gateway),
-        ]
+        let names = try host.run("name of every snapshot\(of)", on: gateway).items.compactMap(\.stringValue)
+        let ids = try host.run("id of every snapshot\(of)", on: gateway).items.compactMap(\.stringValue)
+        let addressed = names.map { (try? host.run("id of snapshot \"\($0)\"\(of)", on: gateway))?.stringValue }
+        let ranged = try host.run(#"id of snapshots "Clean" thru "Other""# + of, on: gateway).items
+            .compactMap(\.stringValue)
 
-        for reply in replies {
-            #expect(reply.errorNumber == Int(errAENoSuchObject))
-            #expect(reply.errorString?.contains(first.id.uuidString) == true)
-            #expect(reply.errorString?.contains(second.id.uuidString) == true)
+        #expect(names.count == 3, "\(names)")
+        for (index, name) in names.enumerated() {
+            for later in names[(index + 1)...] {
+                // Cocoa Scripting's own comparison, which finds a script's
+                // element by name.
+                let related =
+                    (name as NSString).caseInsensitiveCompare(later) == .orderedSame
+                    || (later as NSString).caseInsensitiveCompare(name) == .orderedSame
+                #expect(!related, "\(names)")
+            }
         }
-        #expect(virtualization.revertedSnapshots.isEmpty)
-        #expect(wired.machineFiles.discardedIDs.isEmpty)
-        #expect(alpha.snapshotManifest.snapshots.map(\.id) == [first.id, second.id])
+        #expect(addressed == ids.map(Optional.some), "\(names) addressed \(addressed), read from \(ids)")
+        #expect(ranged.first != nil && ranged.first == names.firstIndex(of: "Clean").map { ids[$0] })
     }
 
     @Test("A delete of a list of snapshot references takes its consent, then deletes each one it names")

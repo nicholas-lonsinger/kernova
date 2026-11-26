@@ -51,7 +51,7 @@ struct NameRuleTests {
     )
     func everyListIsGivenDistinctWellFormedNames() {
         for stored in Self.everyList(upTo: 3) {
-            let assigned = NameRule.assignment(of: stored, fallback: "Untitled")
+            let assigned = NameRule.assignment(of: stored) { _ in "Untitled" }
 
             #expect(assigned.count == stored.count, "\(stored)")
             for (index, name) in assigned.enumerated() {

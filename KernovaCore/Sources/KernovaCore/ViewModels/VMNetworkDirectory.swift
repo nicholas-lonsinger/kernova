@@ -165,7 +165,7 @@ package final class VMNetworkDirectory {
         try commit(verb: verb) { networks in networks.filter { $0.id != id } }
     }
 
-    /// `name` as ``NameRule/validated(_:among:)`` takes it beside every
+    /// `name` as ``NameRule/validated(_:among:identifiers:)`` takes it beside every
     /// network but `id`, refusing too a name that spells `common` or
     /// `isolated`.
     ///

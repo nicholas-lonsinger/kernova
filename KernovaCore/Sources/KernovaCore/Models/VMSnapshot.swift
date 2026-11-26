@@ -164,6 +164,21 @@ package struct VMSnapshot: Sendable, Equatable, Identifiable {
     }
 }
 
+extension VMSnapshot: ListNamed {
+    package var listedName: String {
+        get { name }
+        set { name = newValue }
+    }
+
+    /// What Kernova counts on from when it names a snapshot: "Snapshot",
+    /// "Snapshot 2", …
+    static let nameStem = "Snapshot"
+
+    package var nameBase: String { Self.nameStem }
+
+    package static let identifiers = NameRule.Identifiers.uuid
+}
+
 /// The network device a snapshot's configuration was captured with — the part
 /// of what a revert installs that decides which network the VM lands on, and
 /// under which address.
@@ -262,8 +277,10 @@ struct VMSnapshotManifestRecord: Codable, Sendable, Equatable {
 /// or reverted to.
 package struct VMSnapshotManifest: Sendable, Equatable {
     /// Storage order is the order snapshots were taken; ``ordered`` is what the
-    /// UI reads.
-    package var snapshots: [VMSnapshot]
+    /// UI reads. Each name is the snapshot's own (``NamedList``), so of two
+    /// the file records under one name, the one taken later goes by the next
+    /// free name.
+    package private(set) var snapshots: NamedList<VMSnapshot>
 
     /// The snapshot the VM's current state descends from, marked "Current" in
     /// the UI; `nil` once that snapshot is deleted, or before the first one is
@@ -271,7 +288,7 @@ package struct VMSnapshotManifest: Sendable, Equatable {
     package var currentID: UUID?
 
     package init(snapshots: [VMSnapshot] = [], currentID: UUID? = nil) {
-        self.snapshots = snapshots
+        self.snapshots = NamedList(repairing: snapshots)
         self.currentID = currentID
     }
 
@@ -304,17 +321,30 @@ package struct VMSnapshotManifest: Sendable, Equatable {
         return ordered.first?.id
     }
 
-    /// A default name for a new snapshot that is none of the existing ones'
-    /// (``NameRule/firstAvailable(_:among:)``) — `"Snapshot"`, then
-    /// `"Snapshot 2"`, `"Snapshot 3"`, …
+    /// The name Kernova gives a new snapshot: the first of "Snapshot",
+    /// "Snapshot 2", "Snapshot 3", … no snapshot goes by.
     package var defaultNewName: String {
-        NameRule.firstAvailable("Snapshot", among: snapshots.map(\.name))
+        NameRule.name(for: "", fallback: VMSnapshot.nameStem, among: snapshots.names(excluding: nil))
     }
 
-    /// Adds `snapshot` and marks it current.
-    mutating func insert(_ snapshot: VMSnapshot) {
+    /// The name a new snapshot is taken under: `chosen`, a name its caller
+    /// chose, refused where it can't be one; or, for `nil`, the name Kernova
+    /// gives one (``defaultNewName``).
+    package func nameForNewSnapshot(_ chosen: String?) throws(NameRule.Refusal) -> String {
+        guard let chosen else { return defaultNewName }
+        return try snapshots.validatedName(chosen, for: nil)
+    }
+
+    /// Adds `snapshot` under the name ``nameForNewSnapshot(_:)`` gives
+    /// `chosen`, refusing one it refuses, and marks it current; answers the
+    /// snapshot as listed.
+    @discardableResult
+    mutating func insert(_ snapshot: VMSnapshot, named chosen: String?) throws(NameRule.Refusal) -> VMSnapshot {
+        var snapshot = snapshot
+        snapshot.name = try nameForNewSnapshot(chosen)
         snapshots.append(snapshot)
         currentID = snapshot.id
+        return snapshot
     }
 
     /// Drops the snapshot carrying `id`, clearing the current marker when it
@@ -324,16 +354,15 @@ package struct VMSnapshotManifest: Sendable, Equatable {
         if currentID == id { currentID = nil }
     }
 
-    /// Renames the snapshot carrying `id`; a no-op when it isn't listed.
-    mutating func rename(id: UUID, to name: String) {
-        guard let index = snapshots.firstIndex(where: { $0.id == id }) else { return }
-        snapshots[index].name = name
+    /// Renames the snapshot carrying `id` to `name`, refusing a name another
+    /// snapshot goes by; a no-op when it isn't listed.
+    mutating func rename(id: UUID, to name: String) throws(NameRule.Refusal) {
+        try snapshots.rename(id, to: name)
     }
 
     /// Replaces the notes on the snapshot carrying `id`; a no-op when it isn't
     /// listed.
     mutating func setNotes(id: UUID, to notes: String) {
-        guard let index = snapshots.firstIndex(where: { $0.id == id }) else { return }
-        snapshots[index].notes = notes
+        snapshots.update(id) { $0.notes = notes }
     }
 }

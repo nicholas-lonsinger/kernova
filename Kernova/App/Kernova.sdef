@@ -256,7 +256,7 @@
 				<accessor style="range"/>
 				<accessor style="test"/>
 			</element>
-			<element type="snapshot" description="Its snapshots, newest first. Several can share a name: snapshot &#8220;&#8230;&#8221; refuses one more than one of them carries, listing their ids.">
+			<element type="snapshot" description="Its snapshots, newest first.">
 				<cocoa key="snapshots"/>
 				<accessor style="index"/>
 				<accessor style="name"/>
@@ -308,12 +308,12 @@
 			</property>
 		</class>
 
-		<class name="snapshot" code="KvSn" plural="snapshots" description="A virtual machine&#8217;s named restore point. Take one with make new snapshot at a virtual machine, with properties {name:&#8230;, notes:&#8230;}; with no name, Kernova names it Snapshot, then Snapshot 2, and so on. Its sizes are measured from its files each time a script reads them.">
+		<class name="snapshot" code="KvSn" plural="snapshots" description="A virtual machine&#8217;s named restore point. Take one with make new snapshot at a virtual machine, with properties {name:&#8230;, notes:&#8230;}, which refuses a name another of its snapshots goes by; with no name, Kernova names it Snapshot, then Snapshot 2, and so on. Its sizes are measured from its files each time a script reads them.">
 			<cocoa class="VMSnapshotScriptObject"/>
 			<property name="id" code="ID  " type="text" access="r" description="Its stable identifier, unique among its virtual machine&#8217;s snapshots.">
 				<cocoa key="uniqueID"/>
 			</property>
-			<property name="name" code="pnam" type="text" description="Its name, which another of its virtual machine&#8217;s snapshots can share. Setting it renames it.">
+			<property name="name" code="pnam" type="text" description="Its name, unique among its virtual machine&#8217;s snapshots ignoring case. Setting it renames it, refusing a name another of them goes by.">
 				<cocoa key="name"/>
 			</property>
 			<property name="notes" code="KvNo" type="text" description="The user&#8217;s note on it, empty when there is none. Setting it replaces the note, trimmed of leading and trailing spaces and line breaks; empty text clears it.">

@@ -1399,9 +1399,7 @@ package final class VMLibraryViewModel {
     ) async {
         if takingSnapshotFirst {
             do {
-                try await verbs().takeSnapshot(
-                    .id(instance.id), name: instance.snapshotManifest.defaultNewName, notes: "",
-                    asEphemeralBaseline: false)
+                try await verbs().takeSnapshot(.id(instance.id), name: "", notes: "", asEphemeralBaseline: false)
             } catch {
                 present(error, about: .vm(instance))
                 return

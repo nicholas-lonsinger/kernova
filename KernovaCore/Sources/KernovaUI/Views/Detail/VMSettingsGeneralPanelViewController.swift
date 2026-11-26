@@ -499,18 +499,11 @@ final class VMSettingsGeneralPanelViewController: NSViewController, VMSettingsPa
         let listed = manifest.ordered.map { BaselineMenuItem(id: $0.id, title: $0.name) }
         if listed != renderedEphemeralBaselines {
             renderedEphemeralBaselines = listed
-            // Items are built and added directly: `addItem(withTitle:)` removes
-            // an existing entry carrying the same title, and nothing keeps two
-            // snapshots from sharing a name — the entry it drops is a baseline
-            // that could then neither be shown as selected nor picked.
-            let menu = NSMenu()
-            for item in listed {
-                let menuItem = NSMenuItem()
-                menuItem.title = item.title
+            ephemeralBaselinePopUp.removeAllItems()
+            ephemeralBaselinePopUp.addItems(withTitles: listed.map(\.title))
+            for (menuItem, item) in zip(ephemeralBaselinePopUp.itemArray, listed) {
                 menuItem.representedObject = item.id
-                menu.addItem(menuItem)
             }
-            ephemeralBaselinePopUp.menu = menu
         }
         ephemeralBaselineCaption?.refresh()
         guard

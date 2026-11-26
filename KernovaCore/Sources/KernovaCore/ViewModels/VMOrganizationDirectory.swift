@@ -465,7 +465,7 @@ package final class VMOrganizationDirectory {
 
     // MARK: - Commit
 
-    /// `name` as ``NameRule/validated(_:among:)`` takes it beside every
+    /// `name` as ``NameRule/validated(_:among:identifiers:)`` takes it beside every
     /// element of `named` but `id`.
     private static func validatedName(
         _ name: String, of kind: Element, for id: UUID?, among named: [(id: UUID, name: String)]

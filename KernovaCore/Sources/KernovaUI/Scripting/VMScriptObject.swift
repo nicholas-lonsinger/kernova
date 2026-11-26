@@ -178,9 +178,6 @@ package final class VMScriptObject: NSObject {
 
     /// The named-element accessor Cocoa resolves `snapshot "…"` through —
     /// see ``VMScriptingGateway/snapshot(named:of:)``.
-    ///
-    /// Cocoa's own answer is the first snapshot whose name matches, and
-    /// several snapshots of one VM can share a name.
     @objc(valueInSnapshotsWithName:)
     func valueInSnapshots(withName name: String) -> VMSnapshotScriptObject? {
         gateway?.snapshot(named: name, of: info.id)

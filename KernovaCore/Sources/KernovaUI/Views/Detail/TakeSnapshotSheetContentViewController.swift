@@ -11,6 +11,9 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
 
     private let vmName: String
     private let suggestedName: String
+    /// Why the name typed so far can't be the new snapshot's, `nil` while it
+    /// can.
+    private let nameRefusal: (String) -> String?
     /// What the capture is for.
     private let purpose: TakeSnapshotPurpose
 
@@ -30,17 +33,22 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     private let headerBodyLabel = NSTextField(wrappingLabelWithString: "")
     private lazy var captionLabel = GroupedFormStateNote { [unowned self] in captionText }
     private lazy var baselineLabel = GroupedFormStateNote { [unowned self] in baselineText }
+    private lazy var nameRefusalLabel = GroupedFormStateNote { [unowned self] in
+        nameRefusal(nameField.stringValue)
+    }
+    private let confirmButton = NSButton()
 
     private static let sheetWidth: CGFloat = 520
     private static let padding: CGFloat = 20
     private static let heroPointSize: CGFloat = 48
 
     init(
-        vmName: String, suggestedName: String, mode: VMCaptureMode,
+        vmName: String, suggestedName: String, nameRefusal: @escaping (String) -> String?, mode: VMCaptureMode,
         purpose: TakeSnapshotPurpose = .restorePoint
     ) {
         self.vmName = vmName
         self.suggestedName = suggestedName
+        self.nameRefusal = nameRefusal
         self.mode = mode
         self.purpose = purpose
         super.init(nibName: nil, bundle: nil)
@@ -171,10 +179,18 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
         notesEditor.onCommit = { [weak self] _ in self?.confirmTapped() }
         notesEditor.onCancel = { [weak self] in self?.cancelTapped() }
 
-        return makeGroupedFormCard(rows: [
-            GroupedFormFieldRow("Name", control: nameField),
-            GroupedFormFieldRow("Notes", control: notesEditor, alignment: .top),
-        ])
+        return makeGroupedFormCard(
+            rows: [
+                GroupedFormFieldRow("Name", control: nameField),
+                GroupedFormFieldRow("Notes", control: notesEditor, alignment: .top),
+            ], notes: [nameRefusalLabel])
+    }
+
+    /// Shows why the name typed so far can't be the snapshot's, and offers
+    /// Take Snapshot only while it can.
+    private func refreshNameRefusal() {
+        nameRefusalLabel.refresh()
+        confirmButton.isEnabled = nameRefusalLabel.isHidden
     }
 
     private func configureField(_ field: NSTextField, placeholder: String) {
@@ -194,9 +210,13 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
 
         // No ellipsis on the action button itself; the ellipsis lives on the menu
         // item and footer link that open this sheet.
-        let confirm = NSButton(title: "Take Snapshot", target: self, action: #selector(confirmTapped))
+        let confirm = confirmButton
+        confirm.title = "Take Snapshot"
+        confirm.target = self
+        confirm.action = #selector(confirmTapped)
         confirm.bezelStyle = .push
         confirm.keyEquivalent = "\r"
+        refreshNameRefusal()
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -216,6 +236,7 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
     }
 
     @objc private func confirmTapped() {
+        guard confirmButton.isEnabled else { return }
         onConfirm?(nameField.stringValue, notesEditor.text)
     }
 }
@@ -223,6 +244,10 @@ final class TakeSnapshotSheetContentViewController: NSViewController {
 // MARK: - NSTextFieldDelegate
 
 extension TakeSnapshotSheetContentViewController: NSTextFieldDelegate {
+    func controlTextDidChange(_ notification: Notification) {
+        refreshNameRefusal()
+    }
+
     /// Return in the Name field confirms, matching the sheet's default button.
     /// The Notes box takes Return for a newline instead.
     func control(

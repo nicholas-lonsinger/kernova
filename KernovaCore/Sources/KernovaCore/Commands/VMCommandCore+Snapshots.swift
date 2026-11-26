@@ -1,5 +1,6 @@
 import Foundation
 import KernovaCommandModel
+import KernovaKit
 import KernovaLogging
 
 /// The snapshot verbs, and the Ephemeral Mode revert that rides the same path.
@@ -24,7 +25,9 @@ extension VMCommandCore {
 
     // MARK: - Take
 
-    /// Captures a snapshot; `asEphemeralBaseline` also turns Ephemeral Mode on
+    /// Captures a snapshot named `name` — refusing a name another snapshot of
+    /// the VM goes by — or, for an empty one, the first free "Snapshot",
+    /// "Snapshot 2", …; `asEphemeralBaseline` also turns Ephemeral Mode on
     /// with it as the baseline, written inside the capture.
     @discardableResult
     package func takeSnapshot(
@@ -139,17 +142,39 @@ extension VMCommandCore {
             )
             throw invalidState(instance)
         }
-        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Named here as well as where it is listed, so a name the manifest
+        // refuses is refused before the capture's work, not after it.
+        let chosen = NameRule.trimmed(name).isEmpty ? nil : name
         let snapshot = VMSnapshotCaptureRequest(
-            name: trimmedName.isEmpty ? instance.snapshotManifest.defaultNewName : trimmedName,
+            name: try snapshotName(on: instance) { try $0.nameForNewSnapshot(chosen) },
             notes: notes.trimmingCharacters(in: .whitespacesAndNewlines))
         try lifecycle.launchTakeSnapshot(
             instance, mode: mode, snapshot: snapshot, resolving: outcome
         ) { [weak self] permit, captured in
             guard let self else { throw CancellationError() }
-            try self.commitSnapshotManifest(permit, verb: .takeSnapshot) { $0.insert(captured) }
-            alsoRecord(permit, captured)
+            var listed = captured
+            try self.commitSnapshotManifest(permit, verb: .takeSnapshot) {
+                listed = try $0.insert(captured, named: chosen)
+            }
+            alsoRecord(permit, listed)
         }
+    }
+
+    /// What `name` answers of `instance`'s manifest, a name it refuses thrown
+    /// in the refusal's own words.
+    private func snapshotName(
+        on instance: VMInstance, _ name: (VMSnapshotManifest) throws -> String
+    ) throws -> String {
+        do {
+            return try name(instance.snapshotManifest)
+        } catch let refusal as NameRule.Refusal {
+            throw Self.snapshotNameRefusal(refusal)
+        }
+    }
+
+    /// `refusal` of a snapshot's name, as a verb refuses it.
+    private static func snapshotNameRefusal(_ refusal: NameRule.Refusal) -> CommandError {
+        .invalidArgument(refusal.sentence(about: "snapshot"))
     }
 
     // MARK: - Revert
@@ -429,22 +454,23 @@ extension VMCommandCore {
 
     // MARK: - Metadata
 
-    /// Renames a snapshot to `newName` trimmed (``trimmedName(_:)``); an
-    /// unchanged name, and one naming a snapshot the manifest no longer lists,
-    /// are no-ops, and a rename that would change the name is refused while
-    /// the VM's state holds its snapshot metadata.
+    /// Renames a snapshot to `newName` trimmed, refusing an empty name and one
+    /// another snapshot of the VM goes by; an unchanged name, and one naming a
+    /// snapshot the manifest no longer lists, are no-ops, and a rename that
+    /// would change the name is refused while the VM's state holds its
+    /// snapshot metadata.
     ///
     /// What decides is whether the write would change anything, rather than
     /// whether the snapshot is still there: a row deleted while its inline
     /// editor was open must not raise an alert about a rename nobody made.
     package func renameSnapshot(_ selector: VMSelector, snapshot id: UUID, to newName: String) throws {
         let instance = try resolve(selector)
-        let trimmed = try Self.trimmedName(newName)
-        guard let snapshot = instance.snapshotManifest.snapshot(id: id), snapshot.name != trimmed
+        let name = try snapshotName(on: instance) { try $0.snapshots.validatedName(newName, for: id) }
+        guard let snapshot = instance.snapshotManifest.snapshot(id: id), snapshot.name != name
         else { return }
         try require(.renameSnapshot, on: instance)
         try edit(.renameSnapshot, on: instance, verb: .renameSnapshot) { permit in
-            try commitSnapshotManifest(permit, verb: .renameSnapshot) { $0.rename(id: id, to: trimmed) }
+            try commitSnapshotManifest(permit, verb: .renameSnapshot) { try $0.rename(id: id, to: name) }
         }
     }
 
@@ -481,16 +507,18 @@ extension VMCommandCore {
     /// what the file holds; a change that moves nothing writes nothing.
     ///
     /// On failure the manifest stays as the bundle holds it, and the verb is
-    /// refused.
+    /// refused — a name the file's manifest refuses in the refusal's words.
     private func commitSnapshotManifest(
         _ permit: borrowing VMEditPermit, verb: VMVerb,
-        _ change: (inout VMSnapshotManifest) -> Void
+        _ change: (inout VMSnapshotManifest) throws -> Void
     ) throws {
         let instance = permit.instance
         do {
             try permit.bundle.commitSnapshotManifest(change)
         } catch let refused as VMAdmissionRefusal {
             throw admissionRefusal(refused.refusal, on: instance, verb: verb)
+        } catch let refusal as NameRule.Refusal {
+            throw Self.snapshotNameRefusal(refusal)
         } catch {
             logger.log(
                 .error,
@@ -502,18 +530,6 @@ extension VMCommandCore {
 }
 
 extension NamedSelection {
-    /// What an in-app surface refuses `text` with when it names every snapshot
-    /// in `candidates`: each one's name with the identifier that names it
-    /// alone.
-    package static func ambiguity(
-        _ text: String, among candidates: [Candidate], id: (Candidate) -> UUID,
-        name: (Candidate) -> String
-    ) -> String {
-        ambiguity(
-            text, among: candidates, plural: "snapshots", namedAloneBy: "identifiers",
-            label: { "\(name($0)) (\(id($0).uuidString))" })
-    }
-
     /// What an in-app surface refuses `text` with when it names every one of
     /// `candidates`, `plural` of their kind: each one as `label` lists it, by
     /// what names it alone — `namedAloneBy`, in the plural.

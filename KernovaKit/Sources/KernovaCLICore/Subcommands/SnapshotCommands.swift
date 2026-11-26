@@ -12,8 +12,7 @@ extension KernovaCommand {
             commandName: "snapshot",
             abstract: "Work with a virtual machine's snapshots.",
             discussion: "Every verb here names its snapshot by name or identifier, matched "
-                + "against the virtual machine's own list — a name several snapshots carry "
-                + "exits 4 listing their identifiers.",
+                + "against the virtual machine's own list.",
             subcommands: [List.self, Take.self, Revert.self, Delete.self, Rename.self, Notes.self])
     }
 }
@@ -61,8 +60,9 @@ extension KernovaCommand.Snapshot {
             discussion: "A snapshot captures the VM's disks and settings. A running guest's "
                 + "memory is captured with them, and it pauses briefly while the state is "
                 + "written; a stopped one is captured with no memory. A VM whose guest can "
-                + "write to an external disk is snapshotted only while stopped. Without "
-                + "--name Kernova names the snapshot the way its own sheet proposes: "
+                + "write to an external disk is snapshotted only while stopped. A --name "
+                + "another snapshot of the virtual machine goes by, ignoring case, is refused; "
+                + "without one Kernova names the snapshot the way its own sheet proposes: "
                 + "\u{201C}Snapshot\u{201D}, then \u{201C}Snapshot 2\u{201D}, and so on. Prints "
                 + "the new snapshot as one row of `snapshot list`.")
 
@@ -164,9 +164,8 @@ extension KernovaCommand.Snapshot {
         static let configuration = CommandConfiguration(
             commandName: "rename",
             abstract: "Rename one of a virtual machine's snapshots.",
-            discussion: "A snapshot's name is a label rather than an identifier, so one another "
-                + "snapshot of the same virtual machine already carries is accepted — and a "
-                + "later command naming it exits 4 rather than choosing between them.")
+            discussion: "A name another snapshot of the same virtual machine goes by, ignoring "
+                + "case, is refused.")
 
         /// Which virtual machine, by name or identifier.
         @Argument(help: "The virtual machine's name or identifier.", completion: CompletionSource.vm)

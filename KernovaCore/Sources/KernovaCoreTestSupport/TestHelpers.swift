@@ -290,6 +290,17 @@ extension VMInstance {
         refreshBundle { try $0.bundle.commitSnapshotManifest { _ in } }
     }
 
+    /// Puts a manifest recording `snapshots`, names and all, in this fixture
+    /// VM's bundle — as a hand edit or another build could have written it —
+    /// and has the bundle read it back.
+    func seedSnapshotRecords(_ snapshots: [VMSnapshot]) {
+        seedBundleFiles {
+            $0.setManifestRecord(
+                VMSnapshotManifestRecord(snapshots: snapshots.map(\.record), currentID: nil), at: bundleURL)
+        }
+        refreshBundle { try $0.bundle.commitSnapshotManifest { _ in } }
+    }
+
     /// Puts `pairings` in this fixture VM's bundle as though the bundle
     /// already held them, and has the bundle read them back.
     func seedUSBPairings(_ pairings: USBAccessoryPairingSet) {
