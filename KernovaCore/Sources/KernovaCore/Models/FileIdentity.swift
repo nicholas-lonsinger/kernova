@@ -39,9 +39,12 @@ package struct FileIdentity: Hashable {
         hasher.combine(fileResourceIdentifier.hash)
     }
 
-    /// A URL's path exactly as spelled — standardized and without a trailing
+    /// A URL's path as `URL.standardizedFileURL` spells it, without a trailing
     /// separator, so a listing's directory URL and a derived one compare equal.
-    /// Two spellings of one file differ here; identity is what equates them.
+    /// Standardizing drops a leading `/private` where the path without it
+    /// exists and follows a link before a `..`, but two spellings through any
+    /// other link, or in another case, still differ here; identity is what
+    /// equates them.
     package static func spelling(_ url: URL) -> String {
         var path = url.standardizedFileURL.path(percentEncoded: false)
         while path.count > 1, path.hasSuffix("/") { path.removeLast() }
