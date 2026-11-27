@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 /// Pure throttle for a pull's per-chunk progress consumers: decides whether to
 /// forward a `(bytesTransferred, totalBytes)` update now.

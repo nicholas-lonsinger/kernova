@@ -1,4 +1,9 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
+
 import KernovaLogging
 
 /// One peer's clipboard transfer state, as every surface renders it — the host

@@ -206,6 +206,13 @@ var targets: [Target] = [
         ],
         swiftSettings: sharedSwiftSettings
     ),
+    // A user-visible transfer's progress: the operation aggregating its transfers into one readout, the reporter
+    // every surface renders, and the engine clock they measure on.
+    .target(
+        name: "KernovaTransferProgress",
+        dependencies: ["KernovaLogging", "KernovaSynchronization", "CKernovaShims"],
+        swiftSettings: sharedSwiftSettings
+    ),
     // The deterministic, fault-injecting harness that runs `KernovaAgentCore`
     // endpoints against each other on virtual time.
     .target(
@@ -361,7 +368,7 @@ var targets: [Target] = [
 
 if declaresAppleTargets {
     products += [
-        .library(name: "KernovaKit", targets: ["KernovaKit"]),
+        .library(name: "KernovaKit", targets: ["KernovaKit", "KernovaTransferProgress"]),
         .library(name: "KernovaCommandModel", targets: ["KernovaCommandModel"]),
         .library(name: "KernovaAppKitShared", targets: ["KernovaAppKitShared"]),
         // Static for the reasons `KernovaLogging`'s comment gives, so read it
@@ -410,6 +417,7 @@ if declaresAppleTargets {
                 "KernovaSynchronization",
                 "KernovaFileTree",
                 "KernovaWire",
+                "KernovaTransferProgress",
             ],
             swiftSettings: sharedSwiftSettings
         ),
@@ -433,7 +441,7 @@ if declaresAppleTargets {
         // The AppKit UI the app and the macOS guest agent share.
         .target(
             name: "KernovaAppKitShared",
-            dependencies: ["KernovaKit", "KernovaLogging"],
+            dependencies: ["KernovaKit", "KernovaLogging", "KernovaTransferProgress"],
             swiftSettings: sharedSwiftSettings
         ),
         // What the macOS guest agent calls into macOS for: the vsock dial, its identity and session state, and
@@ -480,7 +488,10 @@ if declaresAppleTargets {
         ),
         .target(
             name: "KernovaTestSupport",
-            dependencies: ["KernovaKit", "KernovaLogging", "KernovaSynchronization", "KernovaPortableTestSupport"],
+            dependencies: [
+                "KernovaKit", "KernovaLogging", "KernovaSynchronization", "KernovaPortableTestSupport",
+                "KernovaTransferProgress",
+            ],
             swiftSettings: sharedSwiftSettings
         ),
         .testTarget(
@@ -489,6 +500,7 @@ if declaresAppleTargets {
                 "KernovaKit", "KernovaCommandModel", "KernovaAppKitShared", "KernovaAppRegistry",
                 "KernovaCLICore", "KernovaTestSupport", "KernovaLogging", "KernovaSynchronization", "KernovaWire",
                 "KernovaClipboardItems", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaConsole",
+                "KernovaTransferProgress",
             ],
             swiftSettings: sharedSwiftSettings
         ),

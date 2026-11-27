@@ -1,4 +1,5 @@
 import Foundation
+import KernovaTransferProgress
 
 /// What became of one readout update's chance at the automatic reveal.
 public enum ClipboardProgressRevealDecision: Equatable, Sendable {

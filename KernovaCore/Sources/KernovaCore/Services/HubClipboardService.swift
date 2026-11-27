@@ -8,6 +8,7 @@ import KernovaItemTransfer
 import KernovaKit
 import KernovaLogging
 import KernovaSynchronization
+import KernovaTransferProgress
 import KernovaWire
 
 /// A VM's clipboard: the host's ``ClipboardEnd`` over the host pasteboard, run over the guest agent's CLIPBOARD

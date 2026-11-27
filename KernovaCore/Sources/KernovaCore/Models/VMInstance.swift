@@ -8,6 +8,7 @@ import KernovaFileTree
 import KernovaItemTransfer
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 import KernovaWire
 
 /// The VM display's current hosting location.

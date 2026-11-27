@@ -1,4 +1,5 @@
 import KernovaKit
+import KernovaTransferProgress
 
 /// Why one dragged item's write failed, when the failure is the item's own and the drag's other writes go on.
 package enum DragOutItemFailure: Equatable, Sendable {

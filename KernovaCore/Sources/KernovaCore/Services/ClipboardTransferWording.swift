@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTransferProgress
 
 /// The sentences one refused clipboard or drop transfer is rendered with,
 /// derived once from the failure and the gesture that produced it.

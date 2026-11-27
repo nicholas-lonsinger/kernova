@@ -2,7 +2,7 @@ import Foundation
 import KernovaTestSupport
 import Testing
 
-@testable import KernovaKit
+@testable import KernovaTransferProgress
 import KernovaSynchronization
 
 @Suite("EngineClock conformances", .caseScoped)

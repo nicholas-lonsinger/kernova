@@ -2,7 +2,7 @@ import Foundation
 import KernovaTestSupport
 import Testing
 
-@testable import KernovaKit
+@testable import KernovaTransferProgress
 
 /// Records every report an operation drives its reporter to.
 @MainActor

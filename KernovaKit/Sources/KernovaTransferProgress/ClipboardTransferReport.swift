@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 /// The user action a transfer serves, from the reporting side's point of view.
 public enum ClipboardTransferGesture: Equatable, Sendable {

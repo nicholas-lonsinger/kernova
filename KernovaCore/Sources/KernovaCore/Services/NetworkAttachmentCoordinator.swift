@@ -2,6 +2,7 @@ import Foundation
 import KernovaCommandModel
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 
 /// A realizable network attachment for a live VM, as recovery plans it.
 package enum NetworkAttachmentPlan: Equatable, Sendable {

@@ -3,6 +3,7 @@ import KernovaAgentCore
 import Synchronization
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 import KernovaWire
 import UniformTypeIdentifiers
 

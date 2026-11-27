@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaTransferProgress
 import KernovaSynchronization
 
 /// An `EngineClock` whose reading moves only when the test advances it.
