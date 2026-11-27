@@ -8,7 +8,8 @@ import KernovaLogging
 /// Every panel pick site converts its URL through ``capture(_:)`` and stores the
 /// resulting `(path, bookmark)` pair on the model; every access site resolves it
 /// back into live access via ``ScopedAccess``. A `nil` bookmark falls through to
-/// the raw path, which the sandbox refuses to open for an out-of-container file
+/// the raw path, which the sandbox refuses to open for a file no grant or
+/// entitlement covers
 /// (docs/research/2026-11-18-pasteboard-file-grants.md, finding 8); re-picking
 /// mints a fresh bookmark.
 package enum SecurityScopedBookmark {
@@ -64,9 +65,9 @@ package enum SecurityScopedBookmark {
     /// it replaces, or `nil` (logged) when the system refuses a read-write one —
     /// the caller keeps the bookmark it has.
     ///
-    /// Read-write alone: the refusal does not say whether the replaced
-    /// bookmark's scope or the file's permissions caused it, and a read-only
-    /// bookmark stored in place of a read-write one is never widened again.
+    /// Read-write alone: nothing Kernova stores says which scope the replaced
+    /// bookmark holds, and a read-only bookmark stored in place of a read-write
+    /// one is never widened again.
     static func renewal(for url: URL) -> Data? {
         do {
             return try data(for: url, scope: .withSecurityScope)
@@ -97,8 +98,8 @@ package enum SecurityScopedBookmark {
 
     /// Runs `body` with the bookmark's scope active, passing the resolved
     /// URL (which tracks a moved file) — or `fallback` with no scope when
-    /// the bookmark is absent or dead, letting the raw-path attempt surface
-    /// the usual sandbox denial.
+    /// the bookmark is absent or dead, where an open of the raw path meets
+    /// the sandbox's own refusal.
     static func withResolvedURL<T>(
         bookmark: Data?, fallback: URL,
         options: URL.BookmarkResolutionOptions = [.withSecurityScope],
