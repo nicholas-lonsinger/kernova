@@ -207,10 +207,10 @@ var targets: [Target] = [
         swiftSettings: sharedSwiftSettings
     ),
     // A user-visible transfer's progress: the operation aggregating its transfers into one readout, the reporter
-    // every surface renders, and the engine clock they measure on.
+    // every surface renders, the engine clock they measure on, and what a pull's ending error fails a transfer with.
     .target(
         name: "KernovaTransferProgress",
-        dependencies: ["KernovaLogging", "KernovaSynchronization", "CKernovaShims"],
+        dependencies: ["KernovaAgentCore", "KernovaWire", "KernovaLogging", "KernovaSynchronization", "CKernovaShims"],
         swiftSettings: sharedSwiftSettings
     ),
     // The deterministic, fault-injecting harness that runs `KernovaAgentCore`
@@ -434,7 +434,7 @@ if declaresAppleTargets {
             name: "KernovaClipboardItems",
             dependencies: [
                 "KernovaKit", "KernovaAgentCore", "KernovaAgentRuntime", "KernovaWire", "KernovaLogging",
-                "KernovaSynchronization",
+                "KernovaSynchronization", "KernovaTransferProgress",
             ],
             swiftSettings: sharedSwiftSettings
         ),

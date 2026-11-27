@@ -41,6 +41,10 @@ struct ClipboardProgressStatusItemPresenterTests {
             events.append(.dismissed(showing))
             return true
         }
+
+        func holds(_ showing: TransientStatusItemPopover.Showing) -> Bool { tenancy.current == showing }
+
+        var readoutForClick: (() -> TransientStatusItemPopover.ShowResult?)?
     }
 
     private let slot = RecordingSlot()
@@ -60,7 +64,7 @@ struct ClipboardProgressStatusItemPresenterTests {
             ClipboardProgressSnapshot(
                 direction: .outbound, peerName: "VM", currentItemName: nil, filesCompleted: 0,
                 fileCount: 1, bytesTransferred: 100, totalBytes: 1_000, bytesPerSecond: 100,
-                secondsRemaining: 10, gesture: .peerPaste, elapsedSeconds: elapsed,
+                secondsRemaining: 10, gesture: .paste, elapsedSeconds: elapsed,
                 isCancellable: true, operationID: operation),
             since: Date())
     }

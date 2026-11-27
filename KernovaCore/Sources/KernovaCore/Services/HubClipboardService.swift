@@ -37,7 +37,7 @@ final class HubClipboardService {
     @ObservationIgnored var hub: AgentHub?
 
     /// The VM's name, for logs and reports.
-    @ObservationIgnored var label: () -> String = { "VM" }
+    @ObservationIgnored private let label: @MainActor () -> String
 
     @ObservationIgnored private let reporter: ClipboardTransferReporter
     @ObservationIgnored private let sink: ItemSinkAdapter<POSIXTreeFileSystem>
@@ -47,23 +47,26 @@ final class HubClipboardService {
 
     /// A service over `pasteboard`, offering as `gate` says, landing the guest's representations in clipboard
     /// staging under `stagingRoot` keyed `stagingKey`, its pulls built by `sink`, the hub's item sink, under the
-    /// paste ceiling `maxPasteBytes` reads, reporting to `reporter`.
+    /// paste ceiling `maxPasteBytes` reads, reporting to `reporter` as the VM `label` names.
     init(
         pasteboard: any ClipboardPasteboard, gate: ClipboardOfferGate, sink: ItemSinkAdapter<POSIXTreeFileSystem>,
         stagingRoot: ProcessStagingRoot, stagingKey: String, maxPasteBytes: @escaping @Sendable () -> Int,
-        reporter: ClipboardTransferReporter
+        reporter: ClipboardTransferReporter, label: @escaping @MainActor () -> String
     ) {
         self.gate = gate
         self.sink = sink
         self.reporter = reporter
+        self.label = label
         end = ClipboardEnd(
             pasteboard: pasteboard, gate: gate, stagingLabel: "host-\(stagingKey)", stagingRoot: stagingRoot,
-            pasteCeiling: maxPasteBytes, logger: Self.logger)
+            pasteCeiling: maxPasteBytes, readouts: ClipboardPasteReadouts(reporter: reporter, peerName: label),
+            logger: Self.logger)
         end.onEvent = { [weak self] in self?.heard($0) }
         end.setMayOffer(true)
     }
 
-    /// CLIPBOARD's owner on the hub's connections.
+    /// CLIPBOARD's owner on the hub's connections: a pull's progress and end are handled on the hub's queue, so a
+    /// paste waiting on a pull never needs the main actor.
     nonisolated func owner() -> ItemFeatureOwner<PeerHandle> {
         let end = end
         return ItemFeatureOwner(
@@ -71,8 +74,7 @@ final class HubClipboardService {
             events: { [weak self] peer, event in
                 switch event {
                 case .pullEnded(_, let id, let result): end.pullEnded(id, result)
-                // Nothing here reads how far a pull has landed, so that needs no hop.
-                case .pullAdvanced: break
+                case .pullAdvanced(_, let id, let landing): end.pullAdvanced(id, landing)
                 default: MainActorBridge.async { self?.handle(event, from: peer) }
                 }
             },
@@ -142,7 +144,8 @@ final class HubClipboardService {
     /// What `event` reports to the VM's transfer report, or nil when it reports nothing. The Mac's clipboard is
     /// sent to the guest as `.forward` whether a copy or Copy to Guest offered it; the guest's arrives as `.copy`
     /// whether passthrough or Copy to Mac brought it. A read that finds nothing on the Mac's clipboard a
-    /// pasteboard carries says so only to the command that asked for it; a retraction is logged, never reported.
+    /// pasteboard carries says so only to the command that asked for it; a retraction is logged, never reported;
+    /// a failed pull ends its paste's readout failed, which reports it.
     static func refusal(for event: ClipboardEndEvent)
         -> (gesture: ClipboardTransferGesture, failure: ClipboardTransferFailure)?
     {

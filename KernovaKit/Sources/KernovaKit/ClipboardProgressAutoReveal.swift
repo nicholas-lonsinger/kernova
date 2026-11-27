@@ -17,8 +17,8 @@ public enum ClipboardProgressRevealDecision: Equatable, Sendable {
 ///
 /// The callout is the only progress surface that shows unsummoned, so it
 /// reveals at most once per operation and only for a gesture someone is waiting
-/// on — a peer's paste, which holds the app it is pasting into, and a drop or a
-/// drag out, whose files are not where the user put them until it lands. It
+/// on — a paste, which holds the app it is pasting into, and a drop or a drag
+/// out, whose files are not where the user put them until it lands. It
 /// waits until the transfer has run for `minimumElapsedToReveal` with at least
 /// `minimumRemainingToReveal` still to go.
 ///

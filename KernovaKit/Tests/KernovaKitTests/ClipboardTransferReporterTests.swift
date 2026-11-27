@@ -61,7 +61,7 @@ struct ClipboardTransferReporterTests {
         let names = ["Tax Returns", "Q3", "return.pdf"]
         var account = DragOutAccount(items: 3)
         account.landed = 2
-        account.unreadable = .one(entry: DragOutEntry(names))
+        account.unreadable = .one(entry: ItemEntry(names))
         let finish = ClipboardTransferFinish(
             gesture: .dragOut, outcome: .failed(.dragOutShortfall(account)), peerName: "macOS TEST")
 

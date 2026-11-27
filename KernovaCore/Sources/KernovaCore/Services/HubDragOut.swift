@@ -343,11 +343,7 @@ package final class HubDragOut {
         }
 
         private static func outcome(_ result: ItemPullResult) -> Result<Void, WireError> {
-            switch result {
-            case .landed: .success(())
-            case .failed(let error): .failure(error)
-            case .closed(let closure): .failure(closure.error)
-            }
+            result.error.map { .failure($0) } ?? .success(())
         }
     }
 
@@ -425,17 +421,5 @@ package final class HubDragOut {
     private final class PullState {
         var id: ItemPullID?
         var cancelled = false
-    }
-}
-
-extension StreamClosure {
-    /// What a pull that closed this way reports.
-    fileprivate var error: WireError {
-        switch self {
-        case .resetByPeer(let error), .resetLocally(let error), .connectionClosedLocally(let error),
-            .connectionClosedByPeer(let error):
-            error
-        case .completed, .connectionLost: WireError(.cancelled, debugDetail: "the pull's stream closed: \(self)")
-        }
     }
 }

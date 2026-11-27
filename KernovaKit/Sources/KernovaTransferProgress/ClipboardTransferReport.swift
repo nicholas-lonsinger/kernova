@@ -7,11 +7,9 @@ import Foundation
 /// The user action a transfer serves, from the reporting side's point of view.
 public enum ClipboardTransferGesture: Equatable, Sendable {
     /// This side's user pasted the peer's offer — a pasteboard promise firing and
-    /// pulling the bytes it advertised.
+    /// pulling the bytes it advertised. The app pasted into sits blocked until
+    /// the bytes land.
     case paste
-    /// The peer's user pasted and this side serves the pull. The app pasted into
-    /// sits blocked until the bytes land.
-    case peerPaste
     /// The guest's clipboard written to the Mac's, whether passthrough or
     /// Copy Guest Clipboard to Mac brought it.
     case copy
@@ -24,20 +22,13 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     /// host receives.
     case dragOut
 
-    /// Whether the user owed the message is on this side.
-    ///
-    /// A refusal is reported on the side that made the gesture, so this is
-    /// everything but `peerPaste`, which refuses the *peer* user's paste and is
-    /// theirs to be told about.
-    public var isMadeHere: Bool { self != .peerPaste }
-
     /// Whether someone is waiting in front of a screen for this gesture to end,
     /// which is what earns its readout the callout that shows by itself.
     ///
-    /// A peer's paste holds the app it is pasting into; a drop or a drag out
-    /// leaves the files missing where the user put them until it lands. The rest
-    /// run behind whatever the user is doing.
-    public var isAwaited: Bool { self == .peerPaste || self == .drop || self == .dragOut }
+    /// A paste holds the app it is pasting into; a drop or a drag out leaves
+    /// the files missing where the user put them until it lands. The rest run
+    /// behind whatever the user is doing.
+    public var isAwaited: Bool { self == .paste || self == .drop || self == .dragOut }
 
     /// Which of several concurrent readouts a single-value surface shows —
     /// higher wins, ties settled by which opened its bar last.
@@ -48,9 +39,9 @@ public enum ClipboardTransferGesture: Equatable, Sendable {
     /// front of.
     public var readoutRank: Int {
         switch self {
-        case .peerPaste: 2
+        case .paste: 2
         case .drop, .dragOut: 1
-        case .paste, .copy, .forward: 0
+        case .copy, .forward: 0
         }
     }
 }
@@ -65,7 +56,7 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     /// when it could be read.
     case diskFull(needed: UInt64?, available: Int64?)
     /// Over the transfer ceiling in force when the refusal was raised — the copy
-    /// budget under `.copy`, the peer's paste cap under `.peerPaste`, the most a
+    /// budget under `.copy`, this side's paste ceiling under `.paste`, the most a
     /// take lists of a drag's items under `.dragOut`.
     case tooLarge(limitBytes: Int)
     /// The peer reported a failure of its own.
@@ -78,6 +69,8 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case timedOut
     /// The transfer aborted for a reason with no more specific case.
     case transferFailed
+    /// An item's pull failed for a reason of the item's own.
+    case itemFailed(ItemPullFailure)
     /// Some of a drag out's items did not land, each for a reason of its own, and the others did.
     case dragOutShortfall(DragOutAccount)
     /// Items the sending side did not send whole, and the rest crossed whole;
@@ -132,17 +125,17 @@ public enum DragOutUnreadable: Equatable, Sendable {
     /// None.
     case none
     /// One item, with the entry in it the VM couldn't read when the VM named that entry.
-    case one(entry: DragOutEntry?)
+    case one(entry: ItemEntry?)
     /// `count` items, two or more.
     case several(count: Int)
 }
 
-/// An entry of an item dragged out of the VM, by its path in the VM from that item: the item's own name, then
-/// each folder down to the entry.
+/// An entry of an item the far side offered, by its path there from that item: the item's own name, then each
+/// folder down to the entry.
 ///
 /// Its description withholds the names, which are the user's: a value interpolated into a public log line names
 /// no file.
-public struct DragOutEntry: Equatable, Sendable, CustomStringConvertible {
+public struct ItemEntry: Equatable, Sendable, CustomStringConvertible {
     /// The path's components, the item's own name first; never empty.
     public let components: [String]
 

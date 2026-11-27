@@ -38,17 +38,9 @@ struct ClipboardTransferOperationTests {
     /// An operation at the production reveal delay and idle gap, measured on
     /// `clock` — whose reading moves only when the test advances it, and whose
     /// idle terminal passes only when the test releases it.
-    private func makeOperation(
-        recorder: Recorder,
-        clock: GatedEngineClock,
-        gesture: ClipboardTransferGesture = .paste,
-        direction: ClipboardProgressSnapshot.Direction = .inbound,
-        expectedBytes: UInt64? = 0,
-        expectedItems: Int = 0
-    ) -> ClipboardTransferOperation {
+    private func makeOperation(recorder: Recorder, clock: GatedEngineClock) -> ClipboardTransferOperation {
         ClipboardTransferOperation(
-            gesture: gesture, direction: direction, peerName: "macOS TEST",
-            expectedBytes: expectedBytes, expectedItems: expectedItems, clock: clock, reporter: recorder.reporter)
+            gesture: .paste, direction: .inbound, peerName: "macOS TEST", clock: clock, reporter: recorder.reporter)
     }
 
     // MARK: - Terminals
@@ -75,8 +67,7 @@ struct ClipboardTransferOperationTests {
     func anIdleTerminalPassingAsATransferBeginsCompletesNothing() async throws {
         let recorder = Recorder()
         let clock = GatedEngineClock()
-        let operation = makeOperation(
-            recorder: recorder, clock: clock, gesture: .peerPaste, direction: .outbound)
+        let operation = makeOperation(recorder: recorder, clock: clock)
         clock.advance(seconds: Self.revealDelay)
 
         operation.unitBegan(id: 1, expectedBytes: 100)
@@ -84,8 +75,8 @@ struct ClipboardTransferOperationTests {
         operation.finishWhenIdle()
         let gap = try #require(clock.parked.first)
 
-        // The gap passes, and before the terminal takes the lock the peer's next
-        // pull begins.
+        // The gap passes, and before the terminal takes the lock the paste's
+        // next pull begins.
         clock.releaseHeld(gap)
         operation.unitBegan(id: 2, expectedBytes: 100)
         clock.resume(gap)

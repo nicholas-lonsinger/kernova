@@ -5,7 +5,8 @@ import KernovaTransferProgress
 
 /// Presents a transfer's progress readout inside a menu-bar status item's
 /// dropdown, and reveals it once in the status item's callout so it is seen
-/// without a click.
+/// without a click. A click on the status item while a wait holds the main
+/// thread shows it in the callout too (``StatusItemCalloutSlot/readoutForClick``).
 ///
 /// A status-item controller keeps its own icon and menu structure, drives this
 /// from its `menuNeedsUpdate`, and reads `snapshot` back to compose the icon
@@ -48,8 +49,14 @@ public final class ClipboardProgressStatusItemPresenter {
     /// The callout's showing, kept after it ends so the readout clearing can
     /// close it without closing whatever replaced it.
     private var calloutShowing: TransientStatusItemPopover.Showing?
+    /// Whether a click, rather than the reveal, put ``calloutShowing`` up.
+    private var calloutShownByClick = false
 
     private var autoReveal = ClipboardProgressAutoReveal()
+
+    /// What the reveal's last line recorded: a line is written when this
+    /// changes, never per readout.
+    private var loggedReveal: RevealRecord?
 
     /// What the reveal's revisit is timed on.
     private let clock: any EngineClock
@@ -76,6 +83,7 @@ public final class ClipboardProgressStatusItemPresenter {
         self.onCancel = onCancel
         self.clock = clock
         self.deliveredAt = clock.now
+        slot.readoutForClick = { [weak self] in self?.showCalloutForClick() }
     }
 
     /// Applies the transfer report the domain host just published.
@@ -116,8 +124,9 @@ public final class ClipboardProgressStatusItemPresenter {
         syncItems()
         if rendered == nil {
             let closed = dismissCallout()
+            loggedReveal = nil
             Self.logger.log(
-                .info,
+                .notice,
                 "Readout cleared — callout \(closed ? "dismissed" : "not up", privacy: .public)")
         }
         revealIfEarned(rendered)
@@ -154,6 +163,19 @@ public final class ClipboardProgressStatusItemPresenter {
     }
 
     // MARK: - Private
+
+    /// Shows the readout in the callout for the user's click, until the readout
+    /// clears or its Cancel closes it; nil when there is no readout.
+    private func showCalloutForClick() -> TransientStatusItemPopover.ShowResult? {
+        guard let snapshot else { return nil }
+        let result = slot.show(calloutContent, as: .heldByOwner)
+        if case .shown(let showing) = result {
+            calloutShowing = showing
+            calloutShownByClick = true
+            log(.shown, skip: nil, readout: snapshot, dropdownOpen: slot.isDropdownOpen)
+        }
+        return result
+    }
 
     /// Adds or removes the readout rows from a dropdown that is already on
     /// screen; a closed one is rebuilt by `menuNeedsUpdate` when it next opens.
@@ -196,6 +218,7 @@ public final class ClipboardProgressStatusItemPresenter {
             switch slot.show(calloutContent, as: .heldByOwner) {
             case .shown(let showing):
                 calloutShowing = showing
+                calloutShownByClick = false
                 return true
             case .skipped(let reason):
                 skip = reason
@@ -233,31 +256,41 @@ public final class ClipboardProgressStatusItemPresenter {
         revisit = (readout.operationID, task)
     }
 
-    /// Records the decision with the inputs that made it — one line per delivered
-    /// readout, a rate the tracker's throttle already bounds, and one per revisit.
-    ///
-    /// Only `.shown` is `.info`: a reveal the slot skipped is retried on every
-    /// update until it goes up, so it repeats at the throttle rate as `.none`
-    /// does.
+    /// What a reveal line records of one readout.
+    private struct RevealRecord: Equatable {
+        let operation: ClipboardTransferOperationID
+        let callout: String
+        let skip: TransientStatusItemPopover.SkipReason?
+        let dropdownOpen: Bool
+    }
+
+    /// Records the decision with the inputs that made it, when what it records
+    /// differs from the last line: an operation's first readout, its callout
+    /// going up or down, a reveal skipped for a new reason, the dropdown opening
+    /// or closing.
     private func log(
         _ decision: ClipboardProgressRevealDecision, skip: TransientStatusItemPopover.SkipReason?,
         readout: ClipboardProgressSnapshot, dropdownOpen: Bool
     ) {
-        let level: KernovaLogLevel =
-            switch decision {
-            case .none, .notShown: .debug
-            case .shown: .info
+        let callout =
+            switch calloutShowing.map({ slot.holds($0) }) {
+            case true?: calloutShownByClick ? "shown by a click" : "shown by the reveal"
+            case false?, nil: "not up"
             }
+        let record = RevealRecord(
+            operation: readout.operationID, callout: callout, skip: skip, dropdownOpen: dropdownOpen)
+        guard record != loggedReveal else { return }
+        loggedReveal = record
         let skipped = skip.map { " — skipped: \($0)" } ?? ""
         Self.logger.log(
-            level,
+            .notice,
             """
             Readout callout \(String(describing: decision), privacy: .public)\(skipped, privacy: .public) — \
             gesture=\(String(describing: readout.gesture), privacy: .public), \
             elapsed=\(ClipboardProgressLogFormat.logSeconds(readout.elapsedSeconds), privacy: .public), \
             remaining=\(ClipboardProgressLogFormat.logSeconds(readout.secondsRemaining), privacy: .public), \
             \(ClipboardProgressLogFormat.logBytes(transferred: readout.bytesTransferred, total: readout.totalBytes, known: readout.bytesKnown), privacy: .public), \
-            menuOpen=\(dropdownOpen, privacy: .public)
+            menuOpen=\(dropdownOpen, privacy: .public), callout=\(callout, privacy: .public)
             """
         )
     }

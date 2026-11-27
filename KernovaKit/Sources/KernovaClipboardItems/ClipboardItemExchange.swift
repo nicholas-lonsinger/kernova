@@ -29,8 +29,8 @@ import KernovaWire
 /// - A connection's leaving ends every offer and request it carried: what an end wrote of the far side's is the
 ///   end's to retract, since nothing more of it can be pulled.
 ///
-/// Offers and ends hop onto the main actor in the order the connection emitted them; a pull's end is handled on
-/// the connection's queue, so a paste waiting on a pull never needs the main actor.
+/// Offers and ends hop onto the main actor in the order the connection emitted them; a pull's progress and end are
+/// handled on the connection's queue, so a paste waiting on a pull never needs the main actor.
 @MainActor
 public final class ClipboardItemExchange {
     /// Which end an exchange is: the one end of a crossing whose copy wins.
@@ -76,6 +76,9 @@ public final class ClipboardItemExchange {
         /// more of it can be pulled; the far side's clipboard may hold it still, and the next link carries only
         /// its next copy.
         case linkLost
+        /// This side's user cancelled a paste of it on its readout: this side pulls nothing more of it, and the
+        /// far side's clipboard holds it still, so a fresh copy there is what pastes it again.
+        case cancelledHere
     }
 
     /// Hears each offer of the far side once its items are read: it is this end's clipboard now.
@@ -146,19 +149,21 @@ public final class ClipboardItemExchange {
     private let pasteCeiling: @Sendable () -> Int
     private let pulls = ClipboardPullRegistry()
     private let serves = ClipboardServeWaits()
+    private let readouts: ClipboardPasteReadouts
     private let logger: KernovaLogger
 
     /// An exchange taking the far side's offers as `gate` admits them, landing their representations in clipboard
     /// staging labelled `stagingLabel` under `stagingRoot`, reading the paste ceiling from `pasteCeiling` each
-    /// time a pull needs it.
+    /// time a pull needs it, and reporting each offer's pulls as `readouts` says.
     init(
         side: Side, gate: ClipboardOfferGate, stagingLabel: String, stagingRoot: ProcessStagingRoot,
-        pasteCeiling: @escaping @Sendable () -> Int, logger: KernovaLogger
+        pasteCeiling: @escaping @Sendable () -> Int, readouts: ClipboardPasteReadouts, logger: KernovaLogger
     ) {
         self.side = side
         self.gate = gate
         staging = ClipboardFileStaging(label: stagingLabel, root: stagingRoot)
         self.pasteCeiling = pasteCeiling
+        self.readouts = readouts
         self.logger = logger
     }
 
@@ -177,7 +182,7 @@ public final class ClipboardItemExchange {
         reading.removeAll()
         if let remote {
             self.remote = nil
-            remote.close()
+            remote.close(.interrupted)
             onRemoteOfferEnded?(remote, .linkLost)
         }
         if unanswered != nil {
@@ -202,7 +207,7 @@ public final class ClipboardItemExchange {
         requests.removeAll()
         guard let remote else { return }
         self.remote = nil
-        remote.release()
+        remote.release(.interrupted)
         onRemoteOfferEnded?(remote, .settingChanged)
     }
 
@@ -229,7 +234,7 @@ public final class ClipboardItemExchange {
     @discardableResult
     func offer(_ source: ClipboardOfferSource, answering request: OfferRequest?) -> Bool {
         if let request, requests.remove(request.token) == nil { return false }
-        endRemote(.superseded)
+        supersedeRemote()
         guard let link else { return false }
         // A far-side offer still being read predates this side's offer too.
         for token in reading { link.releaseOffer(token) }
@@ -314,12 +319,13 @@ public final class ClipboardItemExchange {
         local = .none
     }
 
-    /// Ends the far side's offer as this end's clipboard, releasing it: this side pulls nothing more of it.
-    private func endRemote(_ ending: RemoteEnding) {
+    /// Ends the far side's offer as this end's clipboard, this side's own copy superseding it, and releases it: this
+    /// side pulls nothing more of it.
+    private func supersedeRemote() {
         guard let remote else { return }
         self.remote = nil
-        remote.release()
-        onRemoteOfferEnded?(remote, ending)
+        remote.release(.letGo)
+        onRemoteOfferEnded?(remote, .superseded)
     }
 
     /// The host: whether the guest made the offer arriving now before it saw one of this side's still on the
@@ -470,7 +476,8 @@ public final class ClipboardItemExchange {
 
     // MARK: The far side's offer
 
-    /// Hands `event`, of the connection `link` names, to the exchange. Pulls' ends go to ``pullEnded(_:_:)``.
+    /// Hands `event`, of the connection `link` names, to the exchange. A pull's progress and end are handled where
+    /// they arrive (``pullAdvanced(_:_:)``, ``pullEnded(_:_:)``).
     func handle(_ event: ItemTransferEvent, on link: any ClipboardItemLink) {
         serves.end(by: event)
         switch event {
@@ -489,11 +496,13 @@ public final class ClipboardItemExchange {
             if reading.remove(token) != nil { answerLost(token) }
             guard let remote, remote.token == token else { return }
             self.remote = nil
-            remote.close()
+            remote.close(.interrupted)
             onRemoteOfferEnded?(remote, Self.ending(closure))
         case .pullEnded(_, let id, let result):
             pullEnded(id, result)
-        case .pullAdvanced, .serveEnded:
+        case .pullAdvanced(_, let id, let landing):
+            pullAdvanced(id, landing)
+        case .serveEnded:
             break
         }
     }
@@ -517,11 +526,25 @@ public final class ClipboardItemExchange {
         pulls.ended(id, result)
     }
 
+    /// A pull of the far side's offer landed further: handled where it arrives, on any queue.
+    nonisolated func pullAdvanced(_ id: ItemPullID, _ landing: ItemLandingProgress) {
+        pulls.advanced(id, landing)
+    }
+
     /// Releases `remote`, which this end's pasteboard no longer holds: this side pulls nothing more of it, and
     /// what it landed stays servable.
     func release(_ remote: ClipboardRemoteOffer) {
         if self.remote === remote { self.remote = nil }
-        remote.release()
+        remote.release(.letGo)
+    }
+
+    /// A Cancel on a readout of `remote`'s pulls spent it: while it is this end's clipboard, it is released and
+    /// ends as `.cancelledHere`.
+    private func cancelledHere(_ remote: ClipboardRemoteOffer) {
+        guard self.remote === remote else { return }
+        self.remote = nil
+        remote.release(.letGo)
+        onRemoteOfferEnded?(remote, .cancelledHere)
     }
 
     /// Reads every item of the far side's offer `header`, then hands the offer over, unless it ended meanwhile.
@@ -542,7 +565,7 @@ public final class ClipboardItemExchange {
         if let remote {
             // The far side replaced its offer: its RESET comes first, so this is only a connection's offer.
             self.remote = nil
-            remote.close()
+            remote.close(.interrupted)
         }
         if !header.request.isEmpty { request?.answer = header.token }
         reading.insert(header.token)
@@ -605,8 +628,10 @@ public final class ClipboardItemExchange {
         return ClipboardRemoteOffer(
             header: header, items: items, link: link, staging: staging, generation: generation,
             ceiling: { UInt64(clamping: max(ceiling(), 0)) }, registry: pulls, logger: logger,
+            readouts: readouts.resolved(),
             landed: { [weak self] in MainActorBridge.async { self?.onLanded?() } },
-            failed: { [weak self] error in MainActorBridge.async { self?.onPullFailed?(error) } })
+            failed: { [weak self] error in MainActorBridge.async { self?.onPullFailed?(error) } },
+            cancelled: { [weak self] in self?.cancelledHere($0) })
     }
 }
 

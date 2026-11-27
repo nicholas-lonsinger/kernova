@@ -61,7 +61,7 @@ public final class ClipboardTransferOperation: Sendable {
     /// `ClipboardProgressAutoReveal`.
     public static let defaultRevealDelay: TimeInterval = 0.3
 
-    /// How long a peer-driven operation may sit with nothing in flight before
+    /// How long an operation may sit with nothing in flight before
     /// ``finishWhenIdle()`` calls it over.
     public static let defaultIdleGap: TimeInterval = 2.0
 
@@ -195,6 +195,8 @@ public final class ClipboardTransferOperation: Sendable {
         /// screen and the terminal must clear it.
         var revealed = false
         var isFinished = false
+        /// Whether a Cancel was the terminal.
+        var wasCancelled = false
         /// The armed idle terminal, `nil` while none is.
         ///
         /// A transfer beginning, or any terminal, cancels it under the lock, and
@@ -223,6 +225,21 @@ public final class ClipboardTransferOperation: Sendable {
             declaredBytes = declaredBytes &- (previous?.expected ?? 0) &+ state.expected
             transferredBytes = transferredBytes &- (previous?.observed ?? 0) &+ state.observed
             units[id] = state
+        }
+
+        /// Starts transfer `id` over from its estimate: a transfer that begins
+        /// again after it ended lands everything afresh, so neither what the
+        /// earlier attempt landed nor what it declared counts. The readout may
+        /// fall back with it, and its next update past the new count is
+        /// forwarded at once.
+        mutating func restart(_ id: UInt64) {
+            guard var unit = units[id], unit.landed > 0 || unit.declared > 0 || unit.completed else { return }
+            if unit.completed { completedCount -= 1 }
+            unit.landed = 0
+            unit.declared = 0
+            unit.completed = false
+            setUnit(id, unit)
+            coalescer.rebase(bytesTransferred: progress.done)
         }
 
         /// Calls off the armed idle terminal.
@@ -302,6 +319,7 @@ public final class ClipboardTransferOperation: Sendable {
                     label = "completed"
                 }
             case .cancelled:
+                wasCancelled = true
                 outcome = .cancelled(final: snapshot(at: now, header: header))
                 label = "cancelled"
             case .failed(let failure):
@@ -364,10 +382,9 @@ public final class ClipboardTransferOperation: Sendable {
     /// upward as they are declared. `expectedBytes` nil is an operation that
     /// cannot know its bytes: its readout counts files alone.
     ///
-    /// `onCancelRequested` stops what this operation measures — the transfers,
-    /// not the offer behind them — and is what puts a Cancel affordance on the
-    /// readout. It runs once at most, on the main actor, right after a Cancel
-    /// ended the operation (``requestCancel()``).
+    /// `onCancelRequested` stops what this operation measures, and is what puts
+    /// a Cancel affordance on the readout. It runs once at most, on the main
+    /// actor, right after a Cancel ended the operation (``requestCancel()``).
     public init(
         gesture: ClipboardTransferGesture,
         direction: ClipboardProgressSnapshot.Direction,
@@ -412,10 +429,17 @@ public final class ClipboardTransferOperation: Sendable {
     // MARK: - Transfer events
 
     /// Records that one of this operation's transfers started, declaring it if
-    /// this is the first the operation has heard of it.
-    public func unitBegan(id: UInt64, expectedBytes: UInt64 = 0, name: String? = nil) {
+    /// this is the first the operation has heard of it, and returns whether it
+    /// did: false once the operation has ended. One that begins again after it
+    /// ended starts over from its estimate, what its earlier attempt landed and
+    /// declared no longer counted.
+    @discardableResult
+    public func unitBegan(id: UInt64, expectedBytes: UInt64 = 0, name: String? = nil) -> Bool {
         apply(id: id, declaring: UnitState(estimate: expectedBytes, name: name)) { state, unit in
-            if !state.activeUnits.contains(unit) { state.activeUnits.append(unit) }
+            if !state.activeUnits.contains(unit) {
+                state.restart(unit)
+                state.activeUnits.append(unit)
+            }
             state.lastActiveName = state.units[unit]?.name ?? state.lastActiveName
             // A transfer in flight means the operation isn't idle: call off the
             // terminal armed for the gap this transfer just filled.
@@ -478,8 +502,9 @@ public final class ClipboardTransferOperation: Sendable {
     /// transfer ends if nothing has begun since, and its owner still holds it —
     /// one let go of first retires its readout instead.
     ///
-    /// For a peer-driven operation, where nothing on this side knows the peer has
-    /// stopped asking. Nothing in flight is not "finished" — a multi-file paste is
+    /// For an operation whose transfers something else asks for — a paste's
+    /// app, a drag's destination — where nothing tells this side it has stopped
+    /// asking. Nothing in flight is not "finished" — a multi-file paste is
     /// walked one file at a time, so the gap between two of them looks exactly
     /// like the end, and this gap is what tells them apart.
     public func finishWhenIdle() {
@@ -495,8 +520,18 @@ public final class ClipboardTransferOperation: Sendable {
     ///
     /// A caller that *caches* an operation across events must ask before reusing
     /// one: events after a terminal are dropped, and a reused finished operation
-    /// silently measures nothing at all.
+    /// silently measures nothing at all. One whose events come from several
+    /// threads reads the answer from ``unitBegan(id:expectedBytes:name:)``,
+    /// which gives it in the same step as it records.
     public var isLive: Bool { state.withLock { !$0.isFinished } }
+
+    /// Whether a Cancel ended it (``requestCancel()``).
+    ///
+    /// The Cancel ends the operation before its owner's stop runs, so an owner
+    /// that starts transfers from other threads, finding the operation ended,
+    /// reads this to learn whether a Cancel has already stopped what it would
+    /// start.
+    public var wasCancelled: Bool { state.withLock { $0.wasCancelled } }
 
     /// A Cancel: ends the operation `cancelled`, at what had arrived, and then
     /// stops what it measures. An operation that has already ended, or that
@@ -518,24 +553,28 @@ public final class ClipboardTransferOperation: Sendable {
 
     // MARK: - Event plumbing
 
-    /// Shared event path.
+    /// Shared event path; whether the event was recorded.
     ///
     /// `declaring` is non-nil only for `unitBegan`, the one event allowed to
     /// introduce a transfer. Progress and terminals for an unknown transfer are
     /// dropped: one landing after the operation ended must never mint a new unit,
     /// since nothing would arm a terminal for it.
+    @discardableResult
     private func apply(
         id: UInt64, declaring declared: UnitState?, _ mutate: (inout State, UInt64) -> Void
-    ) {
+    ) -> Bool {
+        var recorded = false
         update { state in
             guard !state.isFinished else { return Outcome() }
             if state.units[id] == nil {
                 guard let declared else { return Outcome() }
                 state.setUnit(id, declared)
             }
+            recorded = true
             mutate(&state, id)
             return state.resolve(at: clock.now, revealDelay: revealDelay, header: header)
         }
+        return recorded
     }
 
     /// Completes the operation once it has stayed idle for the whole gap.

@@ -88,7 +88,8 @@ public enum ClipboardEndEvent: Sendable, Equatable {
     case served
     /// A pull of the far side's offer landed here.
     case landed
-    /// A pull of the far side's offer failed a paste: `TOO_LARGE` over the paste ceiling.
+    /// A pull of the far side's offer failed a paste, with the error it failed with: `TOO_LARGE` over the paste
+    /// ceiling. The paste's readout reports the failure too.
     case pullFailed(WireError)
     /// The pasteboard refused a paste's bytes of this side's write of the far side's offer.
     case pasteRefused

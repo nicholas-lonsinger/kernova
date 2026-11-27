@@ -147,6 +147,16 @@ public enum ItemPullResult: Sendable, Equatable {
     case failed(WireError)
     /// Nothing landed: the stream closed before the sink verified the container.
     case closed(StreamClosure)
+
+    /// The error a pull that landed nothing ended with, nil for one that landed: a stream reset's own, and
+    /// `CANCELLED` for a stream its connection's end, or an END before the sink verified, closed.
+    public var error: WireError? {
+        switch self {
+        case .landed: nil
+        case .failed(let error), .closed(.resetByPeer(let error)), .closed(.resetLocally(let error)): error
+        case .closed(let closure): WireError(.cancelled, debugDetail: "the pull's stream closed: \(closure)")
+        }
+    }
 }
 
 /// How one pull this side served ended.

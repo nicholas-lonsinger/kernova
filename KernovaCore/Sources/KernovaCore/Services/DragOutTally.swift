@@ -1,20 +1,6 @@
 import KernovaKit
 import KernovaTransferProgress
 
-/// Why one dragged item's write failed, when the failure is the item's own and the drag's other writes go on.
-package enum DragOutItemFailure: Equatable, Sendable {
-    /// This Mac did not permit the write (`EPERM`) where the item was dropped.
-    case refused
-    /// The VM could not read the item, at `entry` when it named the entry.
-    case unreadable(entry: DragOutEntry?)
-    /// The item's bytes arrived but could not be written on this Mac.
-    case unwritable
-    /// An app in the VM never supplied the item.
-    case unsupplied
-    /// Any other failure of the item's own.
-    case failed
-}
-
 /// What each of a drag out's items came to as its write ended, and the ``DragOutAccount`` of them all, which
 /// each item's end changes in constant time.
 struct DragOutTally {
@@ -23,7 +9,7 @@ struct DragOutTally {
         /// Written where it was dropped, in `folder`.
         case landed(folder: String)
         /// Failed as `failure` where it was dropped, in `folder`; `promised` when the item is a promise.
-        case failed(DragOutItemFailure, folder: String, promised: Bool)
+        case failed(ItemPullFailure, folder: String, promised: Bool)
     }
 
     /// Each ended item's outcome, by index: an item is landed or failed, never both.
@@ -31,7 +17,7 @@ struct DragOutTally {
     private var counts = DragOutAccount(items: 0)
     /// The entry the VM named of each item it could not read, by index; nil for an item it named none of. A
     /// subscript assignment of nil would drop the item.
-    private var unreadable: [Int: DragOutEntry?] = [:]
+    private var unreadable: [Int: ItemEntry?] = [:]
     /// How many items landed in each folder.
     private var landedIn: [String: Int] = [:]
     /// How many items were refused in each folder.

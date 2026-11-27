@@ -33,6 +33,7 @@ public enum ClipboardRetractionLog {
             case .settingChanged: "the clipboard setting changed"
             case .byFarSide: "\(far) withdrew its offer"
             case .superseded: "a copy of this side's replaced it"
+            case .cancelledHere: "a paste of it was cancelled"
             }
         return "Retracted \(taken) from the \(board) pasteboard\(peer)\(kept): \(why)"
     }

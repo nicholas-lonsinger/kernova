@@ -7,6 +7,7 @@ import KernovaKit
 import KernovaLogging
 import KernovaPlatformDarwin
 import KernovaSynchronization
+import KernovaTransferProgress
 import KernovaWire
 
 /// The guest's clipboard over the session peer's CLIPBOARD items: its ``ClipboardEnd`` fed the host's policy, the
@@ -56,8 +57,9 @@ final class GuestClipboard {
         // Its own provider registry: the providers it holds are the guest pasteboard's alone.
         end = ClipboardEnd(
             pasteboard: pasteboard, gate: .onCommand, stagingLabel: "agent", stagingRoot: stagingRoot,
-            pasteCeiling: { ceiling.withLock { $0 } }, providerRegistry: LazyClipboardProviderRegistry(),
-            logger: logger)
+            pasteCeiling: { ceiling.withLock { $0 } },
+            readouts: ClipboardPasteReadouts(reporter: ClipboardTransferReporter(), peerName: { "Mac" }),
+            providerRegistry: LazyClipboardProviderRegistry(), logger: logger)
         end.onEvent = { [weak self] in self?.heard($0) }
     }
 
@@ -82,8 +84,7 @@ final class GuestClipboard {
             events: { _, event in
                 switch event {
                 case .pullEnded(_, let id, let result): end.pullEnded(id, result)
-                // Nothing here reads how far a pull has landed, so that needs no hop.
-                case .pullAdvanced: break
+                case .pullAdvanced(_, let id, let landing): end.pullAdvanced(id, landing)
                 default: MainActorBridge.async { end.handle(event, on: link) }
                 }
             },

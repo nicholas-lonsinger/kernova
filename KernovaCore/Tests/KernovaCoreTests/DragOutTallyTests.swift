@@ -14,7 +14,7 @@ struct DragOutTallyTests {
         var account = DragOutAccount(items: items)
         var landedIn: Set<String> = []
         var refusedIn: Set<String> = []
-        var unreadEntries: [DragOutEntry?] = []
+        var unreadEntries: [ItemEntry?] = []
         for outcome in outcomes.values {
             switch outcome {
             case .landed(let folder):
@@ -46,7 +46,7 @@ struct DragOutTallyTests {
             .landed(folder: "/a"), .landed(folder: "/b"),
             .failed(.refused, folder: "/a", promised: false), .failed(.refused, folder: "/a", promised: true),
             .failed(.refused, folder: "/b", promised: false),
-            .failed(.unreadable(entry: DragOutEntry(["item\(index)", "x"])), folder: "/a", promised: false),
+            .failed(.unreadable(entry: ItemEntry(["item\(index)", "x"])), folder: "/a", promised: false),
             .failed(.unreadable(entry: nil), folder: "/b", promised: false),
             .failed(.unwritable, folder: "/b", promised: false), .failed(.unsupplied, folder: "/a", promised: true),
             .failed(.failed, folder: "/a", promised: false),
