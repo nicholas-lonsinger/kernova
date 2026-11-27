@@ -14,6 +14,7 @@ struct DragOutTallyTests {
         var account = DragOutAccount(items: items)
         var landedIn: Set<String> = []
         var refusedIn: Set<String> = []
+        var unreadEntries: [DragOutEntry?] = []
         for outcome in outcomes.values {
             switch outcome {
             case .landed(let folder):
@@ -23,24 +24,34 @@ struct DragOutTallyTests {
                 account.refused += 1
                 refusedIn.insert(folder)
                 if promised { account.refusedPromise = true }
-            case .failed(.unreadable, _, _): account.unreadable += 1
+            case .failed(.unreadable(let entry), _, _): unreadEntries.append(entry)
             case .failed(.unwritable, _, _): account.unwritable += 1
             case .failed(.unsupplied, _, _): account.unsupplied += 1
             case .failed(.failed, _, _): account.failed += 1
             }
         }
+        switch unreadEntries.count {
+        case 0: break
+        case 1: account.unreadable = .one(entry: unreadEntries[0])
+        default: account.unreadable = .several(count: unreadEntries.count)
+        }
         account.refusedBesideLanded = !landedIn.isDisjoint(with: refusedIn)
         return account
     }
 
-    /// Every outcome an item's write can come to, in two folders.
-    private static let outcomes: [DragOutTally.Outcome] = [
-        .landed(folder: "/a"), .landed(folder: "/b"),
-        .failed(.refused, folder: "/a", promised: false), .failed(.refused, folder: "/a", promised: true),
-        .failed(.refused, folder: "/b", promised: false), .failed(.unreadable, folder: "/a", promised: false),
-        .failed(.unwritable, folder: "/b", promised: false), .failed(.unsupplied, folder: "/a", promised: true),
-        .failed(.failed, folder: "/a", promised: false),
-    ]
+    /// Every outcome item `index`'s write can come to, in two folders; unreadable, it names an entry of its own
+    /// or none.
+    private static func outcomes(of index: Int) -> [DragOutTally.Outcome] {
+        [
+            .landed(folder: "/a"), .landed(folder: "/b"),
+            .failed(.refused, folder: "/a", promised: false), .failed(.refused, folder: "/a", promised: true),
+            .failed(.refused, folder: "/b", promised: false),
+            .failed(.unreadable(entry: DragOutEntry(["item\(index)", "x"])), folder: "/a", promised: false),
+            .failed(.unreadable(entry: nil), folder: "/b", promised: false),
+            .failed(.unwritable, folder: "/b", promised: false), .failed(.unsupplied, folder: "/a", promised: true),
+            .failed(.failed, folder: "/a", promised: false),
+        ]
+    }
 
     /// Three items reach one folder holding a landed and a refused item while
     /// another folder's counts change; two items reach every replacement of
@@ -49,7 +60,7 @@ struct DragOutTallyTests {
         "every sequence of up to `depth` ends of `items` items' writes keeps the account counted from scratch",
         arguments: [(items: 2, depth: 4), (items: 3, depth: 3)])
     func incrementalMatchesScratch(items: Int, depth: Int) {
-        let events = (0..<items).flatMap { index in Self.outcomes.map { (index, $0) } }
+        let events = (0..<items).flatMap { index in Self.outcomes(of: index).map { (index, $0) } }
         var sequences: [[(Int, DragOutTally.Outcome)]] = [[]]
         for _ in 0..<depth {
             sequences = sequences.flatMap { sequence in events.map { sequence + [$0] } }

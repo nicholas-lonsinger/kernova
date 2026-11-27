@@ -53,4 +53,19 @@ struct ClipboardTransferReporterTests {
         #expect(olderStopped.withLock { $0 })
         #expect(!newerStopped.withLock { $0 })
     }
+
+    // MARK: - The log
+
+    @Test("the public log line of a drag out naming the entry the VM couldn't read holds none of its names")
+    func unreadEntryStaysOutOfTheLog() throws {
+        let names = ["Tax Returns", "Q3", "return.pdf"]
+        var account = DragOutAccount(items: 3)
+        account.landed = 2
+        account.unreadable = .one(entry: DragOutEntry(names))
+        let finish = ClipboardTransferFinish(
+            gesture: .dragOut, outcome: .failed(.dragOutShortfall(account)), peerName: "macOS TEST")
+
+        let line = try #require(finish.logLine)
+        for name in names { #expect(!line.contains(name), "\(line)") }
+    }
 }

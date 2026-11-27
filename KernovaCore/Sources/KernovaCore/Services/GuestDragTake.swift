@@ -1183,9 +1183,14 @@ package final class GuestDragTake: GuestDragTaking {
         case .itemRepresentationUnavailable: .item(.unsupplied)
         case .writeFailed where error.posixErrno == EPERM: .item(.refused)
         case .writeFailed, .itemUnpackRefused, .itemDecmpfsRefused: .item(.unwritable)
-        case .readFailed: .item(.unreadable)
+        case .readFailed: .item(.unreadable(entry: unreadEntry(of: error)))
         default: .item(.failed)
         }
+    }
+
+    /// The entry a READ_FAILED `error` names, bytes that aren't UTF-8 replaced, or nil when it names none.
+    private static func unreadEntry(of error: WireError) -> DragOutEntry? {
+        DragOutEntry((error.item?.path ?? []).map { String(decoding: $0, as: UTF8.self) })
     }
 
     private static func describe(_ result: DragTakeResult) -> String {
