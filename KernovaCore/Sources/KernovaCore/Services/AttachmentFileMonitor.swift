@@ -5,10 +5,7 @@ import KernovaLogging
 /// (external storage disks, removable media, shared directories).
 ///
 /// One `DispatchSourceFileSystemObject` per unique parent directory, plus the
-/// full re-probe `revalidate()` runs. Existence probes must go through each
-/// path's security bookmark: under the sandbox a raw `fileExists` on an
-/// out-of-container path is denied and would mark every present attachment
-/// missing.
+/// full re-probe `revalidate()` runs.
 ///
 /// Watching is best-effort: a file-scoped bookmark never grants its parent
 /// directory, so `open(parent, O_EVTONLY)` fails for most external attachments and

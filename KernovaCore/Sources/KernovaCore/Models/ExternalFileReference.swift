@@ -78,7 +78,10 @@ extension ExternalFileReference.Kind {
 
 extension ScopedAccess {
     /// Opens `reference`'s bookmark, reporting the healed `(path, bookmark)`
-    /// when the resolved reality diverges from what the reference carries.
+    /// when the resolved reality diverges from what the reference carries: the
+    /// path the bookmark resolves to, and a fresh bookmark where the system
+    /// grants one (``SecurityScopedBookmark/renewal(for:)``), else the
+    /// reference's own.
     ///
     /// `nil` when the reference has no bookmark or the bookmark no longer
     /// resolves; the caller then falls through to the raw path.
@@ -98,8 +101,9 @@ extension ScopedAccess {
         guard scope.isStale || moved else { return (scope, nil) }
         // Re-creating while the scope is active is Apple's documented
         // stale-bookmark pattern.
-        guard let fresh = SecurityScopedBookmark.make(for: scope.url) else { return (scope, nil) }
-        return (scope, (resolvedPath, fresh))
+        let fresh = SecurityScopedBookmark.renewal(for: scope.url)
+        guard moved || fresh != nil else { return (scope, nil) }
+        return (scope, (resolvedPath, fresh ?? bookmark))
     }
 }
 

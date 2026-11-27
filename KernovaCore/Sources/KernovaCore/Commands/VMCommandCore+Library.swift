@@ -957,10 +957,9 @@ extension VMCommandCore {
     ///
     /// One detached pass answers both: the syscalls block, so a stale or
     /// unreachable mount must not reach the main actor. Existence probes go
-    /// through each reference's bookmark — a raw check on an out-of-container
-    /// path is sandbox-denied and would render every row as missing — and
-    /// sharing compares the identity sets ``ExternalFileReference`` derives,
-    /// which is what the trash itself acts on.
+    /// through each reference's bookmark, and sharing compares the identity
+    /// sets ``ExternalFileReference`` derives, which is what the trash itself
+    /// acts on.
     func externalAttachments(for instance: VMInstance) async -> [ExternalAttachment] {
         let references = offeredExternalReferences(for: instance)
         guard !references.isEmpty else { return [] }

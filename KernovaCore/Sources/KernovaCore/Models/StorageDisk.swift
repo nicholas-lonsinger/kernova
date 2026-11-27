@@ -27,7 +27,7 @@ package struct StorageDisk: Codable, Sendable, Equatable {
     ///
     /// Only meaningful for external disks; `nil` for internal (bundle-relative)
     /// disks and when bookmark creation failed — resolution then falls back to
-    /// the raw path, surfacing the missing-file UX if the sandbox denies it.
+    /// the raw path.
     package var bookmark: Data?
 
     /// Free-form user note, empty when none was entered.
