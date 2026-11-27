@@ -147,7 +147,7 @@ final class VMRemovableMediaReconciler {
         // so a row that failed mid-swap restores its original path/readOnly. A
         // rebuilt entry keeps its persisted bookmark only when the config row still
         // matches the live path — a mid-swap rollback can't recover the old path's
-        // bookmark, so it rolls back bookmark-less and the missing-file UX takes over.
+        // bookmark, so it rolls back bookmark-less.
         let configuredByID = Dictionary(
             (instance.configuration.removableMedia ?? []).map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first })

@@ -5,15 +5,13 @@ import KernovaLogging
 /// Creation and resolution of app-scoped security bookmarks — the sandbox's
 /// mechanism for persisting a user's open/save-panel grant across launches.
 ///
-/// Runtime behavior here, and in ``ScopedAccess`` and `RuntimeFileAccess`, is
-/// untested by construction: bookmark creation and resolution need a real
-/// open/save-panel grant, which only a user driving the panel can mint.
-///
 /// Every panel pick site converts its URL through ``capture(_:)`` and stores the
 /// resulting `(path, bookmark)` pair on the model; every access site resolves it
 /// back into live access via ``ScopedAccess``. A `nil` bookmark falls through to
-/// the raw path, which the sandbox denies for out-of-container files — surfacing
-/// the missing-file UX, from which re-picking mints a fresh bookmark.
+/// the raw path, which the sandbox refuses to open for a file no grant or
+/// entitlement covers
+/// (docs/research/2026-11-18-pasteboard-file-grants.md, finding 8); re-picking
+/// mints a fresh bookmark.
 package enum SecurityScopedBookmark {
     fileprivate static let logger = KernovaLogger(
         subsystem: "app.kernova", category: "SecurityScopedBookmark")
@@ -31,16 +29,29 @@ package enum SecurityScopedBookmark {
         (url.path(percentEncoded: false), make(for: url))
     }
 
-    /// Creates app-scoped bookmark data for `url`, or `nil` (logged) when
-    /// the system refuses — callers store the raw path alone and rely on
-    /// the nil-bookmark fall-through.
+    /// Creates app-scoped bookmark data for `url`, or `nil` (logged) when the
+    /// system refuses — callers store the raw path alone and rely on the
+    /// nil-bookmark fall-through.
+    ///
+    /// The bookmark grants read-write access, or read access alone where the
+    /// system refuses that: a read-write scope is refused for a file the
+    /// process can only read
+    /// (docs/research/2026-11-18-pasteboard-file-grants.md, finding 15).
     static func make(for url: URL) -> Data? {
+        let refusal: any Error
         do {
-            return try url.bookmarkData(
-                options: .withSecurityScope,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
+            return try data(for: url, scope: .withSecurityScope)
+        } catch {
+            refusal = error
+        }
+        do {
+            let readOnly = try data(
+                for: url, scope: [.withSecurityScope, .securityScopeAllowOnlyReadAccess])
+            logger.log(
+                .notice,
+                "Bookmarked \(url.path(percentEncoded: false), privacy: .private) for read access alone; read-write was refused: \(refusal.localizedDescription, privacy: .public)"
             )
+            return readOnly
         } catch {
             logger.log(
                 .error,
@@ -48,6 +59,29 @@ package enum SecurityScopedBookmark {
             )
             return nil
         }
+    }
+
+    /// A fresh bookmark for `url`, made under the active scope of the bookmark
+    /// it replaces, or `nil` (logged) when the system refuses a read-write one —
+    /// the caller keeps the bookmark it has.
+    ///
+    /// Read-write alone: nothing Kernova stores says which scope the replaced
+    /// bookmark holds, and a read-only bookmark stored in place of a read-write
+    /// one is never widened again.
+    static func renewal(for url: URL) -> Data? {
+        do {
+            return try data(for: url, scope: .withSecurityScope)
+        } catch {
+            logger.log(
+                .notice,
+                "Kept the bookmark of \(url.path(percentEncoded: false), privacy: .private); a fresh one was refused: \(error.localizedDescription, privacy: .public)"
+            )
+            return nil
+        }
+    }
+
+    private static func data(for url: URL, scope: URL.BookmarkCreationOptions) throws -> Data {
+        try url.bookmarkData(options: scope, includingResourceValuesForKeys: nil, relativeTo: nil)
     }
 
     /// Resolution options for an advisory read: mounts nothing and puts no
@@ -64,8 +98,8 @@ package enum SecurityScopedBookmark {
 
     /// Runs `body` with the bookmark's scope active, passing the resolved
     /// URL (which tracks a moved file) — or `fallback` with no scope when
-    /// the bookmark is absent or dead, letting the raw-path attempt surface
-    /// the usual sandbox denial.
+    /// the bookmark is absent or dead, where an open of the raw path meets
+    /// the sandbox's own refusal.
     static func withResolvedURL<T>(
         bookmark: Data?, fallback: URL,
         options: URL.BookmarkResolutionOptions = [.withSecurityScope],

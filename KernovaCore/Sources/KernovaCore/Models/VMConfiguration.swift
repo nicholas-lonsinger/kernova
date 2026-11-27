@@ -861,8 +861,8 @@ extension VMConfiguration {
         return references
     }
 
-    /// Writes a resolved path and freshly minted bookmark back to the field
-    /// `reference` was projected from.
+    /// Writes a heal's resolved path and bookmark back to the field `reference`
+    /// was projected from.
     ///
     /// A list entry the id no longer matches — removed between the projection
     /// and the write-back — is a no-op.
