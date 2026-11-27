@@ -86,12 +86,13 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
     /// An end over `pasteboard` offering as `gate` says, its writes' providers held by `providerRegistry` and
     /// recorded in `ledger`, landing the far side's representations, and calling in its own copied promises, in
     /// clipboard staging labelled `stagingLabel` under `stagingRoot`, under the paste ceiling `pasteCeiling` reads
-    /// each time it is needed. It offers nothing until a connection carries the clipboard and it may offer.
+    /// each time it is needed, its pastes' pulls reported as `readouts` says. It offers nothing until a connection
+    /// carries the clipboard and it may offer.
     public init(
         pasteboard: any ClipboardPasteboard, gate: ClipboardOfferGate, stagingLabel: String,
         stagingRoot: ProcessStagingRoot, pasteCeiling: @escaping @Sendable () -> Int,
-        providerRegistry: LazyClipboardProviderRegistry = .shared, ledger: ClipboardWriteLedger = .shared,
-        logger: KernovaLogger
+        readouts: ClipboardPasteReadouts, providerRegistry: LazyClipboardProviderRegistry = .shared,
+        ledger: ClipboardWriteLedger = .shared, logger: KernovaLogger
     ) {
         self.pasteboard = pasteboard
         self.pasteCeiling = pasteCeiling
@@ -100,7 +101,7 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
             pasteboard: pasteboard, providerRegistry: providerRegistry, ledger: ledger)
         exchange = ClipboardItemExchange(
             side: Role.side, gate: gate, stagingLabel: stagingLabel, stagingRoot: stagingRoot,
-            pasteCeiling: pasteCeiling, logger: logger)
+            pasteCeiling: pasteCeiling, readouts: readouts, logger: logger)
         promiseStaging = ClipboardFileStaging(label: "\(stagingLabel)-promises", root: stagingRoot)
         exchange.onRemoteOffer = { [weak self] in self?.publish($0) }
         exchange.onRemoteOfferEnded = { [weak self] in self?.remoteEnded($0, $1) }
@@ -164,7 +165,8 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
 
     // MARK: The connection's events
 
-    /// Hands `event`, of the connection `link` names, to this end; a pull's end goes to ``pullEnded(_:_:)``.
+    /// Hands `event`, of the connection `link` names, to this end; a pull's progress and end go to
+    /// ``pullAdvanced(_:_:)`` and ``pullEnded(_:_:)``.
     public func handle(_ event: ItemTransferEvent, on link: Role.Link) {
         exchange.handle(event, on: Role.itemCalls(link))
     }
@@ -172,6 +174,12 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
     /// A pull of the far side's offer ended: handled where it arrives, on any queue.
     nonisolated public func pullEnded(_ id: ItemPullID, _ result: ItemPullResult) {
         exchange.pullEnded(id, result)
+    }
+
+    /// A pull of the far side's offer landed further: handled where it arrives, on any queue, in order with its
+    /// end.
+    nonisolated public func pullAdvanced(_ id: ItemPullID, _ landing: ItemLandingProgress) {
+        exchange.pullAdvanced(id, landing)
     }
 
     /// The content of the representation of this side's offer that pull `id`'s `request` pulls
@@ -346,16 +354,16 @@ public final class ClipboardEnd<Role: ClipboardEndRole> {
     }
 
     /// The far side's offer stopped being this end's clipboard: a write of it the pasteboard still holds is
-    /// retracted — every promise when the far side withdrew it, and what no paste had when the link or
-    /// the setting ended it, since the far side may hold it still. This side's own copy replacing it replaced the
-    /// write already.
+    /// retracted — every promise when the far side withdrew it or a paste of it was cancelled here, since nothing
+    /// more of it can be pulled, and what no paste had when the link or the setting ended it, since the far side
+    /// may hold it still. This side's own copy replacing it replaced the write already.
     private func remoteEnded(_ remote: ClipboardRemoteOffer, _ ending: ClipboardItemExchange.RemoteEnding) {
         if published?.remote === remote { published = nil }
         let withdrawal: ClipboardWithdrawal
         switch ending {
         case .superseded: return
         case .linkLost, .settingChanged: withdrawal = .unread
-        case .byFarSide: withdrawal = .everyPromise
+        case .byFarSide, .cancelledHere: withdrawal = .everyPromise
         }
         guard let retraction = publisher.retractWrite(servingOffer: remote.token, withdrawing: withdrawal) else {
             return

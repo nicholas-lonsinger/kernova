@@ -481,7 +481,8 @@ package final class VMInstance {
         let hubClipboard = HubClipboardService(
             pasteboard: hostPasteboard, gate: Self.clipboardOfferGate(for: bundle.configuration), sink: itemSink,
             stagingRoot: stagingRoot, stagingKey: bundle.configuration.id.uuidString,
-            maxPasteBytes: { preferences.clipboardMaxPasteBytes }, reporter: clipboardTransfers)
+            maxPasteBytes: { preferences.clipboardMaxPasteBytes }, reporter: clipboardTransfers
+        ) { [snapshots] in snapshots.instance?.name ?? "VM" }
         self.hubClipboard = hubClipboard
         let dropService = HubDropService(stagingRoot: stagingRoot, reporter: clipboardTransfers)
         self.dropService = dropService
@@ -519,7 +520,6 @@ package final class VMInstance {
             self?.clipboardRefusal = refusal
         }
         hubClipboard.hub = agentHub
-        hubClipboard.label = { [weak self] in self?.name ?? "VM" }
     }
 
     deinit {

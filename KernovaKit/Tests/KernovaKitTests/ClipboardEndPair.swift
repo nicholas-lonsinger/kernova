@@ -5,6 +5,7 @@ import KernovaAgentRuntime
 import KernovaClipboardItems
 import KernovaLogging
 import KernovaTestSupport
+import KernovaTransferProgress
 import KernovaWire
 
 @testable import KernovaKit
@@ -63,12 +64,14 @@ final class ClipboardEndPair {
         self.holdsSteps = holdsSteps
         host = ClipboardEnd(
             pasteboard: hostPasteboard, gate: gate, stagingLabel: "pair-host", stagingRoot: staging,
-            pasteCeiling: pasteCeiling, providerRegistry: LazyClipboardProviderRegistry(),
-            ledger: ClipboardWriteLedger(), logger: Self.logger)
+            pasteCeiling: pasteCeiling,
+            readouts: ClipboardPasteReadouts(reporter: ClipboardTransferReporter(), peerName: { "guest" }),
+            providerRegistry: LazyClipboardProviderRegistry(), ledger: ClipboardWriteLedger(), logger: Self.logger)
         guest = ClipboardEnd(
             pasteboard: guestPasteboard, gate: gate, stagingLabel: "pair-guest", stagingRoot: staging,
-            pasteCeiling: pasteCeiling, providerRegistry: LazyClipboardProviderRegistry(),
-            ledger: ClipboardWriteLedger(), logger: Self.logger)
+            pasteCeiling: pasteCeiling,
+            readouts: ClipboardPasteReadouts(reporter: ClipboardTransferReporter(), peerName: { "host" }),
+            providerRegistry: LazyClipboardProviderRegistry(), ledger: ClipboardWriteLedger(), logger: Self.logger)
         for board in [hostPasteboard, guestPasteboard] {
             board.holdsReads = holdsSteps
             board.readsChanged = { [work] in work.changed.notify() }

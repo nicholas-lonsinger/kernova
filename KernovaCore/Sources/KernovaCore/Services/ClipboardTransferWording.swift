@@ -84,10 +84,10 @@ package struct ClipboardTransferWording: Equatable {
 
         case (.tooLarge(let limitBytes), _):
             return ClipboardTransferWording(
-                headline: "Clipboard not pasted into \(vm).",
+                headline: "Clipboard not pasted from \(vm).",
                 message:
-                    "Too large to paste into the guest — over the \(ClipboardPasteLimit.displayLimit(limitBytes)) clipboard transfer limit",
-                menuLine: "Clipboard: too large to paste into the guest")
+                    "Too large to paste on your Mac — over the \(ClipboardPasteLimit.displayLimit(limitBytes)) clipboard transfer limit.",
+                menuLine: "Clipboard: too large to paste on your Mac")
 
         case (.peerReported(let code), .drop):
             // The drop did not finish rather than nothing was saved: a batch that
@@ -110,11 +110,6 @@ package struct ClipboardTransferWording: Equatable {
             }
             return ClipboardTransferWording(
                 headline: "Files not copied to \(vm).", message: message, menuLine: menuLine)
-
-        case (.peerReported, _):
-            return ClipboardTransferWording(
-                headline: "Clipboard not pasted into \(vm).", message: "Clipboard transfer failed on the guest side",
-                menuLine: "Clipboard: paste into the guest failed")
 
         case (.filesLeftOut(let count, let limitBytes), .copy):
             return ClipboardTransferWording(
@@ -179,11 +174,30 @@ package struct ClipboardTransferWording: Equatable {
                 message: "The guest\u{2019}s clipboard couldn\u{2019}t be copied to the Mac.",
                 menuLine: "Clipboard: copy from the guest failed")
 
-        case (.transferFailed, _):
+        case (.transferFailed, _), (.itemFailed(.failed), _), (.peerReported, _):
             return ClipboardTransferWording(
                 headline: "Clipboard not pasted from \(vm).",
                 message: "The transfer from the guest failed, so the paste didn't finish.",
                 menuLine: "Clipboard: paste from the guest failed")
+
+        case (.itemFailed(.unreadable(let entry)), _):
+            let unread = entry.map { quoted($0.components.joined(separator: "/")) } ?? "what was copied"
+            return ClipboardTransferWording(
+                headline: "Clipboard not pasted from \(vm).",
+                message: "The VM couldn't read \(unread), so the paste didn't finish.",
+                menuLine: "Clipboard: the VM couldn't read the copy")
+
+        case (.itemFailed(.unsupplied), _):
+            return ClipboardTransferWording(
+                headline: "Clipboard not pasted from \(vm).",
+                message: "The VM could no longer supply what was copied, so the paste didn't finish.",
+                menuLine: "Clipboard: the VM could no longer supply the copy")
+
+        case (.itemFailed(.refused), _), (.itemFailed(.unwritable), _):
+            return ClipboardTransferWording(
+                headline: "Clipboard not pasted from \(vm).",
+                message: "What was copied couldn't be saved on this Mac, so the paste didn't finish.",
+                menuLine: "Clipboard: the paste couldn't be saved on this Mac")
 
         case (.dragOutShortfall(let account), _):
             return shortfallWording(account, vm: vm)
@@ -239,7 +253,6 @@ package struct ClipboardTransferWording: Equatable {
         case .forward: return "Clipboard not copied to \(vm)."
         case .drop: return "Files not copied to \(vm)."
         case .dragOut: return "Files not copied from \(vm)."
-        case .peerPaste: return "Clipboard not pasted into \(vm)."
         case .paste: return "Clipboard not pasted from \(vm)."
         }
     }
@@ -271,7 +284,7 @@ package struct ClipboardTransferWording: Equatable {
         case .tooLarge:
             message = "The drag holds more items than can be dragged out of the VM at once."
             menuLine = "Drag: too many items to drag out at once"
-        case .transferFailed, .peerReported, .itemsSkipped, .itemsUnreadable, .sendFailed, .dropStopped,
+        case .transferFailed, .itemFailed, .peerReported, .itemsSkipped, .itemsUnreadable, .sendFailed, .dropStopped,
             .nothingToCopy, .filesLeftOut:
             message = "The transfer from the VM failed, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"

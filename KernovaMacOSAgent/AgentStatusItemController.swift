@@ -50,7 +50,7 @@ final class AgentStatusItemController: NSObject, NSMenuDelegate {
 
         menu.delegate = self
         menu.autoenablesItems = false
-        statusItem.menu = menu
+        calloutSlot.attachDropdown()
         setIcon(for: connectionState())
     }
 

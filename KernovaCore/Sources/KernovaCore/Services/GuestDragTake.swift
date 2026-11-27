@@ -79,7 +79,7 @@ package enum GuestDragWriteError: Error, Equatable, Sendable {
     /// The drag's transfers failed, for the reason the drag's readout reports.
     case failed(ClipboardTransferFailure)
     /// This item failed for a reason of its own, and the drag's other writes went on.
-    case itemFailed(DragOutItemFailure)
+    case itemFailed(ItemPullFailure)
 }
 
 /// What a take hears from the guest on its stream.
@@ -431,7 +431,7 @@ package final class GuestDragTake: GuestDragTaking {
         /// For a reason every write of the take shares, which ends them all.
         case shared(ClipboardTransferFailure)
         /// For a reason of the item's own.
-        case item(DragOutItemFailure)
+        case item(ItemPullFailure)
     }
 
     nonisolated private static let logger = KernovaLogger(
@@ -1185,20 +1185,12 @@ package final class GuestDragTake: GuestDragTaking {
     /// written: shared when every write shares its cause — the offer or its
     /// connection gone, or this Mac's volume full.
     static func failure(for error: WireError, owed: Int) -> PullFailure {
-        switch error.code {
-        case .itemOfferStale, .cancelled, .shuttingDown: .shared(.interrupted(fileCount: owed))
-        case .writeFailed where error.posixErrno == ENOSPC: .shared(.diskFull(needed: nil, available: nil))
-        case .itemRepresentationUnavailable: .item(.unsupplied)
-        case .writeFailed where error.posixErrno == EPERM: .item(.refused)
-        case .writeFailed, .itemUnpackRefused, .itemDecmpfsRefused: .item(.unwritable)
-        case .readFailed: .item(.unreadable(entry: unreadEntry(of: error)))
-        default: .item(.failed)
+        let failure = ClipboardTransferFailure(pullEndedWith: error, fileCount: owed)
+        switch failure {
+        case .itemFailed(let own): return .item(own)
+        case .interrupted, .diskFull: return .shared(failure)
+        default: return .item(.failed)
         }
-    }
-
-    /// The entry a READ_FAILED `error` names, bytes that aren't UTF-8 replaced, or nil when it names none.
-    private static func unreadEntry(of error: WireError) -> DragOutEntry? {
-        DragOutEntry((error.item?.path ?? []).map { String(decoding: $0, as: UTF8.self) })
     }
 
     private static func describe(_ result: DragTakeResult) -> String {

@@ -138,7 +138,7 @@ package final class HubDropService: Sendable {
         }
         guard let failure = Self.failure(released: body, items: items, lost: offer.lost) else {
             Self.logger.log(.notice, "A drop landed all \(items, privacy: .public) item(s)")
-            return reporter.completed(.drop, startedAt: offer.began)
+            return reporter.completed(startedAt: offer.began)
         }
         Self.logger.log(
             .notice,

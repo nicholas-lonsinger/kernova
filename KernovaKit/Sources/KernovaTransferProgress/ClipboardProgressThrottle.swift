@@ -62,6 +62,16 @@ struct FetchProgressCoalescer: Sendable {
         lastForwardAt = now
     }
 
+    /// Takes `bytesTransferred`, below what was last forwarded, as where the
+    /// count stands — a transfer starting over lowered it — so the next update
+    /// past it forwards at once rather than waiting to pass a count that no
+    /// longer describes anything.
+    mutating func rebase(bytesTransferred: UInt64) {
+        guard bytesTransferred < lastForwardedBytes else { return }
+        lastForwardedBytes = bytesTransferred
+        lastForwardAt = nil
+    }
+
     /// Whether `(bytesTransferred, totalBytes)`, observed at `now`, should be
     /// forwarded, advancing the watermarks when it should.
     mutating func shouldForward(bytesTransferred: UInt64, totalBytes: UInt64, at now: EngineInstant) -> Bool {

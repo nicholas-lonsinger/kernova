@@ -4,8 +4,7 @@ import FoundationEssentials
 import Foundation
 #endif
 
-/// Smoothed throughput and time-remaining estimate for a monotonically growing
-/// byte count.
+/// Smoothed throughput and time-remaining estimate for a growing byte count.
 ///
 /// A raw Δbytes/Δt reading swings wildly across a vsock transfer (a write parked
 /// on a full socket buffer reads as 0 B/s, the drain after it as a burst), so
@@ -36,10 +35,11 @@ struct TransferRateEstimator: Equatable, Sendable {
     /// Folds a cumulative byte count observed at `seconds` (any monotonic
     /// timebase) into the average.
     ///
-    /// A regression in `bytes` is ignored rather than folded in as negative
-    /// throughput.
+    /// A regression in `bytes` — a transfer starting over — moves the anchor
+    /// back to it rather than folding in negative throughput, so the bytes
+    /// after it are measured from there.
     mutating func record(bytes: UInt64, seconds: TimeInterval) {
-        guard let previousBytes = anchorBytes, let previousSeconds = anchorSeconds else {
+        guard let previousBytes = anchorBytes, let previousSeconds = anchorSeconds, bytes >= previousBytes else {
             anchorBytes = bytes
             anchorSeconds = seconds
             return

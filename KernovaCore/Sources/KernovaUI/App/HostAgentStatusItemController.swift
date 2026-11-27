@@ -125,7 +125,7 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
 
         menu.delegate = self
         menu.autoenablesItems = false
-        statusItem.menu = menu
+        transientPopover.attachDropdown()
         setIcon()
         updateTooltip()
 
@@ -213,12 +213,10 @@ final class HostAgentStatusItemController: NSObject, NSMenuDelegate {
     /// A notice the status item can't carry is dropped rather than deferred:
     /// the dropdown's line, which reads the same refusal for as long as it
     /// stands, is the fallback, and a refusal replayed later
-    /// would interrupt for something the user has moved past. A refusal the
-    /// *guest* user's gesture produced is not presented here at all — the
-    /// guest's own status item announces it over there.
+    /// would interrupt for something the user has moved past.
     private func presentPendingNotices() {
         for instance in viewModel.instances {
-            guard let finish = instance.clipboardRefusal, finish.gesture.isMadeHere,
+            guard let finish = instance.clipboardRefusal,
                 let wording = ClipboardTransferWording.wording(
                     for: finish, vmName: instance.name),
                 noticeLedger.route(finish.date, for: instance.instanceID, dropdownIsOpen: isMenuOpen)
