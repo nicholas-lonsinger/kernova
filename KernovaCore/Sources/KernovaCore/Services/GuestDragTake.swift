@@ -1134,11 +1134,15 @@ package final class GuestDragTake: GuestDragTaking {
         failOwed()
     }
 
-    /// Fails every write still owed as cancelled: the readout's Cancel, which
-    /// ended the readout first, or the app terminating.
+    /// Ends the writes as cancelled, the readout with them: every write still
+    /// owed fails as cancelled, and a readout still live ends cancelled. The
+    /// readout's Cancel reaches here once it has ended the readout; the app
+    /// terminating reaches here first, and the readout's end calls back in,
+    /// to find the writes already ended.
     private func cancelWrites() {
         guard terminal == nil else { return }
         terminal = .cancelled
+        readout?.requestCancel()
         for cancel in inFlight.values { cancel() }
         failOwed()
         retireIfDone()
