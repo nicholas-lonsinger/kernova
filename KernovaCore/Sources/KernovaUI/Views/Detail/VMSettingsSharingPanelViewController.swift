@@ -442,6 +442,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
                 isMissing: isMissing,
                 missingPath: isMissing ? directory.path : nil,
                 readOnly: directory.readOnly,
+                readAccessOnly: directory.readAccessOnly,
                 controlsEnabled: readOnlyOffer.isOffered,
                 ejectEnabled: removeOffer.isOffered)
         }
@@ -449,13 +450,7 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
         sharedList?.update(
             models,
             makeRow: { model in makeSharedRow(model) },
-            applyRow: { model, row in
-                row.update(
-                    title: model.title, notes: model.notes, subtitle: model.subtitle,
-                    iconSystemName: model.iconSystemName, missingPath: model.missingPath,
-                    readOnly: model.readOnly, controlsEnabled: model.controlsEnabled,
-                    ejectEnabled: model.ejectEnabled)
-            })
+            applyRow: { model, row in row.update(model) })
     }
 
     /// Builds one shared-directory row.
@@ -474,9 +469,9 @@ final class VMSettingsSharingPanelViewController: NSViewController, VMSettingsPa
             icon: icon,
             subtitle: makeAttachmentSubtitleLabel(path: model.subtitle, isMissing: model.isMissing),
             readOnlyToggle: makeGroupedFormReadOnlySwitch(
-                id: model.id, isOn: model.readOnly, enabled: model.controlsEnabled, target: self,
-                action: #selector(sharedReadOnlyToggled)),
+                id: model.id, isOn: model.readOnly, target: self, action: #selector(sharedReadOnlyToggled)),
             readOnlyCaption: makeGroupedFormReadOnlyCaption(),
+            readAccessOnly: model.readAccessOnly,
             ejectButton: makeGroupedFormEjectButton(
                 id: model.id, enabled: model.ejectEnabled, target: self,
                 action: #selector(sharedDeleteTapped)),

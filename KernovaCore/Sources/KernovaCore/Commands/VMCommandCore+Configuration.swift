@@ -413,7 +413,8 @@ extension VMCommandCore {
     ///
     /// The share answered is one the guest reaches as `readOnly` says: a
     /// folder any share of which the guest reaches with the other access is
-    /// refused, since an add changes no share it finds.
+    /// refused, since an add changes no share it finds, and so is a writable
+    /// share of a folder whose bookmark grants reading alone.
     ///
     /// Resolve, gate, then grant: the VM, its state and what `path` names decide
     /// the answer before the authority is consulted, so a selector no VM
@@ -446,6 +447,10 @@ extension VMCommandCore {
         // is one the sandbox does not admit (observed 2026-11-26, macOS
         // 27.2.1), so the share is of the folder the path resolves to.
         let file = PickedFile(picking: folder.resolvingSymlinksInPath())
+        if !readOnly, file.bookmark?.access == .readOnly {
+            throw readAccessOnlyRefusal(
+                ReadAccessOnly(sharingWritable: file.path), verb: .editSharedDirectory, on: instance)
+        }
         try addSharedDirectories([file], readOnly: readOnly, to: instance)
         guard let shared = try share(at: file.path, on: instance, sharedReadOnly: readOnly) else {
             throw itemNotFound(instance, item: "shared directory \u{201C}\(file.path)\u{201D}")
@@ -547,7 +552,7 @@ extension SharedDirectory {
     func answers(to folder: NamedFolder) -> Bool {
         guard !isListed(at: folder) else { return true }
         guard let identity = folder.identity else { return false }
-        let target = bookmark.flatMap(SecurityScopedBookmark.resolvedTargetPath) ?? path
+        let target = bookmark.flatMap { SecurityScopedBookmark.resolvedTargetPath($0.data) } ?? path
         return FileIdentity(at: URL(fileURLWithPath: target).resolvingSymlinksInPath()) == identity
     }
 

@@ -253,6 +253,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 isMissing: isMissing,
                 missingPath: isMissing ? disk.path : nil,
                 readOnly: disk.readOnly,
+                readAccessOnly: disk.readAccessOnly,
                 controlsEnabled: canEditStorageDisks,
                 ejectEnabled: canEditStorageDisks)
         }
@@ -263,7 +264,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                     model: model, kind: .storage,
                     readOnlySelector: #selector(storageReadOnlyToggled))
             },
-            applyRow: applyAttachmentRow)
+            applyRow: { model, row in row.update(model) })
     }
 
     private func refreshRemovableList() {
@@ -280,6 +281,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                 isMissing: isMissing,
                 missingPath: isMissing ? item.path : nil,
                 readOnly: item.readOnly,
+                readAccessOnly: item.readAccessOnly,
                 controlsEnabled: canEditRemovableMedia,
                 ejectEnabled: canEditRemovableMedia)
         }
@@ -290,15 +292,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
                     model: model, kind: .removable,
                     readOnlySelector: #selector(removableReadOnlyToggled))
             },
-            applyRow: applyAttachmentRow)
-    }
-
-    private func applyAttachmentRow(_ model: VMSettingsRenderedRow, to row: AttachmentRowView) {
-        row.update(
-            title: model.title, notes: model.notes, subtitle: model.subtitle,
-            iconSystemName: model.iconSystemName, missingPath: model.missingPath,
-            readOnly: model.readOnly, controlsEnabled: model.controlsEnabled,
-            ejectEnabled: model.ejectEnabled)
+            applyRow: { model, row in row.update(model) })
     }
 
     private func refresh(_ kind: AttachmentKind) {
@@ -341,9 +335,9 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             subtitle: makeAttachmentSubtitleLabel(
                 path: model.missingPath ?? model.subtitle, isMissing: model.isMissing),
             readOnlyToggle: makeGroupedFormReadOnlySwitch(
-                id: model.id, isOn: model.readOnly, enabled: model.controlsEnabled,
-                target: self, action: readOnlySelector),
+                id: model.id, isOn: model.readOnly, target: self, action: readOnlySelector),
             readOnlyCaption: makeGroupedFormReadOnlyCaption(),
+            readAccessOnly: model.readAccessOnly,
             ejectButton: ejectButton)
         row.onEditBegan = { [weak self] id in self?.list(kind)?.activeEdit = id }
         row.onRenameCommitted = { [weak self] _, newLabel in
@@ -484,7 +478,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             var shared: [String] = []
             if !disk.isInternal {
                 shared = await viewModel.sharingVMNames(
-                    forPath: disk.path, bookmark: disk.bookmark, excluding: instance)
+                    forPath: disk.path, bookmark: disk.bookmark?.data, excluding: instance)
             }
             // The resolve suspends, so the panel may have rebuilt or closed
             // under it — re-read the window and the row before presenting.
@@ -539,6 +533,8 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let label: String
         let image: DiskImageReference
         let readOnly: Bool
+        /// Why Read Only stays on, which takes the toggle away.
+        let readAccessOnly: ReadAccessOnly?
         let busText: String
         let notes: String
         /// Rename / Read Only / Eject gating, read from the capability the
@@ -559,7 +555,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             guard let disk = currentStorageDisks.first(where: { $0.id == ref.id }) else { return nil }
             return AttachmentInfo(
                 id: disk.id, label: disk.label, image: disk.imageReference,
-                readOnly: disk.readOnly,
+                readOnly: disk.readOnly, readAccessOnly: disk.readAccessOnly,
                 busText: disk.kind == .usbMassStorage ? "USB mass storage" : "Virtio block",
                 notes: disk.notes, editable: canEditStorageDisks,
                 removable: viewModel.capabilities.isAvailable(.trashStorageDisk, on: instance),
@@ -568,7 +564,8 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             guard let item = currentRemovableMedia.first(where: { $0.id == ref.id }) else { return nil }
             return AttachmentInfo(
                 id: item.id, label: item.label, image: item.imageReference,
-                readOnly: item.readOnly, busText: "USB mass storage", notes: item.notes,
+                readOnly: item.readOnly, readAccessOnly: item.readAccessOnly, busText: "USB mass storage",
+                notes: item.notes,
                 editable: canEditRemovableMedia, removable: canEditRemovableMedia,
                 isSoleStorageDisk: false)
         }
@@ -618,7 +615,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
         let readOnly = attachmentMenuItem(
             "Read Only", #selector(menuAttachmentToggleReadOnly(_:)), ref)
         readOnly.state = info.readOnly ? .on : .off
-        readOnly.isEnabled = info.editable
+        readOnly.isEnabled = info.editable && info.readAccessOnly == nil
         menu.addItem(readOnly)
         // Removable media offers Eject (detach, no confirmation) alongside the
         // file-trashing Remove…; storage disks get Remove… only.
@@ -805,7 +802,7 @@ final class VMSettingsStoragePanelViewController: NSViewController, VMSettingsPa
             var shared: [String] = []
             if !isAgent {
                 shared = await viewModel.sharingVMNames(
-                    forPath: item.path, bookmark: item.bookmark, excluding: instance)
+                    forPath: item.path, bookmark: item.bookmark?.data, excluding: instance)
             }
             // The resolve suspends, so the panel may have rebuilt or closed
             // under it — re-read the window and the row before presenting.

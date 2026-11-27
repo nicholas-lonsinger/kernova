@@ -161,7 +161,7 @@ final class VMRemovableMediaReconciler {
                 configured
                 ?? RemovableMediaItem(id: info.id, path: info.path, readOnly: info.readOnly, bookmark: nil)
             copy.path = info.path
-            copy.readOnly = info.readOnly
+            copy.readOnlySetting = info.readOnly
             copy.bookmark = configured?.path == info.path ? configured?.bookmark : nil
             rollbackLookup[info.id] = copy
         }
@@ -224,7 +224,7 @@ final class VMRemovableMediaReconciler {
                 // The scope must stay live while the service resolves the path and
                 // opens the attachment; on success it is registered with the instance
                 // (released at detach or teardown), and released by deinit if it throws.
-                let scope = item.bookmark.flatMap { ScopedAccess(bookmark: $0) }
+                let scope = item.bookmark.flatMap { ScopedAccess(bookmark: $0.data) }
                 // An installer entry names the app's disk; the guest gets the VM's copy of it.
                 let installerCopy = item.installerCopy(in: instance.bundleLayout)
                 _ = try await lifecycle.attachRemovableMedia(

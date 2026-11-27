@@ -273,8 +273,20 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     /// App-scoped security bookmarks for `kernelPath` / `initrdPath`
     /// (user-picked files re-read on every boot); see
     /// ``StorageDisk/bookmark`` for the nil semantics.
-    var kernelBookmark: Data?
-    var initrdBookmark: Data?
+    var kernelBookmark: FileBookmark? {
+        get { FileBookmark(data: kernelBookmarkData, readOnly: kernelBookmarkReadOnly) }
+        set { (kernelBookmarkData, kernelBookmarkReadOnly) = FileBookmark.recorded(newValue) }
+    }
+    var initrdBookmark: FileBookmark? {
+        get { FileBookmark(data: initrdBookmarkData, readOnly: initrdBookmarkReadOnly) }
+        set { (initrdBookmarkData, initrdBookmarkReadOnly) = FileBookmark.recorded(newValue) }
+    }
+
+    /// ``kernelBookmark`` and ``initrdBookmark`` as `config.json` records them.
+    private(set) var kernelBookmarkData: Data?
+    private(set) var kernelBookmarkReadOnly: Bool?
+    private(set) var initrdBookmarkData: Data?
+    private(set) var initrdBookmarkReadOnly: Bool?
 
     // MARK: - Storage Disks
 
@@ -423,8 +435,8 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         kernelPath: String? = nil,
         initrdPath: String? = nil,
         kernelCommandLine: String? = Defaults.kernelCommandLine,
-        kernelBookmark: Data? = nil,
-        initrdBookmark: Data? = nil,
+        kernelBookmark: FileBookmark? = nil,
+        initrdBookmark: FileBookmark? = nil,
         storageDisks: [StorageDisk]? = nil,
         removableMedia: [RemovableMediaItem]? = nil,
         sharedDirectories: [SharedDirectory]? = nil,
@@ -472,8 +484,8 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.kernelPath = kernelPath
         self.initrdPath = initrdPath
         self.kernelCommandLine = kernelCommandLine
-        self.kernelBookmark = kernelBookmark
-        self.initrdBookmark = initrdBookmark
+        (self.kernelBookmarkData, self.kernelBookmarkReadOnly) = FileBookmark.recorded(kernelBookmark)
+        (self.initrdBookmarkData, self.initrdBookmarkReadOnly) = FileBookmark.recorded(initrdBookmark)
         self.storageDisks = storageDisks.map(NamedList.init(repairing:))
         self.removableMedia = removableMedia
         self.sharedDirectories = sharedDirectories.map(NamedList.init(repairing:))
@@ -485,6 +497,22 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
     }
 
     // MARK: - Codable
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, guestOS, bootMode, cpuCount, memorySizeInGB
+        case displayWidth, displayHeight, displayPPI, displaySizesToWindow, displayHiDPI, displayAutoResizes
+        case networkEnabled, networkMode, bridgedInterfaceIdentifier, networkMembership, macAddress
+        case clipboardSharingEnabled, clipboardPassthroughEnabled, dropFilesEnabled, serialSocketRelayEnabled
+        case audioInputEnabled, audioOutputEnabled, inputDeviceMode, systemKeyForwarding, agentLogForwardingEnabled
+        case lastSeenAgentVersion, lastSeenSystemAgentVersion, lastSeenAgentPayloadHash
+        case lastSeenSystemAgentPayloadHash, lastSeenGuestOSVersion
+        case hardwareModelData, machineIdentifierData, genericMachineIdentifierData, deviceShape
+        case kernelPath, initrdPath, kernelCommandLine, kernelBookmarkReadOnly, initrdBookmarkReadOnly
+        case kernelBookmarkData = "kernelBookmark"
+        case initrdBookmarkData = "initrdBookmark"
+        case storageDisks, removableMedia, sharedDirectories, installContext, pendingGuestAccount
+        case linuxInstallContext, createdAt, installedImage
+    }
 
     // Custom `init(from:)` so a key absent from the file takes the value a new
     // VM gets, where synthesized `Codable` would fail the whole decode on any
@@ -558,8 +586,12 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
         self.kernelCommandLine = try c.decode(
             String?.self, forKey: .kernelCommandLine, default: Defaults.kernelCommandLine, in: decoder)
-        self.kernelBookmark = try c.decodeIfPresent(Data.self, forKey: .kernelBookmark)
-        self.initrdBookmark = try c.decodeIfPresent(Data.self, forKey: .initrdBookmark)
+        self.kernelBookmarkData = try c.decodeIfPresent(Data.self, forKey: .kernelBookmarkData)
+        self.kernelBookmarkReadOnly = try c.decode(
+            Bool?.self, forKey: .kernelBookmarkReadOnly, absentMeans: nil, in: decoder)
+        self.initrdBookmarkData = try c.decodeIfPresent(Data.self, forKey: .initrdBookmarkData)
+        self.initrdBookmarkReadOnly = try c.decode(
+            Bool?.self, forKey: .initrdBookmarkReadOnly, absentMeans: nil, in: decoder)
         self.storageDisks = try c.decodeIfPresent(NamedList<StorageDisk>.self, forKey: .storageDisks)
         self.removableMedia = try c.decodeIfPresent([RemovableMediaItem].self, forKey: .removableMedia)
         self.sharedDirectories = try c.decodeIfPresent(NamedList<SharedDirectory>.self, forKey: .sharedDirectories)
@@ -867,7 +899,7 @@ extension VMConfiguration {
     /// A list entry the id no longer matches — removed between the projection
     /// and the write-back — is a no-op.
     mutating func healExternalReference(
-        _ reference: ExternalFileReference, movedTo path: String, bookmark: Data
+        _ reference: ExternalFileReference, movedTo path: String, bookmark: FileBookmark
     ) {
         switch reference.kind {
         case .kernel:
@@ -960,11 +992,19 @@ extension VMConfiguration {
 package struct SharedDirectory: Codable, Sendable, Equatable {
     package var id: UUID
     package var path: String
-    package var readOnly: Bool
+    /// The share's Read Only setting.
+    package var readOnlySetting: Bool
 
     /// App-scoped security bookmark for `path` (a user-picked directory);
     /// see ``StorageDisk/bookmark`` for the nil semantics.
-    var bookmark: Data?
+    var bookmark: FileBookmark? {
+        get { FileBookmark(data: bookmarkData, readOnly: bookmarkReadOnly) }
+        set { (bookmarkData, bookmarkReadOnly) = FileBookmark.recorded(newValue) }
+    }
+
+    /// ``bookmark`` as `config.json` records it.
+    private var bookmarkData: Data?
+    private var bookmarkReadOnly: Bool?
 
     /// What the share goes by at every door, and the name a macOS guest
     /// mounts the folder by: the share's own among its VM's
@@ -973,19 +1013,21 @@ package struct SharedDirectory: Codable, Sendable, Equatable {
     package private(set) var name: String
 
     private enum CodingKeys: String, CodingKey {
-        case id, path, readOnly, bookmark
+        case id, path, bookmarkReadOnly
+        case readOnlySetting = "readOnly"
+        case bookmarkData = "bookmark"
         case name = "mountName"
     }
 
     /// A share named `name`, by default the name its path makes
     /// (``nameBase(ofPath:)``).
     init(
-        id: UUID = UUID(), path: String, readOnly: Bool = false, bookmark: Data? = nil, name: String? = nil
+        id: UUID = UUID(), path: String, readOnly: Bool = false, bookmark: FileBookmark? = nil, name: String? = nil
     ) {
         self.id = id
         self.path = path
-        self.readOnly = readOnly
-        self.bookmark = bookmark
+        self.readOnlySetting = readOnly
+        (self.bookmarkData, self.bookmarkReadOnly) = FileBookmark.recorded(bookmark)
         self.name = name ?? Self.nameBase(ofPath: path)
     }
 
@@ -993,7 +1035,7 @@ package struct SharedDirectory: Codable, Sendable, Equatable {
     /// system names it — a volume's root by the volume's name — where that
     /// makes a name (``shape``), else as ``init(id:path:readOnly:bookmark:name:)``
     /// names it.
-    init(sharing path: String, id: UUID, readOnly: Bool, bookmark: Data?) {
+    init(sharing path: String, id: UUID, readOnly: Bool, bookmark: FileBookmark?) {
         let folderName = try? URL(filePath: path, directoryHint: .isDirectory).resourceValues(forKeys: [.nameKey]).name
         self.init(
             id: id, path: path, readOnly: readOnly, bookmark: bookmark, name: folderName.flatMap(Self.shape.base(of:)))
@@ -1004,9 +1046,17 @@ package struct SharedDirectory: Codable, Sendable, Equatable {
         let path = try c.decode(String.self, forKey: .path)
         self.init(
             id: try c.decode(UUID.self, forKey: .id), path: path,
-            readOnly: try c.decode(Bool.self, forKey: .readOnly),
-            bookmark: try c.decodeIfPresent(Data.self, forKey: .bookmark),
+            readOnly: try c.decode(Bool.self, forKey: .readOnlySetting),
+            bookmark: FileBookmark(
+                data: try c.decodeIfPresent(Data.self, forKey: .bookmarkData),
+                readOnly: try c.decode(Bool?.self, forKey: .bookmarkReadOnly, absentMeans: nil, in: decoder)),
             name: try c.decodeIfPresent(String.self, forKey: .name))
+    }
+
+    /// Whether the guest gets the folder read-only, on the terms
+    /// ``StorageDisk/readOnly`` states.
+    package var readOnly: Bool {
+        readOnlySetting || bookmark?.access == .readOnly
     }
 
     /// The name the last component of `path` makes (``shape``), read from the

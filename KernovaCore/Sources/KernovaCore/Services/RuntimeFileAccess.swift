@@ -67,7 +67,7 @@ final class RuntimeFileAccess {
 struct ExternalReferenceHeal {
     let reference: ExternalFileReference
     let path: String
-    let bookmark: Data
+    let bookmark: FileBookmark
 }
 
 extension VMInstance {

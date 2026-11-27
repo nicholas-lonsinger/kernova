@@ -65,15 +65,16 @@ struct VMCreationViewModelTests {
             let vm = VMCreationViewModel.overFakeEngine()
             vm.selectedOS = .linux
             if installerOnDisk {
-                vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: Data([0x01]))
+                vm.selectLocalISO(
+                    path: "/path/to/ubuntu.iso", bookmark: FileBookmark(data: Data([0x01]), access: .readWrite))
             } else {
                 vm.selectLinuxCatalogEntry(makeLinuxCatalogEntry())
             }
             vm.kernelPath = "/path/to/vmlinuz"
             vm.initrdPath = "/path/to/initrd"
             vm.kernelCommandLine = "console=hvc0"
-            vm.kernelBookmark = Data([0x02])
-            vm.initrdBookmark = Data([0x03])
+            vm.kernelBookmark = FileBookmark(data: Data([0x02]), access: .readWrite)
+            vm.initrdBookmark = FileBookmark(data: Data([0x03]), access: .readWrite)
             vm.linuxBootMode = linuxBootMode
             vm.selectedOS = guest
             vm.vmName = "Test"
@@ -110,7 +111,7 @@ struct VMCreationViewModelTests {
         vm.selectedOS = .linux
         vm.linuxBootMode = .efi
         vm.vmName = "Test"
-        let bookmark = Data([0x01, 0x02, 0x03])
+        let bookmark = FileBookmark(data: Data([0x01, 0x02, 0x03]), access: .readOnly)
         vm.selectLocalISO(path: "/path/to/ubuntu.iso", bookmark: bookmark)
 
         let disks = try #require(vm.buildConfiguration().storageDisks)
@@ -164,7 +165,7 @@ struct VMCreationViewModelTests {
     @Test("buildInstallContext snapshots localFile with chosen path")
     func buildInstallContextLocalFile() {
         let vm = VMCreationViewModel.overFakeEngine(localImageInspector: MockLocalRestoreImageInspector())
-        let bookmark = Data([0x01, 0x02, 0x03])
+        let bookmark = FileBookmark(data: Data([0x01, 0x02, 0x03]), access: .readOnly)
         vm.selectLocalFile(path: "/tmp/macOS-26.ipsw", bookmark: bookmark)
 
         let context = vm.buildInstallContext()

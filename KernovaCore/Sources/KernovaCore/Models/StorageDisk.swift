@@ -11,7 +11,8 @@ package struct StorageDisk: Codable, Sendable, Equatable {
     /// Bundle-relative for internal disks (e.g. `"Disk.asif"`,
     /// `"AdditionalDisks/<id>.asif"`); absolute for external disks.
     package var path: String
-    package var readOnly: Bool
+    /// The disk's Read Only setting.
+    package var readOnlySetting: Bool
     package var label: String
     /// When `true`, `path` is bundle-relative and the file is owned by the bundle.
     package var isInternal: Bool
@@ -28,10 +29,23 @@ package struct StorageDisk: Codable, Sendable, Equatable {
     /// Only meaningful for external disks; `nil` for internal (bundle-relative)
     /// disks and when bookmark creation failed — resolution then falls back to
     /// the raw path.
-    package var bookmark: Data?
+    package var bookmark: FileBookmark? {
+        get { FileBookmark(data: bookmarkData, readOnly: bookmarkReadOnly) }
+        set { (bookmarkData, bookmarkReadOnly) = FileBookmark.recorded(newValue) }
+    }
+
+    /// ``bookmark`` as `config.json` records it.
+    private var bookmarkData: Data?
+    private var bookmarkReadOnly: Bool?
 
     /// Free-form user note, empty when none was entered.
     package var notes: String
+
+    private enum CodingKeys: String, CodingKey {
+        case id, path, label, isInternal, kind, bookmarkReadOnly, notes
+        case readOnlySetting = "readOnly"
+        case bookmarkData = "bookmark"
+    }
 
     package init(
         id: UUID = UUID(),
@@ -40,17 +54,23 @@ package struct StorageDisk: Codable, Sendable, Equatable {
         label: String? = nil,
         isInternal: Bool = false,
         kind: StorageDiskKind? = nil,
-        bookmark: Data? = nil,
+        bookmark: FileBookmark? = nil,
         notes: String = ""
     ) {
         self.id = id
         self.path = path
-        self.readOnly = readOnly
+        self.readOnlySetting = readOnly
         self.label = label ?? Self.imageStem(ofPath: path)
         self.isInternal = isInternal
         self.kind = kind ?? Self.defaultKind(forPath: path)
-        self.bookmark = bookmark
+        (self.bookmarkData, self.bookmarkReadOnly) = FileBookmark.recorded(bookmark)
         self.notes = notes
+    }
+
+    /// Whether the guest gets the disk read-only: as its Read Only setting
+    /// says, and always when its bookmark grants reading alone.
+    package var readOnly: Bool {
+        readOnlySetting || bookmark?.access == .readOnly
     }
 
     // Custom `init(from:)` for `notes`: a `decode` of a non-optional field
@@ -61,11 +81,13 @@ package struct StorageDisk: Codable, Sendable, Equatable {
         self.id = try c.decode(UUID.self, forKey: .id)
         let path = try c.decode(String.self, forKey: .path)
         self.path = path
-        self.readOnly = try c.decode(Bool.self, forKey: .readOnly)
+        self.readOnlySetting = try c.decode(Bool.self, forKey: .readOnlySetting)
         self.label = try c.decode(String.self, forKey: .label)
         self.isInternal = try c.decode(Bool.self, forKey: .isInternal)
         self.kind = try c.decode(StorageDiskKind.self, forKey: .kind)
-        self.bookmark = try c.decodeIfPresent(Data.self, forKey: .bookmark)
+        self.bookmarkData = try c.decodeIfPresent(Data.self, forKey: .bookmarkData)
+        self.bookmarkReadOnly = try c.decode(
+            Bool?.self, forKey: .bookmarkReadOnly, absentMeans: nil, in: decoder)
         self.notes = try c.decode(String.self, forKey: .notes, default: Self(path: path).notes, in: decoder)
     }
 
@@ -139,12 +161,20 @@ extension StorageDisk: ListNamed {
 package struct RemovableMediaItem: Codable, Sendable, Equatable {
     package var id: UUID
     package var path: String
-    package var readOnly: Bool
+    /// The medium's Read Only setting.
+    package var readOnlySetting: Bool
     package var label: String
 
     /// App-scoped security bookmark for `path` (always an external,
     /// user-picked file); see ``StorageDisk/bookmark`` for the nil semantics.
-    package var bookmark: Data?
+    package var bookmark: FileBookmark? {
+        get { FileBookmark(data: bookmarkData, readOnly: bookmarkReadOnly) }
+        set { (bookmarkData, bookmarkReadOnly) = FileBookmark.recorded(newValue) }
+    }
+
+    /// ``bookmark`` as `config.json` records it.
+    private var bookmarkData: Data?
+    private var bookmarkReadOnly: Bool?
 
     /// Free-form user note, empty when none was entered.
     package var notes: String
@@ -155,22 +185,34 @@ package struct RemovableMediaItem: Codable, Sendable, Equatable {
     /// other medium, and on an installer that never ejects on its own.
     package var awaitedAgentScopes: Set<GuestAgentScope>
 
+    private enum CodingKeys: String, CodingKey {
+        case id, path, label, bookmarkReadOnly, notes, awaitedAgentScopes
+        case readOnlySetting = "readOnly"
+        case bookmarkData = "bookmark"
+    }
+
     init(
         id: UUID = UUID(),
         path: String,
         readOnly: Bool = true,
         label: String? = nil,
-        bookmark: Data? = nil,
+        bookmark: FileBookmark? = nil,
         notes: String = "",
         awaitedAgentScopes: Set<GuestAgentScope> = []
     ) {
         self.id = id
         self.path = path
-        self.readOnly = readOnly
+        self.readOnlySetting = readOnly
         self.label = label ?? StorageDisk.imageStem(ofPath: path)
-        self.bookmark = bookmark
+        (self.bookmarkData, self.bookmarkReadOnly) = FileBookmark.recorded(bookmark)
         self.notes = notes
         self.awaitedAgentScopes = awaitedAgentScopes
+    }
+
+    /// Whether the guest gets the medium read-only, on the terms
+    /// ``StorageDisk/readOnly`` states.
+    package var readOnly: Bool {
+        readOnlySetting || bookmark?.access == .readOnly
     }
 
     // Custom `init(from:)` for `notes`: a `decode` of a non-optional field
@@ -181,9 +223,11 @@ package struct RemovableMediaItem: Codable, Sendable, Equatable {
         self.id = try c.decode(UUID.self, forKey: .id)
         let path = try c.decode(String.self, forKey: .path)
         self.path = path
-        self.readOnly = try c.decode(Bool.self, forKey: .readOnly)
+        self.readOnlySetting = try c.decode(Bool.self, forKey: .readOnlySetting)
         self.label = try c.decode(String.self, forKey: .label)
-        self.bookmark = try c.decodeIfPresent(Data.self, forKey: .bookmark)
+        self.bookmarkData = try c.decodeIfPresent(Data.self, forKey: .bookmarkData)
+        self.bookmarkReadOnly = try c.decode(
+            Bool?.self, forKey: .bookmarkReadOnly, absentMeans: nil, in: decoder)
         self.notes = try c.decode(String.self, forKey: .notes, default: Self(path: path).notes, in: decoder)
         self.awaitedAgentScopes = try c.decode(
             Set<GuestAgentScope>.self, forKey: .awaitedAgentScopes, default: Self(path: path).awaitedAgentScopes,

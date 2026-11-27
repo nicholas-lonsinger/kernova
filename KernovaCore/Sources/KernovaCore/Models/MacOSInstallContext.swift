@@ -62,7 +62,14 @@ package struct MacOSInstallContext: Codable, Sendable, Equatable {
     /// `nil` when bookmark creation failed — the install then falls back to the
     /// raw path. `downloadDestinationPath` needs none: the destination is always
     /// the Downloads folder, covered by the downloads entitlement.
-    var localIPSWBookmark: Data?
+    var localIPSWBookmark: FileBookmark? {
+        get { FileBookmark(data: localIPSWBookmarkData, readOnly: localIPSWBookmarkReadOnly) }
+        set { (localIPSWBookmarkData, localIPSWBookmarkReadOnly) = FileBookmark.recorded(newValue) }
+    }
+
+    /// ``localIPSWBookmark`` as `config.json` records it.
+    private var localIPSWBookmarkData: Data?
+    private var localIPSWBookmarkReadOnly: Bool?
 
     /// `true` when the user confirmed "Download & Replace" in the wizard.
     ///
@@ -79,11 +86,17 @@ package struct MacOSInstallContext: Codable, Sendable, Equatable {
         localIPSWPath.map { URL(fileURLWithPath: $0) }
     }
 
+    private enum CodingKeys: String, CodingKey {
+        case source, downloadDestinationPath, remoteURL, version, build, localIPSWPath
+        case localIPSWBookmarkReadOnly, requestedFreshDownload
+        case localIPSWBookmarkData = "localIPSWBookmark"
+    }
+
     init(
         source: Source,
         downloadDestinationPath: String? = nil,
         localIPSWPath: String? = nil,
-        localIPSWBookmark: Data? = nil,
+        localIPSWBookmark: FileBookmark? = nil,
         requestedFreshDownload: Bool = false,
         remoteURL: URL? = nil,
         version: String? = nil,
@@ -92,7 +105,7 @@ package struct MacOSInstallContext: Codable, Sendable, Equatable {
         self.source = source
         self.downloadDestinationPath = downloadDestinationPath
         self.localIPSWPath = localIPSWPath
-        self.localIPSWBookmark = localIPSWBookmark
+        (self.localIPSWBookmarkData, self.localIPSWBookmarkReadOnly) = FileBookmark.recorded(localIPSWBookmark)
         self.requestedFreshDownload = requestedFreshDownload
         self.remoteURL = remoteURL
         self.version = version
@@ -108,7 +121,9 @@ package struct MacOSInstallContext: Codable, Sendable, Equatable {
         self.downloadDestinationPath = try c.decodeIfPresent(
             String.self, forKey: .downloadDestinationPath)
         self.localIPSWPath = try c.decodeIfPresent(String.self, forKey: .localIPSWPath)
-        self.localIPSWBookmark = try c.decodeIfPresent(Data.self, forKey: .localIPSWBookmark)
+        self.localIPSWBookmarkData = try c.decodeIfPresent(Data.self, forKey: .localIPSWBookmarkData)
+        self.localIPSWBookmarkReadOnly = try c.decode(
+            Bool?.self, forKey: .localIPSWBookmarkReadOnly, absentMeans: nil, in: decoder)
         self.requestedFreshDownload = try c.decode(
             Bool.self, forKey: .requestedFreshDownload, absentMeans: false, in: decoder)
         self.remoteURL = try c.decodeIfPresent(URL.self, forKey: .remoteURL)

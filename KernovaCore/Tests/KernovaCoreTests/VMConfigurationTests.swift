@@ -84,37 +84,47 @@ struct VMConfigurationTests {
         #expect(decoded.removableMedia?[0].awaitedAgentScopes == [])
     }
 
-    @Test("Security bookmark fields round-trip through JSON")
+    @Test("Security bookmark fields read their access from the key beside them, read-write where there is none")
     func bookmarkFieldsRoundTrip() throws {
-        var original = VMConfiguration(
-            name: "Bookmarked VM",
-            guestOS: .linux,
-            bootMode: .linuxKernel,
-            cpuCount: VMGuestOS.linux.hostCPUCount,
-            memorySizeInGB: VMGuestOS.linux.hostMemorySize,
-            kernelPath: "/boot/vmlinuz",
-            initrdPath: "/boot/initrd",
-            kernelBookmark: Data([0x0A]),
-            initrdBookmark: Data([0x0B])
-        )
-        original.storageDisks = [
-            StorageDisk(path: "/ext/data.img", isInternal: false, bookmark: Data([0x0C]))
-        ]
-        original.removableMedia = [
-            RemovableMediaItem(path: "/ext/install.iso", bookmark: Data([0x0D]))
-        ]
-        original.sharedDirectories = [
-            SharedDirectory(path: "/Users/me/Shared", bookmark: Data([0x0E]))
-        ]
+        // 0x0A is "Cg==", 0x0B "Cw==", and so on, as `config.json` writes them.
+        let json = Self.makeBaseJSON(
+            bootMode: "linuxKernel",
+            extraFields: """
+                "kernelPath": "/boot/vmlinuz", "kernelBookmark": "Cg==", "kernelBookmarkReadOnly": true,
+                "initrdPath": "/boot/initrd", "initrdBookmark": "Cw==",
+                "storageDisks": [
+                    {"id": "11111111-1111-1111-1111-111111111111", "path": "/ext/data.img", "readOnly": false,
+                     "label": "data", "isInternal": false, "kind": "virtio", "bookmark": "DA==", "bookmarkReadOnly": true},
+                    {"id": "22222222-2222-2222-2222-222222222222", "path": "/ext/more.img", "readOnly": false,
+                     "label": "more", "isInternal": false, "kind": "virtio", "bookmark": "DQ=="}
+                ],
+                "removableMedia": [
+                    {"id": "33333333-3333-3333-3333-333333333333", "path": "/ext/install.iso", "readOnly": true,
+                     "label": "install", "bookmark": "Dg==", "bookmarkReadOnly": true}
+                ],
+                "sharedDirectories": [
+                    {"id": "44444444-4444-4444-4444-444444444444", "path": "/Users/me/Shared", "readOnly": false,
+                     "bookmark": "Dw=="}
+                ],
+                "installContext": {"source": "localFile", "localIPSWPath": "/ext/restore.ipsw",
+                    "localIPSWBookmark": "EA==", "localIPSWBookmarkReadOnly": true}
+                """)
+        let read = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: Data(json.utf8))
+        let decoded = try VMConfiguration.makeJSONDecoder().decode(
+            VMConfiguration.self, from: VMConfiguration.makeJSONEncoder().encode(read))
 
-        let data = try VMConfiguration.makeJSONEncoder().encode(original)
-        let decoded = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: data)
-
-        #expect(decoded.kernelBookmark == Data([0x0A]))
-        #expect(decoded.initrdBookmark == Data([0x0B]))
-        #expect(decoded.storageDisks?[0].bookmark == Data([0x0C]))
-        #expect(decoded.removableMedia?[0].bookmark == Data([0x0D]))
-        #expect(decoded.sharedDirectories?[0].bookmark == Data([0x0E]))
+        for config in [read, decoded] {
+            #expect(config.kernelBookmark == FileBookmark(data: Data([0x0A]), access: .readOnly))
+            #expect(config.initrdBookmark == FileBookmark(data: Data([0x0B]), access: .readWrite))
+            #expect(
+                config.storageDisks?.map(\.bookmark) == [
+                    FileBookmark(data: Data([0x0C]), access: .readOnly),
+                    FileBookmark(data: Data([0x0D]), access: .readWrite),
+                ])
+            #expect(config.removableMedia?[0].bookmark == FileBookmark(data: Data([0x0E]), access: .readOnly))
+            #expect(config.sharedDirectories?[0].bookmark == FileBookmark(data: Data([0x0F]), access: .readWrite))
+            #expect(config.installContext?.localIPSWBookmark == FileBookmark(data: Data([0x10]), access: .readOnly))
+        }
     }
 
     // MARK: - StorageDisk Tests

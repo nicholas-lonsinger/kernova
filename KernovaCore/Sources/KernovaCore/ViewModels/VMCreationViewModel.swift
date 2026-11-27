@@ -68,7 +68,7 @@ package enum LinuxImageSelection: Sendable, Equatable {
     /// the ceiling it holds the transfer to.
     case customURL(image: CustomLinuxImage, sizeBytes: UInt64)
     /// An ISO already on this Mac, with the grant minted for it at pick time.
-    case localISO(path: String, bookmark: Data?)
+    case localISO(path: String, bookmark: FileBookmark?)
 }
 
 /// How a Linux guest boots: EFI firmware starting an installer image, or a
@@ -298,8 +298,8 @@ package final class VMCreationViewModel {
 
     /// Security bookmarks paired with the panel-picked paths above; each is set
     /// alongside its path at pick time.
-    package var kernelBookmark: Data?
-    package var initrdBookmark: Data?
+    package var kernelBookmark: FileBookmark?
+    package var initrdBookmark: FileBookmark?
 
     // MARK: - Step 3: Resources
 
@@ -642,7 +642,7 @@ package final class VMCreationViewModel {
     /// The selection carries `.pending` until the inspection lands with a
     /// verdict — ``bootConfigValid`` blocks Next on a local file until that
     /// verdict is ``LocalRestoreImageInspection/usable(_:)``.
-    package func selectLocalFile(path: String, bookmark: Data?) {
+    package func selectLocalFile(path: String, bookmark: FileBookmark?) {
         localFileInspectionTask?.cancel()
         ipswSelection = .localFile(LocalRestoreImage(path: path, bookmark: bookmark))
         localFileInspectionGeneration += 1
@@ -657,7 +657,7 @@ package final class VMCreationViewModel {
                     self.localFileInspectionTask = nil
                 }
             }
-            let scope = bookmark.flatMap { ScopedAccess(bookmark: $0) }
+            let scope = bookmark.flatMap { ScopedAccess(bookmark: $0.data) }
             defer { scope?.release() }
             let url = scope?.url ?? URL(fileURLWithPath: path)
             let inspection: LocalRestoreImageInspection
@@ -703,7 +703,7 @@ package final class VMCreationViewModel {
 
     /// Commits a panel-picked ISO together with the grant minted for it, which
     /// is `nil` when the bookmark could not be created.
-    package func selectLocalISO(path: String, bookmark: Data?) {
+    package func selectLocalISO(path: String, bookmark: FileBookmark?) {
         linuxSelection = .localISO(path: path, bookmark: bookmark)
     }
 
