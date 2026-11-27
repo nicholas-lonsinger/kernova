@@ -85,9 +85,8 @@ package struct StorageDisk: Codable, Sendable, Equatable {
         self.label = try c.decode(String.self, forKey: .label)
         self.isInternal = try c.decode(Bool.self, forKey: .isInternal)
         self.kind = try c.decode(StorageDiskKind.self, forKey: .kind)
-        self.bookmarkData = try c.decodeIfPresent(Data.self, forKey: .bookmarkData)
-        self.bookmarkReadOnly = try c.decode(
-            Bool?.self, forKey: .bookmarkReadOnly, absentMeans: nil, in: decoder)
+        (self.bookmarkData, self.bookmarkReadOnly) = FileBookmark.recorded(
+            try c.decodeBookmark(.bookmarkData, readOnly: .bookmarkReadOnly, in: decoder))
         self.notes = try c.decode(String.self, forKey: .notes, default: Self(path: path).notes, in: decoder)
     }
 
@@ -225,9 +224,8 @@ package struct RemovableMediaItem: Codable, Sendable, Equatable {
         self.path = path
         self.readOnlySetting = try c.decode(Bool.self, forKey: .readOnlySetting)
         self.label = try c.decode(String.self, forKey: .label)
-        self.bookmarkData = try c.decodeIfPresent(Data.self, forKey: .bookmarkData)
-        self.bookmarkReadOnly = try c.decode(
-            Bool?.self, forKey: .bookmarkReadOnly, absentMeans: nil, in: decoder)
+        (self.bookmarkData, self.bookmarkReadOnly) = FileBookmark.recorded(
+            try c.decodeBookmark(.bookmarkData, readOnly: .bookmarkReadOnly, in: decoder))
         self.notes = try c.decode(String.self, forKey: .notes, default: Self(path: path).notes, in: decoder)
         self.awaitedAgentScopes = try c.decode(
             Set<GuestAgentScope>.self, forKey: .awaitedAgentScopes, default: Self(path: path).awaitedAgentScopes,

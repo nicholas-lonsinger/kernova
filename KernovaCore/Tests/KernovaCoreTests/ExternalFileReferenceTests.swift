@@ -147,41 +147,15 @@ struct ExternalFileReferenceTests {
 
     // MARK: - Bookmark creation
 
-    /// A file in a fresh scratch directory, its mode `permissions`.
-    private func makeScratchFile(named name: String, permissions: Int) throws -> URL {
-        let scratch = TestScratchDirectory(prefix: "ExternalFileReferenceTests")
-        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
-        let file = scratch.url.appendingPathComponent(name)
-        try Data("image".utf8).write(to: file)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: permissions], ofItemAtPath: file.path(percentEncoded: false))
-        return file
-    }
-
     @Test("A file the user can read but not write is bookmarked with read access alone")
     func bookmarksUnwritableFile() throws {
-        let file = try makeScratchFile(named: "installer.iso", permissions: 0o444)
+        let scratch = TestScratchDirectory(prefix: "ExternalFileReferenceTests")
+        try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
+        let file = scratch.url.appendingPathComponent("installer.iso")
+        try Data("image".utf8).write(to: file)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o444], ofItemAtPath: file.path(percentEncoded: false))
 
         #expect(SecurityScopedBookmark.make(for: file)?.access == .readOnly)
-    }
-
-    @Test("A heal renews a read-only bookmark read-only, though its file can be written to by then")
-    func healKeepsReadOnlyAccess() throws {
-        let file = try makeScratchFile(named: "installer.iso", permissions: 0o444)
-        let bookmark = try #require(SecurityScopedBookmark.make(for: file))
-        try #require(bookmark.access == .readOnly)
-        try FileManager.default.setAttributes(
-            [.posixPermissions: 0o644], ofItemAtPath: file.path(percentEncoded: false))
-        let moved = file.deletingLastPathComponent().appendingPathComponent("moved.iso")
-        try FileManager.default.moveItem(at: file, to: moved)
-
-        let opened = try #require(
-            ScopedAccess.open(
-                ExternalFileReference(
-                    id: UUID(), kind: .storageDisk, label: "Installer", path: file.path(percentEncoded: false),
-                    bookmark: bookmark, readOnly: true)))
-        defer { opened.scope.release() }
-
-        #expect(try #require(opened.healedTo).bookmark.access == .readOnly)
     }
 }

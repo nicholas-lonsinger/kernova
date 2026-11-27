@@ -1,44 +1,41 @@
 import Foundation
 
 /// Why an entry's Read Only stays on whatever its setting — its bookmark grants
-/// reading alone (``FileBookmark/Access/readOnly``) — and what lifts that: what
-/// Settings shows beside the entry's Read Only switch, and what a request to
-/// turn it off is refused with.
+/// reading alone (``FileBookmark/Access/readOnly``) — and what asks for write
+/// access again: what Settings shows beside the entry's Read Only switch, and
+/// what a request to turn it off is refused with.
 package struct ReadAccessOnly: Sendable, Equatable {
     /// Why, naming the entry.
     package let reason: String
-    /// What gives the entry a bookmark that grants writing: a new pick of the
-    /// file, which only attaching it again makes.
+    /// What asks the system for a bookmark that grants writing: a new pick of
+    /// the file, which only attaching it again makes, named by the controls
+    /// that do it.
     package let remedy: String
 
-    /// The notice for an attached disk image named `label`, listed under
-    /// `section` in Settings.
-    fileprivate init(file label: String, removing entry: String, section: String) {
-        reason =
-            "Kernova has read access only to “\(label)”, because the file couldn’t be written to when it was attached."
-        remedy =
-            "To turn Read Only off, make the file writable, then remove \(entry) and attach the file again with "
-            + "Attach Disk… in Settings, under \(section)."
+    /// The whole notice, as one refusal states it.
+    package var message: String { "\(reason) \(remedy)" }
+}
+
+extension ReadAccessOnly {
+    /// The reason for a disk image named `label`: the system refuses a
+    /// read-write bookmark for a file the process can only read
+    /// (docs/research/2026-11-18-pasteboard-file-grants.md, finding 15).
+    fileprivate static func fileReason(_ label: String) -> String {
+        "Kernova has read access only to “\(label)”, because the file couldn’t be written to when it was attached."
     }
 
-    /// The notice for a shared folder named `name`.
-    fileprivate init(folder name: String) {
-        reason =
-            "Kernova has read access only to “\(name)”, because the folder couldn’t be written to when it was shared."
-        remedy =
-            "To turn Read Only off, make the folder writable, then remove the share and add the folder again with "
-            + "Add Shared Directory… in Settings, under Shared Directories."
+    /// The reason for a folder at, or named, `folder`. No cause is named:
+    /// folders of mode 0555, locked, and on a read-only volume each got a
+    /// read-write bookmark (unsandboxed, macOS 27.2.1, 2026-11-26).
+    fileprivate static func folderReason(_ folder: String) -> String {
+        "Kernova has read access only to “\(folder)”."
     }
 
     /// The notice for a share of the folder at `path` asked for writable, whose
     /// bookmark was just made granting reading alone.
     init(sharingWritable path: String) {
-        reason = "Kernova has read access only to “\(path)”, because the folder can’t be written to."
-        remedy = "Share it as read only, or make the folder writable and share it again."
+        self.init(reason: Self.folderReason(path), remedy: "Share it as read only.")
     }
-
-    /// The whole notice, as one refusal states it.
-    package var message: String { "\(reason) \(remedy)" }
 }
 
 extension StorageDisk {
@@ -46,7 +43,11 @@ extension StorageDisk {
     /// alone.
     package var readAccessOnly: ReadAccessOnly? {
         guard bookmark?.access == .readOnly else { return nil }
-        return ReadAccessOnly(file: label, removing: "the disk", section: "Storage Disks")
+        return ReadAccessOnly(
+            reason: ReadAccessOnly.fileReason(label),
+            remedy:
+                "To turn Read Only off, make the file writable, then remove the disk with Remove… and Remove "
+                + "from VM, and attach the file again with Attach Disk… in Settings, under Storage Disks.")
     }
 }
 
@@ -55,7 +56,11 @@ extension RemovableMediaItem {
     /// reading alone.
     package var readAccessOnly: ReadAccessOnly? {
         guard bookmark?.access == .readOnly else { return nil }
-        return ReadAccessOnly(file: label, removing: "it", section: "Removable Media")
+        return ReadAccessOnly(
+            reason: ReadAccessOnly.fileReason(label),
+            remedy:
+                "To turn Read Only off, make the file writable, then Eject the disk and attach the file again "
+                + "with Attach Disk… in Settings, under Removable Media.")
     }
 }
 
@@ -64,6 +69,10 @@ extension SharedDirectory {
     /// alone.
     package var readAccessOnly: ReadAccessOnly? {
         guard bookmark?.access == .readOnly else { return nil }
-        return ReadAccessOnly(folder: name)
+        return ReadAccessOnly(
+            reason: ReadAccessOnly.folderReason(name),
+            remedy:
+                "Ejecting the share and adding the folder again with Add Shared Directory… in Settings, under "
+                + "Shared Directories, asks for write access again.")
     }
 }

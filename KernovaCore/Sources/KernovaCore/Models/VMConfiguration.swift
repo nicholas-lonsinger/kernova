@@ -586,12 +586,10 @@ package struct VMConfiguration: Codable, Sendable, Equatable {
         self.initrdPath = try c.decodeIfPresent(String.self, forKey: .initrdPath)
         self.kernelCommandLine = try c.decode(
             String?.self, forKey: .kernelCommandLine, default: Defaults.kernelCommandLine, in: decoder)
-        self.kernelBookmarkData = try c.decodeIfPresent(Data.self, forKey: .kernelBookmarkData)
-        self.kernelBookmarkReadOnly = try c.decode(
-            Bool?.self, forKey: .kernelBookmarkReadOnly, absentMeans: nil, in: decoder)
-        self.initrdBookmarkData = try c.decodeIfPresent(Data.self, forKey: .initrdBookmarkData)
-        self.initrdBookmarkReadOnly = try c.decode(
-            Bool?.self, forKey: .initrdBookmarkReadOnly, absentMeans: nil, in: decoder)
+        (self.kernelBookmarkData, self.kernelBookmarkReadOnly) = FileBookmark.recorded(
+            try c.decodeBookmark(.kernelBookmarkData, readOnly: .kernelBookmarkReadOnly, in: decoder))
+        (self.initrdBookmarkData, self.initrdBookmarkReadOnly) = FileBookmark.recorded(
+            try c.decodeBookmark(.initrdBookmarkData, readOnly: .initrdBookmarkReadOnly, in: decoder))
         self.storageDisks = try c.decodeIfPresent(NamedList<StorageDisk>.self, forKey: .storageDisks)
         self.removableMedia = try c.decodeIfPresent([RemovableMediaItem].self, forKey: .removableMedia)
         self.sharedDirectories = try c.decodeIfPresent(NamedList<SharedDirectory>.self, forKey: .sharedDirectories)
@@ -1047,9 +1045,7 @@ package struct SharedDirectory: Codable, Sendable, Equatable {
         self.init(
             id: try c.decode(UUID.self, forKey: .id), path: path,
             readOnly: try c.decode(Bool.self, forKey: .readOnlySetting),
-            bookmark: FileBookmark(
-                data: try c.decodeIfPresent(Data.self, forKey: .bookmarkData),
-                readOnly: try c.decode(Bool?.self, forKey: .bookmarkReadOnly, absentMeans: nil, in: decoder)),
+            bookmark: try c.decodeBookmark(.bookmarkData, readOnly: .bookmarkReadOnly, in: decoder),
             name: try c.decodeIfPresent(String.self, forKey: .name))
     }
 

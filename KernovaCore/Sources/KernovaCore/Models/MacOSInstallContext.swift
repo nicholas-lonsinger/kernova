@@ -121,9 +121,8 @@ package struct MacOSInstallContext: Codable, Sendable, Equatable {
         self.downloadDestinationPath = try c.decodeIfPresent(
             String.self, forKey: .downloadDestinationPath)
         self.localIPSWPath = try c.decodeIfPresent(String.self, forKey: .localIPSWPath)
-        self.localIPSWBookmarkData = try c.decodeIfPresent(Data.self, forKey: .localIPSWBookmarkData)
-        self.localIPSWBookmarkReadOnly = try c.decode(
-            Bool?.self, forKey: .localIPSWBookmarkReadOnly, absentMeans: nil, in: decoder)
+        (self.localIPSWBookmarkData, self.localIPSWBookmarkReadOnly) = FileBookmark.recorded(
+            try c.decodeBookmark(.localIPSWBookmarkData, readOnly: .localIPSWBookmarkReadOnly, in: decoder))
         self.requestedFreshDownload = try c.decode(
             Bool.self, forKey: .requestedFreshDownload, absentMeans: false, in: decoder)
         self.remoteURL = try c.decodeIfPresent(URL.self, forKey: .remoteURL)

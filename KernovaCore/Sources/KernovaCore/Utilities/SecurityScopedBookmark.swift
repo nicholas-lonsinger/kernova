@@ -1,4 +1,5 @@
 import Foundation
+import KernovaCommandModel
 import KernovaKit
 import KernovaLogging
 
@@ -30,6 +31,16 @@ extension FileBookmark {
     /// `bookmark` as those two keys record it.
     static func recorded(_ bookmark: FileBookmark?) -> (data: Data?, readOnly: Bool?) {
         (bookmark?.data, bookmark?.access == .readOnly ? true : nil)
+    }
+}
+
+extension KeyedDecodingContainer {
+    /// The bookmark a model records at `key`, with its access at `readOnlyKey`
+    /// (``FileBookmark/init(data:readOnly:)``).
+    func decodeBookmark(_ key: Key, readOnly readOnlyKey: Key, in decoder: any Decoder) throws -> FileBookmark? {
+        FileBookmark(
+            data: try decodeIfPresent(Data.self, forKey: key),
+            readOnly: try decode(Bool?.self, forKey: readOnlyKey, absentMeans: nil, in: decoder))
     }
 }
 
@@ -95,8 +106,9 @@ package enum SecurityScopedBookmark {
     /// under `replaced`'s active scope, or `nil` (logged) when the system
     /// refuses — the caller keeps the bookmark it has.
     ///
-    /// Never narrower, which nothing widens again, and never wider, which
-    /// would let the guest write a file its entry showed as Read Only.
+    /// Never narrower, which nothing widens again, and never wider, which would
+    /// lift the Read Only a read-only bookmark holds its entry to
+    /// (``StorageDisk/readOnly``) with no request from the user.
     static func renewal(of replaced: FileBookmark, at url: URL) -> FileBookmark? {
         do {
             return try bookmark(for: url, granting: replaced.access)

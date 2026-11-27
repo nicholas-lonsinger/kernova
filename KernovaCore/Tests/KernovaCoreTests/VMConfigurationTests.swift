@@ -84,46 +84,46 @@ struct VMConfigurationTests {
         #expect(decoded.removableMedia?[0].awaitedAgentScopes == [])
     }
 
-    @Test("Security bookmark fields read their access from the key beside them, read-write where there is none")
-    func bookmarkFieldsRoundTrip() throws {
+    @Test(
+        "Every security bookmark field reads its access from the key beside it, read-write where there is none",
+        arguments: [true, false])
+    func bookmarkFieldsRoundTrip(readOnlyKeysWritten: Bool) throws {
+        // The key beside a bookmark, as `config.json` spells it, or nothing.
+        func readOnly(_ key: String) -> String { readOnlyKeysWritten ? #", "\#(key)": true"# : "" }
         // 0x0A is "Cg==", 0x0B "Cw==", and so on, as `config.json` writes them.
         let json = Self.makeBaseJSON(
             bootMode: "linuxKernel",
             extraFields: """
-                "kernelPath": "/boot/vmlinuz", "kernelBookmark": "Cg==", "kernelBookmarkReadOnly": true,
-                "initrdPath": "/boot/initrd", "initrdBookmark": "Cw==",
+                "kernelPath": "/boot/vmlinuz", "kernelBookmark": "Cg=="\(readOnly("kernelBookmarkReadOnly")),
+                "initrdPath": "/boot/initrd", "initrdBookmark": "Cw=="\(readOnly("initrdBookmarkReadOnly")),
                 "storageDisks": [
                     {"id": "11111111-1111-1111-1111-111111111111", "path": "/ext/data.img", "readOnly": false,
-                     "label": "data", "isInternal": false, "kind": "virtio", "bookmark": "DA==", "bookmarkReadOnly": true},
-                    {"id": "22222222-2222-2222-2222-222222222222", "path": "/ext/more.img", "readOnly": false,
-                     "label": "more", "isInternal": false, "kind": "virtio", "bookmark": "DQ=="}
+                     "label": "data", "isInternal": false, "kind": "virtio",
+                     "bookmark": "DA=="\(readOnly("bookmarkReadOnly"))}
                 ],
                 "removableMedia": [
                     {"id": "33333333-3333-3333-3333-333333333333", "path": "/ext/install.iso", "readOnly": true,
-                     "label": "install", "bookmark": "Dg==", "bookmarkReadOnly": true}
+                     "label": "install", "bookmark": "DQ=="\(readOnly("bookmarkReadOnly"))}
                 ],
                 "sharedDirectories": [
                     {"id": "44444444-4444-4444-4444-444444444444", "path": "/Users/me/Shared", "readOnly": false,
-                     "bookmark": "Dw=="}
+                     "bookmark": "Dg=="\(readOnly("bookmarkReadOnly"))}
                 ],
                 "installContext": {"source": "localFile", "localIPSWPath": "/ext/restore.ipsw",
-                    "localIPSWBookmark": "EA==", "localIPSWBookmarkReadOnly": true}
+                    "localIPSWBookmark": "Dw=="\(readOnly("localIPSWBookmarkReadOnly"))}
                 """)
         let read = try VMConfiguration.makeJSONDecoder().decode(VMConfiguration.self, from: Data(json.utf8))
         let decoded = try VMConfiguration.makeJSONDecoder().decode(
             VMConfiguration.self, from: VMConfiguration.makeJSONEncoder().encode(read))
+        let access: FileBookmark.Access = readOnlyKeysWritten ? .readOnly : .readWrite
 
         for config in [read, decoded] {
-            #expect(config.kernelBookmark == FileBookmark(data: Data([0x0A]), access: .readOnly))
-            #expect(config.initrdBookmark == FileBookmark(data: Data([0x0B]), access: .readWrite))
-            #expect(
-                config.storageDisks?.map(\.bookmark) == [
-                    FileBookmark(data: Data([0x0C]), access: .readOnly),
-                    FileBookmark(data: Data([0x0D]), access: .readWrite),
-                ])
-            #expect(config.removableMedia?[0].bookmark == FileBookmark(data: Data([0x0E]), access: .readOnly))
-            #expect(config.sharedDirectories?[0].bookmark == FileBookmark(data: Data([0x0F]), access: .readWrite))
-            #expect(config.installContext?.localIPSWBookmark == FileBookmark(data: Data([0x10]), access: .readOnly))
+            #expect(config.kernelBookmark == FileBookmark(data: Data([0x0A]), access: access))
+            #expect(config.initrdBookmark == FileBookmark(data: Data([0x0B]), access: access))
+            #expect(config.storageDisks?[0].bookmark == FileBookmark(data: Data([0x0C]), access: access))
+            #expect(config.removableMedia?[0].bookmark == FileBookmark(data: Data([0x0D]), access: access))
+            #expect(config.sharedDirectories?[0].bookmark == FileBookmark(data: Data([0x0E]), access: access))
+            #expect(config.installContext?.localIPSWBookmark == FileBookmark(data: Data([0x0F]), access: access))
         }
     }
 
