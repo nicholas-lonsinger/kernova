@@ -226,7 +226,7 @@ package struct DecodingItemSink {
                 return .refused(id, SimItems.wireError(error, pull.acceptance))
             }
             pulls[id] = pull
-            return .consumed(id, bytes.count)
+            return .consumed(id, bytes.count, .none)
         case .finish(let id):
             if terminated.contains(id) { violations.append("finish for pull \(id.stream.rawValue) after its end") }
             guard var pull = pulls.removeValue(forKey: id) else { return nil }

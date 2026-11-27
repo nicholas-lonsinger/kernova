@@ -58,7 +58,11 @@ struct ItemAdapterTests {
                 return
             }
             sink.handle(.bytes(Bench.id, bytes), reporter: sinkReporter)
-            #expect(try await sinks.next() == .consumed(Bench.id, bytes.count))
+            let report = try await sinks.next()
+            guard case .consumed(Bench.id, bytes.count, _)? = report else {
+                Issue.record("the sink reported \(String(describing: report)) for the pull's bytes")
+                return
+            }
         }
         // Queue more writes on the pull's lane, unawaited, as a pull mid-copy has.
         var queued: [Data] = []

@@ -67,6 +67,9 @@ public struct ContainerDecoder {
         grammar = ContainerGrammar(acceptance: acceptance)
     }
 
+    /// The bytes the entries decoded so far declare their chunks carry: `TreeEventSequence.declaredBytes`.
+    public var declaredBytes: UInt64 { grammar.sequence.declaredBytes }
+
     #if DEBUG
     /// The input bytes held and not yet decoded.
     package var bufferedByteCountForTesting: Int { buffer.count }

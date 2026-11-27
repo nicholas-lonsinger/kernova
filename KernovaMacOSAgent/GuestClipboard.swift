@@ -80,8 +80,12 @@ final class GuestClipboard {
                 MainActorBridge.async { self?.setLink(usable == nil ? nil : link) }
             },
             events: { _, event in
-                if case .pullEnded(_, let id, let result) = event { return end.pullEnded(id, result) }
-                MainActorBridge.async { end.handle(event, on: link) }
+                switch event {
+                case .pullEnded(_, let id, let result): end.pullEnded(id, result)
+                // Nothing here reads how far a pull has landed, so that needs no hop.
+                case .pullAdvanced: break
+                default: MainActorBridge.async { end.handle(event, on: link) }
+                }
             },
             content: { id, request, _ in end.content(id, request) },
             policy: { [weak self] policy in MainActorBridge.async { self?.apply(policy) } })

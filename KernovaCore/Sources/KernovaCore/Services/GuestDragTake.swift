@@ -105,10 +105,12 @@ package protocol GuestDragTransport: AnyObject {
     func cancel()
 
     /// Pulls `item`, item `index` of the taken offer, to exactly
-    /// `destination`, calling `ended` once with how the pull ended, and
-    /// returns what cancels it.
+    /// `destination`, calling `progressed` from any thread each time its
+    /// landing advances and `ended` once with how the pull ended, and returns
+    /// what cancels it.
     func pull(
         _ item: DraggedOutItem, at index: Int, to destination: URL,
+        progressed: @escaping @Sendable (ItemLandingProgress) -> Void,
         ended: @escaping @MainActor (Result<Void, WireError>) -> Void
     ) -> @MainActor () -> Void
 
@@ -1045,9 +1047,15 @@ package final class GuestDragTake: GuestDragTaking {
             operation.unitBegan(id: UInt64(index), expectedBytes: 0, name: items[index].filename)
             return itemEnded(index, failing: .item(.unsupplied), to: destination, operation: operation, completion)
         }
-        operation.unitBegan(id: UInt64(index), expectedBytes: item.sizeEstimate, name: item.filename)
+        let unit = UInt64(index)
+        operation.unitBegan(id: unit, expectedBytes: item.sizeEstimate, name: item.filename)
         var ended = false
-        let cancel = transport.pull(item, at: index, to: destination) { [weak self] result in
+        let cancel = transport.pull(
+            item, at: index, to: destination,
+            progressed: { landing in
+                operation.unitProgressed(id: unit, landed: landing.landed, declared: landing.declared)
+            }
+        ) { [weak self] result in
             ended = true
             self?.pullEnded(index, result, to: destination, operation: operation, completion)
         }
@@ -1126,11 +1134,15 @@ package final class GuestDragTake: GuestDragTaking {
         failOwed()
     }
 
-    /// The readout's Cancel: every write still owed fails as cancelled.
+    /// Ends the writes as cancelled, the readout with them: every write still
+    /// owed fails as cancelled, and a readout still live ends cancelled. The
+    /// readout's Cancel reaches here once it has ended the readout; the app
+    /// terminating reaches here first, and the readout's end calls back in,
+    /// to find the writes already ended.
     private func cancelWrites() {
         guard terminal == nil else { return }
         terminal = .cancelled
-        readout?.finish(.cancelled)
+        readout?.requestCancel()
         for cancel in inFlight.values { cancel() }
         failOwed()
         retireIfDone()
@@ -1156,11 +1168,7 @@ package final class GuestDragTake: GuestDragTaking {
             expectedBytes: sized.contains { $0.sizeEstimate == 0 } ? nil : sized.reduce(0) { $0 + $1.sizeEstimate },
             expectedItems: items.count,
             revealDelay: progressRevealDelay, idleGap: progressIdleGap, clock: clock,
-            onCancelRequested: { [weak self] in
-                // Called outside the operation's lock on whichever thread saw
-                // the click, so it hops before touching anything.
-                Task { @MainActor in self?.cancelWrites() }
-            },
+            onCancelRequested: { [weak self] in self?.cancelWrites() },
             reporter: reporter)
         readout = operation
         return operation

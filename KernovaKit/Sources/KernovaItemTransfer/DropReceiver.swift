@@ -62,7 +62,11 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
                 guard usable == nil else { return }
                 queue.async { [self] in connectionEnded() }
             },
-            events: { [self] _, event in queue.async { [self] in handle(event) } },
+            events: { [self] _, event in
+                // Nothing here reads how far a pull has landed, so that needs no hop.
+                if case .pullAdvanced = event { return }
+                queue.async { [self] in handle(event) }
+            },
             content: { _, _, _ in
                 .failure(WireError(.itemRepresentationUnavailable, debugDetail: "a peer offers no drops"))
             })
@@ -88,7 +92,7 @@ public final class DropReceiver<FileSystem: MutableTreeFileSystem>: Sendable {
             if idle { logger.log(.notice, "The host withdrew a drop before it finished") }
         case .pullEnded(_, let id, let result):
             pullEnded(id, result)
-        case .offerEnded(_, .local, _, _), .serveEnded, .offerRequested, .requestEnded:
+        case .offerEnded(_, .local, _, _), .serveEnded, .offerRequested, .requestEnded, .pullAdvanced:
             break
         }
     }

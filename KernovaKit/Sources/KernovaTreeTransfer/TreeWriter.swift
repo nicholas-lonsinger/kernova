@@ -77,6 +77,12 @@ final class TreeWriter<FileSystem: MutableTreeFileSystem> {
     private var phase = Phase.writing
     /// The rules every event is admitted through before the writer acts on it.
     private var sequence: TreeEventSequence
+
+    /// The bytes the events landed so far carried, data and resource fork: `TreeEventSequence.counts`.
+    var landedByteCount: UInt64 { sequence.counts.bytes }
+
+    /// The bytes the entries landed so far declare their chunks carry: `TreeEventSequence.declaredBytes`.
+    var declaredByteCount: UInt64 { sequence.declaredBytes }
     /// Whether the item's own entry was created under ``stagingName``, which a failure then removes.
     private var stagingCreated = false
     /// The identity of the item's own entry, once created.

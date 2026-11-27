@@ -493,7 +493,7 @@ public final class ClipboardItemExchange {
             onRemoteOfferEnded?(remote, Self.ending(closure))
         case .pullEnded(_, let id, let result):
             pullEnded(id, result)
-        case .serveEnded:
+        case .pullAdvanced, .serveEnded:
             break
         }
     }
@@ -729,7 +729,7 @@ public final class ClipboardServeWaits: Sendable {
             for wait in waits {
                 wait.answer(.init(.failure(WireError(.itemRepresentationUnavailable, debugDetail: "the offer ended"))))
             }
-        case .offerReceived, .offerEnded, .offerRequested, .requestEnded, .pullEnded:
+        case .offerReceived, .offerEnded, .offerRequested, .requestEnded, .pullAdvanced, .pullEnded:
             break
         }
     }

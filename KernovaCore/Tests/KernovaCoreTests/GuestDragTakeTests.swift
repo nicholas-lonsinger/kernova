@@ -100,6 +100,7 @@ struct GuestDragTakeTests {
 
         func pull(
             _ item: DraggedOutItem, at index: Int, to destination: URL,
+            progressed: @escaping @Sendable (ItemLandingProgress) -> Void,
             ended: @escaping @MainActor (Result<Void, WireError>) -> Void
         ) -> @MainActor () -> Void {
             if let refused = refusal(index) {

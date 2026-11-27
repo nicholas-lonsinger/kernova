@@ -207,7 +207,8 @@ public final class ClipboardTransferReporter {
         recompute()
     }
 
-    /// Stops the operation `id` names, reporting whether one was reached.
+    /// Cancels the operation `id` names (``ClipboardTransferOperation/requestCancel()``),
+    /// reporting whether a live one was cancelled.
     ///
     /// The readout is the only handle the user has on a transfer, so a Cancel on
     /// it must reach *that* operation and no other. The identity comes off the
@@ -215,11 +216,7 @@ public final class ClipboardTransferReporter {
     /// several operations run at once and the ranking decides which is shown.
     @discardableResult
     public func cancel(_ id: ClipboardTransferOperationID) -> Bool {
-        guard let operation = live.first(where: { $0.id == id })?.operation,
-            operation.isCancellable
-        else { return false }
-        operation.requestCancel()
-        return true
+        live.first(where: { $0.id == id })?.operation?.requestCancel() ?? false
     }
 
     // MARK: - Private

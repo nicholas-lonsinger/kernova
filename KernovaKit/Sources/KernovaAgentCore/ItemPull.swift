@@ -137,8 +137,9 @@ struct ItemPullServer: Sendable {
 /// ENDs FAILED with its code. A sink refusal before the END RESETs the pull with the sink's code, and so does
 /// the end of the offer it names, with `ITEM_OFFER_STALE`, until the pull is committed: nothing withdraws a
 /// commit. A pull exists from its `.pulled` success to its stream's close, or its sink's publish report when
-/// that comes later. It emits one `.pullEnded`: a committed pull's on its sink's report, any other's at its
-/// close, after the sink's `.abort`.
+/// that comes later. It emits a `.pullAdvanced` for each change in how far the sink reports landing it, and
+/// one `.pullEnded`: a committed pull's on its sink's report, any other's at its close, after the sink's
+/// `.abort`.
 ///
 /// A pull asked for while every one of the connection's 64 stream slots is held waits, in the order asked,
 /// for a slot to free; its `.pulled` answer comes when it opens, or refuses it when its offer ends first or
@@ -163,6 +164,8 @@ struct ItemPullClient: Sendable {
         var feature: FeatureID
         var token: Data
         var sink: Sink = .receiving
+        /// How far the sink last reported landing it.
+        var landing = ItemLandingProgress.none
         /// The stream closed while the sink was publishing.
         var streamClosed = false
 
@@ -289,9 +292,12 @@ struct ItemPullClient: Sendable {
         outbox: inout [ItemTransferOutput], diagnostics: inout [Diagnostic]
     ) {
         switch input {
-        case .consumed(let id, let count):
-            guard index(id, generation) != nil else { return }
+        case .consumed(let id, let count, let landing):
+            guard let index = index(id, generation) else { return }
             connection.consumed(count, on: id.stream)
+            guard landing != pulls[index].landing else { return }
+            pulls[index].landing = landing
+            outbox.append(.event(.pullAdvanced(pulls[index].feature, id, landing)))
         case .verified(let id):
             guard let index = index(id, generation) else { return }
             guard pulls[index].sink == .finishing else {

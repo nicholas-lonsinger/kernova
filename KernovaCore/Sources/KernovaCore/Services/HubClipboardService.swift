@@ -69,8 +69,12 @@ final class HubClipboardService {
         return ItemFeatureOwner(
             usable: { [weak self] peer in MainActorBridge.async { self?.setConsolePeer(peer) } },
             events: { [weak self] peer, event in
-                if case .pullEnded(_, let id, let result) = event { return end.pullEnded(id, result) }
-                MainActorBridge.async { self?.handle(event, from: peer) }
+                switch event {
+                case .pullEnded(_, let id, let result): end.pullEnded(id, result)
+                // Nothing here reads how far a pull has landed, so that needs no hop.
+                case .pullAdvanced: break
+                default: MainActorBridge.async { self?.handle(event, from: peer) }
+                }
             },
             content: { id, request, _ in end.content(id, request) })
     }

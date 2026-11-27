@@ -488,7 +488,8 @@ package final class PropertyChecker {
                     fail("\(where_) served pull \(pull.stream) landed, but the puller's sink published nothing")
                 }
             }
-        case .event(.offerReceived), .event(.offerEnded), .event(.offerRequested), .event(.requestEnded), .reply:
+        case .event(.offerReceived), .event(.offerEnded), .event(.offerRequested), .event(.requestEnded),
+            .event(.pullAdvanced), .reply:
             break
         }
         let buffered = link.items(side).sink.maxBufferedBytes

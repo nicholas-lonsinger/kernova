@@ -16,7 +16,7 @@ struct ClipboardTransferReporterTests {
     private func makeOperation(
         _ reporter: ClipboardTransferReporter,
         gesture: ClipboardTransferGesture = .paste,
-        onCancelRequested: (@Sendable () -> Void)? = nil
+        onCancelRequested: (@MainActor @Sendable () -> Void)? = nil
     ) -> ClipboardTransferOperation {
         ClipboardTransferOperation(
             gesture: gesture, direction: .inbound, peerName: "macOS TEST",

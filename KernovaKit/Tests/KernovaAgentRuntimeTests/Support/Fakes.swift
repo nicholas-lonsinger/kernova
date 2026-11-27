@@ -65,7 +65,7 @@ final class MemoryItems: ItemSource, ItemSink {
     /// The sink's report on `effect`, if it takes one.
     func land(_ effect: ItemSinkEffect) -> ItemSinkInput? {
         switch effect {
-        case .bytes(let id, let bytes): return .consumed(id, bytes.count)
+        case .bytes(let id, let bytes): return .consumed(id, bytes.count, .none)
         case .finish(let id): return .verified(id)
         case .commit(let id): return .published(id, .named(Data()))
         case .begin, .abort: return nil

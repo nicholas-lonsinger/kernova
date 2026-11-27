@@ -189,7 +189,8 @@ public enum ItemSinkEffect: Sendable, Equatable {
     case begin(ItemPullID, ItemPullOrder, Representation)
     /// The container's next bytes: feed them, then report `.consumed`.
     case bytes(ItemPullID, Data)
-    /// Every byte arrived: finish the decoder, then report `.verified` or `.refused`.
+    /// Every byte arrived: finish the decoder, then report `.consumed` of no bytes with what the finish landed,
+    /// and `.verified`; or report `.refused`.
     case finish(ItemPullID)
     /// Publish what the pull staged, then report `.published` or `.publishFailed`; a failed publish leaves
     /// nothing. The pull's last effect: nothing withdraws it.
@@ -198,10 +199,29 @@ public enum ItemSinkEffect: Sendable, Equatable {
     case abort(ItemPullID)
 }
 
+/// How far one pull's landing has come, in logical bytes — the unit of the container's `EndRecord.bytes`,
+/// after decompression. Both figures are cumulative and only grow.
+public struct ItemLandingProgress: Sendable, Equatable {
+    /// The bytes landed so far.
+    public var landed: UInt64
+    /// The bytes the entries admitted so far declare their chunks carry, data and resource fork: what ``landed``
+    /// reaches once each has all its bytes.
+    public var declared: UInt64
+
+    /// `landed` bytes of the `declared` so far.
+    public init(landed: UInt64, declared: UInt64) {
+        self.landed = landed
+        self.declared = declared
+    }
+
+    /// Nothing landed or declared: where every pull starts.
+    public static let none = ItemLandingProgress(landed: 0, declared: 0)
+}
+
 /// The item sink's reports.
 public enum ItemSinkInput: Sendable, Equatable {
-    /// It is done with this many delivered bytes.
-    case consumed(ItemPullID, Int)
+    /// It is done with this many delivered bytes, and has landed the pull this far.
+    case consumed(ItemPullID, Int, ItemLandingProgress)
     /// After `.finish`, the decoder finished and the tree is staged.
     case verified(ItemPullID)
     /// It refused the container: `ITEM_CONTAINER_MALFORMED`, `TOO_LARGE`, `ITEM_UNPACK_REFUSED`, …
@@ -227,6 +247,9 @@ public enum ItemTransferEvent: Sendable, Equatable {
     /// ``ItemCommand/requestClipboardOffer(_:token:)`` says, or the host's to this side (`.remote`). Once per
     /// request.
     case requestEnded(ItemOfferOrigin, token: Data, StreamClosure)
+    /// A pull this side opened, of an offer of `FeatureID`'s, landed further: its sink's latest report, at each
+    /// change, before its `.pullEnded`.
+    case pullAdvanced(FeatureID, ItemPullID, ItemLandingProgress)
     /// A pull this side opened, of an offer of `FeatureID`'s, ended. Once per pull `pull` returned; a committed
     /// pull's follows its sink's publish report, and may follow the connection's `.closed`.
     case pullEnded(FeatureID, ItemPullID, ItemPullResult)
@@ -238,7 +261,9 @@ public enum ItemTransferEvent: Sendable, Equatable {
         switch self {
         case .offerReceived(let header): header.feature
         case .offerRequested, .requestEnded: .clipboard
-        case .offerEnded(let feature, _, _, _), .pullEnded(let feature, _, _), .serveEnded(let feature, _, _): feature
+        case .offerEnded(let feature, _, _, _), .pullAdvanced(let feature, _, _), .pullEnded(let feature, _, _),
+            .serveEnded(let feature, _, _):
+            feature
         }
     }
 }
