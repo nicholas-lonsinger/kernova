@@ -78,11 +78,6 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case timedOut
     /// The transfer aborted for a reason with no more specific case.
     case transferFailed
-    /// The sending side could not read what it was sending, so the transfer
-    /// stopped there.
-    case sourceUnreadable
-    /// The bytes arrived but could not be written to a file on this side.
-    case stagingFailed
     /// Some of a drag out's items did not land, each for a reason of its own, and the others did.
     case dragOutShortfall(DragOutAccount)
     /// Items the sending side did not send whole, and the rest crossed whole;
@@ -102,7 +97,8 @@ public enum ClipboardTransferFailure: Equatable, Sendable {
     case filesLeftOut(count: Int, limitBytes: Int)
 }
 
-/// What a drag out of the VM came to, item by item, once some of its items failed: observed counts only.
+/// What a drag out of the VM came to once some of its items failed, all of it observed: how many items came to
+/// each outcome and, when the VM couldn't read only one item, the entry in it the VM named.
 public struct DragOutAccount: Equatable, Sendable {
     /// The items the drag carried.
     public var items: Int
@@ -111,7 +107,7 @@ public struct DragOutAccount: Equatable, Sendable {
     /// The items this side was not permitted (`EPERM`) to write where they were dropped.
     public var refused = 0
     /// The items the VM could not read.
-    public var unreadable = 0
+    public var unreadable = DragOutUnreadable.none
     /// The items whose bytes arrived but could not be written on this side.
     public var unwritable = 0
     /// The items an app in the VM never supplied.
@@ -129,6 +125,36 @@ public struct DragOutAccount: Equatable, Sendable {
     public init(items: Int) {
         self.items = items
     }
+}
+
+/// The items of a drag out the VM could not read.
+public enum DragOutUnreadable: Equatable, Sendable {
+    /// None.
+    case none
+    /// One item, with the entry in it the VM couldn't read when the VM named that entry.
+    case one(entry: DragOutEntry?)
+    /// `count` items, two or more.
+    case several(count: Int)
+}
+
+/// An entry of an item dragged out of the VM, by its path in the VM from that item: the item's own name, then
+/// each folder down to the entry.
+///
+/// Its description withholds the names, which are the user's: a value interpolated into a public log line names
+/// no file.
+public struct DragOutEntry: Equatable, Sendable, CustomStringConvertible {
+    /// The path's components, the item's own name first; never empty.
+    public let components: [String]
+
+    /// The entry at `components`, or nil when there are none.
+    public init?(_ components: [String]) {
+        guard !components.isEmpty else { return nil }
+        self.components = components
+    }
+
+    /// `<private>`, whatever the entry. A struct or an enum holding the entry prints this for it, since the entry
+    /// has no debug description.
+    public var description: String { "<private>" }
 }
 
 /// Why this side ended a drop the VM had not finished landing, as this side observed it.

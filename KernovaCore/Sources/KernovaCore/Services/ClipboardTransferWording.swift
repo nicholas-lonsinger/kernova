@@ -185,20 +185,8 @@ package struct ClipboardTransferWording: Equatable {
                 message: "The transfer from the guest failed, so the paste didn't finish.",
                 menuLine: "Clipboard: paste from the guest failed")
 
-        case (.sourceUnreadable, let gesture):
-            let reader = gesture.readsOnThisMac ? "This Mac" : "The VM"
-            let prefix = gesture == .drop ? "Drop" : "Clipboard"
-            return ClipboardTransferWording(
-                headline: headline(for: gesture, vm: vm),
-                message: "\(reader) couldn't read one of the items, so \(unfinished(gesture)) didn't finish.",
-                menuLine: "\(prefix): \(reader.lowercasedFirst) couldn't read an item")
-
-        // Only a drag out raises a shortfall account.
-        case (.stagingFailed, _), (.dragOutShortfall, _):
-            return ClipboardTransferWording(
-                headline: "Clipboard not pasted from \(vm).",
-                message: "The copied file couldn't be saved to disk, so the paste didn't finish.",
-                menuLine: "Clipboard: paste from the guest failed")
+        case (.dragOutShortfall(let account), _):
+            return shortfallWording(account, vm: vm)
 
         case (.itemsSkipped(let count), .drop):
             return ClipboardTransferWording(
@@ -283,8 +271,8 @@ package struct ClipboardTransferWording: Equatable {
         case .tooLarge:
             message = "The drag holds more items than can be dragged out of the VM at once."
             menuLine = "Drag: too many items to drag out at once"
-        case .transferFailed, .peerReported, .sourceUnreadable, .stagingFailed, .itemsSkipped, .itemsUnreadable,
-            .sendFailed, .dropStopped, .nothingToCopy, .filesLeftOut:
+        case .transferFailed, .peerReported, .itemsSkipped, .itemsUnreadable, .sendFailed, .dropStopped,
+            .nothingToCopy, .filesLeftOut:
             message = "The transfer from the VM failed, so the drag didn't finish."
             menuLine = "Drag: the files didn't reach your Mac"
         }
@@ -317,8 +305,12 @@ package struct ClipboardTransferWording: Equatable {
             sentences.append(
                 "This Mac didn't allow Kernova to save \(itemCount(account.refused)) where you dropped \(refused).")
         }
-        if account.unreadable > 0 {
-            sentences.append("\(itemCount(account.unreadable).capitalizedFirst) couldn't be read in the VM.")
+        switch account.unreadable {
+        case .none: break
+        case .one(let entry?):
+            sentences.append("The VM couldn't read \(quoted(entry.components.joined(separator: "/"))).")
+        case .one(nil): sentences.append("One item couldn't be read in the VM.")
+        case .several(let count): sentences.append("\(itemCount(count).capitalizedFirst) couldn't be read in the VM.")
         }
         if account.unwritable > 0 {
             sentences.append("\(itemCount(account.unwritable).capitalizedFirst) couldn't be written on this Mac.")
@@ -350,16 +342,6 @@ package struct ClipboardTransferWording: Equatable {
         count == 1 ? "one item" : "\(count.formatted()) items"
     }
 
-    /// What the gesture that did not finish is called in the sentence saying so.
-    private static func unfinished(_ gesture: ClipboardTransferGesture) -> String {
-        switch gesture {
-        case .drop: "the drop"
-        case .dragOut: "the drag"
-        case .copy, .forward: "the copy"
-        case .paste, .peerPaste: "the paste"
-        }
-    }
-
     /// The needed and free byte counts a disk-full refusal knows, joined, or
     /// empty when it knows neither.
     private static func diskFullDetail(needed: UInt64?, available: Int64?) -> String {
@@ -374,25 +356,7 @@ package struct ClipboardTransferWording: Equatable {
     private static func quoted(_ name: String) -> String { "\u{201C}\(name)\u{201D}" }
 }
 
-extension ClipboardTransferGesture {
-    /// Whether the bytes this gesture moves are read on this Mac — it sends
-    /// them — rather than in the VM.
-    fileprivate var readsOnThisMac: Bool {
-        switch self {
-        case .drop, .forward, .peerPaste: true
-        case .paste, .copy, .dragOut: false
-        }
-    }
-}
-
 extension String {
-    /// The string with its first character lowercased, for a phrase that
-    /// continues a sentence.
-    fileprivate var lowercasedFirst: String {
-        guard let first else { return self }
-        return first.lowercased() + dropFirst()
-    }
-
     /// The string with its first character uppercased, for a phrase that
     /// begins a sentence.
     fileprivate var capitalizedFirst: String {

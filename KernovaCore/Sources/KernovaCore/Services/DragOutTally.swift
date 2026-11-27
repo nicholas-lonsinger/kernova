@@ -5,8 +5,8 @@ import KernovaTransferProgress
 package enum DragOutItemFailure: Equatable, Sendable {
     /// This Mac did not permit the write (`EPERM`) where the item was dropped.
     case refused
-    /// The VM could not read the item.
-    case unreadable
+    /// The VM could not read the item, at `entry` when it named the entry.
+    case unreadable(entry: DragOutEntry?)
     /// The item's bytes arrived but could not be written on this Mac.
     case unwritable
     /// An app in the VM never supplied the item.
@@ -29,6 +29,9 @@ struct DragOutTally {
     /// Each ended item's outcome, by index: an item is landed or failed, never both.
     private(set) var outcomes: [Int: Outcome] = [:]
     private var counts = DragOutAccount(items: 0)
+    /// The entry the VM named of each item it could not read, by index; nil for an item it named none of. A
+    /// subscript assignment of nil would drop the item.
+    private var unreadable: [Int: DragOutEntry?] = [:]
     /// How many items landed in each folder.
     private var landedIn: [String: Int] = [:]
     /// How many items were refused in each folder.
@@ -40,8 +43,8 @@ struct DragOutTally {
 
     /// Records that item `index` came to `outcome`, in place of any outcome it came to before.
     mutating func record(_ outcome: Outcome, at index: Int) {
-        if let previous = outcomes.updateValue(outcome, forKey: index) { count(previous, by: -1) }
-        count(outcome, by: 1)
+        if let previous = outcomes.updateValue(outcome, forKey: index) { count(previous, at: index, by: -1) }
+        count(outcome, at: index, by: 1)
     }
 
     /// Whether item `index`'s write has ended.
@@ -57,12 +60,15 @@ struct DragOutTally {
     func account(items: Int) -> DragOutAccount {
         var account = counts
         account.items = items
+        if let first = unreadable.first {
+            account.unreadable = unreadable.count == 1 ? .one(entry: first.value) : .several(count: unreadable.count)
+        }
         account.refusedBesideLanded = foldersLandedAndRefused > 0
         account.refusedPromise = refusedPromises > 0
         return account
     }
 
-    private mutating func count(_ outcome: Outcome, by delta: Int) {
+    private mutating func count(_ outcome: Outcome, at index: Int, by delta: Int) {
         switch outcome {
         case .landed(let folder):
             counts.landed += delta
@@ -71,7 +77,8 @@ struct DragOutTally {
             counts.refused += delta
             if promised { refusedPromises += delta }
             countFolder(folder, landed: 0, refused: delta)
-        case .failed(.unreadable, _, _): counts.unreadable += delta
+        case .failed(.unreadable(let entry), _, _):
+            if delta > 0 { unreadable.updateValue(entry, forKey: index) } else { unreadable.removeValue(forKey: index) }
         case .failed(.unwritable, _, _): counts.unwritable += delta
         case .failed(.unsupplied, _, _): counts.unsupplied += delta
         case .failed(.failed, _, _): counts.failed += delta
