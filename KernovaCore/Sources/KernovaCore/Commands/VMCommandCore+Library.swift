@@ -856,7 +856,7 @@ extension VMCommandCore {
                 for attachment in toDelete {
                     if let file = await trashExternalFile(
                         at: URL(fileURLWithPath: attachment.path),
-                        bookmark: attachment.reference.bookmark,
+                        bookmark: attachment.reference.bookmark?.data,
                         label: attachment.label,
                         vmName: vmName,
                         permanently: permanently)
@@ -985,7 +985,7 @@ extension VMCommandCore {
                         sharedWithVMNames: Self.sharingVMNames(
                             matching: ExternalFileReference.fileIdentities(
                                 forPath: reference.path,
-                                resolvedTarget: reference.bookmark.flatMap { targets[$0] }),
+                                resolvedTarget: reference.bookmark.flatMap { targets[$0.data] }),
                             among: others),
                         isMissing: isMissing))
             }

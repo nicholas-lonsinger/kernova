@@ -103,8 +103,10 @@ extension VMConfiguration {
         .field("kernelPath", \.kernelPath, .machineKeys),
         .field("initrdPath", \.initrdPath, .machineKeys),
         .field("kernelCommandLine", \.kernelCommandLine, .machineKeys),
-        .field("kernelBookmark", \.kernelBookmark, .machineKeys),
-        .field("initrdBookmark", \.initrdBookmark, .machineKeys),
+        .field("kernelBookmarkData", \.kernelBookmarkData, .machineKeys),
+        .field("kernelBookmarkReadOnly", \.kernelBookmarkReadOnly, .machineKeys),
+        .field("initrdBookmarkData", \.initrdBookmarkData, .machineKeys),
+        .field("initrdBookmarkReadOnly", \.initrdBookmarkReadOnly, .machineKeys),
         .field("storageDisks", \.storageDisks, .machineKeys),
         // Every share rides one device on some guests, so a move that keeps
         // at least one share is a swap of that device's share; adding the

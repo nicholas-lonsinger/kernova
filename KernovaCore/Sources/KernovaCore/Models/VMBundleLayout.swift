@@ -284,12 +284,12 @@ package struct DiskImageReference: Sendable, Equatable {
 
 extension StorageDisk {
     package var imageReference: DiskImageReference {
-        DiskImageReference(path: path, isInternal: isInternal, bookmark: bookmark)
+        DiskImageReference(path: path, isInternal: isInternal, bookmark: bookmark?.data)
     }
 }
 
 extension RemovableMediaItem {
     package var imageReference: DiskImageReference {
-        DiskImageReference(path: path, isInternal: false, bookmark: bookmark)
+        DiskImageReference(path: path, isInternal: false, bookmark: bookmark?.data)
     }
 }

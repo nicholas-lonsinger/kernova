@@ -353,6 +353,9 @@ struct VMSettingsRenderedRow: Identifiable, Equatable {
     let isMissing: Bool
     let missingPath: String?
     let readOnly: Bool
+    /// Why the read-only switch stays on whatever `controlsEnabled` says, `nil`
+    /// where nothing but `controlsEnabled` holds it.
+    let readAccessOnly: ReadAccessOnly?
     /// Whether the title, notes and read-only switch take an edit.
     let controlsEnabled: Bool
     /// Whether the eject button takes a click.

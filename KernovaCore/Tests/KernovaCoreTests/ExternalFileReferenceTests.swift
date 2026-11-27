@@ -10,12 +10,12 @@ import Testing
 struct ExternalFileReferenceTests {
     // MARK: - Fixture
 
-    private static let kernelBookmark = Data([0x01])
-    private static let initrdBookmark = Data([0x02])
-    private static let diskBookmark = Data([0x03])
-    private static let mediaBookmark = Data([0x04])
-    private static let directoryBookmark = Data([0x05])
-    private static let ipswBookmark = Data([0x06])
+    private static let kernelBookmark = FileBookmark(data: Data([0x01]), access: .readWrite)
+    private static let initrdBookmark = FileBookmark(data: Data([0x02]), access: .readOnly)
+    private static let diskBookmark = FileBookmark(data: Data([0x03]), access: .readWrite)
+    private static let mediaBookmark = FileBookmark(data: Data([0x04]), access: .readOnly)
+    private static let directoryBookmark = FileBookmark(data: Data([0x05]), access: .readWrite)
+    private static let ipswBookmark = FileBookmark(data: Data([0x06]), access: .readOnly)
 
     /// A configuration with every external field populated at once, each
     /// carrying a distinct sentinel bookmark.
@@ -81,11 +81,12 @@ struct ExternalFileReferenceTests {
     @Test("Healing every projected reference writes back to the field it came from")
     func healWritesBackEveryKind() {
         var config = makeFullyPopulatedConfig()
-        var expected: [UUID: (path: String, bookmark: Data)] = [:]
+        var expected: [UUID: (path: String, bookmark: FileBookmark)] = [:]
 
         for (index, reference) in config.externalFileReferences.enumerated() {
             let path = "/Volumes/Moved/\(index)"
-            let bookmark = Data([0xF0, UInt8(index)])
+            let bookmark = FileBookmark(
+                data: Data([0xF0, UInt8(index)]), access: index.isMultiple(of: 2) ? .readOnly : .readWrite)
             expected[reference.id] = (path, bookmark)
             config.healExternalReference(reference, movedTo: path, bookmark: bookmark)
         }
@@ -105,7 +106,8 @@ struct ExternalFileReferenceTests {
     /// The kind is irrelevant to identity, so every case here uses one.
     private func makeReference(path: String, bookmark: Data? = nil) -> ExternalFileReference {
         ExternalFileReference(
-            id: UUID(), kind: .storageDisk, label: "Disk", path: path, bookmark: bookmark, readOnly: false)
+            id: UUID(), kind: .storageDisk, label: "Disk", path: path,
+            bookmark: bookmark.map { FileBookmark(data: $0, access: .readWrite) }, readOnly: false)
     }
 
     @Test("A trailing slash and a redundant component don't split an identity")
@@ -145,7 +147,7 @@ struct ExternalFileReferenceTests {
 
     // MARK: - Bookmark creation
 
-    @Test("A file the user can read but not write is bookmarked")
+    @Test("A file the user can read but not write is bookmarked with read access alone")
     func bookmarksUnwritableFile() throws {
         let scratch = TestScratchDirectory(prefix: "ExternalFileReferenceTests")
         try FileManager.default.createDirectory(at: scratch.url, withIntermediateDirectories: true)
@@ -154,6 +156,6 @@ struct ExternalFileReferenceTests {
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o444], ofItemAtPath: file.path(percentEncoded: false))
 
-        #expect(SecurityScopedBookmark.make(for: file) != nil)
+        #expect(SecurityScopedBookmark.make(for: file)?.access == .readOnly)
     }
 }

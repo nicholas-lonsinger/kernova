@@ -980,15 +980,15 @@ private func configureGroupedFormStepped(
     stepper.action = stepperAction
 }
 
-/// The read-only switch on an attachment row, tagged with the item's id.
+/// The read-only switch on an attachment row, tagged with the item's id; the
+/// row decides whether it takes an edit.
 @MainActor
 func makeGroupedFormReadOnlySwitch(
-    id: UUID, isOn: Bool, enabled: Bool, target: AnyObject, action: Selector
+    id: UUID, isOn: Bool, target: AnyObject, action: Selector
 ) -> NSSwitch {
     let toggle = NSSwitch()
     toggle.controlSize = .small
     toggle.state = isOn ? .on : .off
-    toggle.isEnabled = enabled
     toggle.identifier = NSUserInterfaceItemIdentifier(id.uuidString)
     toggle.target = target
     toggle.action = action

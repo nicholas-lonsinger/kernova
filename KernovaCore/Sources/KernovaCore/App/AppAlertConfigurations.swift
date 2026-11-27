@@ -211,7 +211,10 @@ package struct AppAlertConfigurations {
     /// One remedy here is certain, and it is ``StartFailedAttachment/Reason/notWritable``'s:
     /// the builder asks for a writable file or folder only for an entry the VM
     /// may write (`requireWritable: !readOnly`), so marking that entry Read
-    /// Only skips the check the bring-up died on. It is named only while the VM's
+    /// Only skips the check the bring-up died on. An entry whose bookmark grants
+    /// reading alone is Read Only whatever its setting (``StorageDisk/readOnly``),
+    /// so none reaches this remedy, whose making the file writable it would not
+    /// honor. It is named only while the VM's
     /// settings can be reached — `holdsSavedState` is exactly what closes them
     /// (``VMAdmission/editClasses(settledAt:facts:)``) — because advice nobody in that state
     /// can follow is worse than none. Everything else the file-system reasons

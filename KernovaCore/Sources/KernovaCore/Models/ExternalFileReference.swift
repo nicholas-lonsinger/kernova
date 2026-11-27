@@ -24,7 +24,7 @@ package struct ExternalFileReference: Sendable, Equatable {
     package let kind: Kind
     let label: String
     let path: String
-    let bookmark: Data?
+    let bookmark: FileBookmark?
     /// Whether the VM opens the item read-only: always for a kernel, an
     /// initial RAM disk and an installer image, and as the entry says for
     /// the rest.
@@ -80,15 +80,15 @@ extension ScopedAccess {
     /// Opens `reference`'s bookmark, reporting the healed `(path, bookmark)`
     /// when the resolved reality diverges from what the reference carries: the
     /// path the bookmark resolves to, and a fresh bookmark where the system
-    /// grants one (``SecurityScopedBookmark/renewal(for:)``), else the
+    /// grants one (``SecurityScopedBookmark/renewal(of:at:)``), else the
     /// reference's own.
     ///
     /// `nil` when the reference has no bookmark or the bookmark no longer
     /// resolves; the caller then falls through to the raw path.
     static func open(
         _ reference: ExternalFileReference
-    ) -> (scope: ScopedAccess, healedTo: (path: String, bookmark: Data)?)? {
-        guard let bookmark = reference.bookmark, let scope = ScopedAccess(bookmark: bookmark) else {
+    ) -> (scope: ScopedAccess, healedTo: (path: String, bookmark: FileBookmark)?)? {
+        guard let bookmark = reference.bookmark, let scope = ScopedAccess(bookmark: bookmark.data) else {
             return nil
         }
         let resolvedPath = scope.url.path(percentEncoded: false)
@@ -101,7 +101,7 @@ extension ScopedAccess {
         guard scope.isStale || moved else { return (scope, nil) }
         // Re-creating while the scope is active is Apple's documented
         // stale-bookmark pattern.
-        let fresh = SecurityScopedBookmark.renewal(for: scope.url)
+        let fresh = SecurityScopedBookmark.renewal(of: bookmark, at: scope.url)
         guard moved || fresh != nil else { return (scope, nil) }
         return (scope, (resolvedPath, fresh ?? bookmark))
     }
@@ -119,7 +119,7 @@ extension Sequence<ExternalFileReference> {
         var refs: [String: Data?] = [:]
         for reference in self {
             if (refs[reference.path] ?? nil) != nil { continue }
-            refs.updateValue(reference.bookmark, forKey: reference.path)
+            refs.updateValue(reference.bookmark?.data, forKey: reference.path)
         }
         return refs
     }
@@ -140,7 +140,7 @@ extension Sequence<ExternalFileReference> {
     ) -> [Data: String] {
         var attempts: [Data: String?] = [:]
         for reference in self {
-            guard let bookmark = reference.bookmark, attempts[bookmark] == nil else { continue }
+            guard let bookmark = reference.bookmark?.data, attempts[bookmark] == nil else { continue }
             attempts[bookmark] = resolve(bookmark)
         }
         return attempts.compactMapValues { $0 }
@@ -157,7 +157,7 @@ extension Sequence<ExternalFileReference> {
             identities.formUnion(
                 ExternalFileReference.fileIdentities(
                     forPath: reference.path,
-                    resolvedTarget: reference.bookmark.flatMap { resolvedTargets[$0] }))
+                    resolvedTarget: reference.bookmark.flatMap { resolvedTargets[$0.data] }))
         }
         return identities
     }

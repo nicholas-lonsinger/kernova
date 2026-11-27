@@ -354,7 +354,7 @@ final class BootConfigContentViewController: NSViewController, NSTextFieldDelega
     /// pickers; `assign` writes the captured pair onto its model fields.
     private func browseAndCapture(
         title: String, types: [UTType],
-        assign: @escaping (VMCreationViewModel, String, Data?) -> Void
+        assign: @escaping (VMCreationViewModel, String, FileBookmark?) -> Void
     ) {
         browse(title: title, types: types) { [weak self] url in
             guard let self else { return }

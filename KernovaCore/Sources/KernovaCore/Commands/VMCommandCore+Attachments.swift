@@ -9,7 +9,7 @@ import KernovaLogging
 /// grant across as data.
 package struct PickedFile: Sendable, Hashable {
     let path: String
-    let bookmark: Data?
+    let bookmark: FileBookmark?
 
     /// One open-panel URL as the core takes it — path plus the app-scoped
     /// bookmark minted from this pick's grant.
@@ -20,7 +20,7 @@ package struct PickedFile: Sendable, Hashable {
     #if DEBUG
     /// A pick carrying the bookmark a test chooses: a real one needs a panel's
     /// grant.
-    init(path: String, bookmark: Data?) {
+    init(path: String, bookmark: FileBookmark?) {
         self.path = path
         self.bookmark = bookmark
     }
@@ -163,7 +163,7 @@ extension VMCommandCore {
         var shared: [String] = []
         if !disk.isInternal {
             shared = await sharingVMNames(
-                forPath: disk.path, bookmark: disk.bookmark, excluding: instance)
+                forPath: disk.path, bookmark: disk.bookmark?.data, excluding: instance)
             #if DEBUG
             await afterSharingResolveForTesting?()
             #endif
@@ -197,7 +197,7 @@ extension VMCommandCore {
             }
             guard disk.isInternal else {
                 return await trashExternalFile(
-                    at: URL(fileURLWithPath: disk.path), bookmark: disk.bookmark,
+                    at: URL(fileURLWithPath: disk.path), bookmark: disk.bookmark?.data,
                     label: disk.label, vmName: instance.name)
             }
             return await removeFile(
@@ -285,11 +285,15 @@ extension VMCommandCore {
         try mutateStorageDisk(id, on: instance) { $0.notes = trimmed }
     }
 
-    /// Marks a storage disk read-only, or writable again.
+    /// Marks a storage disk read-only, or writable again — refused for a disk
+    /// whose bookmark grants reading alone (``StorageDisk/readAccessOnly``).
     func setStorageDiskReadOnly(_ selector: VMSelector, disk id: UUID, readOnly: Bool) throws {
         let instance = try resolve(selector)
         try require(.editStorageDisks, on: instance)
-        try mutateStorageDisk(id, on: instance) { $0.readOnly = readOnly }
+        if !readOnly, let notice = storageDisk(id: id, on: instance)?.readAccessOnly {
+            throw readAccessOnlyRefusal(notice, verb: .editStorageDisk, on: instance)
+        }
+        try mutateStorageDisk(id, on: instance) { $0.readOnlySetting = readOnly }
     }
 
     /// Rewrites the boot order to `order`.
@@ -427,7 +431,7 @@ extension VMCommandCore {
         var shared: [String] = []
         if trashFile, !isAgentInstaller {
             shared = await sharingVMNames(
-                forPath: item.path, bookmark: item.bookmark, excluding: instance)
+                forPath: item.path, bookmark: item.bookmark?.data, excluding: instance)
             #if DEBUG
             await afterSharingResolveForTesting?()
             #endif
@@ -469,7 +473,7 @@ extension VMCommandCore {
             return
         }
         let kept = await trashExternalFile(
-            at: URL(fileURLWithPath: item.path), bookmark: item.bookmark, label: item.label,
+            at: URL(fileURLWithPath: item.path), bookmark: item.bookmark?.data, label: item.label,
             vmName: instance.name)
         try Self.requireRemoved(
             [kept].compactMap { $0 }, after: .attachment(label: item.label, vm: instance.name))
@@ -519,7 +523,9 @@ extension VMCommandCore {
         try mutateRemovableMedia(id, on: instance) { $0.notes = trimmed }
     }
 
-    /// Marks a removable medium read-only, or writable again.
+    /// Marks a removable medium read-only, or writable again — refused for a
+    /// medium whose bookmark grants reading alone
+    /// (``RemovableMediaItem/readAccessOnly``).
     ///
     /// Unlike a label or a note this *is* part of the mount identity, so a live
     /// guest sees the medium ejected and re-inserted. On a running VM, making
@@ -530,7 +536,10 @@ extension VMCommandCore {
     ) throws {
         let instance = try resolve(selector)
         try require(.editRemovableMedia, on: instance)
-        try mutateRemovableMedia(id, on: instance) { $0.readOnly = readOnly }
+        if !readOnly, let notice = removableMediaItem(id: id, on: instance)?.readAccessOnly {
+            throw readAccessOnlyRefusal(notice, verb: .editRemovableMedia, on: instance)
+        }
+        try mutateRemovableMedia(id, on: instance) { $0.readOnlySetting = readOnly }
     }
 
     // MARK: - Shared Directories
@@ -586,17 +595,22 @@ extension VMCommandCore {
         try writeSharedDirectories(of: instance, as: capability) { $0.removeAll { $0.id == id } }
     }
 
-    /// Marks a shared directory read-only, or writable again.
+    /// Marks a shared directory read-only, or writable again — refused for a
+    /// share whose bookmark grants reading alone
+    /// (``SharedDirectory/readAccessOnly``).
     func setSharedDirectoryReadOnly(
         _ selector: VMSelector, directory id: UUID, readOnly: Bool
     ) throws {
         let instance = try resolve(selector)
         let capability = try requireSharedDirectories(.change, on: instance)
-        guard sharedDirectory(id: id, on: instance) != nil else {
+        guard let directory = sharedDirectory(id: id, on: instance) else {
             throw staleAttachment(id, on: instance, verb: .editSharedDirectory)
         }
+        if !readOnly, let notice = directory.readAccessOnly {
+            throw readAccessOnlyRefusal(notice, verb: .editSharedDirectory, on: instance)
+        }
         try writeSharedDirectories(of: instance, as: capability) { directories in
-            directories.update(id) { $0.readOnly = readOnly }
+            directories.update(id) { $0.readOnlySetting = readOnly }
         }
     }
 
@@ -1220,6 +1234,16 @@ extension VMCommandCore {
             verb: verb,
             message:
                 "That attachment is no longer attached to \u{201C}\(instance.name)\u{201D}.")
+    }
+
+    /// The refusal turning Read Only off raises for an entry whose bookmark
+    /// grants reading alone.
+    func readAccessOnlyRefusal(_ notice: ReadAccessOnly, verb: VMVerb, on instance: VMInstance) -> CommandError {
+        logger.log(
+            .notice,
+            "Refused \(verb.rawValue, privacy: .public) for '\(instance.name, privacy: .public)': the entry's bookmark grants reading alone"
+        )
+        return .invalidArgument(notice.message)
     }
 
     /// Applies `edit` to one storage disk, refusing when the VM no longer

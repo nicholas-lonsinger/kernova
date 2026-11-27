@@ -17,7 +17,7 @@ package enum LocalRestoreImageInspection: Sendable, Equatable {
 /// A restore image already on disk, picked or adopted without a download.
 package struct LocalRestoreImage: Sendable, Equatable {
     package var path: String
-    var bookmark: Data?
+    var bookmark: FileBookmark?
     /// What inspecting the file established.
     package var inspection: LocalRestoreImageInspection = .pending
 }
