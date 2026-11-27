@@ -3,7 +3,7 @@ import KernovaSynchronization
 import KernovaTestSupport
 import Testing
 
-@testable import KernovaKit
+@testable import KernovaTransferProgress
 
 @Suite("ClipboardTransferReporter", .caseScoped)
 @MainActor

@@ -1,4 +1,5 @@
 import Foundation
+import KernovaTransferProgress
 
 /// Display strings for the clipboard transfer readout.
 public enum ClipboardProgressFormat {
@@ -134,18 +135,5 @@ public enum ClipboardProgressFormat {
             parts.append(pending)
         }
         return parts.joined(separator: " — ")
-    }
-
-    /// Seconds as a log record spells them ("2.00 s"), or `unknown` where there
-    /// is no estimate — never shown to a user, who gets `timeRemaining` instead.
-    package static func logSeconds(_ value: TimeInterval?) -> String {
-        guard let value else { return "unknown" }
-        return String(format: "%.2f s", value)
-    }
-
-    /// Bytes as a log record spells them ("512/4096 bytes"), or `size unknown`
-    /// for an operation that does not know its bytes.
-    package static func logBytes(transferred: UInt64, total: UInt64, known: Bool) -> String {
-        known ? "\(transferred)/\(total) bytes" : "size unknown"
     }
 }

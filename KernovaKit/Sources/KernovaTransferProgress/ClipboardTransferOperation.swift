@@ -1,4 +1,10 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
+
+import Dispatch
 import KernovaLogging
 import KernovaSynchronization
 
@@ -220,7 +226,7 @@ public final class ClipboardTransferOperation: Sendable {
 
         /// What a record says of the bytes moved.
         var loggedBytes: String {
-            ClipboardProgressFormat.logBytes(transferred: transferredBytes, total: totalBytes, known: bytesKnown)
+            ClipboardProgressLogFormat.logBytes(transferred: transferredBytes, total: totalBytes, known: bytesKnown)
         }
 
         /// Decides whether this event, sampled at `now`, may reach the UI, then
@@ -545,17 +551,17 @@ public final class ClipboardTransferOperation: Sendable {
         case .revealed(let elapsed, let bytes):
             Self.logger.log(
                 .info,
-                "\(String(describing: self.header.gesture), privacy: .public) \(String(describing: self.header.direction), privacy: .public) '\(self.header.peerName, privacy: .public)' revealed at \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(bytes, privacy: .public)"
+                "\(String(describing: self.header.gesture), privacy: .public) \(String(describing: self.header.direction), privacy: .public) '\(self.header.peerName, privacy: .public)' revealed at \(ClipboardProgressLogFormat.logSeconds(elapsed), privacy: .public) — \(bytes, privacy: .public)"
             )
         case .ended(let terminal, let elapsed, let bytes, let revealed):
             Self.logger.log(
                 .info,
-                "\(String(describing: self.header.gesture), privacy: .public) \(String(describing: self.header.direction), privacy: .public) '\(self.header.peerName, privacy: .public)' \(terminal, privacy: .public) after \(ClipboardProgressFormat.logSeconds(elapsed), privacy: .public) — \(bytes, privacy: .public), revealed=\(revealed, privacy: .public)"
+                "\(String(describing: self.header.gesture), privacy: .public) \(String(describing: self.header.direction), privacy: .public) '\(self.header.peerName, privacy: .public)' \(terminal, privacy: .public) after \(ClipboardProgressLogFormat.logSeconds(elapsed), privacy: .public) — \(bytes, privacy: .public), revealed=\(revealed, privacy: .public)"
             )
         case .emission(let snapshot):
             Self.logger.log(
                 .debug,
-                "\(String(describing: self.header.gesture), privacy: .public) readout — \(ClipboardProgressFormat.logBytes(transferred: snapshot.bytesTransferred, total: snapshot.totalBytes, known: snapshot.bytesKnown), privacy: .public), \(ClipboardProgressFormat.logSeconds(snapshot.elapsedSeconds), privacy: .public) elapsed, \(ClipboardProgressFormat.logSeconds(snapshot.secondsRemaining), privacy: .public) remaining"
+                "\(String(describing: self.header.gesture), privacy: .public) readout — \(ClipboardProgressLogFormat.logBytes(transferred: snapshot.bytesTransferred, total: snapshot.totalBytes, known: snapshot.bytesKnown), privacy: .public), \(ClipboardProgressLogFormat.logSeconds(snapshot.elapsedSeconds), privacy: .public) elapsed, \(ClipboardProgressLogFormat.logSeconds(snapshot.secondsRemaining), privacy: .public) remaining"
             )
         }
     }

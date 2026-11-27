@@ -5,6 +5,7 @@ import KernovaAgentRuntime
 import KernovaFileTree
 import KernovaItemTransfer
 import KernovaKit
+import KernovaTransferProgress
 import KernovaWire
 import Synchronization
 

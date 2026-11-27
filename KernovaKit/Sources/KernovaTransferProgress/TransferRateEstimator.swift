@@ -1,4 +1,8 @@
+#if canImport(FoundationEssentials)
+import FoundationEssentials
+#else
 import Foundation
+#endif
 
 /// Smoothed throughput and time-remaining estimate for a monotonically growing
 /// byte count.

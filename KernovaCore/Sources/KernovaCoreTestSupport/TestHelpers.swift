@@ -10,6 +10,7 @@ import KernovaTestSupport
 
 @testable import KernovaCore
 @testable import KernovaKit
+@testable import KernovaTransferProgress
 
 // `waitForChange` below is here rather than in KernovaTestSupport: it is built
 // on the core's `waitForObservedChange`, and only the core's and the app's

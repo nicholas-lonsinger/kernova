@@ -1,5 +1,6 @@
 import Foundation
 import KernovaKit
+import KernovaTransferProgress
 
 /// How one take's delivery came out: what its drop named, then what it
 /// delivered.

@@ -1,5 +1,6 @@
 import KernovaKit
 import KernovaTestSupport
+import KernovaTransferProgress
 import Testing
 
 @testable import KernovaCore

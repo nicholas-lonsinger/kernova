@@ -5,6 +5,7 @@ import KernovaKit
 
 #if SWIFT_PACKAGE
 import KernovaTestSupport
+import KernovaTransferProgress
 #endif
 
 @testable import KernovaCore

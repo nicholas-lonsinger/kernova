@@ -1,5 +1,3 @@
-import Foundation
-
 /// Why a clipboard, drop or drag transfer failed, as the side that failed
 /// reports it.
 public enum ClipboardErrorCode: Sendable {

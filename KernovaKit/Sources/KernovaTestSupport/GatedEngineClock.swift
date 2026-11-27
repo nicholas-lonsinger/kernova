@@ -1,5 +1,5 @@
 import Foundation
-import KernovaKit
+import KernovaTransferProgress
 import KernovaSynchronization
 
 /// An `EngineClock` that parks every `sleep` until the test releases it,

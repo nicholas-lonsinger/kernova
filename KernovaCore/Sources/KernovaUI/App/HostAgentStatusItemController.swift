@@ -3,6 +3,7 @@ import KernovaAppKitShared
 import KernovaCore
 import KernovaKit
 import KernovaLogging
+import KernovaTransferProgress
 
 /// Owns the resident agent's menu-bar `NSStatusItem` and its dropdown.
 ///
