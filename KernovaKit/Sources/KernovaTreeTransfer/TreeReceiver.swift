@@ -29,6 +29,13 @@ public final class TreeReceiver<FileSystem: MutableTreeFileSystem> {
     private var state: State
     private let writer: TreeWriter<FileSystem>
 
+    /// The logical bytes landed so far, after decompression: the unit of the container's `EndRecord.bytes`.
+    public var landedByteCount: UInt64 { writer.landedByteCount }
+
+    /// The bytes the entries landed so far declare their chunks carry, which ``landedByteCount`` reaches once
+    /// each has all its bytes.
+    public var declaredByteCount: UInt64 { writer.declaredByteCount }
+
     /// A receiver landing what `acceptance` admits in `destination`, as the item `name`.
     ///
     /// - Parameters:

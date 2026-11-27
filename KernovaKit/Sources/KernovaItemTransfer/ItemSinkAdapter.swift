@@ -26,13 +26,26 @@ import KernovaWire
 /// FOLDER, through a `TreeReceiver` staging beside its landing's directory and publishing under the landing's
 /// name, or creating it at its landing's exact path, its landed bytes charged to the order's budget when it has
 /// one; an INLINE one landing in memory decoded there, charged to that budget likewise, and published as its
-/// bytes. Each pull's work runs on a queue of its own.
+/// bytes. Each pull's work runs on a queue of its own, and each report of bytes consumed carries how far the
+/// pull has landed.
 public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink {
     private enum Pull {
         case receiving(TreeReceiver<FileSystem>)
         case inline(InlineReceiver)
         /// The sink refused the pull; later bytes are dropped.
         case refused
+
+        /// How far a pull still receiving has landed.
+        var landing: ItemLandingProgress {
+            switch self {
+            case .receiving(let receiver):
+                ItemLandingProgress(landed: receiver.landedByteCount, declared: receiver.declaredByteCount)
+            case .inline(let receiver):
+                ItemLandingProgress(landed: UInt64(receiver.bytes.count), declared: receiver.declaredBytes)
+            case .refused:
+                .none
+            }
+        }
     }
 
     private let fileSystem: FileSystem
@@ -145,7 +158,7 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
                         pull = .inline(receiver)
                     case .refused: return
                     }
-                    reporter.report(.consumed(id, bytes.count))
+                    reporter.report(.consumed(id, bytes.count, pull.landing))
                 } catch {
                     pull = .refused
                     reporter.report(.refused(id, error))
@@ -164,6 +177,8 @@ public final class ItemSinkAdapter<FileSystem: MutableTreeFileSystem>: ItemSink 
                         pull = .inline(receiver)
                     case .refused: return
                     }
+                    // Entries still decompressing at the stream's end land in the finish.
+                    reporter.report(.consumed(id, 0, pull.landing))
                     reporter.report(.verified(id))
                 } catch {
                     pull = .refused
@@ -260,6 +275,9 @@ struct InlineReceiver {
     private let account: ByteBudget.Account?
     /// The DATA entry's bytes so far.
     private(set) var bytes = Data()
+
+    /// The bytes the DATA entry declares, once its header decoded.
+    var declaredBytes: UInt64 { decoder.declaredBytes }
 
     init(accepting acceptance: ContainerAcceptance, budget: ByteBudget? = nil) {
         decoder = ContainerDecoder(accepting: acceptance)

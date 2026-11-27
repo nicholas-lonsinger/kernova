@@ -39,9 +39,10 @@ extension AgentHub: DragOutHub {}
 /// It lives on the main actor. The hub's events and the answers to its calls
 /// reach it in the order the hub emitted them, each hopping from the hub's
 /// queue to the main queue, so a call's answer still comes before any event it
-/// caused. A take's delivery is the exception: it settles on the hub's queue,
-/// because a Mac destination asking a promised item's name waits for it
-/// holding the main thread.
+/// caused. Two are heard on the hub's queue instead: a take's delivery settles
+/// there, because a Mac destination asking a promised item's name waits for it
+/// holding the main thread, and a pull's landing progress goes from there to
+/// its take's readout, which takes it from any thread.
 @MainActor
 @Observable
 package final class HubDragOut {
@@ -72,6 +73,8 @@ package final class HubDragOut {
         [DragTakeID: (token: Data, events: @MainActor (GuestDragTakeEvent) -> Void)] = [:]
     /// What the hub's queue settles each take's delivery from, by its id.
     nonisolated private let deliveries = Deliveries()
+    /// Where the hub's queue hands each pull's landing progress.
+    nonisolated private let landings = Landings()
     /// Each pull, until its one `.pullEnded`.
     @ObservationIgnored private var pulls: [ItemPullID: @MainActor (ItemPullResult) -> Void] = [:]
 
@@ -100,7 +103,14 @@ package final class HubDragOut {
         DragFeatureOwner(
             items: ItemFeatureOwner(
                 usable: { [weak self] peer in Self.onMain { self?.consolePeerChanged(peer) } },
-                events: { [weak self] peer, event in Self.onMain { self?.handle(event, from: peer) } },
+                events: { [weak self, landings] peer, event in
+                    switch event {
+                    case .pullAdvanced(_, let id, let landing): return landings.advance(id, landing)
+                    case .pullEnded(_, let id, _): landings.end(id)
+                    default: break
+                    }
+                    Self.onMain { self?.handle(event, from: peer) }
+                },
                 content: { _, _, _ in
                     .failure(WireError(.itemRepresentationUnavailable, debugDetail: "the host offers no drag"))
                 }),
@@ -175,6 +185,9 @@ package final class HubDragOut {
             offerEnded(token)
         case .pullEnded(_, let id, let result):
             pullEnded(id, result)
+        case .pullAdvanced:
+            // Heard on the hub's queue.
+            break
         case .offerEnded(_, .local, _, _), .serveEnded, .offerRequested, .requestEnded:
             // The host offers no drag, and a request is CLIPBOARD's.
             break
@@ -285,6 +298,7 @@ package final class HubDragOut {
         /// (`NSFilePromiseProvider.h`: "Always use the supplied URL").
         func pull(
             _ item: DraggedOutItem, at index: Int, to destination: URL,
+            progressed: @escaping @Sendable (ItemLandingProgress) -> Void,
             ended: @escaping @MainActor (Result<Void, WireError>) -> Void
         ) -> @MainActor () -> Void {
             guard let owner else {
@@ -302,7 +316,11 @@ package final class HubDragOut {
             }
             let peer = peer
             let state = PullState()
+            let landings = owner.landings
             hub.pullItem(order, from: peer) { [weak owner, hub] result in
+                // Recorded on the hub's queue, before any of the pull's events
+                // can reach it.
+                if case .success(let id) = result { landings.add(id, progressed) }
                 HubDragOut.onMain {
                     switch result {
                     case .success(let id):
@@ -381,6 +399,24 @@ package final class HubDragOut {
                 if let size = delivery.sizes[index] { item.sizeEstimate = size }
                 return item
             }
+        }
+    }
+
+    /// Where each pull's landing progress goes, by its id, until its one
+    /// `.pullEnded`, recorded and read on the hub's queue.
+    private final class Landings: Sendable {
+        private let routes = Mutex([ItemPullID: @Sendable (ItemLandingProgress) -> Void]())
+
+        func add(_ id: ItemPullID, _ route: @escaping @Sendable (ItemLandingProgress) -> Void) {
+            routes.withLock { $0[id] = route }
+        }
+
+        func advance(_ id: ItemPullID, _ landing: ItemLandingProgress) {
+            routes.withLock { $0[id] }?(landing)
+        }
+
+        func end(_ id: ItemPullID) {
+            routes.withLock { _ = $0.removeValue(forKey: id) }
         }
     }
 

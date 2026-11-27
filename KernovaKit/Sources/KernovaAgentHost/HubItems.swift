@@ -35,8 +35,8 @@ extension ItemFeatureRouter where Peer == PeerHandle {
 
 /// What the owner of the hub's item events holds open on one connection, each in the order it opened: the host's
 /// offers and its clipboard offer requests, the peer's offers the hub forwarded, and the pulls and takes the owner
-/// opened. The hub hands on an event ending one of these only while it is held, so each ends toward the owner
-/// exactly once.
+/// opened. The hub hands on an event about one of these only while it is held, so each ends toward the owner
+/// exactly once and nothing about it follows its end.
 struct HubOpenItems: Sendable {
     struct Offer: Sendable, Equatable {
         var token: Data
@@ -81,6 +81,8 @@ extension AgentHubState {
         case .offerRequested, .requestEnded(.remote, _, _):
             // A peer's request: the connection refuses a peer opening one before it reaches here.
             return (false, nil)
+        case .pullAdvanced(_, let id, _):
+            return (entry.items.pulls.contains { $0.id == id }, nil)
         case .pullEnded(_, let id, _):
             return (entry.items.pulls.removeFirst(where: { $0.id == id }), nil)
         case .serveEnded:
